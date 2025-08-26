@@ -1,6 +1,15 @@
+# Data
 data:
-  _target_: scientific_stochastic_interpolants.data.load_data.load_stochastic_navier_stokes
-  paths:
-    - data/stochastic_navier_stokes
-  files:
-    - data.npz
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 10
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_history: 2  
+  

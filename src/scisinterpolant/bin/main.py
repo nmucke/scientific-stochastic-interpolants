@@ -1,7 +1,8 @@
 import hydra
-from scisinterpolant.data.load_data import load_stochastic_navier_stokes
 import pdb
+import logging
 
+logger = logging.getLogger(__name__)
 
 @hydra.main(
     config_path="../../../config",
@@ -9,7 +10,11 @@ import pdb
     version_base=None,
 )
 def main(cfg):
-    data = load_stochastic_navier_stokes(cfg.data)
+
+    logger.info(f"Preparing dataloader...")
+    dataloader = hydra.utils.instantiate(cfg.data)
+    
+
 
 if __name__ == "__main__":
     main()
