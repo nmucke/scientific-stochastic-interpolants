@@ -3,51 +3,42 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
+authors = [{name = "Nikolaj T. Mücke", email = "nmucke@gmail.com"}]
+dependencies = []
 name = "scientific-stochastic-interpolants"
-version = "0.1.0"
-description = "Scientific Stochastic Interpolants"
-readme = "README.md"
-license = {text = "MIT"}
-authors = [
-    {name = "Nikolaj T. Mücke", email = "nmucke@gmail.com"},
-]
-classifiers = [
-]
-requires-python = ">=3.11"
-dependencies = [
-]
+requires-python = ">= 3.12,<3.13"
+version = "0.1.1"
 
-[project.scripts]
+[tool.pixi.workspace]
+preview = ["pixi-build"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "win-64"]
 
-[project.urls]
+[tool.pixi.package.build]
+backend = { name = "pixi-build-python", version = "*" }
+channels = [
+  "https://prefix.dev/pixi-build-backends",
+  "https://prefix.dev/conda-forge",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scientific_stochastic_interpolants"]
-
-# Pixi project configuration
-[tool.pixi.project]
-name = "scientific-stochastic-interpolants"
-version = "0.1.0"
-description = "Scientific Stochastic Interpolants"
-authors = ["Nikolaj T. Mücke <nmucke@gmail.com>"]
-license = "MIT"
-readme = "README.md"
-homepage = "https://github.com/nmucke/scientific-stochastic-interpolants"
-repository = "https://github.com/nmucke/scientific-stochastic-interpolants.git"
-channels = ["https://prefix.dev/conda-forge"]
-platforms = ["osx-arm64", "linux-64", "win-64"]
 
 # System requirements
 [tool.pixi.system-requirements]
 cuda = "12.6"
 
+[tool.pixi.feature.py312.dependencies]
+python = {version="~=3.12.10", channel="conda-forge"}
+
 # Pixi dependencies
 [tool.pixi.dependencies]
 python = ">=3.11"
 
+
 [tool.pixi.pypi-dependencies]
-torch = { version = ">=2.5.1", index = "https://download.pytorch.org/whl/cu124" }
-torchvision = { version = ">=0.20.1", index = "https://download.pytorch.org/whl/cu124" }
+torch = { version = ">=2.5.1", index = "https://download.pytorch.org/whl/cu126" }
+torchvision = { version = ">=0.20.1", index = "https://download.pytorch.org/whl/cu126" }
 
 [tool.pixi.target.osx.pypi-dependencies]
 # OSX has no CUDA support so use the CPU here
@@ -96,3 +87,24 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+
+
+[tool.pixi.feature.dev.dependencies]
+pytest= ">=8.3.5,<8.4"
+pre-commit = {version="~=4.1.0", channel="conda-forge"}
+black = {version="~=24.1.0", channel="conda-forge"}
+isort = {version="~=6.0.0", channel="conda-forge"}
+mypy = {version="~=1.15.0", channel="conda-forge"}
+
+
+[tool.pixi.feature.dev.tasks]
+"py.test" = { cmd = "py.test tests --exitfirst", description = "Run tests" }
+pre-commit = { cmd = "pre-commit run", description = "Run pre-commit hooks on specific files" }
+format = { cmd = "black src", description = "Format code" }
+type-check = { cmd = "mypy src", description = "Type check code" }
+sort-imports = { cmd = "isort src", description = "Sort imports" }
+
+
+[tool.pixi.environments]
+default = { features = ["py312"], solve-group="default" }
+dev = { features = ["dev", "py312"], solve-group="default" }
