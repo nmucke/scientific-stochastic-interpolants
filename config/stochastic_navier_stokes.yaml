@@ -11,5 +11,4 @@ data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_history: 2  
-  
+    len_history: 2
