@@ -1,0 +1,6 @@
+data:
+  _target_: scientific_stochastic_interpolants.data.load_data.load_stochastic_navier_stokes
+  paths:
+    - data/stochastic_navier_stokes
+  files:
+    - data.npz
