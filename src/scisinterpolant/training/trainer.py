@@ -3,10 +3,15 @@ import logging
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+SCHEDULERS_THAT_REQUIRE_LOSS = [
+    "ReduceLROnPlateau",
+]
 
 
 class Trainer:
@@ -20,6 +25,7 @@ class Trainer:
         val_dataloader: DataLoader,
         optimizer: Optimizer,
         loss_fn: nn.Module = nn.MSELoss(),
+        scheduler: LRScheduler = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """Initialize the trainer."""
@@ -27,6 +33,7 @@ class Trainer:
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.optimizer = optimizer
+        self.scheduler = scheduler
         self.device = device
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
@@ -77,6 +84,14 @@ class Trainer:
                     pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
 
             val_loss = self._val()
+
+            if (
+                self.scheduler is not None
+                and self.scheduler.__class__.__name__ in SCHEDULERS_THAT_REQUIRE_LOSS
+            ):
+                self.scheduler.step(val_loss)
+            else:
+                self.scheduler.step()
 
             total_loss /= len(self.train_dataloader)  # type: ignore[assignment]
             logger.info(

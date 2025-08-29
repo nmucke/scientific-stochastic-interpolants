@@ -49,6 +49,11 @@ optimizer:
   lr: 0.001
   weight_decay: 0.00000001
 
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 50
+  eta_min: 0.00000001
+
 trainer:
   _target_: scisinterpolant.training.trainer.Trainer
   num_epochs: 50

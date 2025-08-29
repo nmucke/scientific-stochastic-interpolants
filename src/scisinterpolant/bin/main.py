@@ -35,11 +35,18 @@ def main(cfg: DictConfig) -> None:
         params=model.drift_model.parameters(),
     )
 
+    logger.info(f"Instantiating scheduler...")
+    scheduler = hydra.utils.instantiate(
+        cfg.scheduler,
+        optimizer=optimizer,
+    )
+
     logger.info(f"Instantiating trainer...")
     trainer = hydra.utils.instantiate(
         cfg.trainer,
         model=model,
         optimizer=optimizer,
+        scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
     )
