@@ -22,7 +22,7 @@ architecture:
   cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
   cond_embedding_dim: 4 # dimension of the scalar conditional embedding
   field_cond_channels: 2 # number of channels in the field conditional input
-  pars_cond_dim: 5 # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
-  pars_cond_embedding_dim: 16 # dimension of the pars conditional embedding
+  pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
+  pars_cond_embedding_dim: null # dimension of the pars conditional embedding
   multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
   num_blocks: 2 # number of convnext blocks per layer

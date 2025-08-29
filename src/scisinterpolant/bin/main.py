@@ -23,11 +23,10 @@ def main(cfg: DictConfig) -> None:
 
     batch = next(iter(dataloader))
     cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
-    pars_cond = torch.randn(cfg.data.batch_size, 5)
 
     model = hydra.utils.instantiate(cfg.architecture)
 
-    out = model(batch["base"], cond, batch["field_cond"], pars_cond)
+    out = model(batch["base"], cond, batch["field_cond"])
 
     pdb.set_trace()
 
