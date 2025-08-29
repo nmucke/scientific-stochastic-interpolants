@@ -2,6 +2,7 @@ import logging
 import pdb
 
 import hydra
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
@@ -19,56 +20,69 @@ VERBOSE = True
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
+    logger.info(f"Instantiating preprocesser...")
     preprocesser = Preprocesser(
         base=cfg.preprocesser.base,
         target=cfg.preprocesser.target,
         field_cond=cfg.preprocesser.field_cond,
     )
 
-    logger.info(f"Instantiating preprocesser...")
-    preprocesser = hydra.utils.instantiate(
-        cfg.preprocesser,
-    )
-
-    logger.info(f"Preparing train dataloader...")
-    train_dataloader = hydra.utils.instantiate(
-        cfg.train_data,
-        dataset={"preprocesser": preprocesser},
-    )
-
-    logger.info(f"Preparing val dataloader...")
-    val_dataloader = hydra.utils.instantiate(
-        cfg.val_data,
-        dataset={"preprocesser": preprocesser},
-    )
+    logger.info(f"Instantiating test data...")
+    test_dataset = hydra.utils.instantiate(cfg.test_data)
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
 
-    logger.info(f"Instantiating optimizer...")
-    optimizer = hydra.utils.instantiate(
-        cfg.optimizer,
-        params=model.drift_model.parameters(),
-    )
+    logger.info(f"Loading model from checkpoint...")
+    model.load_state_dict(torch.load("checkpoints/model.pth"))
+    model.eval()
+    model.to("cuda")
 
-    logger.info(f"Instantiating scheduler...")
-    scheduler = hydra.utils.instantiate(
-        cfg.scheduler,
-        optimizer=optimizer,
-    )
+    logger.info(f"Sampling from the model...")
+    trajectory = test_dataset[0].unsqueeze(0)
 
-    logger.info(f"Instantiating trainer...")
-    trainer = hydra.utils.instantiate(
-        cfg.trainer,
-        model=model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-    )
+    x = trajectory[:, :, :, :, 1]
+    x_cond = trajectory[:, :, :, :, 0:2]
+    x_cond = x_cond.squeeze(0)
+    x_cond = torch.permute(x_cond, (0, 3, 1, 2))
 
-    logger.info(f"Training...")
-    trainer.train(verbose=VERBOSE)
+    x = preprocesser.transform(base=x, is_batch=True)["base"]
+    x_cond = preprocesser.transform(field_cond=x_cond, is_batch=True)["field_cond"]
+
+    x = x.to("cuda")
+    x_cond = x_cond.to("cuda")
+
+    num_steps = 100
+    dt = torch.tensor(1 / num_steps, device="cuda")
+    t_vec = torch.linspace(0, 1, num_steps, device="cuda")
+    t_vec = t_vec.unsqueeze(0)
+    with torch.no_grad():
+        for i in range(0, num_steps):
+            t = t_vec[:, i : i + 1]
+            drift = model.drift_model(x, t, field_cond=x_cond)
+            wiener_process = torch.randn_like(x) * torch.sqrt(dt)
+            diffusion_term = model.interpolation.gamma(t)
+            x = x + drift * dt + diffusion_term * wiener_process
+            x_cond = torch.cat([x_cond[:, -1:], x], dim=1)
+
+    true_trajectory = trajectory[0, 0, :, :, 2].cpu().numpy()
+    predicted_trajectory = x.cpu()
+    predicted_trajectory = preprocesser.inverse_transform(
+        base=predicted_trajectory, is_batch=True
+    )["base"].numpy()
+    predicted_trajectory = predicted_trajectory[0, 0]
+
+    plt.figure()
+    plt.subplot(1, 3, 1)
+    plt.imshow(true_trajectory)
+    plt.colorbar()
+    plt.subplot(1, 3, 2)
+    plt.imshow(predicted_trajectory)
+    plt.colorbar()
+    plt.subplot(1, 3, 3)
+    plt.imshow(true_trajectory - predicted_trajectory)
+    plt.colorbar()
+    plt.show()
 
 
 if __name__ == "__main__":

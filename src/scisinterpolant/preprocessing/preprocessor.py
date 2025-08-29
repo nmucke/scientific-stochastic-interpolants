@@ -36,46 +36,12 @@ class Preprocesser:
             rearrange(torch.tensor(pars_cond["std"]), "c -> c") if pars_cond else None
         )
 
-        self.batched_trajectory_transform_fn = {
-            (True, True): self._transform_batch_trajectory,
-            (True, False): self._transform_batch,
-            (False, True): self._transform_trajectory,
-            (False, False): self._transform_sample,
+        self.batched_trajectory_fn = {
+            (True, True): lambda x: x.unsqueeze(0).unsqueeze(-1),
+            (True, False): lambda x: x.unsqueeze(0),
+            (False, True): lambda x: x.unsqueeze(-1),
+            (False, False): lambda x: x,
         }
-
-    def _transform_batch(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
-    ) -> torch.Tensor:
-        """Transform the batch data."""
-
-        mean = mean.unsqueeze(0)
-        std = std.unsqueeze(0)
-
-        return (x - mean) / std
-
-    def _transform_trajectory(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
-    ) -> torch.Tensor:
-        """Transform the trajectory data."""
-
-        mean = mean.unsqueeze(-1)
-        std = std.unsqueeze(-1)
-
-        return (x - mean) / std
-
-    def _transform_batch_trajectory(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
-    ) -> torch.Tensor:
-        """Transform the batch trajectory data."""
-        mean = mean.unsqueeze(0).unsqueeze(-1)
-        std = std.unsqueeze(0).unsqueeze(-1)
-        return (x - mean) / std
-
-    def _transform_sample(
-        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
-    ) -> torch.Tensor:
-        """Transform the data."""
-        return (x - mean) / std
 
     def _transform(
         self,
@@ -86,9 +52,9 @@ class Preprocesser:
         is_trajectory: bool = False,
     ) -> torch.Tensor:
         """Transform the field data."""
-        return self.batched_trajectory_transform_fn[(is_batch, is_trajectory)](
-            x, mean, std
-        )
+        mean = self.batched_trajectory_fn[(is_batch, is_trajectory)](mean)
+        std = self.batched_trajectory_fn[(is_batch, is_trajectory)](std)
+        return (x - mean) / std
 
     def transform(
         self,
@@ -134,6 +100,62 @@ class Preprocesser:
                 is_trajectory,
             )
 
+        return {
+            "base": base,
+            "target": target,
+            "field_cond": field_cond,
+            "pars_cond": pars_cond,
+        }
+
+    def _inverse_transform(
+        self,
+        x: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
+    ) -> torch.Tensor:
+        """Inverse transform the data."""
+        mean = self.batched_trajectory_fn[(is_batch, is_trajectory)](mean)
+        std = self.batched_trajectory_fn[(is_batch, is_trajectory)](std)
+        return x * std + mean
+
+    def inverse_transform(
+        self,
+        base: torch.Tensor | None = None,
+        target: torch.Tensor | None = None,
+        field_cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Inverse transform the data."""
+
+        if base is not None:
+            base = self._inverse_transform(
+                base, self.base_mean, self.base_std, is_batch, is_trajectory
+            )
+        if target is not None:
+            target = self._inverse_transform(
+                target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
+        if field_cond is not None:
+            field_cond = self._inverse_transform(
+                field_cond,
+                self.field_cond_mean,
+                self.field_cond_std,
+                is_batch,
+                is_trajectory,
+            )
+        if pars_cond is not None:
+            pars_cond = self._inverse_transform(
+                pars_cond,
+                self.pars_cond_mean,
+                self.pars_cond_std,
+                is_batch,
+                is_trajectory,
+            )
         return {
             "base": base,
             "target": target,

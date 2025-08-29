@@ -108,7 +108,6 @@ class Trainer:
 
     def train(self, verbose: bool = True) -> None:
         """Train the model."""
-        self.model.train()
 
         for epoch in range(self.num_epochs):
             total_loss = 0
