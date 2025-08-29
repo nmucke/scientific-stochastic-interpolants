@@ -120,7 +120,7 @@ class Trainer:
                 if verbose:
                     pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
 
-            val_loss = self._val()
+            val_loss = self._compute_val_loss()
 
             if self.early_stopping(val_loss):
                 logger.info(f"Early stopping triggered at epoch {epoch}")
@@ -142,7 +142,7 @@ class Trainer:
                 f"Best Val Loss: {self.early_stopping.best_loss:.4f}"
             )
 
-    def _val(self) -> float:
+    def _compute_val_loss(self) -> float:
         """Validate the model."""
         self.model.eval()
         with torch.no_grad():
