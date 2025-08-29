@@ -36,21 +36,68 @@ class Preprocesser:
             rearrange(torch.tensor(pars_cond["std"]), "c -> c") if pars_cond else None
         )
 
+        self.batched_trajectory_transform_fn = {
+            (True, True): self._transform_batch_trajectory,
+            (True, False): self._transform_batch,
+            (False, True): self._transform_trajectory,
+            (False, False): self._transform_sample,
+        }
+
+    def _transform_batch(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        """Transform the batch data."""
+
+        mean = mean.unsqueeze(0)
+        std = std.unsqueeze(0)
+
+        return (x - mean) / std
+
+    def _transform_trajectory(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        """Transform the trajectory data."""
+
+        mean = mean.unsqueeze(-1)
+        std = std.unsqueeze(-1)
+
+        return (x - mean) / std
+
+    def _transform_batch_trajectory(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        """Transform the batch trajectory data."""
+        mean = mean.unsqueeze(0).unsqueeze(-1)
+        std = std.unsqueeze(0).unsqueeze(-1)
+        return (x - mean) / std
+
     def _transform_sample(
+        self, x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor
+    ) -> torch.Tensor:
+        """Transform the data."""
+        return (x - mean) / std
+
+    def _transform(
         self,
         x: torch.Tensor,
         mean: torch.Tensor,
         std: torch.Tensor,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
     ) -> torch.Tensor:
         """Transform the field data."""
-        return (x - mean) / std
+        return self.batched_trajectory_transform_fn[(is_batch, is_trajectory)](
+            x, mean, std
+        )
 
     def transform(
         self,
-        base: torch.Tensor,
-        target: torch.Tensor,
+        base: torch.Tensor | None = None,
+        target: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Transform the data.
@@ -62,15 +109,29 @@ class Preprocesser:
             pars_cond: The pars condition data. [B, D]
         """
 
-        base = self._transform_sample(base, self.base_mean, self.base_std)
-        target = self._transform_sample(target, self.target_mean, self.target_std)
+        if base is not None:
+            base = self._transform(
+                base, self.base_mean, self.base_std, is_batch, is_trajectory
+            )
+        if target is not None:
+            target = self._transform(
+                target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
         if field_cond is not None:
-            field_cond = self._transform_sample(
-                field_cond, self.field_cond_mean, self.field_cond_std
+            field_cond = self._transform(
+                field_cond,
+                self.field_cond_mean,
+                self.field_cond_std,
+                is_batch,
+                is_trajectory,
             )
         if pars_cond is not None:
-            pars_cond = self._transform_sample(
-                pars_cond, self.pars_cond_mean, self.pars_cond_std
+            pars_cond = self._transform(
+                pars_cond,
+                self.pars_cond_mean,
+                self.pars_cond_std,
+                is_batch,
+                is_trajectory,
             )
 
         return {

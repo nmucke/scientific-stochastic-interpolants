@@ -47,6 +47,16 @@ val_data:
     len_history: 2
     tajectories_ids: (140, 150)
 
+
+test_data:
+  _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+  paths:
+    - data/stochastic_navier_stokes
+  files:
+    - data.npz
+  len_history: 2
+  tajectories_ids: (150, 160)
+
 model:
   _target_: scisinterpolant.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:

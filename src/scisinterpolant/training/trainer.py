@@ -95,7 +95,6 @@ class Trainer:
             noise=noise,
             field_cond=batch.get("field_cond", None),
             pars_cond=batch.get("pars_cond", None),
-            base_cond=batch.get("base_cond", None),
         )
         return self.loss_fn(drift, x_diff)
 
@@ -125,6 +124,7 @@ class Trainer:
 
             if self.early_stopping(val_loss):
                 logger.info(f"Early stopping triggered at epoch {epoch}")
+                self.model.load_state_dict(torch.load(self.checkpoint_path))
                 break
 
             if self.early_stopping.save_checkpoint:
