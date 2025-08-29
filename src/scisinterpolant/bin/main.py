@@ -21,11 +21,12 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Preparing dataloader...")
     dataloader = hydra.utils.instantiate(cfg.data)
 
-    batch = next(iter(dataloader))
-    cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
-
+    logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.architecture)
 
+    logger.info(f"Test forward pass...")
+    batch = next(iter(dataloader))
+    cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
     out = model(batch["base"], cond, batch["field_cond"])
 
     pdb.set_trace()
