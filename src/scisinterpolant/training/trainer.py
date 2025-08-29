@@ -86,7 +86,7 @@ class Trainer:
             batch[key] = value.to(self.device)
 
         t = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
-        noise = torch.randn(batch["base"].shape, device=self.device).to(self.device)
+        noise = torch.randn(batch["base"].shape, device=self.device)
 
         drift, x_diff = self.model(
             base=batch.get("base", None),
