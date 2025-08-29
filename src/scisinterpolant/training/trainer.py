@@ -1,12 +1,13 @@
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from torch.optim import Optimizer
-from tqdm import tqdm
-
 import logging
 
+import torch
+import torch.nn as nn
+from torch.optim import Optimizer
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 logger = logging.getLogger(__name__)
+
 
 class Trainer:
     """Trainer for the stochastic interpolant."""
@@ -30,16 +31,15 @@ class Trainer:
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
 
-
         self.model.train()
         self.model.to(self.device)
 
-    def _compute_loss(self, batch: dict):
+    def _compute_loss(self, batch: dict) -> torch.Tensor:
         """Compute the loss for the model."""
 
         for key, value in batch.items():
             batch[key] = value.to(self.device)
-        
+
         t = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
         noise = torch.randn(batch["base"].shape, device=self.device).to(self.device)
 
@@ -53,16 +53,16 @@ class Trainer:
         )
         return self.loss_fn(drift, x_diff)
 
-    def _train_step(self, batch: dict):
+    def _train_step(self, batch: dict) -> torch.Tensor:
         """Train the model for one step."""
         self.optimizer.zero_grad()
         loss = self._compute_loss(batch)
         loss.backward()
         self.optimizer.step()
 
-        return loss.item()
+        return loss
 
-    def train(self, verbose: bool = True):
+    def train(self, verbose: bool = True) -> None:
         """Train the model."""
         self.model.train()
 
@@ -72,17 +72,18 @@ class Trainer:
             pbar = tqdm(self.train_dataloader) if verbose else self.train_dataloader
             for batch in pbar:
                 loss = self._train_step(batch)
-                total_loss += loss
+                total_loss += loss.item()
                 if verbose:
                     pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
 
             val_loss = self._val()
 
-            total_loss /= len(self.train_dataloader)
-            logger.info(f"Epoch {epoch}, Train Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}")
+            total_loss /= len(self.train_dataloader)  # type: ignore[assignment]
+            logger.info(
+                f"Epoch {epoch}, Train Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}"
+            )
 
-
-    def _val(self, ):
+    def _val(self) -> float:
         """Validate the model."""
         self.model.eval()
         with torch.no_grad():
@@ -90,5 +91,5 @@ class Trainer:
             for batch in self.val_dataloader:
                 loss = self._compute_loss(batch)
                 total_loss += loss.item()
-            total_loss /= len(self.val_dataloader)
+            total_loss /= len(self.val_dataloader)  # type: ignore[assignment]
         return total_loss

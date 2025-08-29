@@ -10,6 +10,8 @@ from scisinterpolant.architectures.u_net import UNet
 
 logger = logging.getLogger(__name__)
 
+VERBOSE = True
+
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
@@ -43,7 +45,8 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(f"Training...")
-    trainer.train(verbose=True)
+    trainer.train(verbose=VERBOSE)
+
 
 if __name__ == "__main__":
     main()
