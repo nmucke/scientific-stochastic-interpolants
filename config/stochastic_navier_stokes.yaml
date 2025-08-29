@@ -76,7 +76,11 @@ scheduler:
 
 trainer:
   _target_: scisinterpolant.training.trainer.Trainer
-  num_epochs: 2
+  num_epochs: 50
   loss_fn:
     _target_: torch.nn.MSELoss
   device: cuda
+  early_stopping:
+    _target_: scisinterpolant.training.trainer.EarlyStopping
+    patience: 10
+  checkpoint_path: checkpoints/model.pth

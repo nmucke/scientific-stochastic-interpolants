@@ -1,4 +1,6 @@
 import logging
+import pdb
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -14,6 +16,31 @@ SCHEDULERS_THAT_REQUIRE_LOSS = [
 ]
 
 
+@dataclass
+class EarlyStopping:
+    """Early stopping for the trainer."""
+
+    patience: int = 10
+    delta: float = 1e-6
+    best_loss: float = float("inf")
+    counter: int = 0
+    early_stop: bool = False
+    save_checkpoint: bool = False
+
+    def __call__(self, val_loss: float) -> bool:
+        """Check if the early stopping condition is met."""
+        if val_loss < self.best_loss + self.delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            self.save_checkpoint = True
+        else:
+            self.counter += 1
+            self.save_checkpoint = False
+        if self.counter >= self.patience:
+            self.early_stop = True
+        return self.early_stop
+
+
 class Trainer:
     """Trainer for the stochastic interpolant."""
 
@@ -24,6 +51,8 @@ class Trainer:
         train_dataloader: DataLoader,
         val_dataloader: DataLoader,
         optimizer: Optimizer,
+        early_stopping: EarlyStopping,
+        checkpoint_path: str | None = None,
         loss_fn: nn.Module = nn.MSELoss(),
         scheduler: LRScheduler = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -36,7 +65,8 @@ class Trainer:
         self.device = device
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
-
+        self.early_stopping = early_stopping
+        self.checkpoint_path = checkpoint_path
 
         self.scheduler = scheduler
         if self.scheduler is not None:
@@ -74,7 +104,6 @@ class Trainer:
         loss = self._compute_loss(batch)
         loss.backward()
         self.optimizer.step()
-
         return loss
 
     def train(self, verbose: bool = True) -> None:
@@ -93,6 +122,14 @@ class Trainer:
 
             val_loss = self._val()
 
+            if self.early_stopping(val_loss):
+                logger.info(f"Early stopping triggered at epoch {epoch}")
+                break
+
+            if self.early_stopping.save_checkpoint:
+                logger.info(f"Saving checkpoint at epoch {epoch}")
+                torch.save(self.model.state_dict(), self.checkpoint_path)
+
             if self.scheduler_requires_loss:
                 self.scheduler.step(val_loss)
             if self.scheduler:
@@ -100,7 +137,9 @@ class Trainer:
 
             total_loss /= len(self.train_dataloader)  # type: ignore[assignment]
             logger.info(
-                f"Epoch {epoch}, Train Loss: {total_loss:.4f}, Val Loss: {val_loss:.4f}"
+                f"Epoch {epoch}, Train Loss: {total_loss:.4f}, "
+                f"Val Loss: {val_loss:.4f}, "
+                f"Best Val Loss: {self.early_stopping.best_loss:.4f}"
             )
 
     def _val(self) -> float:

@@ -19,7 +19,6 @@ VERBOSE = True
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
-
     preprocesser = Preprocesser(
         base=cfg.preprocesser.base,
         target=cfg.preprocesser.target,
@@ -70,9 +69,6 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Training...")
     trainer.train(verbose=VERBOSE)
-
-    logger.info(f"Saving model...")
-    torch.save(model.state_dict(), "model.pth")
 
 
 if __name__ == "__main__":
