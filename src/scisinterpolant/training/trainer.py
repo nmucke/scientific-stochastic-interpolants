@@ -89,12 +89,13 @@ class Trainer:
         noise = torch.randn(batch["base"].shape, device=self.device).to(self.device)
 
         drift, x_diff = self.model(
-            base=batch["base"],
-            target=batch["target"],
+            base=batch.get("base", None),
+            target=batch.get("target", None),
             t=t,
             noise=noise,
             field_cond=batch.get("field_cond", None),
             pars_cond=batch.get("pars_cond", None),
+            base_cond=batch.get("base_cond", None),
         )
         return self.loss_fn(drift, x_diff)
 
