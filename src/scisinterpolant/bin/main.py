@@ -2,7 +2,11 @@ import logging
 import pdb
 
 import hydra
+import torch
+import torch.nn as nn
 from omegaconf import DictConfig
+
+from scisinterpolant.architectures.u_net import UNet
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +20,15 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Preparing dataloader...")
     dataloader = hydra.utils.instantiate(cfg.data)
+
+    batch = next(iter(dataloader))
+    cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
+
+    model = hydra.utils.instantiate(cfg.architecture)
+
+    out = model(batch["base"], cond, batch["field_cond"])
+
+    pdb.set_trace()
 
 
 if __name__ == "__main__":
