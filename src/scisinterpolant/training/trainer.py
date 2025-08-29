@@ -33,10 +33,18 @@ class Trainer:
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.optimizer = optimizer
-        self.scheduler = scheduler
         self.device = device
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
+
+
+        self.scheduler = scheduler
+        if self.scheduler is not None:
+            self.scheduler_requires_loss = (
+                scheduler.__class__.__name__ in SCHEDULERS_THAT_REQUIRE_LOSS
+            )
+        else:
+            self.scheduler_requires_loss = False
 
         self.model.train()
         self.model.to(self.device)
@@ -85,12 +93,9 @@ class Trainer:
 
             val_loss = self._val()
 
-            if (
-                self.scheduler is not None
-                and self.scheduler.__class__.__name__ in SCHEDULERS_THAT_REQUIRE_LOSS
-            ):
+            if self.scheduler_requires_loss:
                 self.scheduler.step(val_loss)
-            else:
+            if self.scheduler:
                 self.scheduler.step()
 
             total_loss /= len(self.train_dataloader)  # type: ignore[assignment]
