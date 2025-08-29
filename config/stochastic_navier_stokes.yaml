@@ -2,7 +2,7 @@
 data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 10
+  batch_size: 32
   shuffle: True
   # Dataset
   dataset:
@@ -21,7 +21,7 @@ model:
   drift_model:
     _target_: scisinterpolant.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
-    out_channels: 5 # number of channels in the output
+    out_channels: 1 # number of channels in the output
     hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 4 # dimension of the scalar conditional embedding
@@ -30,3 +30,15 @@ model:
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
+
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 0.001
+  weight_decay: 0.00000001
+
+trainer:
+  _target_: scisinterpolant.training.trainer.Trainer
+  num_epochs: 5
+  loss_fn:
+    _target_: torch.nn.MSELoss
+  device: cuda

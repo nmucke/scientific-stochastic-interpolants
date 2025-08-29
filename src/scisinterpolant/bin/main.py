@@ -24,22 +24,22 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
 
-    logger.info(f"Test forward pass...")
-    batch = next(iter(dataloader))
-
-    t = torch.abs(torch.randn(cfg.data.batch_size, 1))
-    noise = torch.randn(batch["base"].shape)
-
-    drift, x_diff = model(
-        base=batch["base"],
-        target=batch["target"],
-        t=t,
-        noise=noise,
-        field_cond=batch.get("field_cond", None),
-        pars_cond=batch.get("pars_cond", None),
+    logger.info(f"Instantiating optimizer...")
+    optimizer = hydra.utils.instantiate(
+        cfg.optimizer,
+        params=model.drift_model.parameters(),
     )
-    pdb.set_trace()
 
+    logger.info(f"Instantiating trainer...")
+    trainer = hydra.utils.instantiate(
+        cfg.trainer,
+        model=model,
+        optimizer=optimizer,
+        dataloader=dataloader,
+    )
+
+    logger.info(f"Training...")
+    trainer.train()
 
 if __name__ == "__main__":
     main()
