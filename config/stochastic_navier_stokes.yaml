@@ -1,8 +1,28 @@
+preprocesser:
+  _target_: scisinterpolant.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  target:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  field_cond:
+    mean:
+      - 0.0
+      - 0.0
+    std:
+      - 3.09969
+      - 3.09969
+
 # Data
-data:
+train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 10
+  batch_size: 32
   shuffle: True
   # Dataset
   dataset:
@@ -12,7 +32,20 @@ data:
     files:
       - data.npz
     len_history: 2
+    tajectories_ids: (0, 140)
 
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: True
+  dataset:
+    _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_history: 2
+    tajectories_ids: (140, 150)
 
 model:
   _target_: scisinterpolant.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
@@ -21,7 +54,7 @@ model:
   drift_model:
     _target_: scisinterpolant.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
-    out_channels: 5 # number of channels in the output
+    out_channels: 1 # number of channels in the output
     hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 4 # dimension of the scalar conditional embedding
@@ -30,3 +63,24 @@ model:
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001
+  weight_decay: 0.00000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 50
+  eta_min: 0.00000001
+
+trainer:
+  _target_: scisinterpolant.training.trainer.Trainer
+  num_epochs: 50
+  loss_fn:
+    _target_: torch.nn.MSELoss
+  device: cuda
+  early_stopping:
+    _target_: scisinterpolant.training.trainer.EarlyStopping
+    patience: 10
+  checkpoint_path: checkpoints/model.pth

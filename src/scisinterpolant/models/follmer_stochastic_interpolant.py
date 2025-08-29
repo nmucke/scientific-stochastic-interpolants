@@ -16,6 +16,28 @@ class FollmerStochasticInterpolant(nn.Module):
         self.interpolation = interpolation
         self.drift_model = drift_model
 
+    def drift(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """
+        Compute the drift of the Follmer stochastic interpolant.
+        """
+        return self.drift_model(x, t, field_cond, pars_cond)
+
+    def score(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compute the score of the Follmer stochastic interpolant."""
+        return self.drift_model(x, t, field_cond, pars_cond)
+
     def forward(
         self,
         base: torch.Tensor,
