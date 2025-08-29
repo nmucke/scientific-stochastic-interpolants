@@ -37,13 +37,29 @@ class FollmerStochasticInterpolant(nn.Module):
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
 
         Returns:
-            torch.Tensor: Output tensor [B, C, H, W].
+            torch.Tensor: Drift tensor [B, C, H, W].
+            torch.Tensor: Interpolation derivative tensor [B, C, H, W].
         """
 
-        x = self.interpolation(base=base, target=target, t=t, noise=noise)
-        return self.drift_model(
+        x = self.interpolation.forward(
+            base=base, 
+            target=target, 
+            t=t, 
+            noise=noise,
+        )
+
+        drift = self.drift_model(
             x=x,
             cond=t,
             field_cond=field_cond,
             pars_cond=pars_cond,
         )
+
+        x_diff = self.interpolation.forward_diff(
+            base=base, 
+            target=target, 
+            t=t, 
+            noise=noise
+        )
+
+        return drift, x_diff
