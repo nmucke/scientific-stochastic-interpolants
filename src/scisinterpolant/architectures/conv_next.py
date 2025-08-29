@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+from scisinterpolant.architectures.architecture_utils import AddCond, AddCondNone
+
 
 class ConvNextBlock(nn.Module):
     """ConvNext block with conditional input."""
@@ -14,6 +16,7 @@ class ConvNextBlock(nn.Module):
         out_channels: int,
         cond_dim: int,
         multiplier: int = 2,
+        pars_cond_dim: int | None = None,
     ) -> None:
         """
         Initialize ConvNext block with conditional input.
@@ -23,6 +26,7 @@ class ConvNextBlock(nn.Module):
             out_channels (int): Number of output channels.
             cond_dim (int): Dimension of the conditional input.
             multiplier (int): Multiplier for the number of channels.
+            pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
         """
         super(ConvNextBlock, self).__init__()
 
@@ -30,7 +34,11 @@ class ConvNextBlock(nn.Module):
             in_channels, in_channels, kernel_size=7, stride=1, padding=3
         )
 
-        self.cond_mlp = nn.Linear(cond_dim, in_channels)
+        self.add_cond = AddCond(cond_dim, in_channels)
+        if pars_cond_dim is not None:
+            self.add_pars_cond = AddCond(pars_cond_dim, in_channels)
+        else:
+            self.add_pars_cond = AddCondNone()
 
         self.conv_next = nn.Sequential(
             nn.GroupNorm(1, in_channels),
@@ -56,7 +64,12 @@ class ConvNextBlock(nn.Module):
             in_channels, out_channels, kernel_size=1, stride=1, padding=0
         )
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: torch.Tensor,
+        pars_cond: torch.Tensor = None,
+    ) -> torch.Tensor:
         """
         Forward pass.
 
@@ -66,8 +79,8 @@ class ConvNextBlock(nn.Module):
         """
         res = self.res_conv(x)
         x = self.ds_conv(x)
-        cond = self.cond_mlp(cond)
-        x = x + rearrange(cond, "b c -> b c 1 1")
+        x = self.add_cond(x, cond)
+        x = self.add_pars_cond(x, pars_cond)
         x = self.conv_next(x)
         x = x + res
         return x
@@ -82,6 +95,7 @@ class MultipleConvNextBlocks(nn.Module):
         out_channels: int,
         cond_dim: int,
         multiplier: int = 2,
+        pars_cond_dim: int | None = None,
         num_blocks: int = 2,
     ) -> None:
         """
@@ -92,6 +106,7 @@ class MultipleConvNextBlocks(nn.Module):
             out_channels (int): Number of output channels.
             cond_dim (int): Dimension of the conditional input.
             multiplier (int): Multiplier for the number of channels.
+            pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
             num_blocks (int): Number of ConvNext blocks.
         """
         super(MultipleConvNextBlocks, self).__init__()
@@ -103,12 +118,15 @@ class MultipleConvNextBlocks(nn.Module):
                     out_channels=out_channels,
                     cond_dim=cond_dim,
                     multiplier=multiplier,
+                    pars_cond_dim=pars_cond_dim,
                 )
                 for i in range(num_blocks)
             ]
         )
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, cond: torch.Tensor, pars_cond: torch.Tensor = None
+    ) -> torch.Tensor:
         """
         Forward pass.
 
@@ -117,5 +135,5 @@ class MultipleConvNextBlocks(nn.Module):
             cond (torch.Tensor): Conditional input tensor of shape (B, D).
         """
         for block in self.blocks:
-            x = block(x, cond)
+            x = block(x, cond, pars_cond)
         return x

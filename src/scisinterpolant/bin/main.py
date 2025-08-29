@@ -3,10 +3,10 @@ import pdb
 
 import hydra
 import torch
+import torch.nn as nn
 from omegaconf import DictConfig
 
-from scisinterpolant.models.conv_next import MultipleConvNextBlocks
-from scisinterpolant.models.embeddings import FourierScalarEncoder
+from scisinterpolant.architectures.u_net import UNet
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +23,11 @@ def main(cfg: DictConfig) -> None:
 
     batch = next(iter(dataloader))
     cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
+    pars_cond = torch.randn(cfg.data.batch_size, 5)
 
-    cond = FourierScalarEncoder(embedding_dim=4)(cond)
+    model = hydra.utils.instantiate(cfg.architecture)
 
-    model = MultipleConvNextBlocks(
-        in_channels=1,
-        out_channels=5,
-        cond_dim=4,
-        multiplier=2,
-        num_blocks=2,
-    )
-
-    out = model(batch["base"], cond)
+    out = model(batch["base"], cond, batch["field_cond"], pars_cond)
 
     pdb.set_trace()
 
