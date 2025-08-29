@@ -43,7 +43,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(f"Training...")
-    trainer.train()
+    trainer.train(verbose=True)
 
 if __name__ == "__main__":
     main()
