@@ -42,9 +42,9 @@ class FollmerStochasticInterpolant(nn.Module):
         """
 
         x = self.interpolation.forward(
-            base=base, 
-            target=target, 
-            t=t, 
+            base=base,
+            target=target,
+            t=t,
             noise=noise,
         )
 
@@ -56,10 +56,7 @@ class FollmerStochasticInterpolant(nn.Module):
         )
 
         x_diff = self.interpolation.forward_diff(
-            base=base, 
-            target=target, 
-            t=t, 
-            noise=noise
+            base=base, target=target, t=t, noise=noise
         )
 
         return drift, x_diff

@@ -30,7 +30,7 @@ def main(cfg: DictConfig) -> None:
     t = torch.abs(torch.randn(cfg.data.batch_size, 1))
     noise = torch.randn(batch["base"].shape)
 
-    out = model(
+    drift, x_diff = model(
         base=batch["base"],
         target=batch["target"],
         t=t,
