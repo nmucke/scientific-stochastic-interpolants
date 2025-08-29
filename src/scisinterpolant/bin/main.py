@@ -22,13 +22,22 @@ def main(cfg: DictConfig) -> None:
     dataloader = hydra.utils.instantiate(cfg.data)
 
     logger.info(f"Instantiating model...")
-    model = hydra.utils.instantiate(cfg.architecture)
+    model = hydra.utils.instantiate(cfg.model)
 
     logger.info(f"Test forward pass...")
     batch = next(iter(dataloader))
-    cond = torch.abs(torch.randn(cfg.data.batch_size, 1))
-    out = model(batch["base"], cond, batch["field_cond"])
 
+    t = torch.abs(torch.randn(cfg.data.batch_size, 1))
+    noise = torch.randn(batch["base"].shape)
+
+    drift, x_diff = model(
+        base=batch["base"],
+        target=batch["target"],
+        t=t,
+        noise=noise,
+        field_cond=batch.get("field_cond", None),
+        pars_cond=batch.get("pars_cond", None),
+    )
     pdb.set_trace()
 
 
