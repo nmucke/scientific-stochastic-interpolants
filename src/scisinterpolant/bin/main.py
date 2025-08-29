@@ -18,8 +18,11 @@ logger = logging.getLogger(__name__)
 )
 def main(cfg: DictConfig) -> None:
 
-    logger.info(f"Preparing dataloader...")
-    dataloader = hydra.utils.instantiate(cfg.data)
+    logger.info(f"Preparing train dataloader...")
+    train_dataloader = hydra.utils.instantiate(cfg.train_data)
+
+    logger.info(f"Preparing val dataloader...")
+    val_dataloader = hydra.utils.instantiate(cfg.val_data)
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -35,7 +38,8 @@ def main(cfg: DictConfig) -> None:
         cfg.trainer,
         model=model,
         optimizer=optimizer,
-        dataloader=dataloader,
+        train_dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
     )
 
     logger.info(f"Training...")

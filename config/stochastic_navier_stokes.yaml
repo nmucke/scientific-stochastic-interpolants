@@ -1,5 +1,5 @@
 # Data
-data:
+train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
   batch_size: 32
@@ -12,7 +12,20 @@ data:
     files:
       - data.npz
     len_history: 2
+    tajectories_ids: (0, 140)
 
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: True
+  dataset:
+    _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_history: 2
+    tajectories_ids: (140, 150)
 
 model:
   _target_: scisinterpolant.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
@@ -32,13 +45,13 @@ model:
     num_blocks: 2 # number of convnext blocks per layer
 
 optimizer:
-  _target_: torch.optim.Adam
+  _target_: torch.optim.AdamW
   lr: 0.001
   weight_decay: 0.00000001
 
 trainer:
   _target_: scisinterpolant.training.trainer.Trainer
-  num_epochs: 5
+  num_epochs: 50
   loss_fn:
     _target_: torch.nn.MSELoss
   device: cuda
