@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from scisinterpolant.architectures.u_net import UNet
+from scisinterpolant.preprocessing.preprocessor import Preprocesser
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,28 @@ VERBOSE = True
 )
 def main(cfg: DictConfig) -> None:
 
+    preprocesser = Preprocesser(
+        base=cfg.preprocesser.base,
+        target=cfg.preprocesser.target,
+        field_cond=cfg.preprocesser.field_cond,
+    )
+
+    logger.info(f"Instantiating preprocesser...")
+    preprocesser = hydra.utils.instantiate(
+        cfg.preprocesser,
+    )
+
     logger.info(f"Preparing train dataloader...")
-    train_dataloader = hydra.utils.instantiate(cfg.train_data)
+    train_dataloader = hydra.utils.instantiate(
+        cfg.train_data,
+        dataset={"preprocesser": preprocesser},
+    )
 
     logger.info(f"Preparing val dataloader...")
-    val_dataloader = hydra.utils.instantiate(cfg.val_data)
+    val_dataloader = hydra.utils.instantiate(
+        cfg.val_data,
+        dataset={"preprocesser": preprocesser},
+    )
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -53,6 +70,9 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Training...")
     trainer.train(verbose=VERBOSE)
+
+    logger.info(f"Saving model...")
+    torch.save(model.state_dict(), "model.pth")
 
 
 if __name__ == "__main__":

@@ -1,3 +1,23 @@
+preprocesser:
+  _target_: scisinterpolant.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  target:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  field_cond:
+    mean:
+      - 0.0
+      - 0.0
+    std:
+      - 3.09969
+      - 3.09969
+
 # Data
 train_data:
   # Dataloader
@@ -12,7 +32,7 @@ train_data:
     files:
       - data.npz
     len_history: 2
-    tajectories_ids: (0, 10)
+    tajectories_ids: (0, 140)
 
 val_data:
   _target_: torch.utils.data.DataLoader
@@ -56,7 +76,7 @@ scheduler:
 
 trainer:
   _target_: scisinterpolant.training.trainer.Trainer
-  num_epochs: 50
+  num_epochs: 2
   loss_fn:
     _target_: torch.nn.MSELoss
   device: cuda
