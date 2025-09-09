@@ -56,6 +56,7 @@ class Trainer:
         loss_fn: nn.Module = nn.MSELoss(),
         scheduler: LRScheduler = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        max_grad_norm: float = 1.0,
     ):
         """Initialize the trainer."""
         self.model = model
@@ -67,7 +68,7 @@ class Trainer:
         self.num_epochs = num_epochs
         self.early_stopping = early_stopping
         self.checkpoint_path = checkpoint_path
-
+        self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
         if self.scheduler is not None:
             self.scheduler_requires_loss = (
@@ -82,38 +83,50 @@ class Trainer:
     def _compute_loss(self, batch: dict) -> torch.Tensor:
         """Compute the loss for the model."""
 
+        # Move data to device
         for key, value in batch.items():
             batch[key] = value.to(self.device)
 
+        # Sample pseudo-time
         t = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
-        noise = torch.randn(batch["base"].shape, device=self.device).to(self.device)
 
-        drift, x_diff = self.model(
+        # Sample noise
+        noise = torch.randn(batch["base"].shape, device=self.device)
+
+        # Compute pred and true drift
+        pred_drift, true_diff = self.model(
             base=batch.get("base", None),
             target=batch.get("target", None),
             t=t,
             noise=noise,
             field_cond=batch.get("field_cond", None),
             pars_cond=batch.get("pars_cond", None),
-            base_cond=batch.get("base_cond", None),
         )
-        return self.loss_fn(drift, x_diff)
+
+        # Compute and return the loss
+        return self.loss_fn(pred_drift, true_diff)
 
     def _train_step(self, batch: dict) -> torch.Tensor:
         """Train the model for one step."""
         self.optimizer.zero_grad()
         loss = self._compute_loss(batch)
+
+        # Clip gradients to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(), max_norm=self.max_grad_norm
+        )
         loss.backward()
         self.optimizer.step()
         return loss
 
     def train(self, verbose: bool = True) -> None:
         """Train the model."""
-        self.model.train()
 
         for epoch in range(self.num_epochs):
             total_loss = 0
             self.model.train()
+
+            # Loop over batches
             pbar = tqdm(self.train_dataloader) if verbose else self.train_dataloader
             for batch in pbar:
                 loss = self._train_step(batch)
@@ -121,16 +134,21 @@ class Trainer:
                 if verbose:
                     pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
 
+            # Compute validation loss
             val_loss = self._compute_val_loss()
 
+            # Early stopping
             if self.early_stopping(val_loss):
                 logger.info(f"Early stopping triggered at epoch {epoch}")
+                self.model.load_state_dict(torch.load(self.checkpoint_path))
                 break
 
+            # Save checkpoint
             if self.early_stopping.save_checkpoint:
                 logger.info(f"Saving checkpoint at epoch {epoch}")
                 torch.save(self.model.state_dict(), self.checkpoint_path)
 
+            # Update scheduler
             if self.scheduler_requires_loss:
                 self.scheduler.step(val_loss)
             if self.scheduler:

@@ -93,9 +93,10 @@ class QuadraticDeterministicInterpolation(nn.Module):
 class LinearStochasticInterpolation(nn.Module):
     """Linear stochastic interpolant."""
 
-    def __init__(self) -> None:
+    def __init__(self, gamma_multiplier: float = 1.0) -> None:
         """Initialize linear stochastic interpolant."""
         super(LinearStochasticInterpolation, self).__init__()
+        self.gamma_multiplier = gamma_multiplier
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -115,11 +116,11 @@ class LinearStochasticInterpolation(nn.Module):
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma function."""
-        return 1 - t
+        return self.gamma_multiplier * (1 - t)
 
     def gamma_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma derivative."""
-        return -1
+        return -self.gamma_multiplier
 
     def forward(
         self,
@@ -151,9 +152,10 @@ class LinearStochasticInterpolation(nn.Module):
 class QuadraticStochasticInterpolation(nn.Module):
     """Quadratic stochastic interpolant."""
 
-    def __init__(self) -> None:
+    def __init__(self, gamma_multiplier: float = 1.0) -> None:
         """Initialize quadratic stochastic interpolant."""
         super(QuadraticStochasticInterpolation, self).__init__()
+        self.gamma_multiplier = gamma_multiplier
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -173,11 +175,11 @@ class QuadraticStochasticInterpolation(nn.Module):
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma function."""
-        return 1 - t
+        return self.gamma_multiplier * (1 - t)
 
     def gamma_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma derivative."""
-        return -1
+        return -self.gamma_multiplier
 
     def forward(
         self,

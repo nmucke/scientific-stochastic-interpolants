@@ -68,6 +68,7 @@ class UNet(nn.Module):
         pars_cond_embedding_dim: int | None = None,
         multiplier: int = 2,
         num_blocks: int = 2,
+        dropout_rate: float = 0.0,
     ) -> None:
         """
         Initialize UNet.
@@ -83,6 +84,7 @@ class UNet(nn.Module):
             pars_cond_embedding_dim (int): Dimension of the pars conditional embedding. Can be None.
             multiplier (int): Multiplier for the number of channels.
             num_blocks (int): Number of ConvNext blocks per layer.
+            dropout_rate (float): Dropout rate.
         """
         super(UNet, self).__init__()
 
@@ -94,6 +96,8 @@ class UNet(nn.Module):
         }
         self._reverse_channels = hidden_channels[::-1]
         self.gelu = nn.GELU()
+
+        self.dropout = nn.Dropout(dropout_rate)
 
         self.cond_encoder = get_cond_encoder(
             cond_dim=cond_dim,
@@ -180,11 +184,14 @@ class UNet(nn.Module):
 
         x_skip_list = []
         for conv_block, down_block in zip(self.encoder_conv_blocks, self.down_blocks):
+            x = self.dropout(x)
             x = conv_block(x, cond, pars_cond)
             x_skip_list.append(x)
             x = down_block(x)
 
+        x = self.dropout(x)
         x = self.bottleneck_conv_block(x, cond, pars_cond)
+        x = self.dropout(x)
 
         for conv_block, up_block, x_skip in zip(
             self.decoder_conv_blocks,
@@ -192,6 +199,7 @@ class UNet(nn.Module):
             x_skip_list[::-1],
         ):
             x = up_block(x)
+            x = self.dropout(x)
             x = x + x_skip
             x = conv_block(x, cond, pars_cond)
 

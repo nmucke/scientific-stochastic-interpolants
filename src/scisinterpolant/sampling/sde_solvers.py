@@ -1,46 +1,20 @@
-from abc import ABC, abstractmethod
+from typing import Callable
 
 import torch
 import torch.nn as nn
 
 
-class BaseSDESolver(ABC):
-    """SDE solver for the stochastic interpolant."""
-
-    def __init__(
-        self,
-        model: nn.Module,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    ) -> None:
-        self.model = model.to(device)
-        self.device = device
-
-    def _sample_wiener_process(
-        self,
-        shape: tuple[int, ...],
-        dt: float,
-    ) -> torch.Tensor:
-        """Sample noise for the SDE solver."""
-        return torch.randn(shape, device=self.device) * torch.sqrt(dt)
-
-    @abstractmethod
-    def _compute_one_step(
-        self,
-        x: torch.Tensor,
-        dt: float,
-    ) -> torch.Tensor:
-        """Compute one step of the SDE."""
-        pass
-
-    def solve(
-        self,
-        x0: torch.Tensor,
-        num_steps: int,
-    ) -> torch.Tensor:
-        """Solve the SDE."""
-        x = x0
-        dt = 1 / num_steps
-
-        for _ in range(num_steps):
-            x = self._compute_one_step(x, dt)
-        return x
+def euler_maruyama_step(
+    drift_model: nn.Module,
+    diffusion_model: Callable,
+    x: torch.Tensor,
+    t: torch.Tensor,
+    dt: torch.Tensor,
+    field_cond: torch.Tensor | None = None,
+    pars_cond: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Euler-Maruyama step."""
+    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)
+    drift = drift_model(x, t, field_cond, pars_cond)
+    diffusion = diffusion_model(t)
+    return x + drift * dt + diffusion * wiener_process

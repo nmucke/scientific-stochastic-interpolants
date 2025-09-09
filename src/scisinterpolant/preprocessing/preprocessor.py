@@ -36,21 +36,34 @@ class Preprocesser:
             rearrange(torch.tensor(pars_cond["std"]), "c -> c") if pars_cond else None
         )
 
-    def _transform_sample(
+        self.batched_trajectory_fn = {
+            (True, True): lambda x: x.unsqueeze(0).unsqueeze(-1),
+            (True, False): lambda x: x.unsqueeze(0),
+            (False, True): lambda x: x.unsqueeze(-1),
+            (False, False): lambda x: x,
+        }
+
+    def _transform(
         self,
         x: torch.Tensor,
         mean: torch.Tensor,
         std: torch.Tensor,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
     ) -> torch.Tensor:
         """Transform the field data."""
+        mean = self.batched_trajectory_fn[(is_batch, is_trajectory)](mean)
+        std = self.batched_trajectory_fn[(is_batch, is_trajectory)](std)
         return (x - mean) / std
 
     def transform(
         self,
-        base: torch.Tensor,
-        target: torch.Tensor,
+        base: torch.Tensor | None = None,
+        target: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Transform the data.
@@ -62,17 +75,87 @@ class Preprocesser:
             pars_cond: The pars condition data. [B, D]
         """
 
-        base = self._transform_sample(base, self.base_mean, self.base_std)
-        target = self._transform_sample(target, self.target_mean, self.target_std)
+        if base is not None:
+            base = self._transform(
+                base, self.base_mean, self.base_std, is_batch, is_trajectory
+            )
+        if target is not None:
+            target = self._transform(
+                target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
         if field_cond is not None:
-            field_cond = self._transform_sample(
-                field_cond, self.field_cond_mean, self.field_cond_std
+            field_cond = self._transform(
+                field_cond,
+                self.field_cond_mean,
+                self.field_cond_std,
+                is_batch,
+                is_trajectory,
             )
         if pars_cond is not None:
-            pars_cond = self._transform_sample(
-                pars_cond, self.pars_cond_mean, self.pars_cond_std
+            pars_cond = self._transform(
+                pars_cond,
+                self.pars_cond_mean,
+                self.pars_cond_std,
+                is_batch,
+                is_trajectory,
             )
 
+        return {
+            "base": base,
+            "target": target,
+            "field_cond": field_cond,
+            "pars_cond": pars_cond,
+        }
+
+    def _inverse_transform(
+        self,
+        x: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
+    ) -> torch.Tensor:
+        """Inverse transform the data."""
+        mean = self.batched_trajectory_fn[(is_batch, is_trajectory)](mean)
+        std = self.batched_trajectory_fn[(is_batch, is_trajectory)](std)
+        return x * std + mean
+
+    def inverse_transform(
+        self,
+        base: torch.Tensor | None = None,
+        target: torch.Tensor | None = None,
+        field_cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
+        is_batch: bool = False,
+        is_trajectory: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Inverse transform the data."""
+
+        if base is not None:
+            base = self._inverse_transform(
+                base, self.base_mean, self.base_std, is_batch, is_trajectory
+            )
+        if target is not None:
+            target = self._inverse_transform(
+                target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
+        if field_cond is not None:
+            field_cond = self._inverse_transform(
+                field_cond,
+                self.field_cond_mean,
+                self.field_cond_std,
+                is_batch,
+                is_trajectory,
+            )
+        if pars_cond is not None:
+            pars_cond = self._inverse_transform(
+                pars_cond,
+                self.pars_cond_mean,
+                self.pars_cond_std,
+                is_batch,
+                is_trajectory,
+            )
         return {
             "base": base,
             "target": target,
