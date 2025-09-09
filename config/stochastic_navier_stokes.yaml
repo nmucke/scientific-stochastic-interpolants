@@ -37,7 +37,7 @@ train_data:
 val_data:
   _target_: torch.utils.data.DataLoader
   batch_size: 32
-  shuffle: True
+  shuffle: False
   dataset:
     _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
     paths:
@@ -62,6 +62,7 @@ model:
   _target_: scisinterpolant.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
     _target_: scisinterpolant.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: 0.1
   drift_model:
     _target_: scisinterpolant.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
@@ -74,25 +75,26 @@ model:
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
-    dropout_rate: 0.2 # dropout rate
+    dropout_rate: 0.1 # dropout rate
 
 optimizer:
   _target_: torch.optim.AdamW
-  lr: 0.001
-  weight_decay: 0.00000001
+  lr: 0.0001
+  weight_decay: 0.00001
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 50
-  eta_min: 0.00000001
+  T_max: 500
+  eta_min: 0.00001
 
 trainer:
   _target_: scisinterpolant.training.trainer.Trainer
-  num_epochs: 50
+  num_epochs: 1000
   loss_fn:
     _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
     _target_: scisinterpolant.training.trainer.EarlyStopping
-    patience: 10
+    patience: 25
   checkpoint_path: checkpoints/model.pth
+  max_grad_norm: 5.0

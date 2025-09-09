@@ -39,7 +39,7 @@ def main(cfg: DictConfig) -> None:
     model.to("cuda")
 
     logger.info(f"Sampling from the model...")
-    trajectory = test_dataset[0].unsqueeze(0)
+    trajectory = test_dataset[0]["x"].unsqueeze(0)
 
     x = trajectory[:, :, :, :, 1]
     x_cond = trajectory[:, :, :, :, 0:2]
@@ -53,17 +53,14 @@ def main(cfg: DictConfig) -> None:
     x_cond = x_cond.to("cuda")
 
     num_steps = 100
-    dt = torch.tensor(1 / num_steps, device="cuda")
-    t_vec = torch.linspace(0, 1, num_steps, device="cuda")
-    t_vec = t_vec.unsqueeze(0)
-    with torch.no_grad():
-        for i in range(0, num_steps):
-            t = t_vec[:, i : i + 1]
-            drift = model.drift_model(x, t, field_cond=x_cond)
-            wiener_process = torch.randn_like(x) * torch.sqrt(dt)
-            diffusion_term = model.interpolation.gamma(t)
-            x = x + drift * dt + diffusion_term * wiener_process
-            x_cond = torch.cat([x_cond[:, -1:], x], dim=1)
+
+    x = model.sample(
+        base=x,
+        batch_size=1,
+        num_steps=num_steps,
+        field_cond=x_cond,
+        pars_cond=None,
+    )
 
     true_trajectory = trajectory[0, 0, :, :, 2].cpu().numpy()
     predicted_trajectory = x.cpu()
@@ -75,12 +72,15 @@ def main(cfg: DictConfig) -> None:
     plt.figure()
     plt.subplot(1, 3, 1)
     plt.imshow(true_trajectory)
+    plt.title("True Trajectory")
     plt.colorbar()
     plt.subplot(1, 3, 2)
     plt.imshow(predicted_trajectory)
+    plt.title("Predicted Trajectory")
     plt.colorbar()
     plt.subplot(1, 3, 3)
     plt.imshow(true_trajectory - predicted_trajectory)
+    plt.title("Error")
     plt.colorbar()
     plt.show()
 
