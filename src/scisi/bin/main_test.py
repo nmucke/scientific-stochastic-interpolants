@@ -62,7 +62,7 @@ def main(cfg: DictConfig) -> None:
     x_history = x_history.to("cuda")
 
     logger.info(f"Sampling from the model...")
-    num_steps = 25
+    num_steps = 100
     x = model.sample_trajectory(
         base=x,
         batch_size=1,

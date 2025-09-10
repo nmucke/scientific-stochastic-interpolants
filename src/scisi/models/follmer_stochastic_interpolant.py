@@ -107,9 +107,9 @@ class FollmerStochasticInterpolant(nn.Module):
     def sample(
         self,
         base: torch.Tensor,
+        field_history: torch.Tensor,
         batch_size: int = 1,
         num_steps: int = 100,
-        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         return_field_history: bool = False,
@@ -123,6 +123,7 @@ class FollmerStochasticInterpolant(nn.Module):
         # Repeat the data if batch_size > 1
         if batch_size > 1:
             base = base.repeat(batch_size, 1, 1, 1)
+            field_history = field_history.repeat(batch_size, 1, 1, 1, 1)
             if field_cond is not None:
                 field_cond = field_cond.repeat(batch_size, 1, 1, 1)
             if pars_cond is not None:
@@ -147,7 +148,7 @@ class FollmerStochasticInterpolant(nn.Module):
         # Add the new base to the field history
         if return_field_history:
             field_history = torch.cat(
-                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=4  # type: ignore[index]
+                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=4
             )
             return base, field_history
 
