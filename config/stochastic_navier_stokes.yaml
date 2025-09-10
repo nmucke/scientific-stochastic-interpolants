@@ -82,12 +82,12 @@ model:
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0001
-  weight_decay: 0.00001
+  weight_decay: 0.000001
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
   T_max: 500
-  eta_min: 0.00001
+  eta_min: 0.000001
 
 trainer:
   _target_: scisi.training.trainer.Trainer
