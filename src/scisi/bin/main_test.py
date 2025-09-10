@@ -5,7 +5,7 @@ import hydra
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from scisi.preprocessing.preprocessor import Preprocesser
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
@@ -14,18 +14,25 @@ logger = logging.getLogger(__name__)
 
 VERBOSE = True
 
+import argparse
+
+DEFAULT_PROJECT = "stochastic_navier_stokes"
+DEFAULT_NAME = "gentle-meadow-5"
+
 
 @hydra.main(  # type: ignore[misc]
-    config_path="../../../config",
-    config_name="stochastic_navier_stokes.yaml",
+    config_path="../../../checkpoints",
+    config_name=f"{DEFAULT_PROJECT}/{DEFAULT_NAME}/config.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
+    project = list(cfg.keys())[0]
+    name = list(cfg[project].keys())[0]
+    cfg = OmegaConf.select(cfg, f"{project}.{name}")
+
     logger.info(f"Instantiating preprocesser...")
-    preprocesser = Preprocesser(
-        base=cfg.preprocesser.base,
-        target=cfg.preprocesser.target,
-        field_cond=cfg.preprocesser.field_cond,
+    preprocesser = hydra.utils.instantiate(
+        cfg.preprocesser,
     )
 
     logger.info(f"Instantiating test data...")
@@ -35,7 +42,7 @@ def main(cfg: DictConfig) -> None:
     model = hydra.utils.instantiate(cfg.model)
 
     logger.info(f"Loading model from checkpoint...")
-    model.load_state_dict(torch.load("checkpoints/model.pth"))
+    model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
     model.eval()
     model.to("cuda")
 
@@ -55,38 +62,36 @@ def main(cfg: DictConfig) -> None:
     x_history = x_history.to("cuda")
 
     logger.info(f"Sampling from the model...")
-    num_steps = 250
-    x = model.sample(
+    num_steps = 100
+    x = model.sample_trajectory(
         base=x,
         batch_size=1,
         num_steps=num_steps,
         field_history=x_history,
+        num_physical_steps=51,
         sde_stepper=heun_step,
+        # sde_stepper=euler_maruyama_step,
     )
 
-    true_trajectory = trajectory[0, 0, :, :, 2].cpu().numpy()
+    true_trajectory = trajectory[0, 0].cpu().numpy()
     predicted_trajectory = x.cpu()
 
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(
-        base=predicted_trajectory, is_batch=True
+        base=predicted_trajectory, is_batch=True, is_trajectory=True
     )["base"].numpy()
     predicted_trajectory = predicted_trajectory[0, 0]
 
     logger.info(f"Plotting trajectory...")
+    plotting_times = [10, 25, 50]
     plt.figure()
-    plt.subplot(1, 3, 1)
-    plt.imshow(true_trajectory)
-    plt.title("True Trajectory")
-    plt.colorbar()
-    plt.subplot(1, 3, 2)
-    plt.imshow(predicted_trajectory)
-    plt.title("Predicted Trajectory")
-    plt.colorbar()
-    plt.subplot(1, 3, 3)
-    plt.imshow(true_trajectory - predicted_trajectory)
-    plt.title("Error")
-    plt.colorbar()
+    for i, t in enumerate(plotting_times):
+        plt.subplot(2, len(plotting_times), i + 1)
+        plt.imshow(true_trajectory[:, :, t])
+        plt.title(f"True Trajectory at t={t}")
+        plt.subplot(2, len(plotting_times), len(plotting_times) + 1 + i)
+        plt.imshow(predicted_trajectory[:, :, t])
+        plt.title(f"Predicted Trajectory at t={t}")
     plt.show()
 
 

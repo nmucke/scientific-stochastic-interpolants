@@ -1,9 +1,12 @@
 import logging
+import os
 import pdb
 from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import trackio
+from omegaconf import OmegaConf
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
@@ -33,6 +36,8 @@ class EarlyStopping:
             self.best_loss = val_loss
             self.counter = 0
             self.save_checkpoint = True
+
+            logger.info(f"New best Val Loss: {self.best_loss:.4f}")
         else:
             self.counter += 1
             self.save_checkpoint = False
@@ -52,11 +57,11 @@ class Trainer:
         val_dataloader: DataLoader,
         optimizer: Optimizer,
         early_stopping: EarlyStopping,
-        checkpoint_path: str | None = None,
         loss_fn: nn.Module = nn.MSELoss(),
         scheduler: LRScheduler = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         max_grad_norm: float = 1.0,
+        tracker: trackio.Run | None = None,
     ):
         """Initialize the trainer."""
         self.model = model
@@ -67,7 +72,6 @@ class Trainer:
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
         self.early_stopping = early_stopping
-        self.checkpoint_path = checkpoint_path
         self.max_grad_norm = max_grad_norm
         self.scheduler = scheduler
         if self.scheduler is not None:
@@ -79,6 +83,25 @@ class Trainer:
 
         self.model.train()
         self.model.to(self.device)
+
+        self.current_lr = self.scheduler.get_last_lr()[0]
+
+        self.tracker = tracker
+
+        # Initialize checkpointing with Trackio tracker
+        if self.tracker is not None:
+
+            self.checkpoint_path = (
+                f"checkpoints/{self.tracker.project}/{self.tracker.name}"
+            )
+            os.makedirs(self.checkpoint_path, exist_ok=True)
+
+            # Dump config to file:
+            config_path = f"{self.checkpoint_path}/config.yaml"
+            with open(config_path, "w") as f:
+                OmegaConf.save(self.tracker.config, f)
+
+            self.checkpoint_model_path = f"{self.checkpoint_path}/model.pth"
 
     def _compute_loss(self, batch: dict) -> torch.Tensor:
         """Compute the loss for the model."""
@@ -116,55 +139,94 @@ class Trainer:
         self.optimizer.step()
         return loss
 
-    def train(self, verbose: bool = True) -> None:
+    def train(self) -> None:
         """Train the model."""
 
         for epoch in range(self.num_epochs):
-            total_loss = 0
             self.model.train()
 
             # Loop over batches
-            pbar = tqdm(self.train_dataloader) if verbose else self.train_dataloader
+            train_loss = 0.0
+            pbar = tqdm(self.train_dataloader)
             for batch in pbar:
                 loss = self._train_step(batch)
-                total_loss += loss.item()
-                if verbose:
-                    pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
+                train_loss += loss.item()
 
-            # Compute validation loss
+                pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
+
+            # Compute average train loss
+            train_loss /= len(self.train_dataloader)
+
             val_loss = self._compute_val_loss()
 
-            # Early stopping
-            if self.early_stopping(val_loss):
-                logger.info(f"Early stopping triggered at epoch {epoch}")
-                self.model.load_state_dict(torch.load(self.checkpoint_path))
+            self._log_with_tracker(epoch, train_loss, val_loss)
+
+            if self._check_early_stopping(val_loss, epoch):
                 break
 
-            # Save checkpoint
-            if self.early_stopping.save_checkpoint:
-                logger.info(f"Saving checkpoint at epoch {epoch}")
-                torch.save(self.model.state_dict(), self.checkpoint_path)
+            self._save_checkpoint(epoch)
 
-            # Update scheduler
-            if self.scheduler_requires_loss:
-                self.scheduler.step(val_loss)
-            if self.scheduler:
-                self.scheduler.step()
+            self._update_scheduler(val_loss)
 
-            total_loss /= len(self.train_dataloader)  # type: ignore[assignment]
-            logger.info(
-                f"Epoch {epoch}, Train Loss: {total_loss:.4f}, "
-                f"Val Loss: {val_loss:.4f}, "
-                f"Best Val Loss: {self.early_stopping.best_loss:.4f}"
+            self._print_info(epoch, train_loss, val_loss)
+
+        logger.info(f"Training finished")
+        logger.info(f"Best Val Loss: {self.early_stopping.best_loss:.4f}")
+        (
+            logger.info(f"Tracking: {self.tracker.name} - {self.tracker.url}")
+            if self.tracker is not None
+            else None
+        )
+
+    def _log_with_tracker(self, epoch: int, train_loss: float, val_loss: float) -> None:
+        """Log with tracker."""
+        if self.tracker is not None:
+            self.tracker.log(
+                {
+                    "epoch": epoch,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                }
             )
+
+    def _check_early_stopping(self, val_loss: float, epoch: int) -> bool:
+        """Early stopping."""
+        if self.early_stopping(val_loss):
+            logger.info(f"Early stopping triggered at epoch {epoch}")
+            if self.tracker is not None:
+                self.model.load_state_dict(torch.load(self.checkpoint_model_path))
+            return True
+        return False
+
+    def _update_scheduler(self, val_loss: float) -> None:
+        """Update the scheduler."""
+        self.scheduler.step(val_loss if self.scheduler_requires_loss else None)
+        if self.current_lr != self.scheduler.get_last_lr()[0]:
+            self.current_lr = self.scheduler.get_last_lr()[0]
+        logger.info(f"Scheduler updated learning rate to {self.current_lr:.6f}")
+
+    def _save_checkpoint(self, epoch: int) -> None:
+        """Save the checkpoint if the early stopping condition is met."""
+        if (self.early_stopping.save_checkpoint) and (self.tracker is not None):
+            logger.info(f"Saving checkpoint at epoch {epoch}")
+            torch.save(self.model.state_dict(), self.checkpoint_model_path)
+
+    def _print_info(self, epoch: int, train_loss: float, val_loss: float) -> None:
+        """Print the information about the training and the tracking."""
+        logger.info(
+            f"Epoch {epoch}, Train Loss: {train_loss:.4f}, "
+            f"Val Loss: {val_loss:.4f}, "
+            f"Best Val Loss: {self.early_stopping.best_loss:.4f}, "
+            f"Tracking: {self.tracker.name} - {self.tracker.url}"  # type: ignore[union-attr]
+        )
 
     def _compute_val_loss(self) -> float:
         """Validate the model."""
         self.model.eval()
         with torch.no_grad():
-            total_loss = 0
+            val_loss = 0.0
             for batch in self.val_dataloader:
                 loss = self._compute_loss(batch)
-                total_loss += loss.item()
-            total_loss /= len(self.val_dataloader)  # type: ignore[assignment]
-        return total_loss
+                val_loss += loss.item()
+            val_loss /= len(self.val_dataloader)
+        return val_loss

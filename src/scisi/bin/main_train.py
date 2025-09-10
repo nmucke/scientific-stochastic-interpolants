@@ -4,11 +4,15 @@ import pdb
 import hydra
 import torch
 import torch.nn as nn
+import trackio
 from omegaconf import DictConfig
 
 from scisi.preprocessing.preprocessor import Preprocesser
 
 logger = logging.getLogger(__name__)
+
+# Suppress httpx logs to avoid cluttering the logs from Trackio initialization
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
 
@@ -19,11 +23,15 @@ VERBOSE = True
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
-    preprocesser = Preprocesser(
-        base=cfg.preprocesser.base,
-        target=cfg.preprocesser.target,
-        field_cond=cfg.preprocesser.field_cond,
+
+    logger.info(f"Instantiating experiment tracking...")
+    tracker = trackio.init(
+        project=cfg.experiment_tracking.project,
+        config=cfg,
     )
+    logger.info(f"Tracker instantiated with properties:")
+    logger.info(f"URL: {tracker.url}")
+    logger.info(f"Name: {tracker.name}")
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(
@@ -65,10 +73,14 @@ def main(cfg: DictConfig) -> None:
         scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
+        tracker=tracker,
     )
 
     logger.info(f"Training...")
-    trainer.train(verbose=VERBOSE)
+    trainer.train()
+
+    logger.info(f"Closing tracker...")
+    tracker.finish()
 
 
 if __name__ == "__main__":
