@@ -54,13 +54,26 @@ def main(cfg: DictConfig) -> None:
 
     num_steps = 100
 
-    x = model.sample(
+    x = model.sample_trajectory(
         base=x,
         batch_size=1,
         num_steps=num_steps,
+        num_physical_steps=100,
         field_cond=x_cond,
         pars_cond=None,
     )
+
+    plt.figure()
+    plt.subplot(1, 3, 1)
+    plt.imshow(x[0, 0, :, :, 20].cpu().numpy())
+    plt.colorbar()
+
+    plt.subplot(1, 3, 2)
+    plt.imshow(x[0, 0, :, :, 30].cpu().numpy())
+
+    plt.subplot(1, 3, 3)
+    plt.imshow(x[0, 0, :, :, 40].cpu().numpy())
+    plt.show()
 
     true_trajectory = trajectory[0, 0, :, :, 2].cpu().numpy()
     predicted_trajectory = x.cpu()
