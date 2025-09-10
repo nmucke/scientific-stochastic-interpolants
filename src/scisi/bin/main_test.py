@@ -69,8 +69,8 @@ def main(cfg: DictConfig) -> None:
         num_steps=num_steps,
         field_history=x_history,
         num_physical_steps=51,
-        # sde_stepper=heun_step,
-        sde_stepper=euler_maruyama_step,
+        sde_stepper=heun_step,
+        # sde_stepper=euler_maruyama_step,
     )
 
     true_trajectory = trajectory[0, 0].cpu().numpy()
