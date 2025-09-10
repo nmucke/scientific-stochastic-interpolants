@@ -63,6 +63,7 @@ model:
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: 0.1
+    wiener_process: true
   drift_model:
     _target_: scisi.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
