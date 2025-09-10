@@ -64,6 +64,7 @@ class UNet(nn.Module):
         hidden_channels: List[int],
         cond_dim: int,
         cond_embedding_dim: int,
+        len_field_history: int,
         field_cond_channels: int | None = None,
         pars_cond_dim: int | None = None,
         pars_cond_embedding_dim: int | None = None,
@@ -83,6 +84,7 @@ class UNet(nn.Module):
             hidden_channels (List[int]): List of hidden channels.
             cond_dim (int): Dimension of the conditional input.
             cond_embedding_dim (int): Dimension of the conditional embedding.
+            len_field_history (int): Length of the field history.
             field_cond_channels (int): Number of channels in the field conditional input. Can be None.
             pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
             pars_cond_embedding_dim (int): Dimension of the pars conditional embedding. Can be None.
@@ -100,6 +102,7 @@ class UNet(nn.Module):
         }
         self._reverse_channels = hidden_channels[::-1]
         self.gelu = nn.GELU()
+        self.len_field_history = len_field_history
 
         self.dropout = nn.Dropout(dropout_rate)
 
@@ -117,6 +120,7 @@ class UNet(nn.Module):
         self.init_conv = get_init_conv(
             in_channels=in_channels,
             out_channels=hidden_channels[0],
+            len_field_history=len_field_history,
             field_cond_channels=field_cond_channels,
         )
 
@@ -174,6 +178,7 @@ class UNet(nn.Module):
         self,
         x: torch.Tensor,
         cond: torch.Tensor,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -183,13 +188,14 @@ class UNet(nn.Module):
         Args:
             x (torch.Tensor): Input tensor [B, C_in, H, W].
             cond (torch.Tensor): Conditional tensor [B, D].
+            field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
             field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
 
         Returns:
             torch.Tensor: Output tensor [B, C_out, H, W].
         """
-        x = self.init_conv(x, field_cond)
+        x = self.init_conv(x, field_history, field_cond)
 
         cond = self.cond_encoder(cond)
 

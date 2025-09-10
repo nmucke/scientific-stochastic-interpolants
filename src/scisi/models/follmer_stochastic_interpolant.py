@@ -29,23 +29,32 @@ class FollmerStochasticInterpolant(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Compute the drift of the Follmer stochastic interpolant.
+
+        Args:
+            x (torch.Tensor): Input tensor [B, C, H, W].
+            t (torch.Tensor): Time tensor [B, 1].
+            field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
+            field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
+            pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
         """
-        return self.drift_model(x, t, field_cond, pars_cond)
+        return self.drift_model(x, t, field_history, field_cond, pars_cond)
 
     def score(
         self,
         x: torch.Tensor,
         t: torch.Tensor,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute the score of the Follmer stochastic interpolant."""
-        return self.drift_model(x, t, field_cond, pars_cond)
+        return self.drift_model(x, t, field_history, field_cond, pars_cond)
 
     def forward(
         self,
@@ -53,6 +62,7 @@ class FollmerStochasticInterpolant(nn.Module):
         target: torch.Tensor,
         t: torch.Tensor,
         noise: torch.Tensor,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
@@ -65,6 +75,7 @@ class FollmerStochasticInterpolant(nn.Module):
             t (torch.Tensor): Time tensor [B, 1].
             noise (torch.Tensor): Noise tensor [B, C, H, W].
             field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
+            field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
 
         Returns:
@@ -82,6 +93,7 @@ class FollmerStochasticInterpolant(nn.Module):
         pred_drift = self.drift_model(
             x=interpolant,
             cond=t,
+            field_history=field_history,
             field_cond=field_cond,
             pars_cond=pars_cond,
         )
@@ -97,6 +109,7 @@ class FollmerStochasticInterpolant(nn.Module):
         base: torch.Tensor,
         batch_size: int = 1,
         num_steps: int = 100,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         return_next_field_cond: bool = False,
@@ -126,6 +139,7 @@ class FollmerStochasticInterpolant(nn.Module):
                     x=base,
                     t=t,
                     dt=dt,
+                    field_history=field_history,
                     field_cond=field_cond,
                     pars_cond=pars_cond,
                 )
@@ -142,6 +156,7 @@ class FollmerStochasticInterpolant(nn.Module):
         batch_size: int = 1,
         num_steps: int = 100,
         num_physical_steps: int = 10,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         sde_stepper: Callable = euler_maruyama_step,
@@ -155,6 +170,7 @@ class FollmerStochasticInterpolant(nn.Module):
                 base=base,
                 batch_size=batch_size,
                 num_steps=num_steps,
+                field_history=field_history,
                 field_cond=field_cond,
                 pars_cond=pars_cond,
                 return_next_field_cond=True,
