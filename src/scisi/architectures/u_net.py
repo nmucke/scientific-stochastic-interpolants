@@ -8,6 +8,7 @@ from scisi.architectures.architecture_utils import (
     get_blocks,
     get_cond_encoder,
     get_init_conv,
+    get_torch_module,
 )
 from scisi.architectures.attention import BottleneckWithAttention
 from scisi.architectures.conv_next import MultipleConvNextBlocks
@@ -16,16 +17,20 @@ from scisi.architectures.conv_next import MultipleConvNextBlocks
 class ConvDown(nn.Module):
     """Conv down block."""
 
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, padding: nn.Module = nn.ZeroPad2d
+    ) -> None:
         """Initialize Conv down block."""
         super(ConvDown, self).__init__()
 
-        self.down_conv = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=4,
-            stride=2,
-            padding=1,
+        self.down_conv = nn.Sequential(
+            padding(1),
+            nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=out_channels,
+                kernel_size=4,
+                stride=2,
+            ),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -35,8 +40,11 @@ class ConvDown(nn.Module):
 
 
 class ConvUp(nn.Module):
+    """Conv up block."""
 
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, padding: nn.Module = nn.ZeroPad2d
+    ) -> None:
         """Initialize Conv up block."""
         super(ConvUp, self).__init__()
 
@@ -71,9 +79,11 @@ class UNet(nn.Module):
         multiplier: int = 2,
         num_blocks: int = 2,
         dropout_rate: float = 0.0,
+        padding: str = "ZeroPad2d",
         spatial_attention: bool = False,
         bottleneck_heads: int = 4,
         bottleneck_dim_head: int = 64,
+        layer_scale: float = 1.0,
     ) -> None:
         """
         Initialize UNet.
@@ -91,6 +101,11 @@ class UNet(nn.Module):
             multiplier (int): Multiplier for the number of channels.
             num_blocks (int): Number of ConvNext blocks per layer.
             dropout_rate (float): Dropout rate.
+            padding (str): Padding module.
+            spatial_attention (bool): Whether to use spatial attention.
+            bottleneck_heads (int): Number of heads for the bottleneck attention.
+            bottleneck_dim_head (int): Dimension of the bottleneck attention head.
+            layer_scale (float): ConvNext layer scale.
         """
         super(UNet, self).__init__()
 
@@ -99,12 +114,12 @@ class UNet(nn.Module):
             "multiplier": multiplier,
             "num_blocks": num_blocks,
             "pars_cond_dim": pars_cond_embedding_dim,
+            "padding": get_torch_module(padding),
+            "dropout_rate": dropout_rate,
+            "layer_scale": layer_scale,
         }
         self._reverse_channels = hidden_channels[::-1]
-        self.gelu = nn.GELU()
         self.len_field_history = len_field_history
-
-        self.dropout = nn.Dropout(dropout_rate)
 
         self.cond_encoder = get_cond_encoder(
             cond_dim=cond_dim,
@@ -150,7 +165,7 @@ class UNet(nn.Module):
             self.bottleneck_block = MultipleConvNextBlocks(
                 in_channels=hidden_channels[-1],
                 out_channels=hidden_channels[-1],
-                **self._fixed_conv_block_args,  # type: ignore[arg-type]
+                **self._fixed_conv_block_args,
             )
 
         self.up_blocks = get_blocks(
@@ -204,14 +219,11 @@ class UNet(nn.Module):
 
         x_skip_list = []
         for conv_block, down_block in zip(self.encoder_conv_blocks, self.down_blocks):
-            x = self.dropout(x)
             x = conv_block(x, cond, pars_cond)
             x_skip_list.append(x)
             x = down_block(x)
 
-        x = self.dropout(x)
         x = self.bottleneck_block(x, cond, pars_cond)
-        x = self.dropout(x)
 
         for conv_block, up_block, x_skip in zip(
             self.decoder_conv_blocks,
@@ -219,7 +231,6 @@ class UNet(nn.Module):
             x_skip_list[::-1],
         ):
             x = up_block(x)
-            x = self.dropout(x)
             x = x + x_skip
             x = conv_block(x, cond, pars_cond)
 

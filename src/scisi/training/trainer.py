@@ -3,6 +3,7 @@ import os
 import pdb
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 import torch.nn as nn
 import trackio
@@ -201,9 +202,9 @@ class Trainer:
     def _update_scheduler(self, val_loss: float) -> None:
         """Update the scheduler."""
         self.scheduler.step(val_loss if self.scheduler_requires_loss else None)
-        if self.current_lr != self.scheduler.get_last_lr()[0]:
+        if np.abs(self.current_lr - self.scheduler.get_last_lr()[0]) > 1e-6:
             self.current_lr = self.scheduler.get_last_lr()[0]
-        logger.info(f"Scheduler updated learning rate to {self.current_lr:.6f}")
+            logger.info(f"Scheduler updated learning rate to {self.current_lr:.6f}")
 
     def _save_checkpoint(self, epoch: int) -> None:
         """Save the checkpoint if the early stopping condition is met."""

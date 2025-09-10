@@ -12,7 +12,10 @@ class InitConvWithHistory(nn.Module):
     """Init conv with field cond."""
 
     def __init__(
-        self, in_channels: int, out_channels: int, len_field_history: int
+        self,
+        in_channels: int,
+        out_channels: int,
+        len_field_history: int,
     ) -> None:
         """Initialize init conv with field cond."""
         super(InitConvWithHistory, self).__init__()
@@ -240,6 +243,9 @@ def get_cond_encoder(  # type: ignore[no-untyped-def]
     if cond_dim == 1 and cond_embedding_dim is not None:
         return nn.Sequential(
             FourierScalarEncoder(embedding_dim=cond_embedding_dim),
+            nn.Linear(cond_embedding_dim, cond_embedding_dim),
+            nn.GELU(),
+            nn.Linear(cond_embedding_dim, cond_embedding_dim),
             nn.GELU(),
         )
     elif (cond_dim is not None) and (cond_embedding_dim is not None):
@@ -251,3 +257,17 @@ def get_cond_encoder(  # type: ignore[no-untyped-def]
         )
     else:
         return nn.Identity()
+
+
+def get_torch_module(module_path: str) -> nn.Module:
+    """
+    Get module from string or module.
+
+    Args:
+        module_path (str): String name of module.
+
+    Returns:
+        nn.Module: Module.
+    """
+    module_parts = module_path.split(".")
+    return getattr(torch.nn, module_parts[-1])
