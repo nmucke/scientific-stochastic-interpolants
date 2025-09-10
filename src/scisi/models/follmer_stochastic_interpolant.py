@@ -112,7 +112,7 @@ class FollmerStochasticInterpolant(nn.Module):
         field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
-        return_next_field_cond: bool = False,
+        return_field_history: bool = False,
         sde_stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
         """Sample from the Follmer stochastic interpolant."""
@@ -144,9 +144,12 @@ class FollmerStochasticInterpolant(nn.Module):
                     pars_cond=pars_cond,
                 )
 
-        if return_next_field_cond and field_cond is not None:
-            field_cond = torch.cat([field_cond[:, 1:], base], dim=1)
-            return base, field_cond
+        # Add the new base to the field history
+        if return_field_history:
+            field_history = torch.cat(
+                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=4  # type: ignore[index]
+            )
+            return base, field_history
 
         return base
 
@@ -173,7 +176,7 @@ class FollmerStochasticInterpolant(nn.Module):
                 field_history=field_history,
                 field_cond=field_cond,
                 pars_cond=pars_cond,
-                return_next_field_cond=True,
+                return_field_history=True,
                 sde_stepper=sde_stepper,
             )
             trajectory.append(base.cpu())
