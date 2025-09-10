@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "merry-cloud-10"
+DEFAULT_NAME = "nice-star-11"
 
 
 @hydra.main(  # type: ignore[misc]
@@ -29,9 +29,7 @@ def main(cfg: DictConfig) -> None:
     cfg = OmegaConf.select(cfg, f"{project}.{name}")
 
     logger.info(f"Instantiating preprocesser...")
-    preprocesser = hydra.utils.instantiate(
-        cfg.preprocesser,
-    )
+    preprocesser = hydra.utils.instantiate(cfg.preprocesser)
 
     logger.info(f"Instantiating test data...")
     test_dataset = hydra.utils.instantiate(cfg.test_data)

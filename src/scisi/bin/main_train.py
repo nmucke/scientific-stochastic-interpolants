@@ -34,9 +34,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Name: {tracker.name}")
 
     logger.info(f"Instantiating preprocesser...")
-    preprocesser = hydra.utils.instantiate(
-        cfg.preprocesser,
-    )
+    preprocesser = hydra.utils.instantiate(cfg.preprocesser)
 
     logger.info(f"Preparing train dataloader...")
     train_dataloader = hydra.utils.instantiate(
