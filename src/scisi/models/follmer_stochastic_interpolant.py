@@ -156,20 +156,22 @@ class FollmerStochasticInterpolant(nn.Module):
     def sample_trajectory(
         self,
         base: torch.Tensor,
+        field_history: torch.Tensor,
         batch_size: int = 1,
         num_steps: int = 100,
         num_physical_steps: int = 10,
-        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         sde_stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
         """Sample a trajectory from the Follmer stochastic interpolant."""
 
-        trajectory = []
-        pbar = tqdm.tqdm(range(0, num_physical_steps))
+        trajectory = [
+            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
+        ]
+        pbar = tqdm.tqdm(range(0, num_physical_steps - field_history.shape[-1]))
         for _ in pbar:
-            base, field_cond = self.sample(
+            base, field_history = self.sample(
                 base=base,
                 batch_size=batch_size,
                 num_steps=num_steps,

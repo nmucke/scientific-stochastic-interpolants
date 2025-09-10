@@ -77,7 +77,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(f"Training...")
-    trainer.train(verbose=VERBOSE)
+    trainer.train()
 
     logger.info(f"Closing tracker...")
     tracker.finish()
