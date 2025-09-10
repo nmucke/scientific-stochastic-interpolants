@@ -60,6 +60,7 @@ class Preprocesser:
         self,
         base: torch.Tensor | None = None,
         target: torch.Tensor | None = None,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         is_batch: bool = False,
@@ -71,6 +72,7 @@ class Preprocesser:
         Args:
             base: The base data. [B, C, H, W]
             target: The target data. [B, C, H, W]
+            field_history: The field history data. [B, C, H, W, L]
             field_cond: The field condition data. [B, C, H, W]
             pars_cond: The pars condition data. [B, D]
         """
@@ -82,6 +84,14 @@ class Preprocesser:
         if target is not None:
             target = self._transform(
                 target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
+        if field_history is not None:
+            field_history = self._transform(
+                field_history,
+                self.base_mean,  # Field history is always normalized with the base mean and std
+                self.base_std,  # Field history is always normalized with the base mean and std
+                is_batch,
+                True,  # Field history is always a trajectory
             )
         if field_cond is not None:
             field_cond = self._transform(
@@ -103,6 +113,7 @@ class Preprocesser:
         return {
             "base": base,
             "target": target,
+            "field_history": field_history,
             "field_cond": field_cond,
             "pars_cond": pars_cond,
         }
@@ -124,6 +135,7 @@ class Preprocesser:
         self,
         base: torch.Tensor | None = None,
         target: torch.Tensor | None = None,
+        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         is_batch: bool = False,
@@ -139,6 +151,14 @@ class Preprocesser:
         if target is not None:
             target = self._inverse_transform(
                 target, self.target_mean, self.target_std, is_batch, is_trajectory
+            )
+        if field_history is not None:
+            field_history = self._inverse_transform(
+                field_history,
+                self.base_mean,  # Field history is always normalized with the base mean and std
+                self.base_std,  # Field history is always normalized with the base mean and std
+                is_batch,
+                True,  # Field history is always a trajectory
             )
         if field_cond is not None:
             field_cond = self._inverse_transform(
@@ -159,6 +179,7 @@ class Preprocesser:
         return {
             "base": base,
             "target": target,
+            "field_history": field_history,
             "field_cond": field_cond,
             "pars_cond": pars_cond,
         }
