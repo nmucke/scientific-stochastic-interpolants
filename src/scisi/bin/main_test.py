@@ -5,7 +5,7 @@ import hydra
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from scisi.preprocessing.preprocessor import Preprocesser
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
@@ -14,18 +14,25 @@ logger = logging.getLogger(__name__)
 
 VERBOSE = True
 
+import argparse
+
+DEFAULT_PROJECT = "stochastic_navier_stokes"
+DEFAULT_NAME = "eager-mountain-3"
+
 
 @hydra.main(  # type: ignore[misc]
-    config_path="../../../config",
-    config_name="stochastic_navier_stokes.yaml",
+    config_path="../../../checkpoints",
+    config_name=f"{DEFAULT_PROJECT}/{DEFAULT_NAME}/config.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
+    project = list(cfg.keys())[0]
+    name = list(cfg[project].keys())[0]
+    cfg = OmegaConf.select(cfg, f"{project}.{name}")
+
     logger.info(f"Instantiating preprocesser...")
-    preprocesser = Preprocesser(
-        base=cfg.preprocesser.base,
-        target=cfg.preprocesser.target,
-        field_cond=cfg.preprocesser.field_cond,
+    preprocesser = hydra.utils.instantiate(
+        cfg.preprocesser,
     )
 
     logger.info(f"Instantiating test data...")
@@ -35,7 +42,7 @@ def main(cfg: DictConfig) -> None:
     model = hydra.utils.instantiate(cfg.model)
 
     logger.info(f"Loading model from checkpoint...")
-    model.load_state_dict(torch.load("checkpoints/model.pth"))
+    model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
     model.eval()
     model.to("cuda")
 
