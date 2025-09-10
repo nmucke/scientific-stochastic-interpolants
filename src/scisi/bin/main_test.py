@@ -14,10 +14,8 @@ logger = logging.getLogger(__name__)
 
 VERBOSE = True
 
-import argparse
-
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "gentle-meadow-5"
+DEFAULT_NAME = "merry-cloud-10"
 
 
 @hydra.main(  # type: ignore[misc]

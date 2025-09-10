@@ -68,7 +68,7 @@ class ConvNextBlock(nn.Module):
 
         self.dropout = nn.Dropout(dropout_rate)
 
-        self.layer_scale = nn.Parameter(torch.ones(out_channels, 1, 1) * layer_scale)
+        # self.layer_scale = nn.Parameter(torch.ones(out_channels, 1, 1) * layer_scale)
 
         self.res_conv = nn.Conv2d(
             in_channels, out_channels, kernel_size=1, stride=1, padding=0
@@ -92,7 +92,7 @@ class ConvNextBlock(nn.Module):
         x = self.add_cond(x, cond)
         x = self.add_pars_cond(x, pars_cond)
         x = self.conv_next(x)
-        x = x * self.layer_scale
+        # x = x * self.layer_scale
         x = self.dropout(x)
         x = x + res
         return x
