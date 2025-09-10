@@ -83,7 +83,6 @@ class UNet(nn.Module):
         spatial_attention: bool = False,
         bottleneck_heads: int = 4,
         bottleneck_dim_head: int = 64,
-        layer_scale: float = 1.0,
     ) -> None:
         """
         Initialize UNet.
@@ -105,7 +104,6 @@ class UNet(nn.Module):
             spatial_attention (bool): Whether to use spatial attention.
             bottleneck_heads (int): Number of heads for the bottleneck attention.
             bottleneck_dim_head (int): Dimension of the bottleneck attention head.
-            layer_scale (float): ConvNext layer scale.
         """
         super(UNet, self).__init__()
 
@@ -116,7 +114,6 @@ class UNet(nn.Module):
             "pars_cond_dim": pars_cond_embedding_dim,
             "padding": get_torch_module(padding),
             "dropout_rate": dropout_rate,
-            "layer_scale": layer_scale,
         }
         self._reverse_channels = hidden_channels[::-1]
         self.len_field_history = len_field_history
