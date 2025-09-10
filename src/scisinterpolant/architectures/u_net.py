@@ -9,6 +9,7 @@ from scisinterpolant.architectures.architecture_utils import (
     get_cond_encoder,
     get_init_conv,
 )
+from scisinterpolant.architectures.attention import BottleneckWithAttention
 from scisinterpolant.architectures.conv_next import MultipleConvNextBlocks
 
 
@@ -69,6 +70,9 @@ class UNet(nn.Module):
         multiplier: int = 2,
         num_blocks: int = 2,
         dropout_rate: float = 0.0,
+        spatial_attention: bool = False,
+        bottleneck_heads: int = 4,
+        bottleneck_dim_head: int = 64,
     ) -> None:
         """
         Initialize UNet.
@@ -129,11 +133,21 @@ class UNet(nn.Module):
             out_channels=hidden_channels[1:],
         )
 
-        self.bottleneck_conv_block = MultipleConvNextBlocks(
-            in_channels=hidden_channels[-1],
-            out_channels=hidden_channels[-1],
-            **self._fixed_conv_block_args,  # type: ignore[arg-type]
-        )
+        if spatial_attention:
+            self.bottleneck_block = BottleneckWithAttention(
+                channels=hidden_channels[-1],
+                conv_block_args=self._fixed_conv_block_args,
+                spatial_attention_args={
+                    "heads": bottleneck_heads,
+                    "dim_head": bottleneck_dim_head,
+                },
+            )
+        else:
+            self.bottleneck_block = MultipleConvNextBlocks(
+                in_channels=hidden_channels[-1],
+                out_channels=hidden_channels[-1],
+                **self._fixed_conv_block_args,  # type: ignore[arg-type]
+            )
 
         self.up_blocks = get_blocks(
             module=ConvUp,
@@ -190,7 +204,7 @@ class UNet(nn.Module):
             x = down_block(x)
 
         x = self.dropout(x)
-        x = self.bottleneck_conv_block(x, cond, pars_cond)
+        x = self.bottleneck_block(x, cond, pars_cond)
         x = self.dropout(x)
 
         for conv_block, up_block, x_skip in zip(

@@ -76,6 +76,9 @@ model:
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
+    spatial_attention: false # whether to use spatial attention in the bottleneck block
+    # bottleneck_heads: 4 # number of heads in the bottleneck block
+    # bottleneck_dim_head: 64 # dimension of the head in the bottleneck block
 
 optimizer:
   _target_: torch.optim.AdamW
