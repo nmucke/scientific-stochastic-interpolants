@@ -17,6 +17,8 @@ class ConvNextBlock(nn.Module):
         cond_dim: int,
         multiplier: int = 2,
         pars_cond_dim: int | None = None,
+        padding: nn.Module = nn.ZeroPad2d,
+        dropout_rate: float = 0.0,
     ) -> None:
         """
         Initialize ConvNext block with conditional input.
@@ -27,11 +29,13 @@ class ConvNextBlock(nn.Module):
             cond_dim (int): Dimension of the conditional input.
             multiplier (int): Multiplier for the number of channels.
             pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
+            padding (nn.Module): Padding module.
+            dropout_rate (float): Dropout rate.
         """
         super(ConvNextBlock, self).__init__()
 
-        self.ds_conv = nn.Conv2d(
-            in_channels, in_channels, kernel_size=7, stride=1, padding=3
+        self.ds_conv = nn.Sequential(
+            padding(3), nn.Conv2d(in_channels, in_channels, kernel_size=7, stride=1)
         )
 
         self.add_cond = AddCond(cond_dim, in_channels)
@@ -42,23 +46,25 @@ class ConvNextBlock(nn.Module):
 
         self.conv_next = nn.Sequential(
             nn.GroupNorm(1, in_channels),
+            padding(1),
             nn.Conv2d(
                 in_channels,
                 in_channels * multiplier,
                 kernel_size=3,
                 stride=1,
-                padding=1,
             ),
             nn.GELU(),
             nn.GroupNorm(1, in_channels * multiplier),
+            padding(1),
             nn.Conv2d(
                 in_channels * multiplier,
                 out_channels,
                 kernel_size=3,
                 stride=1,
-                padding=1,
             ),
         )
+
+        self.dropout = nn.Dropout(dropout_rate)
 
         self.res_conv = nn.Conv2d(
             in_channels, out_channels, kernel_size=1, stride=1, padding=0
@@ -82,6 +88,7 @@ class ConvNextBlock(nn.Module):
         x = self.add_cond(x, cond)
         x = self.add_pars_cond(x, pars_cond)
         x = self.conv_next(x)
+        x = self.dropout(x)
         x = x + res
         return x
 
@@ -97,6 +104,8 @@ class MultipleConvNextBlocks(nn.Module):
         multiplier: int = 2,
         pars_cond_dim: int | None = None,
         num_blocks: int = 2,
+        padding: nn.Module = nn.ZeroPad2d,
+        dropout_rate: float = 0.0,
     ) -> None:
         """
         Initialize multiple ConvNext blocks with conditional input.
@@ -108,6 +117,9 @@ class MultipleConvNextBlocks(nn.Module):
             multiplier (int): Multiplier for the number of channels.
             pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
             num_blocks (int): Number of ConvNext blocks.
+            dropout_rate (float): Dropout rate.
+            padding (nn.Module): Padding module.
+            dropout_rate (float): Dropout rate.
         """
         super(MultipleConvNextBlocks, self).__init__()
 
@@ -119,6 +131,8 @@ class MultipleConvNextBlocks(nn.Module):
                     cond_dim=cond_dim,
                     multiplier=multiplier,
                     pars_cond_dim=pars_cond_dim,
+                    padding=padding,
+                    dropout_rate=dropout_rate,
                 )
                 for i in range(num_blocks)
             ]
@@ -133,6 +147,7 @@ class MultipleConvNextBlocks(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (B, C, H, W).
             cond (torch.Tensor): Conditional input tensor of shape (B, D).
+            pars_cond (torch.Tensor): Pars conditional input tensor of shape (B, D).
         """
         for block in self.blocks:
             x = block(x, cond, pars_cond)

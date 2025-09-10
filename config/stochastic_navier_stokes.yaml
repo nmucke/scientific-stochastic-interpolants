@@ -75,18 +75,19 @@ model:
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
     spatial_attention: false # whether to use spatial attention in the bottleneck block
+    padding: CircularPad2d
     # bottleneck_heads: 4 # number of heads in the bottleneck block
     # bottleneck_dim_head: 64 # dimension of the head in the bottleneck block
 
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0001
-  weight_decay: 0.00001
+  weight_decay: 0.000001
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
   T_max: 500
-  eta_min: 0.00001
+  eta_min: 0.000001
 
 trainer:
   _target_: scisi.training.trainer.Trainer
