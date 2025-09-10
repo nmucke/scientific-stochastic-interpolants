@@ -93,10 +93,19 @@ class QuadraticDeterministicInterpolation(nn.Module):
 class LinearStochasticInterpolation(nn.Module):
     """Linear stochastic interpolant."""
 
-    def __init__(self, gamma_multiplier: float = 0.1) -> None:
+    def __init__(
+        self,
+        gamma_multiplier: float = 0.1,
+        wiener_process: bool = True,
+    ) -> None:
         """Initialize linear stochastic interpolant."""
         super(LinearStochasticInterpolation, self).__init__()
         self.gamma_multiplier = gamma_multiplier
+
+        if wiener_process:
+            self.transform_noise = lambda x, t: x * torch.sqrt(t)
+        else:
+            self.transform_noise = lambda x, t: x
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -131,7 +140,11 @@ class LinearStochasticInterpolation(nn.Module):
     ) -> torch.Tensor:
         """Forward pass."""
         t = _reshape_t(t)
-        return self.alpha(t) * base + self.beta(t) * target + self.gamma(t) * noise
+        return (
+            self.alpha(t) * base
+            + self.beta(t) * target
+            + self.gamma(t) * self.transform_noise(noise, t)
+        )
 
     def forward_diff(
         self,
@@ -145,17 +158,24 @@ class LinearStochasticInterpolation(nn.Module):
         return (
             self.alpha_diff(t) * base
             + self.beta_diff(t) * target
-            + self.gamma_diff(t) * noise
+            + self.gamma_diff(t) * self.transform_noise(noise, t)
         )
 
 
 class QuadraticStochasticInterpolation(nn.Module):
     """Quadratic stochastic interpolant."""
 
-    def __init__(self, gamma_multiplier: float = 0.1) -> None:
+    def __init__(
+        self, gamma_multiplier: float = 0.1, wiener_process: bool = True
+    ) -> None:
         """Initialize quadratic stochastic interpolant."""
         super(QuadraticStochasticInterpolation, self).__init__()
         self.gamma_multiplier = gamma_multiplier
+
+        if wiener_process:
+            self.transform_noise = lambda x, t: x * torch.sqrt(t)
+        else:
+            self.transform_noise = lambda x, t: x
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -190,7 +210,11 @@ class QuadraticStochasticInterpolation(nn.Module):
     ) -> torch.Tensor:
         """Forward pass."""
         t = _reshape_t(t)
-        return self.alpha(t) * base + self.beta(t) * target + self.gamma(t) * noise
+        return (
+            self.alpha(t) * base
+            + self.beta(t) * target
+            + self.gamma(t) * self.transform_noise(noise, t)
+        )
 
     def forward_diff(
         self,
@@ -204,5 +228,5 @@ class QuadraticStochasticInterpolation(nn.Module):
         return (
             self.alpha_diff(t) * base
             + self.beta_diff(t) * target
-            + self.gamma_diff(t) * noise
+            + self.gamma_diff(t) * self.transform_noise(noise, t)
         )

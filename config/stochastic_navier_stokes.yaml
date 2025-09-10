@@ -31,7 +31,7 @@ train_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_history: 2
+    len_field_history: 2
     tajectories_ids: (0, 160)
 
 val_data:
@@ -44,7 +44,7 @@ val_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_history: 2
+    len_field_history: 2
     tajectories_ids: (160, 180)
 
 
@@ -54,7 +54,7 @@ test_data:
     - data/stochastic_navier_stokes
   files:
     - data.npz
-  len_history: 2
+  len_field_history: 2
   tajectories_ids: (180, 200)
   train_or_test: test
 
@@ -63,6 +63,7 @@ model:
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: 0.1
+    wiener_process: true
   drift_model:
     _target_: scisi.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
@@ -70,7 +71,8 @@ model:
     hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 128 # dimension of the scalar conditional embedding
-    field_cond_channels: 2 # number of channels in the field conditional input
+    len_field_history: 2 # number of field history steps
+    field_cond_channels: null # number of channels in the field conditional input
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks

@@ -95,12 +95,9 @@ class Trainer:
 
         # Compute pred and true drift
         pred_drift, true_diff = self.model(
-            base=batch.get("base", None),
-            target=batch.get("target", None),
+            **batch,
             t=t,
             noise=noise,
-            field_cond=batch.get("field_cond", None),
-            pars_cond=batch.get("pars_cond", None),
         )
 
         # Compute and return the loss
