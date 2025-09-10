@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from scisinterpolant.architectures.architecture_utils import AddCond, AddCondNone
+from scisi.architectures.architecture_utils import AddCond, AddCondNone
 
 
 class ConvNextBlock(nn.Module):

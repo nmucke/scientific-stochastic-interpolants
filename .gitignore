@@ -15,3 +15,7 @@ outputs/
 
 # Checkpoints
 checkpoints/
+
+
+# Pixi
+.pixi/

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import tqdm
 
-from scisinterpolant.sampling.sde_solvers import euler_maruyama_step
+from scisi.sampling.sde_solvers import euler_maruyama_step
 
 
 class FollmerStochasticInterpolant(nn.Module):

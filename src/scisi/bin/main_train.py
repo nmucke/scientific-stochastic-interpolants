@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from scisinterpolant.preprocessing.preprocessor import Preprocesser
+from scisi.preprocessing.preprocessor import Preprocesser
 
 logger = logging.getLogger(__name__)
 

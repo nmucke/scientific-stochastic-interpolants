@@ -22,7 +22,7 @@ channels = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/scisinterpolant"]
+packages = ["src/scisi"]
 
 # System requirements
 [tool.pixi.system-requirements]

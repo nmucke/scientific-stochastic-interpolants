@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import einsum, rearrange
 
-from scisinterpolant.architectures.conv_next import MultipleConvNextBlocks
+from scisi.architectures.conv_next import MultipleConvNextBlocks
 
 
 class SpatialAttention(nn.Module):

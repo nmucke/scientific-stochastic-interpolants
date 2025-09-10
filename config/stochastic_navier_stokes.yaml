@@ -1,5 +1,5 @@
 preprocesser:
-  _target_: scisinterpolant.preprocessing.preprocessor.Preprocesser
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
     mean:
       - 0.0
@@ -26,7 +26,7 @@ train_data:
   shuffle: True
   # Dataset
   dataset:
-    _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
     paths:
       - data/stochastic_navier_stokes
     files:
@@ -39,7 +39,7 @@ val_data:
   batch_size: 32
   shuffle: False
   dataset:
-    _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
     paths:
       - data/stochastic_navier_stokes
     files:
@@ -49,7 +49,7 @@ val_data:
 
 
 test_data:
-  _target_: scisinterpolant.data.datasets.StochasticNavierStokesDataset
+  _target_: scisi.data.datasets.StochasticNavierStokesDataset
   paths:
     - data/stochastic_navier_stokes
   files:
@@ -59,12 +59,12 @@ test_data:
   train_or_test: test
 
 model:
-  _target_: scisinterpolant.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
+  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
-    _target_: scisinterpolant.models.interpolations.QuadraticStochasticInterpolation
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: 0.1
   drift_model:
-    _target_: scisinterpolant.architectures.u_net.UNet
+    _target_: scisi.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
     hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
@@ -91,13 +91,13 @@ scheduler:
   eta_min: 0.00001
 
 trainer:
-  _target_: scisinterpolant.training.trainer.Trainer
+  _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
   loss_fn:
     _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
-    _target_: scisinterpolant.training.trainer.EarlyStopping
+    _target_: scisi.training.trainer.EarlyStopping
     patience: 25
   checkpoint_path: checkpoints/model.pth
   max_grad_norm: 5.0

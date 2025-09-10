@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from scisinterpolant.architectures.embeddings import FourierScalarEncoder
+from scisi.architectures.embeddings import FourierScalarEncoder
 
 
 class InitConvWithFieldCond(nn.Module):

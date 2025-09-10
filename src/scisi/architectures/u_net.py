@@ -4,13 +4,13 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from scisinterpolant.architectures.architecture_utils import (
+from scisi.architectures.architecture_utils import (
     get_blocks,
     get_cond_encoder,
     get_init_conv,
 )
-from scisinterpolant.architectures.attention import BottleneckWithAttention
-from scisinterpolant.architectures.conv_next import MultipleConvNextBlocks
+from scisi.architectures.attention import BottleneckWithAttention
+from scisi.architectures.conv_next import MultipleConvNextBlocks
 
 
 class ConvDown(nn.Module):

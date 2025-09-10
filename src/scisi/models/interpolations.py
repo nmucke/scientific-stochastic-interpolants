@@ -1,6 +1,6 @@
 """Interpolants.
 
-This module contains the interpolant models for the scisinterpolant package.
+This module contains the interpolant models for the scisi package.
 """
 
 from abc import ABC, abstractmethod
@@ -93,10 +93,10 @@ class QuadraticDeterministicInterpolation(nn.Module):
 class LinearStochasticInterpolation(nn.Module):
     """Linear stochastic interpolant."""
 
-    def __init__(self) -> None:
+    def __init__(self, gamma_multiplier: float = 0.1) -> None:
         """Initialize linear stochastic interpolant."""
         super(LinearStochasticInterpolation, self).__init__()
-        self.gamma_multiplier = 0.1
+        self.gamma_multiplier = gamma_multiplier
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -152,10 +152,10 @@ class LinearStochasticInterpolation(nn.Module):
 class QuadraticStochasticInterpolation(nn.Module):
     """Quadratic stochastic interpolant."""
 
-    def __init__(self) -> None:
+    def __init__(self, gamma_multiplier: float = 0.1) -> None:
         """Initialize quadratic stochastic interpolant."""
         super(QuadraticStochasticInterpolation, self).__init__()
-        self.gamma_multiplier = 0.1
+        self.gamma_multiplier = gamma_multiplier
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
