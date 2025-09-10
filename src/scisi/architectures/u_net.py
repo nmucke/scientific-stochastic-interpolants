@@ -9,6 +9,7 @@ from scisi.architectures.architecture_utils import (
     get_cond_encoder,
     get_init_conv,
     get_torch_module,
+    init_weights,
 )
 from scisi.architectures.attention import BottleneckWithAttention
 from scisi.architectures.conv_next import MultipleConvNextBlocks
@@ -185,6 +186,8 @@ class UNet(nn.Module):
             stride=1,
             padding=0,
         )
+
+        self.apply(init_weights)
 
     def forward(
         self,

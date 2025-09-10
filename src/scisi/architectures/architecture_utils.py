@@ -271,3 +271,15 @@ def get_torch_module(module_path: str) -> nn.Module:
     """
     module_parts = module_path.split(".")
     return getattr(torch.nn, module_parts[-1])
+
+
+def init_weights(module: nn.Module) -> None:
+    """Initialize weights."""
+    if isinstance(module, nn.Conv2d):
+        nn.init.kaiming_normal_(module.weight, mode="fan_in", nonlinearity="relu")
+        if module.bias is not None:
+            nn.init.constant_(module.bias, 0)
+    elif isinstance(module, nn.Linear):
+        nn.init.xavier_normal_(module.weight)
+        if module.bias is not None:
+            nn.init.constant_(module.bias, 0)
