@@ -140,17 +140,36 @@ def get_init_conv(
         in_channels (int): Number of input channels.
         out_channels (int): Number of output channels.
         field_cond_channels (int): Number of field conditional channels.
+        len_field_history (int): Length of the field history.
     """
-    if (field_cond_channels is not None) and (len_field_history is None):
-        return InitConvWithFieldCond(in_channels, out_channels, field_cond_channels)
-    elif (len_field_history is not None) and (field_cond_channels is None):
-        return InitConvWithHistory(in_channels, out_channels, len_field_history)
-    elif (field_cond_channels is not None) and (len_field_history is not None):
+    # Handle different combinations of field conditioning
+    has_field_cond = field_cond_channels is not None
+    has_history = len_field_history is not None
+
+    if has_field_cond and not has_history:
+        return InitConvWithFieldCond(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            field_cond_channels=field_cond_channels,  # type: ignore[arg-type]
+        )
+    elif has_history and not has_field_cond:
+        return InitConvWithHistory(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            len_field_history=len_field_history,  # type: ignore[arg-type]
+        )
+    elif has_field_cond and has_history:
         return InitConvWithFieldCondAndHistory(
-            in_channels, out_channels, field_cond_channels, len_field_history
+            in_channels=in_channels,
+            out_channels=out_channels,
+            field_cond_channels=field_cond_channels,  # type: ignore[arg-type]
+            len_field_history=len_field_history,  # type: ignore[arg-type]
         )
     else:
-        return InitConv(in_channels, out_channels)
+        return InitConv(
+            in_channels=in_channels,
+            out_channels=out_channels,
+        )
 
 
 def get_blocks(  # type: ignore[no-untyped-def]
