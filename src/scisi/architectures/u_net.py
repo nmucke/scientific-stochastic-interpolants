@@ -187,7 +187,7 @@ class UNet(nn.Module):
             padding=0,
         )
 
-        self.apply(init_weights)
+        # self.apply(init_weights)
 
     def forward(
         self,
