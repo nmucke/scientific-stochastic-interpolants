@@ -61,6 +61,6 @@ class Likelihood(nn.Module):
             x: Input tensor. [B, C, H, W]
         """
 
-        log_likelihood = self.forward(x)
+        x.requires_grad = True
 
-        return torch.autograd.grad(log_likelihood.sum(), x, create_graph=True)[0]
+        return torch.autograd.grad(self.forward(x).sum(), x, create_graph=True)[0]

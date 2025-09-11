@@ -20,6 +20,8 @@ def extract_observations(x: torch.Tensor, obs_indices: torch.Tensor) -> torch.Te
         + obs_indices[:, 2]
     )
 
+    linear_indices = linear_indices.to(x.device)
+
     # Reshape x to [B, C*H*W] for gather
     x_flat = x.view(x.size(0), -1)  # [B, C*H*W]
 

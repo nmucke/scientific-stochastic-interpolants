@@ -60,13 +60,13 @@ def main(cfg: DictConfig) -> None:
     x_history = x_history.to("cuda")
 
     logger.info(f"Sampling from the model...")
-    num_steps = 100
+    num_steps = 150
     x = model.sample_trajectory(
         base=x,
         batch_size=1,
         num_steps=num_steps,
         field_history=x_history,
-        num_physical_steps=10,
+        num_physical_steps=50,
         sde_stepper=heun_step,
         # sde_stepper=euler_maruyama_step,
     )
@@ -81,7 +81,7 @@ def main(cfg: DictConfig) -> None:
     predicted_trajectory = predicted_trajectory[0, 0]
 
     logger.info(f"Plotting trajectory...")
-    plotting_times = [2, 4, 6]
+    plotting_times = [10, 30, 45]
     plt.figure()
     for i, t in enumerate(plotting_times):
         plt.subplot(2, len(plotting_times), i + 1)
