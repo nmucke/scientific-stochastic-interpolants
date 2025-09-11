@@ -54,6 +54,7 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Preparing trajectory...")
     trajectory = test_dataset[0]["x"].unsqueeze(0)
+    
 
     x = trajectory[:, :, :, :, 1]
     x_history = trajectory[:, :, :, :, 0:2]
@@ -81,6 +82,7 @@ def main(cfg: DictConfig) -> None:
     x_history = preprocesser.transform(field_history=x_history, is_batch=True)[
         "field_history"
     ]
+    trajectory = preprocesser.transform(base=trajectory, is_batch=True)["base"]
 
     x = x.to("cuda")
     x_history = x_history.to("cuda")
