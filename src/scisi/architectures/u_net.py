@@ -1,6 +1,7 @@
 import pdb
 from typing import List
 
+import hydra
 import torch
 import torch.nn as nn
 
@@ -8,8 +9,6 @@ from scisi.architectures.architecture_utils import (
     get_blocks,
     get_cond_encoder,
     get_init_conv,
-    get_torch_module,
-    init_weights,
 )
 from scisi.architectures.attention import BottleneckWithAttention
 from scisi.architectures.conv_next import MultipleConvNextBlocks
@@ -19,13 +18,13 @@ class ConvDown(nn.Module):
     """Conv down block."""
 
     def __init__(
-        self, in_channels: int, out_channels: int, padding: nn.Module = nn.ZeroPad2d
+        self, in_channels: int, out_channels: int, padding: str = "torch.nn.ZeroPad2d"
     ) -> None:
         """Initialize Conv down block."""
         super(ConvDown, self).__init__()
 
         self.down_conv = nn.Sequential(
-            padding(1),
+            hydra.utils.instantiate({"_target_": padding, "padding": 1}),
             nn.Conv2d(
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -44,7 +43,7 @@ class ConvUp(nn.Module):
     """Conv up block."""
 
     def __init__(
-        self, in_channels: int, out_channels: int, padding: nn.Module = nn.ZeroPad2d
+        self, in_channels: int, out_channels: int, padding: str = "torch.nn.ZeroPad2d"
     ) -> None:
         """Initialize Conv up block."""
         super(ConvUp, self).__init__()
@@ -80,7 +79,7 @@ class UNet(nn.Module):
         multiplier: int = 2,
         num_blocks: int = 2,
         dropout_rate: float = 0.0,
-        padding: str = "ZeroPad2d",
+        padding: str = "torch.nn.ZeroPad2d",
         spatial_attention: bool = False,
         bottleneck_heads: int = 4,
         bottleneck_dim_head: int = 64,
@@ -113,7 +112,7 @@ class UNet(nn.Module):
             "multiplier": multiplier,
             "num_blocks": num_blocks,
             "pars_cond_dim": pars_cond_embedding_dim,
-            "padding": get_torch_module(padding),
+            "padding": padding,
             "dropout_rate": dropout_rate,
         }
         self._reverse_channels = hidden_channels[::-1]
@@ -163,7 +162,7 @@ class UNet(nn.Module):
             self.bottleneck_block = MultipleConvNextBlocks(
                 in_channels=hidden_channels[-1],
                 out_channels=hidden_channels[-1],
-                **self._fixed_conv_block_args,
+                **self._fixed_conv_block_args,  # type: ignore[arg-type]
             )
 
         self.up_blocks = get_blocks(
@@ -186,8 +185,6 @@ class UNet(nn.Module):
             stride=1,
             padding=0,
         )
-
-        # self.apply(init_weights)
 
     def forward(
         self,

@@ -66,7 +66,7 @@ model:
     out_channels: 1 # number of channels in the output
     hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
-    cond_embedding_dim: 128 # dimension of the scalar conditional embedding
+    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
     len_field_history: 2 # number of field history steps
     field_cond_channels: null # number of channels in the field conditional input
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
@@ -75,7 +75,7 @@ model:
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
     spatial_attention: false # whether to use spatial attention in the bottleneck block
-    padding: CircularPad2d
+    padding: torch.nn.CircularPad2d
     # bottleneck_heads: 4 # number of heads in the bottleneck block
     # bottleneck_dim_head: 64 # dimension of the head in the bottleneck block
 

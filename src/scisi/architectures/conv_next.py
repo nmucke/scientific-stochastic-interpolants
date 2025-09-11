@@ -1,5 +1,6 @@
 import pdb
 
+import hydra
 import torch
 import torch.nn as nn
 from einops import rearrange
@@ -17,7 +18,7 @@ class ConvNextBlock(nn.Module):
         cond_dim: int,
         multiplier: int = 2,
         pars_cond_dim: int | None = None,
-        padding: nn.Module = nn.ZeroPad2d,
+        padding: str = "torch.nn.ZeroPad2d",
         dropout_rate: float = 0.0,
     ) -> None:
         """
@@ -29,13 +30,14 @@ class ConvNextBlock(nn.Module):
             cond_dim (int): Dimension of the conditional input.
             multiplier (int): Multiplier for the number of channels.
             pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
-            padding (nn.Module): Padding module.
+            padding (str): Padding module.
             dropout_rate (float): Dropout rate.
         """
         super(ConvNextBlock, self).__init__()
 
         self.ds_conv = nn.Sequential(
-            padding(3), nn.Conv2d(in_channels, in_channels, kernel_size=7, stride=1)
+            hydra.utils.instantiate({"_target_": padding, "padding": 3}),
+            nn.Conv2d(in_channels, in_channels, kernel_size=7, stride=1),
         )
 
         self.add_cond = AddCond(cond_dim, in_channels)
@@ -46,7 +48,7 @@ class ConvNextBlock(nn.Module):
 
         self.conv_next = nn.Sequential(
             nn.GroupNorm(1, in_channels),
-            padding(1),
+            hydra.utils.instantiate({"_target_": padding, "padding": 1}),
             nn.Conv2d(
                 in_channels,
                 in_channels * multiplier,
@@ -55,7 +57,7 @@ class ConvNextBlock(nn.Module):
             ),
             nn.GELU(),
             nn.GroupNorm(1, in_channels * multiplier),
-            padding(1),
+            hydra.utils.instantiate({"_target_": padding, "padding": 1}),
             nn.Conv2d(
                 in_channels * multiplier,
                 out_channels,
@@ -104,7 +106,7 @@ class MultipleConvNextBlocks(nn.Module):
         multiplier: int = 2,
         pars_cond_dim: int | None = None,
         num_blocks: int = 2,
-        padding: nn.Module = nn.ZeroPad2d,
+        padding: str = "torch.nn.ZeroPad2d",
         dropout_rate: float = 0.0,
     ) -> None:
         """
@@ -118,7 +120,7 @@ class MultipleConvNextBlocks(nn.Module):
             pars_cond_dim (int): Dimension of the pars conditional input. Can be None.
             num_blocks (int): Number of ConvNext blocks.
             dropout_rate (float): Dropout rate.
-            padding (nn.Module): Padding module.
+            padding (str): Padding module.
             dropout_rate (float): Dropout rate.
         """
         super(MultipleConvNextBlocks, self).__init__()
