@@ -9,12 +9,17 @@ from omegaconf import DictConfig
 
 from scisi.preprocessing.preprocessor import Preprocesser
 
+torch.set_default_dtype(torch.float32)
+
+
 logger = logging.getLogger(__name__)
 
 # Suppress httpx logs to avoid cluttering the logs from Trackio initialization
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
+CONTINUE_FROM_CHECKPOINT = False
+CHECKPOINT_PATH = "checkpoints/stochastic_navier_stokes/silly-flower-15/model.pth"
 
 
 @hydra.main(  # type: ignore[misc]
@@ -50,6 +55,10 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
+    if CONTINUE_FROM_CHECKPOINT:
+        logger.info(f"Loading model from checkpoint:")
+        logger.info(f"{CHECKPOINT_PATH}")
+        model.load_state_dict(torch.load(CHECKPOINT_PATH))
 
     logger.info(f"Instantiating optimizer...")
     optimizer = hydra.utils.instantiate(
