@@ -5,26 +5,26 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+from scisi.architectures.conv_next import ConvNextBlock
 from scisi.architectures.embeddings import FourierScalarEncoder
 
 
 class InitConvWithHistory(nn.Module):
     """Init conv with field cond."""
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         in_channels: int,
         out_channels: int,
         len_field_history: int,
+        **kwargs,
     ) -> None:
         """Initialize init conv with field cond."""
         super(InitConvWithHistory, self).__init__()
-        self.conv = nn.Conv2d(
+        self.conv = ConvNextBlock(
             in_channels=in_channels + len_field_history * in_channels,
             out_channels=out_channels,
-            kernel_size=1,
-            stride=1,
-            padding=0,
+            **kwargs,
         )
 
     def forward(
@@ -43,17 +43,19 @@ class InitConvWithHistory(nn.Module):
 class InitConvWithFieldCond(nn.Module):
     """Init conv with field cond."""
 
-    def __init__(
-        self, in_channels: int, out_channels: int, field_cond_channels: int
+    def __init__(  # type: ignore[no-untyped-def]
+        self,
+        in_channels: int,
+        out_channels: int,
+        field_cond_channels: int,
+        **kwargs,
     ) -> None:
         """Initialize init conv with field cond."""
         super(InitConvWithFieldCond, self).__init__()
-        self.conv = nn.Conv2d(
+        self.conv = ConvNextBlock(
             in_channels=in_channels + field_cond_channels,
             out_channels=out_channels,
-            kernel_size=1,
-            stride=1,
-            padding=0,
+            **kwargs,
         )
 
     def forward(
@@ -71,12 +73,13 @@ class InitConvWithFieldCond(nn.Module):
 class InitConvWithFieldCondAndHistory(nn.Module):
     """Init conv with field cond and history."""
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         in_channels: int,
         out_channels: int,
         field_cond_channels: int,
         len_field_history: int,
+        **kwargs,
     ) -> None:
         """Initialize init conv with field cond and history."""
         super(InitConvWithFieldCondAndHistory, self).__init__()
@@ -85,9 +88,13 @@ class InitConvWithFieldCondAndHistory(nn.Module):
             in_channels,
             in_channels + len_field_history * in_channels,
             len_field_history,
+            **kwargs,
         )
         self.field_cond_conv = InitConvWithFieldCond(
-            out_channels, out_channels, field_cond_channels
+            in_channels + len_field_history * in_channels,
+            out_channels,
+            field_cond_channels,
+            **kwargs,
         )
 
     def forward(
@@ -105,15 +112,18 @@ class InitConvWithFieldCondAndHistory(nn.Module):
 class InitConv(nn.Module):
     """Init conv without field cond."""
 
-    def __init__(self, in_channels: int, out_channels: int) -> None:
+    def __init__(  # type: ignore[no-untyped-def]
+        self,
+        in_channels: int,
+        out_channels: int,
+        **kwargs,
+    ) -> None:
         """Initialize init conv without field cond."""
         super(InitConv, self).__init__()
-        self.conv = nn.Conv2d(
+        self.conv = ConvNextBlock(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=1,
-            stride=1,
-            padding=0,
+            **kwargs,
         )
 
     def forward(
@@ -127,11 +137,12 @@ class InitConv(nn.Module):
         return x
 
 
-def get_init_conv(
+def get_init_conv(  # type: ignore[no-untyped-def]
     in_channels: int,
     out_channels: int,
     field_cond_channels: int | None = None,
     len_field_history: int | None = None,
+    **kwargs,
 ) -> nn.Module:
     """
     Get initial convolution.
@@ -154,12 +165,14 @@ def get_init_conv(
             in_channels=in_channels,
             out_channels=out_channels,
             field_cond_channels=field_cond_channels,  # type: ignore[arg-type]
+            **kwargs,
         )
     elif has_history and not has_field_cond:
         return InitConvWithHistory(
             in_channels=in_channels,
             out_channels=out_channels,
             len_field_history=len_field_history,  # type: ignore[arg-type]
+            **kwargs,
         )
     elif has_field_cond and has_history:
         return InitConvWithFieldCondAndHistory(
@@ -167,11 +180,13 @@ def get_init_conv(
             out_channels=out_channels,
             field_cond_channels=field_cond_channels,  # type: ignore[arg-type]
             len_field_history=len_field_history,  # type: ignore[arg-type]
+            **kwargs,
         )
     else:
         return InitConv(
             in_channels=in_channels,
             out_channels=out_channels,
+            **kwargs,
         )
 
 
@@ -199,61 +214,3 @@ def get_blocks(  # type: ignore[no-untyped-def]
             for i in range(len(in_channels))
         ]
     )
-
-
-class AddCond(nn.Module):
-    """Add cond."""
-
-    def __init__(self, cond_dim: int, cond_embedding_dim: int) -> None:
-        """Initialize add cond."""
-        super(AddCond, self).__init__()
-
-        self.cond_mlp = nn.Sequential(
-            nn.Linear(cond_dim, cond_embedding_dim),
-        )
-
-        self.rearrange = lambda x: rearrange(x, "b c -> b c 1 1")
-
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        cond = self.cond_mlp(cond)
-        cond = self.rearrange(cond)
-        x = x + cond
-        return x
-
-
-class AddCondNone(nn.Module):
-    """Add cond none."""
-
-    def __init__(self) -> None:
-        """Initialize add cond none."""
-        super(AddCondNone, self).__init__()
-
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return x
-
-
-def get_cond_encoder(  # type: ignore[no-untyped-def]
-    cond_dim: int | None = None,
-    cond_embedding_dim: int | None = None,
-    **kwargs,
-) -> nn.Module:
-    """Get pars cond embedding."""
-    if cond_dim == 1 and cond_embedding_dim is not None:
-        return nn.Sequential(
-            FourierScalarEncoder(embedding_dim=cond_embedding_dim),
-            nn.Linear(cond_embedding_dim, cond_embedding_dim),
-            nn.GELU(),
-            nn.Linear(cond_embedding_dim, cond_embedding_dim),
-            nn.GELU(),
-        )
-    elif (cond_dim is not None) and (cond_embedding_dim is not None):
-        return nn.Sequential(
-            nn.Linear(cond_dim, cond_embedding_dim),
-            nn.GELU(),
-            nn.Linear(cond_embedding_dim, cond_embedding_dim),
-            nn.GELU(),
-        )
-    else:
-        return nn.Identity()

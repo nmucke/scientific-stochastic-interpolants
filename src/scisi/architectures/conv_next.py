@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from scisi.architectures.architecture_utils import AddCond, AddCondNone
+from scisi.architectures.embeddings import AddCond, AddCondNone
 
 
 class ConvNextBlock(nn.Module):
@@ -15,9 +15,9 @@ class ConvNextBlock(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        cond_dim: int,
-        multiplier: int = 2,
+        cond_dim: int | None = None,
         pars_cond_dim: int | None = None,
+        multiplier: int = 2,
         padding: str = "torch.nn.ZeroPad2d",
         dropout_rate: float = 0.0,
     ) -> None:
@@ -40,7 +40,11 @@ class ConvNextBlock(nn.Module):
             nn.Conv2d(in_channels, in_channels, kernel_size=7, stride=1),
         )
 
-        self.add_cond = AddCond(cond_dim, in_channels)
+        if cond_dim is not None:
+            self.add_cond = AddCond(cond_dim, in_channels)
+        else:
+            self.add_cond = AddCondNone()
+
         if pars_cond_dim is not None:
             self.add_pars_cond = AddCond(pars_cond_dim, in_channels)
         else:
@@ -75,8 +79,8 @@ class ConvNextBlock(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        cond: torch.Tensor,
-        pars_cond: torch.Tensor = None,
+        cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass.
@@ -102,7 +106,7 @@ class MultipleConvNextBlocks(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        cond_dim: int,
+        cond_dim: int | None = None,
         multiplier: int = 2,
         pars_cond_dim: int | None = None,
         num_blocks: int = 2,
@@ -141,7 +145,10 @@ class MultipleConvNextBlocks(nn.Module):
         )
 
     def forward(
-        self, x: torch.Tensor, cond: torch.Tensor, pars_cond: torch.Tensor = None
+        self,
+        x: torch.Tensor,
+        cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass.

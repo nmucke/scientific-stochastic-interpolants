@@ -148,7 +148,7 @@ class FollmerStochasticInterpolant(nn.Module):
         # Add the new base to the field history
         if return_field_history:
             field_history = torch.cat(
-                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=4
+                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1
             )
             return base, field_history
 

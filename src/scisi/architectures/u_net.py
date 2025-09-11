@@ -5,13 +5,10 @@ import hydra
 import torch
 import torch.nn as nn
 
-from scisi.architectures.architecture_utils import (
-    get_blocks,
-    get_cond_encoder,
-    get_init_conv,
-)
+from scisi.architectures.architecture_utils import get_blocks, get_init_conv
 from scisi.architectures.attention import BottleneckWithAttention
 from scisi.architectures.conv_next import MultipleConvNextBlocks
+from scisi.architectures.embeddings import get_cond_encoder
 
 
 class ConvDown(nn.Module):
@@ -129,11 +126,14 @@ class UNet(nn.Module):
             cond_embedding_dim=pars_cond_embedding_dim,
         )
 
+        init_conv_args = dict(self._fixed_conv_block_args, cond_dim=None)
+        init_conv_args.pop("num_blocks")
         self.init_conv = get_init_conv(
             in_channels=in_channels,
             out_channels=hidden_channels[0],
             len_field_history=len_field_history,
             field_cond_channels=field_cond_channels,
+            **init_conv_args,
         )
 
         self.encoder_conv_blocks = get_blocks(
