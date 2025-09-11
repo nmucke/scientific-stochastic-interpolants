@@ -7,11 +7,16 @@ from abc import ABC, abstractmethod
 
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 
-def _reshape_t(t: torch.Tensor) -> torch.Tensor:
-    """Reshape time tensor from [B, 1] to [B, 1, 1, 1]."""
-    return t.unsqueeze(-1).unsqueeze(-1)
+def _expand_t(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    Expand time tensor from [B, 1] to have as many dims as x.
+
+    First dim is always batch and second dim is always time.
+    """
+    return rearrange(t, "b 1 -> b 1" + " ".join(["1" for _ in range(len(x.shape) - 2)]))
 
 
 class LinearDeterministicInterpolation(nn.Module):
@@ -41,14 +46,14 @@ class LinearDeterministicInterpolation(nn.Module):
         self, base: torch.Tensor, target: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
         """Forward pass."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return self.alpha(t) * base + self.beta(t) * target
 
     def forward_diff(
         self, base: torch.Tensor, target: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
         """Forward derivative."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return self.alpha_diff(t) * base + self.beta_diff(t) * target
 
 
@@ -79,14 +84,14 @@ class QuadraticDeterministicInterpolation(nn.Module):
         self, base: torch.Tensor, target: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
         """Forward pass."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return self.alpha(t) * base + self.beta(t) * target
 
     def forward_diff(
         self, base: torch.Tensor, target: torch.Tensor, t: torch.Tensor
     ) -> torch.Tensor:
         """Forward derivative."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return self.alpha_diff(t) * base + self.beta_diff(t) * target
 
 
@@ -139,7 +144,7 @@ class LinearStochasticInterpolation(nn.Module):
         noise: torch.Tensor,
     ) -> torch.Tensor:
         """Forward pass."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return (
             self.alpha(t) * base
             + self.beta(t) * target
@@ -154,7 +159,7 @@ class LinearStochasticInterpolation(nn.Module):
         noise: torch.Tensor,
     ) -> torch.Tensor:
         """Forward derivative."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return (
             self.alpha_diff(t) * base
             + self.beta_diff(t) * target
@@ -209,7 +214,7 @@ class QuadraticStochasticInterpolation(nn.Module):
         noise: torch.Tensor,
     ) -> torch.Tensor:
         """Forward pass."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return (
             self.alpha(t) * base
             + self.beta(t) * target
@@ -224,7 +229,7 @@ class QuadraticStochasticInterpolation(nn.Module):
         noise: torch.Tensor,
     ) -> torch.Tensor:
         """Forward derivative."""
-        t = _reshape_t(t)
+        t = _expand_t(t, base)
         return (
             self.alpha_diff(t) * base
             + self.beta_diff(t) * target

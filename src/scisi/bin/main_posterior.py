@@ -7,17 +7,17 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.likelihood_models.gaussian_likelihood import Likelihood
+from scisi.likelihood_models.observation_operators import LinearObservationOperator
 from scisi.preprocessing.preprocessor import Preprocesser
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
-
-torch.set_default_dtype(torch.float32)
 
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "zealous-wave-18"
+DEFAULT_NAME = "silly-flower-15"
 
 
 @hydra.main(  # type: ignore[misc]
@@ -43,6 +43,28 @@ def main(cfg: DictConfig) -> None:
     model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
     model.eval()
     model.to("cuda")
+
+    logger.info(f"Instantiating observation operator...")
+    obs_indices = [(0, i, j) for i in range(0, 128, 4) for j in range(0, 128, 4)]
+    obs_indices = torch.tensor(obs_indices)
+
+    obs = torch.randn(1024)
+
+    likelihood = Likelihood(
+        obs_operator=LinearObservationOperator(
+            obs_indices=obs_indices,
+        ),
+        dist=torch.distributions.Normal,
+        loc=obs,
+        scale=1,
+    )
+
+    x = torch.randn(8, 1, 128, 128)
+    x.requires_grad = True
+    like = likelihood(x)
+
+    score = likelihood.score(x)
+    pdb.set_trace()
 
     logger.info(f"Preparing trajectory...")
     trajectory = test_dataset[0]["x"].unsqueeze(0)
