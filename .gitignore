@@ -19,3 +19,6 @@ checkpoints/
 
 # Pixi
 .pixi/
+
+# Cache
+cache/

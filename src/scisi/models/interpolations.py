@@ -3,6 +3,7 @@
 This module contains the interpolant models for the scisi package.
 """
 
+import pdb
 from abc import ABC, abstractmethod
 
 import torch
@@ -16,7 +17,9 @@ def _expand_t(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
     First dim is always batch and second dim is always time.
     """
-    return rearrange(t, "b 1 -> b 1" + " ".join(["1" for _ in range(len(x.shape) - 2)]))
+    return rearrange(
+        t, "b 1 -> b 1 " + " ".join(["1" for _ in range(len(x.shape) - 2)])
+    )
 
 
 class LinearDeterministicInterpolation(nn.Module):
