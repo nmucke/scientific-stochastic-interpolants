@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "zealous-wave-18"
-
+DEFAULT_NAME = "bright-trail-19"
+NUM_PHYSICAL_STEPS = 50
+NUM_STEPS = 50
+BATCH_SIZE = 1
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../checkpoints",
@@ -30,6 +32,9 @@ def main(cfg: DictConfig) -> None:
     name = list(cfg[project].keys())[0]
     cfg = OmegaConf.select(cfg, f"{project}.{name}")
 
+    
+    len_field_history = cfg.model.drift_model.len_field_history
+
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
 
@@ -39,7 +44,9 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
 
-    logger.info(f"Loading model from checkpoint...")
+    logger.info(f"Loading model from checkpoint:")
+    logger.info(f"Project: {project}")
+    logger.info(f"Name: {name}")
     model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
     model.eval()
     model.to("cuda")
@@ -47,32 +54,29 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Preparing trajectory...")
     trajectory = test_dataset[0]["x"].unsqueeze(0)
 
-    x = trajectory[:, :, :, :, 1]
-    x_history = trajectory[:, :, :, :, 0:2]
-
     logger.info(f"Preprocessing trajectory...")
-    x = preprocesser.transform(base=x, is_batch=True)["base"]
-    x_history = preprocesser.transform(field_history=x_history, is_batch=True)[
-        "field_history"
-    ]
-
-    x = x.to("cuda")
-    x_history = x_history.to("cuda")
+    init_data = preprocesser.transform(
+        base=trajectory[:, :, :, :, len_field_history - 1], 
+        field_history=trajectory[:, :, :, :, 0:len_field_history],
+        is_batch=True
+    )
+    field_history = init_data["field_history"].to("cuda")
+    base = init_data["base"].to("cuda")
 
     logger.info(f"Sampling from the model...")
-    num_steps = 150
-    x = model.sample_trajectory(
-        base=x,
-        batch_size=1,
-        num_steps=num_steps,
-        field_history=x_history,
-        num_physical_steps=50,
+    predicted_trajectory = model.sample_trajectory(
+        base=base,
+        batch_size=BATCH_SIZE,
+        num_steps=NUM_STEPS,
+        field_history=field_history,
+        num_physical_steps=NUM_PHYSICAL_STEPS,
         sde_stepper=heun_step,
         # sde_stepper=euler_maruyama_step,
+        # diffusion_term=lambda t: 2.0 * model.interpolation.gamma(t),
     )
 
     true_trajectory = trajectory[0, 0].cpu().numpy()
-    predicted_trajectory = x.cpu()
+    predicted_trajectory = predicted_trajectory.cpu()
 
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(

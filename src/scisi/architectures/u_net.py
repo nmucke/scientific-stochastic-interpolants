@@ -209,7 +209,7 @@ class UNet(nn.Module):
         Returns:
             torch.Tensor: Output tensor [B, C_out, H, W].
         """
-        x = self.init_conv(x, field_history, field_cond)
+        x = self.init_conv(x, field_history=field_history, field_cond=field_cond)
 
         cond = self.cond_encoder(cond)
 

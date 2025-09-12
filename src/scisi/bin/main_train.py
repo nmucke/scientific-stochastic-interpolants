@@ -19,7 +19,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
 CONTINUE_FROM_CHECKPOINT = False
-CHECKPOINT_PATH = "checkpoints/stochastic_navier_stokes/silly-flower-15/model.pth"
+CHECKPOINT_PROJECT = "stochastic_navier_stokes"
+CHECKPOINT_NAME = "bright-trail-19"
+CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
 @hydra.main(  # type: ignore[misc]
@@ -35,6 +37,7 @@ def main(cfg: DictConfig) -> None:
         config=cfg,
     )
     logger.info(f"Tracker instantiated with properties:")
+    logger.info(f"Project: {tracker.project}")
     logger.info(f"URL: {tracker.url}")
     logger.info(f"Name: {tracker.name}")
 

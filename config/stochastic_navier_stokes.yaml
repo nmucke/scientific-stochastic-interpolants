@@ -27,7 +27,7 @@ train_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_field_history: 2
+    len_field_history: 5
     tajectories_ids: (0, 160)
 
 val_data:
@@ -40,7 +40,7 @@ val_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_field_history: 2
+    len_field_history: 5
     tajectories_ids: (160, 180)
 
 
@@ -50,7 +50,7 @@ test_data:
     - data/stochastic_navier_stokes
   files:
     - data.npz
-  len_field_history: 2
+  len_field_history: 5
   tajectories_ids: (180, 200)
   train_or_test: test
 
@@ -67,7 +67,7 @@ model:
     hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 256 # dimension of the scalar conditional embedding
-    len_field_history: 2 # number of field history steps
+    len_field_history: 5 # number of field history steps
     field_cond_channels: null # number of channels in the field conditional input
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
