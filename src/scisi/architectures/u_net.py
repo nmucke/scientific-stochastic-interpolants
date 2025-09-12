@@ -126,7 +126,9 @@ class UNet(nn.Module):
             cond_embedding_dim=pars_cond_embedding_dim,
         )
 
-        init_conv_args = dict(self._fixed_conv_block_args, cond_dim=None)
+        init_conv_args = dict(
+            self._fixed_conv_block_args, cond_dim=None, pars_cond_dim=None
+        )
         init_conv_args.pop("num_blocks")
         self.init_conv = get_init_conv(
             in_channels=in_channels,

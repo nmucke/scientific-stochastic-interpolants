@@ -31,7 +31,6 @@ class InitConvWithHistory(nn.Module):
         self,
         x: torch.Tensor,
         field_history: torch.Tensor,
-        field_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass."""
         field_history = rearrange(field_history, "b c h w t -> b (t c) h w")
@@ -61,7 +60,6 @@ class InitConvWithFieldCond(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass."""

@@ -196,14 +196,18 @@ class FollmerStochasticInterpolant(nn.Module):
         ]
         with torch.no_grad():
             pbar = tqdm.tqdm(range(0, num_physical_steps - field_history.shape[-1]))
-            for _ in pbar:
+            for i in pbar:
                 base, field_history = self.sample(
                     base=base,
                     batch_size=batch_size,
                     num_steps=num_steps,
                     field_history=field_history,
-                    field_cond=field_cond,
-                    pars_cond=pars_cond,
+                    field_cond=(
+                        field_cond[:, :, :, :, i] if field_cond is not None else None
+                    ),
+                    pars_cond=(
+                        pars_cond[:, i : i + 1] if pars_cond is not None else None
+                    ),
                     return_field_history=True,
                     sde_stepper=sde_stepper,
                 )
@@ -301,21 +305,21 @@ class FollmerStochasticInterpolant(nn.Module):
             return prior_drift
 
         # Compute the interpolant of the observation
-        base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])
+        base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])  # type: ignore[union-attr]
         interpolant_obs = self.interpolation.forward(
             base_obs, self.observations, t, torch.zeros_like(base_obs)
         )
 
         # Compute the scale of the interpolant of the observation
         interpolant_scale = (
-            self.interpolation.beta(t) ** 2 * self.likelihood_model.original_scale
+            self.interpolation.beta(t) ** 2 * self.likelihood_model.original_scale  # type: ignore[union-attr]
         )
         interpolant_scale = interpolant_scale + self.interpolation.gamma(t) ** 2 * t
 
         # Update the observation and scale of the likelihood model
-        self.likelihood_model.update_obs(interpolant_obs)
-        self.likelihood_model.update_scale(interpolant_scale)
-        likelihood_score = self.likelihood_model.score(x)
+        self.likelihood_model.update_obs(interpolant_obs)  # type: ignore[union-attr]
+        self.likelihood_model.update_scale(interpolant_scale)  # type: ignore[union-attr]
+        likelihood_score = self.likelihood_model.score(x)  # type: ignore[union-attr]
 
         # Compute the posterior drift
         prior_score = self._prior_score(
@@ -324,12 +328,12 @@ class FollmerStochasticInterpolant(nn.Module):
         posterior_drift = (
             prior_drift
             + 0.5
-            * (self.diffusion_term(t) ** 2 - self.interpolation.gamma(t) ** 2)
+            * (self.diffusion_term(t) ** 2 - self.interpolation.gamma(t) ** 2)  # type: ignore[misc]
             * prior_score
         )
 
         posterior_drift = (
-            posterior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score
+            posterior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score  # type: ignore[misc]
         )
 
         return posterior_drift

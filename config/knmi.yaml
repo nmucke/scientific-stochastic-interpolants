@@ -1,18 +1,23 @@
 experiment_tracking:
-  project: stochastic_navier_stokes
+  project: knmi
 
 preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
     mean:
-      - 0.0
+      - 282.1561
     std:
-      - 3.09969
+      - 19.090252
   target:
     mean:
-      - 0.0
+      - 282.1561
     std:
-      - 3.09969
+      - 19.090252
+  field_cond:
+    mean:
+      - 282.15598
+    std:
+      - 17.836073
 
 # Data
 train_data:
@@ -20,39 +25,57 @@ train_data:
   _target_: torch.utils.data.DataLoader
   batch_size: 32
   shuffle: True
+  num_workers: 4
   # Dataset
   dataset:
     _target_: scisi.data.datasets.KNMIDataset
     paths:
-      - data/stochastic_navier_stokes
+      - /export/scratch2/ntm/SciGenML/data/knmi/
     files:
-      - data.npz
-    len_field_history: 2
-    tajectories_ids: (0, 160)
+      - sim_1.npz
+      - sim_2.npz
+      - sim_3.npz
+      - sim_4.npz
+      - sim_5.npz
+    len_field_history: 5
+    save_in_memory: False
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
+    use_exisiting_cache: True
+    starting_time: null
+    ending_time: null
 
 val_data:
   _target_: torch.utils.data.DataLoader
   batch_size: 32
   shuffle: False
+  num_workers: 4
   dataset:
     _target_: scisi.data.datasets.KNMIDataset
     paths:
-      - data/stochastic_navier_stokes
+      - /export/scratch2/ntm/SciGenML/data/knmi/
     files:
-      - data.npz
-    len_field_history: 2
-    tajectories_ids: (160, 180)
-
+      - sim_8.npz
+      - sim_9.npz
+    len_field_history: 5
+    save_in_memory: False
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
+    use_exisiting_cache: True
+    starting_time: null
+    ending_time: null
 
 test_data:
   _target_: scisi.data.datasets.KNMIDataset
   paths:
-    - data/stochastic_navier_stokes
+    - /export/scratch2/ntm/SciGenML/data/knmi/
   files:
-    - data.npz
-  len_field_history: 2
-  tajectories_ids: (180, 200)
+    - sim_10.npz
+    # - sim_11.npz
+    # - sim_12.npz
+  len_field_history: 5
   train_or_test: test
+  save_in_memory: True
+  starting_time: null
+  ending_time: null
 
 model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
@@ -64,13 +87,13 @@ model:
     _target_: scisi.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
+    hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 256 # dimension of the scalar conditional embedding
     len_field_history: 5 # number of field history steps
     field_cond_channels: 1 # number of channels in the field conditional input
-    pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
-    pars_cond_embedding_dim: null # dimension of the pars conditional embedding
+    pars_cond_dim: 1 # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
+    pars_cond_embedding_dim: 256 # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
