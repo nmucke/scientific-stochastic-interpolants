@@ -20,7 +20,7 @@ VERBOSE = True
 DEFAULT_PROJECT = "knmi"
 DEFAULT_NAME = "fancy-breeze-4"
 NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 250
+NUM_STEPS = 50
 STARTING_TIME = 20000
 
 
@@ -109,7 +109,7 @@ def main(cfg: DictConfig) -> None:
     predicted_trajectory = predicted_trajectory[0, 0]
     true_trajectory = trajectory[0, 0, :, :].cpu().numpy()
 
-    # Find indices of lat/lon closest to 1, 1 and 30, 30
+    # Set indices for plotting
     lat_1_idx, lon_1_idx = 32, 0
     lat_30_idx, lon_30_idx = 42, 10
     lat_lon_to_plot = [
