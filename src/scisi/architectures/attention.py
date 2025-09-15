@@ -279,6 +279,7 @@ class SpatialAttention(nn.Module):
         b, c, h, w = x.size()
 
         x = patchify(x, self.patch_size)  # (B, C, H, W) -> (B, L, C*p*p)
+
         x = self.embedding(x)  # (B, L, C*p*p) -> (B, L, D)
 
         attn_out = self.attention(x)  # (B, L, D)

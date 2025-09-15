@@ -10,6 +10,20 @@ from omegaconf import DictConfig
 from scisi.preprocessing.preprocessor import Preprocesser
 
 torch.set_default_dtype(torch.float32)
+# Disable slow attention warnings
+import warnings
+warnings.filterwarnings('ignore', message='.*The operator.*is not optimized.*')
+
+# Enable flash attention if available
+try:
+    import torch.backends.cuda
+    if torch.backends.cuda.is_built():
+        torch.backends.cuda.enable_flash_sdp(True)
+        torch.backends.cuda.enable_mem_efficient_sdp(True)
+        torch.backends.cuda.enable_math_sdp(True)
+except:
+    pass
+
 
 
 logger = logging.getLogger(__name__)
@@ -18,11 +32,10 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = False
+CONTINUE_FROM_CHECKPOINT = True
 CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "bright-trail-19"
+CHECKPOINT_NAME = "elegant-pond-24"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
-
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",

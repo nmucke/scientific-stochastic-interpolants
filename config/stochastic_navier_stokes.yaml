@@ -74,16 +74,15 @@ model:
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
-    padding: torch.nn.CircularPad2d
-    attention_in_layers: [true, true, true, true]
-    attention:
-      # _target_: torch.nn.Identity
-      target: scisi.architectures.attention.SpatialAttention
-      pos_embedding_type: rotary
+    padding: torch.nn.CircularPad2d # padding module
+    attention_in_layers: [true, true, true, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention: # attention module and its arguments
+      target: scisi.architectures.attention.SpatialAttention # attention module
+      pos_embedding_type: rotary # positional embedding type
+      heads: 4 # number of heads
+      patch_size: 4 # patch size
+      dropout_rate: 0.1 # dropout rate
       # embedding_dim: 128
-      heads: 4
-      patch_size: 4
-      dropout_rate: 0.1
       # mlp_dim: 1024
 
 optimizer:
