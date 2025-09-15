@@ -186,12 +186,10 @@ class UNet(nn.Module):
             attention_in_layers=self._reverse_attention_in_layers[1:],
         )
 
-        self.output_conv = nn.Conv2d(
+        self.output_conv = get_init_conv(
             in_channels=hidden_channels[0],
             out_channels=out_channels,
-            kernel_size=1,
-            stride=1,
-            padding=0,
+            **init_conv_args,
         )
 
     def forward(
