@@ -20,8 +20,8 @@ VERBOSE = True
 DEFAULT_PROJECT = "knmi"
 DEFAULT_NAME = "fancy-breeze-4"
 NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 150
-STARTING_TIME = 10000
+NUM_STEPS = 250
+STARTING_TIME = 20000
 
 
 @hydra.main(  # type: ignore[misc]
