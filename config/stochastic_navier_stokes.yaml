@@ -82,8 +82,8 @@ model:
       heads: 4 # number of heads
       patch_size: 4 # patch size
       dropout_rate: 0.1 # dropout rate
-      # embedding_dim: 128
-      # mlp_dim: 1024
+      # embedding_dim: 128 # embedding dimension
+      # mlp_dim: 1024 # mlp dimension
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -105,3 +105,5 @@ trainer:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 25
   max_grad_norm: 5.0
+  mixed_precision: true
+  mixed_precision_warmup: 50

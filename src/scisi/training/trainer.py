@@ -63,6 +63,7 @@ class Trainer:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         max_grad_norm: float = 1.0,
         tracker: trackio.Run | None = None,
+        mixed_precision: bool = False,
     ):
         """Initialize the trainer."""
         self.model = model
@@ -74,6 +75,8 @@ class Trainer:
         self.num_epochs = num_epochs
         self.early_stopping = early_stopping
         self.max_grad_norm = max_grad_norm
+
+        # Initialize scheduler
         self.scheduler = scheduler
         if self.scheduler is not None:
             self.scheduler_requires_loss = (
@@ -82,11 +85,21 @@ class Trainer:
         else:
             self.scheduler_requires_loss = False
 
+        # Initialize mixed precision
+        self.mixed_precision = mixed_precision
+        if self.mixed_precision:
+            self.scaler = torch.cuda.amp.GradScaler()
+            self._train_step = self._train_step_mixed_precision
+        else:
+            self._train_step = self._train_step_full_precision
+
+        # Initialize model
         self.model.train()
         self.model.to(self.device)
 
         self.current_lr = self.scheduler.get_last_lr()[0]
 
+        # Initialize tracker
         self.tracker = tracker
 
         # Initialize checkpointing with Trackio tracker
@@ -103,31 +116,47 @@ class Trainer:
                 OmegaConf.save(self.tracker.config, f)
 
             self.checkpoint_model_path = f"{self.checkpoint_path}/model.pth"
-
-    def _compute_loss(self, batch: dict) -> torch.Tensor:
-        """Compute the loss for the model."""
-
-        # Move data to device
+    
+    def _prepare_batch(self, batch: dict) -> tuple[dict, torch.Tensor]:
+        """Prepare the batch for the model."""
         for key, value in batch.items():
             batch[key] = value.to(self.device)
 
         # Sample pseudo-time
-        t = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
+        batch["t"] = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
 
         # Sample noise
-        noise = torch.randn(batch["base"].shape, device=self.device)
+        batch["noise"] = torch.randn(batch["base"].shape, device=self.device)
+
+        return batch
+
+    def _compute_loss(self, batch: dict) -> torch.Tensor:
+        """Compute the loss for the model."""
 
         # Compute pred and true drift
-        pred_drift, true_diff = self.model(
-            **batch,
-            t=t,
-            noise=noise,
-        )
+        pred_drift, true_diff = self.model(**batch)
 
         # Compute and return the loss
         return self.loss_fn(pred_drift, true_diff)
 
-    def _train_step(self, batch: dict) -> torch.Tensor:
+    def _train_step_mixed_precision(self, batch: dict) -> torch.Tensor:
+        """Train the model for one step using mixed precision."""
+        self.optimizer.zero_grad()
+
+        with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+            loss = self._compute_loss(batch)
+
+        # Clip gradients to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(
+            self.model.parameters(), max_norm=self.max_grad_norm
+        )
+        
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+        return loss
+
+    def _train_step_full_precision(self, batch: dict) -> torch.Tensor:
         """Train the model for one step."""
         self.optimizer.zero_grad()
         loss = self._compute_loss(batch)
@@ -150,6 +179,9 @@ class Trainer:
             train_loss = 0.0
             pbar = tqdm(self.train_dataloader)
             for batch in pbar:
+
+                batch = self._prepare_batch(batch)
+
                 loss = self._train_step(batch)
                 train_loss += loss.item()
 
@@ -185,6 +217,8 @@ class Trainer:
             self.tracker.log(
                 {
                     "epoch": epoch,
+                    "log_train_loss": np.log(train_loss),
+                    "log_val_loss": np.log(val_loss),
                     "train_loss": train_loss,
                     "val_loss": val_loss,
                 }
@@ -227,6 +261,7 @@ class Trainer:
         with torch.no_grad():
             val_loss = 0.0
             for batch in self.val_dataloader:
+                batch = self._prepare_batch(batch)
                 loss = self._compute_loss(batch)
                 val_loss += loss.item()
             val_loss /= len(self.val_dataloader)
