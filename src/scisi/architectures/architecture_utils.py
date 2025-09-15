@@ -1,6 +1,7 @@
 import pdb
 from typing import List
 
+import hydra
 import torch
 import torch.nn as nn
 from einops import rearrange
@@ -27,7 +28,7 @@ class InitConvWithHistory(nn.Module):
             **kwargs,
         )
 
-    def forward(
+    def forward(  # type: ignore[no-untyped-def]
         self,
         x: torch.Tensor,
         field_history: torch.Tensor,
@@ -58,7 +59,7 @@ class InitConvWithFieldCond(nn.Module):
             **kwargs,
         )
 
-    def forward(
+    def forward(  # type: ignore[no-untyped-def]
         self,
         x: torch.Tensor,
         field_cond: torch.Tensor,
@@ -126,7 +127,7 @@ class InitConv(nn.Module):
             **kwargs,
         )
 
-    def forward(
+    def forward(  # type: ignore[no-untyped-def]
         self,
         x: torch.Tensor,
         **kwargs,
@@ -189,14 +190,14 @@ def get_init_conv(  # type: ignore[no-untyped-def]
         )
 
 
-def get_blocks(  # type: ignore[no-untyped-def]
+def get_conv_blocks(  # type: ignore[no-untyped-def]
     module: nn.Module,
     in_channels: List[int],
     out_channels: List[int],
     **kwargs,
 ) -> nn.ModuleList:
     """
-    Get blocks.
+    Get conv blocks.
 
     Args:
         module (nn.Module): Module to use.
@@ -213,3 +214,47 @@ def get_blocks(  # type: ignore[no-untyped-def]
             for i in range(len(in_channels))
         ]
     )
+
+
+class ParsCondIdentity(nn.Module):
+    """Pars cond identity."""
+
+    def __init__(self) -> None:
+        """Initialize pars cond identity."""
+        super(ParsCondIdentity, self).__init__()
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: torch.Tensor,
+        pars_cond: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass."""
+        return x
+
+
+def get_attention_blocks(
+    module_dict: dict,
+    channels: List[int],
+    attention_in_layers: List[bool],
+) -> nn.ModuleList:
+    """
+    Get attention blocks.
+    """
+
+    module_dict["_target_"] = module_dict.pop("target")
+
+    modules = nn.ModuleList()
+    for i in range(len(channels)):
+        if attention_in_layers[i]:
+            modules.append(
+                hydra.utils.instantiate(
+                    module_dict,
+                    channels=channels[i],
+                )
+            )
+        else:
+            modules.append(ParsCondIdentity())
+
+    module_dict["target"] = module_dict.pop("_target_")
+    return modules

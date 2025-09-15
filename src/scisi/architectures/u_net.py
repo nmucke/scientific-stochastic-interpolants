@@ -5,7 +5,11 @@ import hydra
 import torch
 import torch.nn as nn
 
-from scisi.architectures.architecture_utils import get_blocks, get_init_conv
+from scisi.architectures.architecture_utils import (
+    get_attention_blocks,
+    get_conv_blocks,
+    get_init_conv,
+)
 from scisi.architectures.attention import BottleneckWithAttention
 from scisi.architectures.conv_next import MultipleConvNextBlocks
 from scisi.architectures.embeddings import get_cond_encoder
@@ -77,9 +81,8 @@ class UNet(nn.Module):
         num_blocks: int = 2,
         dropout_rate: float = 0.0,
         padding: str = "torch.nn.ZeroPad2d",
-        spatial_attention: bool = False,
-        bottleneck_heads: int = 4,
-        bottleneck_dim_head: int = 64,
+        attention_in_layers: List[bool] = [False, False, False, False],
+        attention: dict = {"_target_": "torch.nn.Identity"},
     ) -> None:
         """
         Initialize UNet.
@@ -98,9 +101,8 @@ class UNet(nn.Module):
             num_blocks (int): Number of ConvNext blocks per layer.
             dropout_rate (float): Dropout rate.
             padding (str): Padding module.
-            spatial_attention (bool): Whether to use spatial attention.
-            bottleneck_heads (int): Number of heads for the bottleneck attention.
-            bottleneck_dim_head (int): Dimension of the bottleneck attention head.
+            attention_in_layers (List[bool]): List of booleans indicating whether to use attention in the encoder layers.
+            bottleneck_attention (dict): Bottleneck attention module.
         """
         super(UNet, self).__init__()
 
@@ -113,6 +115,7 @@ class UNet(nn.Module):
             "dropout_rate": dropout_rate,
         }
         self._reverse_channels = hidden_channels[::-1]
+        self._reverse_attention_in_layers = attention_in_layers[::-1]
         self.len_field_history = len_field_history
 
         self.cond_encoder = get_cond_encoder(
@@ -138,46 +141,61 @@ class UNet(nn.Module):
             **init_conv_args,
         )
 
-        self.encoder_conv_blocks = get_blocks(
+        self.encoder_conv_blocks = get_conv_blocks(
             module=MultipleConvNextBlocks,
             in_channels=hidden_channels[:-1],
             out_channels=hidden_channels[1:],
             **self._fixed_conv_block_args,
         )
 
-        self.down_blocks = get_blocks(
+        self.encoder_attention_blocks = get_attention_blocks(
+            module_dict=attention,
+            channels=hidden_channels[1:],
+            attention_in_layers=attention_in_layers,
+        )
+
+        self.down_blocks = get_conv_blocks(
             module=ConvDown,
             in_channels=hidden_channels[1:],
             out_channels=hidden_channels[1:],
         )
 
-        if spatial_attention:
-            self.bottleneck_block = BottleneckWithAttention(
-                channels=hidden_channels[-1],
-                conv_block_args=self._fixed_conv_block_args,
-                spatial_attention_args={
-                    "heads": bottleneck_heads,
-                    "dim_head": bottleneck_dim_head,
-                },
-            )
-        else:
-            self.bottleneck_block = MultipleConvNextBlocks(
-                in_channels=hidden_channels[-1],
-                out_channels=hidden_channels[-1],
-                **self._fixed_conv_block_args,  # type: ignore[arg-type]
-            )
+        self.bottleneck_block = BottleneckWithAttention(
+            channels=hidden_channels[-1],
+            conv_block_args=self._fixed_conv_block_args,
+            attention=attention,
+            attention_in_layer=attention_in_layers[-1],
+        )
+        # if spatial_attention:
+        #     self.bottleneck_block = BottleneckWithAttention(
+        #         channels=hidden_channels[-1],
+        #         conv_block_args=self._fixed_conv_block_args,
+        #         spatial_attention=hydra.utils.instantiate(spatial_attention),
+        #     )
+        # else:
+        #     self.bottleneck_block = MultipleConvNextBlocks(
+        #         in_channels=hidden_channels[-1],
+        #         out_channels=hidden_channels[-1],
+        #         **self._fixed_conv_block_args,  # type: ignore[arg-type]
+        #     )
 
-        self.up_blocks = get_blocks(
+        self.up_blocks = get_conv_blocks(
             module=ConvUp,
             in_channels=self._reverse_channels[:-1],
             out_channels=self._reverse_channels[:-1],
         )
 
-        self.decoder_conv_blocks = get_blocks(
+        self.decoder_conv_blocks = get_conv_blocks(
             module=MultipleConvNextBlocks,
             in_channels=self._reverse_channels[:-1],
             out_channels=self._reverse_channels[1:],
             **self._fixed_conv_block_args,
+        )
+
+        self.decoder_attention_blocks = get_attention_blocks(
+            module_dict=attention,
+            channels=self._reverse_channels[1:],
+            attention_in_layers=self._reverse_attention_in_layers[1:],
         )
 
         self.output_conv = nn.Conv2d(
@@ -217,21 +235,28 @@ class UNet(nn.Module):
         pars_cond = self.pars_cond_encoder(pars_cond)
 
         x_skip_list = []
-        for conv_block, down_block in zip(self.encoder_conv_blocks, self.down_blocks):
+        for conv_block, down_block, attention_block in zip(
+            self.encoder_conv_blocks,
+            self.down_blocks,
+            self.encoder_attention_blocks,
+        ):
             x = conv_block(x, cond, pars_cond)
+            x = attention_block(x, cond, pars_cond)
             x_skip_list.append(x)
             x = down_block(x)
 
         x = self.bottleneck_block(x, cond, pars_cond)
 
-        for conv_block, up_block, x_skip in zip(
+        for conv_block, up_block, x_skip, attention_block in zip(
             self.decoder_conv_blocks,
             self.up_blocks,
             x_skip_list[::-1],
+            self.decoder_attention_blocks,
         ):
             x = up_block(x)
             x = x + x_skip
             x = conv_block(x, cond, pars_cond)
+            x = attention_block(x, cond, pars_cond)
 
         x = self.output_conv(x)
 

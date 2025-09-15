@@ -97,6 +97,7 @@ def main(cfg: DictConfig) -> None:
         pars_cond=pars_cond,
         num_physical_steps=NUM_PHYSICAL_STEPS,
         sde_stepper=heun_step,
+        diffusion_term=lambda t: 2.0 * model.interpolation.gamma(t),
     )
 
     predicted_trajectory = x.cpu()
