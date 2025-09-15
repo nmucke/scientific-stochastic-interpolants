@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "bright-trail-19"
+DEFAULT_NAME = "elegant-pond-24"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 50
 BATCH_SIZE = 1
@@ -32,7 +32,6 @@ def main(cfg: DictConfig) -> None:
     name = list(cfg[project].keys())[0]
     cfg = OmegaConf.select(cfg, f"{project}.{name}")
 
-    
     len_field_history = cfg.model.drift_model.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
