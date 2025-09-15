@@ -2,7 +2,7 @@
 *.lock
 
 # Data
-data/
+data/stochastic_navier_stokes/
 
 # Logs
 logs/

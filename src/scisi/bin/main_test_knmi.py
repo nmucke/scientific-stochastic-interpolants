@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 
 DEFAULT_PROJECT = "knmi"
-DEFAULT_NAME = "eager-mountain-3"
-# DEFAULT_NAME = "dainty-sunset-0"
+DEFAULT_NAME = "fancy-breeze-4"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 150
 STARTING_TIME = 10000
