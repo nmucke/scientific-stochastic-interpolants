@@ -166,18 +166,6 @@ class UNet(nn.Module):
             attention=attention,
             attention_in_layer=attention_in_layers[-1],
         )
-        # if spatial_attention:
-        #     self.bottleneck_block = BottleneckWithAttention(
-        #         channels=hidden_channels[-1],
-        #         conv_block_args=self._fixed_conv_block_args,
-        #         spatial_attention=hydra.utils.instantiate(spatial_attention),
-        #     )
-        # else:
-        #     self.bottleneck_block = MultipleConvNextBlocks(
-        #         in_channels=hidden_channels[-1],
-        #         out_channels=hidden_channels[-1],
-        #         **self._fixed_conv_block_args,  # type: ignore[arg-type]
-        #     )
 
         self.up_blocks = get_conv_blocks(
             module=ConvUp,
