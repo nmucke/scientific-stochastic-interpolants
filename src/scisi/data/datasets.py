@@ -1,24 +1,28 @@
-import torch
-from scisi.preprocessing.preprocessor import Preprocesser
-from scisi.data.load_data import load_stochastic_navier_stokes
 import logging
-import pdb
 import os
+import pdb
+
 import numpy as np
+import torch
+
+from scisi.data.load_data import load_stochastic_navier_stokes
+from scisi.preprocessing.preprocessor import Preprocesser
 
 logger = logging.getLogger(__name__)
 
+
 class StochasticNavierStokesDataset(torch.utils.data.Dataset):
     """Dataset for the stochastic Navier-Stokes data."""
+
     def __init__(
         self,
         paths: str,
         files: str,
         len_field_history: int,
-        tajectories_ids: list[int] | tuple[int] = None,
+        tajectories_ids: list[int] | str | None = None,
         preprocesser: Preprocesser | None = None,
         train_or_test: str = "train",
-    ):
+    ) -> None:
         """
         Initialize the dataset.
 
@@ -26,10 +30,15 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
             paths: List of paths to the data.
             files: List of files to load.
             len_field_history: Length of the history.
+            tajectories_ids: List of trajectories ids to load. (a,b) to load trajectories from a to b.
+            preprocesser: Preprocesser to use.
+            train_or_test: Train or test.
         """
         self.data = load_stochastic_navier_stokes(paths, files)
         self.data = torch.from_numpy(self.data)
-        self.data = torch.permute(self.data, (0, 2, 3, 1)) # [num_trajectories, num_channels, height, width, num_steps]
+        self.data = torch.permute(
+            self.data, (0, 2, 3, 1)
+        )  # [num_trajectories, num_channels, height, width, num_steps]
         self.data = self.data.unsqueeze(1)
         self.len_field_history = len_field_history
         self.preprocesser = preprocesser
@@ -39,8 +48,10 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
             self.data = self.data[tajectories_ids]
         elif isinstance(tajectories_ids, str):
             # Convert string tuple '(a,b)' to tuple of ints
-            tajectories_ids = tuple(int(x) for x in tajectories_ids.strip('()').split(','))
-            self.data = self.data[tajectories_ids[0]:tajectories_ids[1]]
+            tajectories_ids = tuple(  # type: ignore[assignment]
+                int(x) for x in tajectories_ids.strip("()").split(",")
+            )
+            self.data = self.data[tajectories_ids[0] : tajectories_ids[1]]  # type: ignore[misc]
 
         self.num_trajectories = self.data.shape[0]
         self.num_channels = self.data.shape[1]
@@ -51,10 +62,10 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
         if self.train_or_test == "train":
             self.data = self._prepare_data_windows()
 
-    def _prepare_data_windows(self):
+    def _prepare_data_windows(self) -> torch.Tensor:
         """
         Prepare the data.
-        
+
         Returns:
             torch.Tensor: Data windows. [num_trajectories * (num_steps - len_field_history - 1), num_channels, height, width, len_field_history + 1]
         """
@@ -66,30 +77,36 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
         )
 
         data = torch.zeros(
-            self.num_trajectories * (self.num_steps - self.len_field_history - 1), 
-            self.num_channels, 
-            self.height, 
+            self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+            self.num_channels,
+            self.height,
             self.width,
-            self.len_field_history + 1
+            self.len_field_history + 1,
         )
         for trajectory in range(self.num_trajectories):
             for step in range(self.num_steps - self.len_field_history - 1):
-                window = self.data[trajectory, :, :, :, step:step + self.len_field_history + 1]
-                data[trajectory * (self.num_steps - self.len_field_history - 1) + step] = window
+                window = self.data[
+                    trajectory, :, :, :, step : step + self.len_field_history + 1
+                ]
+                data[
+                    trajectory * (self.num_steps - self.len_field_history - 1) + step
+                ] = window
 
         return data
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Get the length of the dataset."""
         if self.train_or_test == "train":
-            return self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            return int(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            )
         else:
-            return self.num_trajectories
+            return int(self.num_trajectories)
 
-    def _prepare_train_sample(self, sample):
+    def _prepare_train_sample(self, sample: torch.Tensor) -> dict:
         """
         Prepare the train sample.
-        
+
         Returns:
             dict: Sample.
                 'field_history': Field history. [B, C, H, W, L]
@@ -109,38 +126,38 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
             )
 
         return {
-            'field_history': sample["field_history"],
-            'base': sample["base"],
-            'target': sample["target"],
+            "field_history": sample["field_history"],
+            "base": sample["base"],
+            "target": sample["target"],
         }
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
         """Get the item at the given index."""
 
         sample = self.data[idx]
 
         if self.train_or_test == "train":
-            return self._prepare_train_sample(sample)            
+            return self._prepare_train_sample(sample)
         else:
             return {
                 "x": sample,
             }
 
 
-
 class KNMIDataset(torch.utils.data.Dataset):
     """Dataset for the KNMIData."""
+
     def __init__(
-        self, 
-        paths: list[str], 
-        files: list[str], 
-        len_field_history: int, 
-        starting_time: int = None,
-        ending_time: int = None,
-        preprocesser: Preprocesser | None = None, 
+        self,
+        paths: list[str],
+        files: list[str],
+        len_field_history: int,
+        starting_time: int | None = None,
+        ending_time: int | None = None,
+        preprocesser: Preprocesser | None = None,
         train_or_test: str = "train",
         save_in_memory: bool = True,
-        cache_dir: str = None,
+        cache_dir: str | None = None,
         use_exisiting_cache: bool = False,
     ) -> None:
         """
@@ -167,7 +184,9 @@ class KNMIDataset(torch.utils.data.Dataset):
         self.use_exisiting_cache = use_exisiting_cache
 
         if self.train_or_test == "train":
-            self.data, self.field_cond, self.pars_cond = self._prepare_data_windows(tas, ym, time)
+            self.data, self.field_cond, self.pars_cond = self._prepare_data_windows(
+                tas, ym, time
+            )
         else:
             self.data = tas
             self.field_cond = ym
@@ -175,7 +194,9 @@ class KNMIDataset(torch.utils.data.Dataset):
 
         del tas, ym, time
 
-    def _load_file(self, path: str, files: list[str]) -> torch.Tensor:
+    def _load_file(
+        self, path: str, files: list[str]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Load the file."""
 
         time = []
@@ -184,12 +205,12 @@ class KNMIDataset(torch.utils.data.Dataset):
         for file in files:
             data = np.load(os.path.join(path, file))
             if self.starting_time is not None:
-                data["time"] = data["time"][self.starting_time:self.ending_time]
-                data["tas"] = data["tas"][self.starting_time:self.ending_time]
-                data["ym"] = data["ym"][self.starting_time:self.ending_time]
-            time.append(data["time"] % 365) # days
-            tas.append(data["tas"]) # temperature at surface
-            ym.append(data["ym"]) # yearly mean temperature per grid cell
+                data["time"] = data["time"][self.starting_time : self.ending_time]
+                data["tas"] = data["tas"][self.starting_time : self.ending_time]
+                data["ym"] = data["ym"][self.starting_time : self.ending_time]
+            time.append(data["time"] % 365)  # days
+            tas.append(data["tas"])  # temperature at surface
+            ym.append(data["ym"])  # yearly mean temperature per grid cell
 
         lat = data["lat"]
         lon = data["lon"]
@@ -205,27 +226,26 @@ class KNMIDataset(torch.utils.data.Dataset):
         ym = torch.from_numpy(ym)
 
         # Permute the data to have time as the last dimension
-        tas = tas.permute(0, 2, 3, 1)
-        ym = ym.permute(0, 2, 3, 1)
+        tas = tas.permute(0, 2, 3, 1)  # type: ignore[attr-defined]
+        ym = ym.permute(0, 2, 3, 1)  # type: ignore[attr-defined]
 
         # Unsqueeze the data to have channels as the second dimension
-        tas = tas.unsqueeze(1)
-        ym = ym.unsqueeze(1)
+        tas = tas.unsqueeze(1)  # type: ignore[attr-defined]
+        ym = ym.unsqueeze(1)  # type: ignore[attr-defined]
 
-        time = time.float()
+        time = time.float()  # type: ignore[attr-defined]
 
         return tas, ym, time, lat, lon
 
-    
     def _prepare_data_windows(
         self,
         tas: torch.Tensor,
         ym: torch.Tensor,
         time: torch.Tensor,
-    ):
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Prepare the data.
-        
+
         Returns:
             torch.Tensor: Data windows. [num_trajectories * (num_steps - len_field_history - 1), num_channels, height, width, len_field_history + 1]
         """
@@ -238,46 +258,66 @@ class KNMIDataset(torch.utils.data.Dataset):
 
         if self.save_in_memory:
             data = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1), 
-                self.num_channels, 
-                self.height, 
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+                self.num_channels,
+                self.height,
                 self.width,
-                self.len_field_history + 1
+                self.len_field_history + 1,
             )
             field_cond = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1), 
-                self.num_channels, 
-                self.height, 
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+                self.num_channels,
+                self.height,
                 self.width,
             )
             pars_cond = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1), 
-                1, 
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+                1,
             )
 
         if self.use_exisiting_cache and (not self.save_in_memory):
             logger.info(f"Using existing cache directory {self.cache_dir}...")
         else:
             if not self.save_in_memory:
-                logger.info(f"Saving data windows to cache directory {self.cache_dir}...")
+                logger.info(
+                    f"Saving data windows to cache directory {self.cache_dir}..."
+                )
                 # Create cache folder for storing data windows
-                os.makedirs(self.cache_dir, exist_ok=True)
+                os.makedirs(self.cache_dir, exist_ok=True)  # type: ignore[arg-type]
                 counter = 0
 
             for trajectory in range(self.num_trajectories):
                 for step in range(self.num_steps - self.len_field_history - 1):
-                    data_window = tas[trajectory, :, :, :, step:step + self.len_field_history + 1]
-                    field_cond_window = ym[trajectory, :, :, :, step + self.len_field_history + 1]
-                    pars_cond_window = time[trajectory, step + self.len_field_history + 1]
+                    data_window = tas[
+                        trajectory, :, :, :, step : step + self.len_field_history + 1
+                    ]
+                    field_cond_window = ym[
+                        trajectory, :, :, :, step + self.len_field_history + 1
+                    ]
+                    pars_cond_window = time[
+                        trajectory, step + self.len_field_history + 1
+                    ]
 
                     if self.save_in_memory:
-                        data[trajectory * (self.num_steps - self.len_field_history - 1) + step] = data_window
-                        field_cond[trajectory * (self.num_steps - self.len_field_history - 1) + step] = field_cond_window
-                        pars_cond[trajectory * (self.num_steps - self.len_field_history - 1) + step] = pars_cond_window
+                        data[
+                            trajectory * (self.num_steps - self.len_field_history - 1)
+                            + step
+                        ] = data_window
+                        field_cond[
+                            trajectory * (self.num_steps - self.len_field_history - 1)
+                            + step
+                        ] = field_cond_window
+                        pars_cond[
+                            trajectory * (self.num_steps - self.len_field_history - 1)
+                            + step
+                        ] = pars_cond_window
                     else:
-                        np.savez(os.path.join(self.cache_dir, f"data_{counter}.npz"), data_window.numpy())
-                        np.savez(os.path.join(self.cache_dir, f"field_cond_{counter}.npz"), field_cond_window.numpy())
-                        np.savez(os.path.join(self.cache_dir, f"pars_cond_{counter}.npz"), pars_cond_window.numpy())
+                        np.savez(
+                            os.path.join(self.cache_dir, f"data_{counter}.npz"),  # type: ignore[arg-type]
+                            data=data_window.numpy(),
+                            field_cond=field_cond_window.numpy(),
+                            pars_cond=pars_cond_window.numpy(),
+                        )
                         counter += 1
 
         if self.save_in_memory:
@@ -285,16 +325,12 @@ class KNMIDataset(torch.utils.data.Dataset):
         else:
             return None, None, None
 
-
     def _prepare_train_sample(
-        self, 
-        sample: torch.Tensor, 
-        field_cond: torch.Tensor, 
-        pars_cond: torch.Tensor
-        ) -> dict:
+        self, sample: torch.Tensor, field_cond: torch.Tensor, pars_cond: torch.Tensor
+    ) -> dict:
         """
         Prepare the train sample.
-        
+
         Returns:
             dict: Sample.
                 'base': Base. [B, C, H, W]
@@ -314,22 +350,23 @@ class KNMIDataset(torch.utils.data.Dataset):
             )
 
         return {
-            'base': sample["base"],
-            'field_history': sample["field_history"],
-            'field_cond': sample["field_cond"],
-            'pars_cond': pars_cond,
-            'target': sample["target"],
+            "base": sample["base"],
+            "field_history": sample["field_history"],
+            "field_cond": sample["field_cond"],
+            "pars_cond": pars_cond,
+            "target": sample["target"],
         }
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Get the length of the dataset."""
         if self.train_or_test == "train":
-            return self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            return int(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            )
         else:
-            return self.num_trajectories
+            return int(self.num_trajectories)
 
-
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> dict:
         """Get the item at the given index."""
 
         if self.save_in_memory:
@@ -337,9 +374,10 @@ class KNMIDataset(torch.utils.data.Dataset):
             field_cond = self.field_cond[idx]
             pars_cond = self.pars_cond[idx] / 365.0
         else:
-            sample = np.load(os.path.join(self.cache_dir, f"data_{idx}.npz"))["arr_0"]
-            field_cond = np.load(os.path.join(self.cache_dir, f"field_cond_{idx}.npz"))["arr_0"]
-            pars_cond = np.load(os.path.join(self.cache_dir, f"pars_cond_{idx}.npz"))["arr_0"]
+            data = np.load(os.path.join(self.cache_dir, f"data_{idx}.npz"))  # type: ignore[arg-type]
+            sample = data["data"]
+            field_cond = data["field_cond"]
+            pars_cond = data["pars_cond"]
 
             sample = torch.from_numpy(sample)
             field_cond = torch.from_numpy(field_cond)
@@ -354,4 +392,175 @@ class KNMIDataset(torch.utils.data.Dataset):
                 "x": sample,
                 "field_cond": field_cond,
                 "pars_cond": pars_cond,
+            }
+
+
+class WeatherDataset(torch.utils.data.Dataset):
+    """Dataset for the KNMIData."""
+
+    def __init__(
+        self,
+        paths: list[str],
+        files: list[str],
+        len_field_history: int,
+        starting_time: int | None = None,
+        ending_time: int | None = None,
+        preprocesser: Preprocesser | None = None,
+        train_or_test: str = "train",
+        save_in_memory: bool = True,
+        cache_dir: str | None = None,
+        use_exisiting_cache: bool = False,
+    ) -> None:
+        """
+        Initialize the dataset.
+        """
+
+        self.paths = paths
+        self.files = files
+        self.starting_time = starting_time
+        self.ending_time = ending_time
+
+        data = self._load_file(self.paths[0], self.files)
+
+        self.num_trajectories = data.shape[0]
+        self.num_channels = data.shape[1]
+        self.height = data.shape[2]
+        self.width = data.shape[3]
+        self.num_steps = data.shape[-1]
+        self.len_field_history = len_field_history
+        self.preprocesser = preprocesser
+        self.train_or_test = train_or_test
+        self.save_in_memory = save_in_memory
+        self.cache_dir = cache_dir
+        self.use_exisiting_cache = use_exisiting_cache
+
+        if self.train_or_test == "train":
+            self.data = self._prepare_data_windows(data)
+        else:
+            self.data = data
+
+        del data
+
+    def _load_file(self, path: str, files: list[str]) -> torch.Tensor:
+        """Load the files."""
+
+        data = []
+        for file in files:
+            sample = np.load(os.path.join(path, file))["vil"]
+            sample = torch.from_numpy(sample)
+            sample = sample.unsqueeze(1)
+            sample = sample.float()
+            data.append(sample)
+
+        return torch.concat(data, dim=0)
+
+    def _prepare_data_windows(
+        self,
+        data: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """
+        Prepare the data.
+
+        Returns:
+            torch.Tensor: Data windows. [num_trajectories * (num_steps - len_field_history - 1), num_channels, height, width, len_field_history + 1]
+        """
+
+        logger.info(
+            f"Preparing data windows for {self.num_trajectories} "
+            f"trajectories with {self.num_steps} steps and "
+            f"{self.len_field_history} history."
+        )
+
+        if self.save_in_memory:
+            data_windows = torch.zeros(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+                self.num_channels,
+                self.height,
+                self.width,
+                self.len_field_history + 1,
+            )
+
+        if self.use_exisiting_cache and (not self.save_in_memory):
+            logger.info(f"Using existing cache directory {self.cache_dir}...")
+        else:
+            if not self.save_in_memory:
+                logger.info(
+                    f"Saving data windows to cache directory {self.cache_dir}..."
+                )
+                # Create cache folder for storing data windows
+                os.makedirs(self.cache_dir, exist_ok=True)  # type: ignore[arg-type]
+
+            counter = 0
+            for trajectory in range(self.num_trajectories):
+                for step in range(self.num_steps - self.len_field_history - 1):
+                    window = data[
+                        trajectory, :, :, :, step : step + self.len_field_history + 1
+                    ]
+
+                    if self.save_in_memory:
+                        data_windows[counter] = window
+                    else:
+                        np.savez(
+                            os.path.join(self.cache_dir, f"data_{counter}.npz"),  # type: ignore[arg-type]
+                            data=window.numpy(),
+                        )
+
+                    counter += 1
+
+        if self.save_in_memory:
+            return data_windows
+        else:
+            return None
+
+    def _prepare_train_sample(
+        self,
+        sample: torch.Tensor,
+    ) -> dict:
+        """
+        Prepare the train sample.
+
+        Returns:
+            dict: Sample.
+                'base': Base. [B, C, H, W]
+        """
+        target = sample[:, :, :, -1]
+        base = sample[:, :, :, -2]
+        field_history = sample[:, :, :, :-1]
+
+        if self.preprocesser is not None:
+            sample = self.preprocesser.transform(
+                base=base,
+                target=target,
+                field_history=field_history,
+            )
+
+        return {
+            "base": sample["base"],
+            "field_history": sample["field_history"],
+            "target": sample["target"],
+        }
+
+    def __len__(self) -> int:
+        """Get the length of the dataset."""
+        if self.train_or_test == "train":
+            return int(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            )
+        else:
+            return int(self.num_trajectories)
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get the item at the given index."""
+
+        if self.save_in_memory:
+            sample = self.data[idx]  # type: ignore[index]
+        else:
+            sample = np.load(os.path.join(self.cache_dir, f"data_{idx}.npz"))["data"]  # type: ignore[arg-type]
+
+            sample = torch.from_numpy(sample)
+        if self.train_or_test == "train":
+            return self._prepare_train_sample(sample)
+        else:
+            return {
+                "x": sample,
             }

@@ -16,6 +16,7 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
+MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "knmi"
 DEFAULT_NAME = "fancy-breeze-4"
@@ -87,20 +88,26 @@ def main(cfg: DictConfig) -> None:
     field_cond = field_cond.to("cuda")
     pars_cond = pars_cond.to("cuda")
 
-    logger.info(f"Sampling from the model...")
-    x = model.sample_trajectory(
-        base=x,
-        batch_size=1,
-        num_steps=NUM_STEPS,
-        field_history=x_history,
-        field_cond=field_cond,
-        pars_cond=pars_cond,
-        num_physical_steps=NUM_PHYSICAL_STEPS,
-        sde_stepper=heun_step,
-        diffusion_term=lambda t: 2.0 * model.interpolation.gamma(t),
-    )
+    input_dict = {
+        "base": x,
+        "batch_size": 1,
+        "num_steps": NUM_STEPS,
+        "field_history": x_history,
+        "field_cond": field_cond,
+        "pars_cond": pars_cond,
+        "num_physical_steps": NUM_PHYSICAL_STEPS,
+        "sde_stepper": heun_step,
+        "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
+    }
+    if MIXED_PRECISION:
+        logger.info(f"Sampling from the model using mixed precision...")
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            predicted_trajectory = model.sample_trajectory(**input_dict)
+    else:
+        logger.info(f"Sampling from the model using full precision...")
+        predicted_trajectory = model.sample_trajectory(**input_dict)
 
-    predicted_trajectory = x.cpu()
+    predicted_trajectory = predicted_trajectory.cpu()
 
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(

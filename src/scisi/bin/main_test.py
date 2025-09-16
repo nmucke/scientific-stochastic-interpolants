@@ -15,6 +15,7 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
+MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
 DEFAULT_NAME = "noble-dune-33"
@@ -62,19 +63,26 @@ def main(cfg: DictConfig) -> None:
     field_history = init_data["field_history"].to("cuda")
     base = init_data["base"].to("cuda")
 
-    logger.info(f"Sampling from the model...")
+
+    input_dict = {
+        "base": base,
+        "batch_size": BATCH_SIZE,
+        "num_steps": NUM_STEPS,
+        "field_history": field_history,
+        "num_physical_steps": NUM_PHYSICAL_STEPS,
+        "sde_stepper": heun_step,
+        # "sde_stepper": euler_maruyama_step,
+        # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
+    }
     
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        predicted_trajectory = model.sample_trajectory(
-            base=base,
-            batch_size=BATCH_SIZE,
-            num_steps=NUM_STEPS,
-            field_history=field_history,
-            num_physical_steps=NUM_PHYSICAL_STEPS,
-            sde_stepper=heun_step,
-            # sde_stepper=euler_maruyama_step,
-            # diffusion_term=lambda t: 2.0 * model.interpolation.gamma(t),
-        )
+    # Use mixed precision if available
+    if MIXED_PRECISION:
+        logger.info(f"Sampling from the model using mixed precision...")
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            predicted_trajectory = model.sample_trajectory(**input_dict)
+    else:
+        logger.info(f"Sampling from the model using full precision...")
+        predicted_trajectory = model.sample_trajectory(**input_dict)
 
     true_trajectory = trajectory[0, 0].cpu().numpy()
     predicted_trajectory = predicted_trajectory.cpu()
