@@ -88,7 +88,6 @@ def main(cfg: DictConfig) -> None:
     field_cond = field_cond.to("cuda")
     pars_cond = pars_cond.to("cuda")
 
-    logger.info(f"Sampling from the model...")
     input_dict = {
         "base": x,
         "batch_size": 1,
