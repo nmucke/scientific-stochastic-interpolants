@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 
 from scisi.preprocessing.preprocessor import Preprocesser
 
-# Enable flash attention if available
+# Enable flash attention
 import torch.backends.cuda
 torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cuda.enable_mem_efficient_sdp(True)
@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = True
+CONTINUE_FROM_CHECKPOINT = False
 CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "inventive-bay-28"
+CHECKPOINT_NAME = "lucky-marsh-31"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 @hydra.main(  # type: ignore[misc]

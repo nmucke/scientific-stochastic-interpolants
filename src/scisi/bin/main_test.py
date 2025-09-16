@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "jovial-peak-29"
+DEFAULT_NAME = "noble-dune-33"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 50
 BATCH_SIZE = 1

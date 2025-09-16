@@ -75,14 +75,14 @@ model:
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
     padding: torch.nn.CircularPad2d # padding module
-    attention_in_layers: [true, true, true, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
     attention: # attention module and its arguments
       target: scisi.architectures.attention.SpatialAttention # attention module
       pos_embedding_type: rotary # positional embedding type
       heads: 4 # number of heads
-      patch_size: 4 # patch size
+      patch_size: 2 # patch size
       dropout_rate: 0.1 # dropout rate
-      # embedding_dim: 128 # embedding dimension
+      embedding_dim: 512 # embedding dimension
       # mlp_dim: 1024 # mlp dimension
 
 optimizer:
@@ -105,5 +105,4 @@ trainer:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 25
   max_grad_norm: 5.0
-  mixed_precision: true
   mixed_precision_warmup: 50

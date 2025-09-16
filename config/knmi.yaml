@@ -40,7 +40,7 @@ train_data:
     len_field_history: 5
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 
@@ -59,7 +59,7 @@ val_data:
     len_field_history: 5
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 
@@ -97,10 +97,16 @@ model:
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
-    spatial_attention: false # whether to use spatial attention in the bottleneck block
     padding: torch.nn.CircularPad2d
-    # bottleneck_heads: 4 # number of heads in the bottleneck block
-    # bottleneck_dim_head: 64 # dimension of the head in the bottleneck block
+    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention: # attention module and its arguments
+      target: scisi.architectures.attention.SpatialAttention # attention module
+      pos_embedding_type: rotary # positional embedding type
+      heads: 4 # number of heads
+      patch_size: 2 # patch size
+      dropout_rate: 0.1 # dropout rate
+      # embedding_dim: 128 # embedding dimension
+      # mlp_dim: 1024 # mlp dimension
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -122,3 +128,4 @@ trainer:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 25
   max_grad_norm: 5.0
+  mixed_precision_warmup: 50

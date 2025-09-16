@@ -63,7 +63,7 @@ class Trainer:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         max_grad_norm: float = 1.0,
         tracker: trackio.Run | None = None,
-        mixed_precision: bool = False,
+        mixed_precision_warmup: int | None = None,
     ):
         """Initialize the trainer."""
         self.model = model
@@ -86,8 +86,8 @@ class Trainer:
             self.scheduler_requires_loss = False
 
         # Initialize mixed precision
-        self.mixed_precision = mixed_precision
-        if self.mixed_precision:
+        self.mixed_precision_warmup = mixed_precision_warmup
+        if self.mixed_precision_warmup is not None:
             self.scaler = torch.cuda.amp.GradScaler()
             self._train_step = self._train_step_mixed_precision
         else:
@@ -186,6 +186,12 @@ class Trainer:
                 train_loss += loss.item()
 
                 pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
+
+
+            # Switch to full precision if warmup is finished
+            if epoch >= self.mixed_precision_warmup:
+                logger.info(f"Mixed precision warmup finished, switching to full precision")
+                self._train_step = self._train_step_full_precision
 
             # Compute average train loss
             train_loss /= len(self.train_dataloader)
