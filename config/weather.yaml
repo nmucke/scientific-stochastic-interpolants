@@ -23,7 +23,7 @@ train_data:
   num_workers: 4
   # Dataset
   dataset:
-    _target_: scisi.data.datasets.KNMIDataset
+    _target_: scisi.data.datasets.WeatherDataset
     paths:
       - /export/scratch2/ntm/SciGenML/data/weather_npz/
     files:
@@ -54,11 +54,11 @@ val_data:
   shuffle: False
   num_workers: 4
   dataset:
-    _target_: scisi.data.datasets.KNMIDataset
+    _target_: scisi.data.datasets.WeatherDataset
     paths:
       - /export/scratch2/ntm/SciGenML/data/weather_npz/
     files:
-      - "2018/random_0901_1231.npz"
+      - "2017/random_0501_0831.npz"
     len_field_history: 5
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/val
@@ -67,11 +67,11 @@ val_data:
     ending_time: null
 
 test_data:
-  _target_: scisi.data.datasets.KNMIDataset
+  _target_: scisi.data.datasets.WeatherDataset
   paths:
     - /export/scratch2/ntm/SciGenML/data/weather_npz/
   files:
-      - "2018/random_0501_0831.npz"
+      - "2017/random_0501_0831.npz"
   len_field_history: 5
   train_or_test: test
   save_in_memory: True
