@@ -88,9 +88,11 @@ class Trainer:
         # Initialize mixed precision
         self.mixed_precision_warmup = mixed_precision_warmup
         if self.mixed_precision_warmup is not None:
+            self.full_precision = False
             self.scaler = torch.cuda.amp.GradScaler()
             self._train_step = self._train_step_mixed_precision
         else:
+            self.full_precision = True
             self._train_step = self._train_step_full_precision
 
         # Initialize model
@@ -189,9 +191,10 @@ class Trainer:
 
 
             # Switch to full precision if warmup is finished
-            if epoch >= self.mixed_precision_warmup:
+            if (epoch >= self.mixed_precision_warmup) and (not self.full_precision):
                 logger.info(f"Mixed precision warmup finished, switching to full precision")
                 self._train_step = self._train_step_full_precision
+                self.full_precision = True
 
             # Compute average train loss
             train_loss /= len(self.train_dataloader)

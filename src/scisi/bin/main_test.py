@@ -15,7 +15,7 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = True
+MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
 DEFAULT_NAME = "noble-dune-33"
