@@ -14,13 +14,14 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = True
+MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "optimistic-spring-34"
+DEFAULT_NAME = "quirky-cave-36"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
+PLOTTING_TIMES = [10, 30, 45]
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -99,13 +100,12 @@ def main(cfg: DictConfig) -> None:
     predicted_trajectory = predicted_trajectory[0, 0]
 
     logger.info(f"Plotting trajectory...")
-    plotting_times = [10, 30, 45]
     plt.figure()
-    for i, t in enumerate(plotting_times):
-        plt.subplot(2, len(plotting_times), i + 1)
+    for i, t in enumerate(PLOTTING_TIMES):
+        plt.subplot(2, len(PLOTTING_TIMES), i + 1)
         plt.imshow(true_trajectory[:, :, t])
         plt.title(f"True Trajectory at t={t}")
-        plt.subplot(2, len(plotting_times), len(plotting_times) + 1 + i)
+        plt.subplot(2, len(PLOTTING_TIMES), len(PLOTTING_TIMES) + 1 + i)
         plt.imshow(predicted_trajectory[:, :, t])
         plt.title(f"Predicted Trajectory at t={t}")
     plt.show()
