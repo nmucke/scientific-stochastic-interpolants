@@ -5,11 +5,8 @@ import hydra
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
-import trackio
 from omegaconf import DictConfig, OmegaConf
 
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
-from scisi.preprocessing.preprocessor import Preprocesser
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
