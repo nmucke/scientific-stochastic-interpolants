@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import pdb
 
@@ -18,6 +19,13 @@ torch.manual_seed(42)
 VERBOSE = True
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 250
+MIXED_PRECISION = True
+
+mixed_precision_context = (
+    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if MIXED_PRECISION
+    else contextlib.nullcontext()
+)
 
 
 @hydra.main(  # type: ignore[misc]
@@ -80,24 +88,27 @@ def main(posterior_cfg: DictConfig) -> None:
     for i in range(NUM_PHYSICAL_STEPS):
         observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
 
-    logger.info(f"Sampling from the posterior model...")
-    x_post = posterior_model.sample(
-        base=base,
-        batch_size=1,
-        num_steps=NUM_STEPS,
-        field_history=field_history,
-        observations=observations[:, :, len_field_history].to("cuda"),
-        sde_stepper=heun_step,
-    )
+    input_dict = {
+        "base": base,
+        "batch_size": 1,
+        "num_steps": NUM_STEPS,
+        "field_history": field_history,
+        "sde_stepper": heun_step,
+    }
 
-    logger.info(f"Sampling from the prior model...")
-    x_prior = model.sample(
-        base=base,
-        batch_size=1,
-        num_steps=NUM_STEPS,
-        field_history=field_history,
-        sde_stepper=euler_maruyama_step,
+    logger.info(
+        f"Sampling using mixed precision..."
+        if MIXED_PRECISION
+        else f"Sampling using full precision..."
     )
+    with mixed_precision_context:
+        logger.info(f"Sampling from the posterior model...")
+        x_post = posterior_model.sample(
+            **input_dict, observations=observations[:, :, len_field_history].to("cuda")
+        )
+
+        logger.info(f"Sampling from the prior model...")
+        x_prior = model.sample(**input_dict)
 
     true_trajectory = trajectory[0, 0].cpu()
     predicted_trajectory = x_prior[0, 0].cpu()

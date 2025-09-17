@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import pdb
 
@@ -13,13 +14,19 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = False
+MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
 DEFAULT_NAME = "optimistic-spring-34"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
+
+mixed_precision_context = (
+    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if MIXED_PRECISION
+    else contextlib.nullcontext()
+)
 
 
 @hydra.main(  # type: ignore[misc]
@@ -74,12 +81,12 @@ def main(cfg: DictConfig) -> None:
     }
 
     # Use mixed precision if available
-    if MIXED_PRECISION:
-        logger.info(f"Sampling from the model using mixed precision...")
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            predicted_trajectory = model.sample_trajectory(**input_dict)
-    else:
-        logger.info(f"Sampling from the model using full precision...")
+    logger.info(
+        f"Sampling from the model using mixed precision..."
+        if MIXED_PRECISION
+        else f"Sampling from the model using full precision..."
+    )
+    with mixed_precision_context:
         predicted_trajectory = model.sample_trajectory(**input_dict)
 
     true_trajectory = trajectory[0, 0].cpu().numpy()
