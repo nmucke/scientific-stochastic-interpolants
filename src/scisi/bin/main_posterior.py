@@ -21,8 +21,8 @@ torch.manual_seed(42)
 
 VERBOSE = True
 NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 2500
-MIXED_PRECISION = True
+NUM_STEPS = 500
+MIXED_PRECISION = False
 BATCH_SIZE = 1
 SDE_STEPPER = heun_step
 TEST_SAMPLE_INDEX = 0
@@ -135,8 +135,8 @@ def main(posterior_cfg: DictConfig) -> None:
     rmse_prior = torch.sqrt(
         nn.MSELoss()(predicted_trajectory, true_trajectory[:, :, len_field_history])
     )
-    logger.info(f"RMSE of posterior: {rmse_post}")
-    logger.info(f"RMSE of prior: {rmse_prior}")
+    logger.info(f"RMSE of posterior: {rmse_post:.6f}")
+    logger.info(f"RMSE of prior: {rmse_prior:.6f}")
 
     plt.figure()
     plt.subplot(1, 3, 1)

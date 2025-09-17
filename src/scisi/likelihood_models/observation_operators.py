@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 
-def get_grid_indices(height: int, width: int, skip_grid: int) -> torch.Tensor:
+def get_grid_indices(height: int, width: int, skip_grid: int, start_grid: int) -> torch.Tensor:
     """
     Get all grid indices.
 
@@ -19,8 +19,8 @@ def get_grid_indices(height: int, width: int, skip_grid: int) -> torch.Tensor:
     return torch.tensor(
         [
             (0, i, j)
-            for i in range(0, height, skip_grid)
-            for j in range(0, width, skip_grid)
+            for i in range(start_grid, height, skip_grid)
+            for j in range(start_grid, width, skip_grid)
         ]
     )
 
