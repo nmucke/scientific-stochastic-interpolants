@@ -18,10 +18,11 @@ VERBOSE = True
 MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "noble-dune-33"
+DEFAULT_NAME = "optimistic-spring-34"
 NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 50
+NUM_STEPS = 100
 BATCH_SIZE = 1
+
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../checkpoints",
@@ -56,13 +57,12 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
-        base=trajectory[:, :, :, :, len_field_history - 1], 
+        base=trajectory[:, :, :, :, len_field_history - 1],
         field_history=trajectory[:, :, :, :, 0:len_field_history],
-        is_batch=True
+        is_batch=True,
     )
     field_history = init_data["field_history"].to("cuda")
     base = init_data["base"].to("cuda")
-
 
     input_dict = {
         "base": base,
@@ -74,7 +74,7 @@ def main(cfg: DictConfig) -> None:
         # "sde_stepper": euler_maruyama_step,
         # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
     }
-    
+
     # Use mixed precision if available
     if MIXED_PRECISION:
         logger.info(f"Sampling from the model using mixed precision...")

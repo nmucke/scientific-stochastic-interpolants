@@ -1,0 +1,18 @@
+project: stochastic_navier_stokes
+name: noble-dune-33
+# name: optimistic-spring-34
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  obs_indices:
+    _target_: scisi.likelihood_models.observation_operators.get_grid_indices
+    height: 128
+    width: 128
+    skip_grid: 2
+
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.MultivariateGaussianLikelihood
+  variance: 0.0025
+
+posterior_model:
+  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

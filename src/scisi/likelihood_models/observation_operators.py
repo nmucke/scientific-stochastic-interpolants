@@ -1,5 +1,28 @@
+import pdb
+
 import torch
 import torch.nn as nn
+
+
+def get_grid_indices(height: int, width: int, skip_grid: int) -> torch.Tensor:
+    """
+    Get all grid indices.
+
+    Args:
+        height: Height.
+        width: Width.
+        skip_grid: Skip grid.
+
+    Returns:
+        Grid indices. [num_obs, 3] where each row is [C_idx, H_idx, W_idx]
+    """
+    return torch.tensor(
+        [
+            (0, i, j)
+            for i in range(0, height, skip_grid)
+            for j in range(0, width, skip_grid)
+        ]
+    )
 
 
 def extract_observations(x: torch.Tensor, obs_indices: torch.Tensor) -> torch.Tensor:
