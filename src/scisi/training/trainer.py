@@ -63,7 +63,7 @@ class Trainer:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         max_grad_norm: float = 1.0,
         tracker: trackio.Run | None = None,
-        mixed_precision_warmup: int | None = None,
+        mixed_precision_warmup: int = 0,
     ):
         """Initialize the trainer."""
         self.model = model
@@ -87,11 +87,13 @@ class Trainer:
 
         # Initialize mixed precision
         self.mixed_precision_warmup = mixed_precision_warmup
-        if self.mixed_precision_warmup is not None:
+        if self.mixed_precision_warmup > 0:
+            logger.info(f"Mixed precision warmup: {self.mixed_precision_warmup}")
             self.full_precision = False
             self.scaler = torch.cuda.amp.GradScaler()
             self._train_step = self._train_step_mixed_precision
         else:
+            logger.info(f"Mixed precision warmup not set, using full precision")
             self.full_precision = True
             self._train_step = self._train_step_full_precision
 
@@ -118,14 +120,16 @@ class Trainer:
                 OmegaConf.save(self.tracker.config, f)
 
             self.checkpoint_model_path = f"{self.checkpoint_path}/model.pth"
-    
-    def _prepare_batch(self, batch: dict) -> tuple[dict, torch.Tensor]:
+
+    def _prepare_batch(self, batch: dict) -> dict[str, torch.Tensor]:
         """Prepare the batch for the model."""
         for key, value in batch.items():
             batch[key] = value.to(self.device)
 
         # Sample pseudo-time
-        batch["t"] = torch.abs(torch.randn(batch["base"].shape[0], 1, device=self.device))
+        batch["t"] = torch.abs(
+            torch.randn(batch["base"].shape[0], 1, device=self.device)
+        )
 
         # Sample noise
         batch["noise"] = torch.randn(batch["base"].shape, device=self.device)
@@ -152,7 +156,7 @@ class Trainer:
         torch.nn.utils.clip_grad_norm_(
             self.model.parameters(), max_norm=self.max_grad_norm
         )
-        
+
         self.scaler.scale(loss).backward()
         self.scaler.step(self.optimizer)
         self.scaler.update()
@@ -189,10 +193,11 @@ class Trainer:
 
                 pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
 
-
             # Switch to full precision if warmup is finished
             if (epoch >= self.mixed_precision_warmup) and (not self.full_precision):
-                logger.info(f"Mixed precision warmup finished, switching to full precision")
+                logger.info(
+                    f"Mixed precision warmup finished, switching to full precision"
+                )
                 self._train_step = self._train_step_full_precision
                 self.full_precision = True
 

@@ -5,38 +5,62 @@ import hydra
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import trackio
 from omegaconf import DictConfig, OmegaConf
 
-from scisi.likelihood_models.gaussian_likelihood import Likelihood
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
 from scisi.preprocessing.preprocessor import Preprocesser
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
 
-VERBOSE = True
+torch.set_default_dtype(torch.float32)
 
-DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "zealous-wave-18"
+torch.manual_seed(42)
+
+VERBOSE = True
 NUM_PHYSICAL_STEPS = 50
-SKIP_GRID = 4
+NUM_STEPS = 250
 
 
 @hydra.main(  # type: ignore[misc]
-    config_path="../../../checkpoints",
-    config_name=f"{DEFAULT_PROJECT}/{DEFAULT_NAME}/config.yaml",
+    config_path="../../../config",
+    config_name=f"stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
-def main(cfg: DictConfig) -> None:
-    project = list(cfg.keys())[0]
-    name = list(cfg[project].keys())[0]
-    cfg = OmegaConf.select(cfg, f"{project}.{name}")
+def main(posterior_cfg: DictConfig) -> None:
+    project = posterior_cfg.project
+    name = posterior_cfg.name
+
+    cfg = OmegaConf.load(f"checkpoints/{project}/{name}/config.yaml")
+    len_field_history = cfg.model.drift_model.len_field_history
+
+    logger.info(f"Instantiating observation operator...")
+    obs_operator = hydra.utils.instantiate(posterior_cfg.obs_operator)
+
+    logger.info(f"Instantiating likelihood model...")
+    likelihood_model = hydra.utils.instantiate(
+        posterior_cfg.likelihood_model,
+        obs_operator=obs_operator,
+    )
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
 
     logger.info(f"Instantiating test data...")
     test_dataset = hydra.utils.instantiate(cfg.test_data)
+    trajectory = test_dataset[0]["x"].unsqueeze(0)
+
+    logger.info(f"Preprocessing trajectory...")
+    init_data = preprocesser.transform(
+        base=trajectory,
+        field_history=trajectory[:, :, :, :, 0:len_field_history],
+        is_batch=True,
+        is_trajectory=True,
+    )
+    trajectory = init_data["base"].to("cuda")
+    base = init_data["base"][:, :, :, :, len_field_history - 1].to("cuda")
+    field_history = init_data["field_history"].to("cuda")
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -46,87 +70,64 @@ def main(cfg: DictConfig) -> None:
     model.eval()
     model.to("cuda")
 
-    logger.info(f"Instantiating observation operator...")
-    obs_indices = [
-        (0, i, j) for i in range(0, 128, SKIP_GRID) for j in range(0, 128, SKIP_GRID)
-    ]
-    obs_indices = torch.tensor(obs_indices)
-
-    logger.info(f"Preparing trajectory...")
-    trajectory = test_dataset[0]["x"].unsqueeze(0)
-    
-
-    x = trajectory[:, :, :, :, 1]
-    x_history = trajectory[:, :, :, :, 0:2]
+    logger.info(f"Instantiating posterior model...")
+    posterior_model = hydra.utils.instantiate(
+        posterior_cfg.posterior_model,
+        model=model,
+        likelihood_model=likelihood_model,
+        diffusion_term=lambda t: 3.0 * model.interpolation.gamma(t),
+    )
 
     logger.info(f"Preparing observations...")
-    obs_operator = LinearObservationOperator(
-        obs_indices=obs_indices,
-    )
-    observations = torch.zeros(1, len(obs_indices), NUM_PHYSICAL_STEPS)
+    observations = torch.zeros(1, len(obs_operator.obs_indices), NUM_PHYSICAL_STEPS)
     for i in range(NUM_PHYSICAL_STEPS):
-        y = preprocesser.transform(base=trajectory[:, :, :, :, i], is_batch=True)[
-            "base"
-        ]
-        observations[:, :, i] = obs_operator(y)
+        observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
 
-    likelihood = Likelihood(
-        obs_operator=obs_operator,
-        dist=torch.distributions.Normal,
-        loc=observations[:, :, 0],
-        scale=0.05,
+    logger.info(f"Sampling from the posterior model...")
+    x_post = posterior_model.sample(
+        base=base,
+        batch_size=1,
+        num_steps=NUM_STEPS,
+        field_history=field_history,
+        observations=observations[:, :, len_field_history].to("cuda"),
+        sde_stepper=heun_step,
     )
 
-    logger.info(f"Preprocessing trajectory...")
-    x = preprocesser.transform(base=x, is_batch=True)["base"]
-    x_history = preprocesser.transform(field_history=x_history, is_batch=True)[
-        "field_history"
-    ]
-    trajectory = preprocesser.transform(base=trajectory, is_batch=True)["base"]
-
-    x = x.to("cuda")
-    x_history = x_history.to("cuda")
-
-    logger.info(f"Sampling from the model...")
-    num_steps = 500
-    x_post = model.posterior_sample_trajectory(
-        base=x,
+    logger.info(f"Sampling from the prior model...")
+    x_prior = model.sample(
+        base=base,
         batch_size=1,
-        num_steps=num_steps,
-        field_history=x_history,
-        num_physical_steps=NUM_PHYSICAL_STEPS,
-        observations=observations[:, :, 2:],
-        likelihood_model=likelihood,
+        num_steps=NUM_STEPS,
+        field_history=field_history,
         sde_stepper=euler_maruyama_step,
-        diffusion_term=lambda t: 4.0 * model.interpolation.gamma(t),
     )
 
-    x_prior = model.sample_trajectory(
-        base=x,
-        batch_size=1,
-        num_steps=num_steps,
-        field_history=x_history,
-        num_physical_steps=NUM_PHYSICAL_STEPS,
-    )
-
-    true_trajectory = trajectory[0, 0].cpu().numpy()
+    true_trajectory = trajectory[0, 0].cpu()
     predicted_trajectory = x_prior[0, 0].cpu()
     predicted_trajectory_post = x_post[0, 0].cpu()
 
     rmse_post = torch.sqrt(
-        torch.mean(
-            (predicted_trajectory_post - true_trajectory[:, :, :NUM_PHYSICAL_STEPS])
-            ** 2
+        nn.MSELoss()(
+            predicted_trajectory_post, true_trajectory[:, :, len_field_history]
         )
     )
     rmse_prior = torch.sqrt(
-        torch.mean(
-            (predicted_trajectory - true_trajectory[:, :, :NUM_PHYSICAL_STEPS]) ** 2
-        )
+        nn.MSELoss()(predicted_trajectory, true_trajectory[:, :, len_field_history])
     )
-
     logger.info(f"RMSE of posterior: {rmse_post}")
     logger.info(f"RMSE of prior: {rmse_prior}")
+
+    plt.figure()
+    plt.subplot(1, 3, 1)
+    plt.imshow(true_trajectory[:, :, len_field_history])
+    plt.title("True")
+    plt.subplot(1, 3, 2)
+    plt.imshow(predicted_trajectory)
+    plt.title("Prior")
+    plt.subplot(1, 3, 3)
+    plt.imshow(predicted_trajectory_post)
+    plt.title("Posterior")
+    plt.show()
 
     # logger.info(f"Inverse transforming predicted trajectory...")
     # predicted_trajectory = preprocesser.inverse_transform(

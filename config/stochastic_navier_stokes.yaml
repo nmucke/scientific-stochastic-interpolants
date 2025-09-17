@@ -92,7 +92,7 @@ optimizer:
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 100
+  T_max: 500
   eta_min: 0.000001
 
 trainer:
@@ -103,6 +103,6 @@ trainer:
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping
-    patience: 25
+    patience: 50
   max_grad_norm: 5.0
-  mixed_precision_warmup: 50
+  mixed_precision_warmup: 100

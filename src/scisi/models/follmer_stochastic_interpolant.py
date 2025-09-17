@@ -1,6 +1,6 @@
 import pdb
-from typing import Callable
 from functools import partial
+from typing import Callable
 
 import torch
 import torch.nn as nn
@@ -62,17 +62,6 @@ class FollmerStochasticInterpolant(nn.Module):
         """
         return self.drift_model(x, t, field_history, field_cond, pars_cond)
 
-    def score(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        field_history: torch.Tensor | None = None,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Compute the score of the Follmer stochastic interpolant."""
-        return self.drift_model(x, t, field_history, field_cond, pars_cond)
-
     def forward(
         self,
         base: torch.Tensor,
@@ -122,22 +111,24 @@ class FollmerStochasticInterpolant(nn.Module):
         return pred_drift, true_diff
 
     def _prepare_batch(
-        self, 
-        base: torch.Tensor, 
-        field_history: torch.Tensor, 
-        field_cond: torch.Tensor | None = None, 
+        self,
+        base: torch.Tensor,
+        field_history: torch.Tensor,
+        field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         batch_size: int = 1,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """Prepare the batch for the sample method."""
-        
+
         base = base.repeat(batch_size, 1, 1, 1)
         field_history = field_history.repeat(batch_size, 1, 1, 1, 1)
-        field_cond = field_cond.repeat(batch_size, 1, 1, 1) if field_cond is not None else None
+        field_cond = (
+            field_cond.repeat(batch_size, 1, 1, 1) if field_cond is not None else None
+        )
         pars_cond = pars_cond.repeat(batch_size, 1) if pars_cond is not None else None
 
         return base, field_history, field_cond, pars_cond
-    
+
     def _compute_first_step(
         self,
         base: torch.Tensor,
@@ -146,19 +137,19 @@ class FollmerStochasticInterpolant(nn.Module):
         field_history: torch.Tensor,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
-        sde_stepper: Callable = euler_maruyama_step,        
+        sde_stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
         return sde_stepper(
-                drift_model=self.drift_model,
-                diffusion_term=self.interpolation.gamma,
-                x=base,
-                t=t,
-                dt=dt,
-                field_history=field_history,
-                field_cond=field_cond,
-                pars_cond=pars_cond,
-            )
+            drift_model=self.drift_model,
+            diffusion_term=self.interpolation.gamma,
+            x=base,
+            t=t,
+            dt=dt,
+            field_history=field_history,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+        )
 
     def sample(
         self,
@@ -179,7 +170,9 @@ class FollmerStochasticInterpolant(nn.Module):
             diffusion_term = self.interpolation.gamma
             drift_model = self.drift_model
         else:
-            drift_model = partial(self._drift_with_prior_score, diffusion_term=diffusion_term)
+            drift_model = partial(
+                self._drift_with_prior_score, diffusion_term=diffusion_term
+            )
 
         base, field_history, field_cond, pars_cond = self._prepare_batch(
             base, field_history, field_cond, pars_cond, batch_size
@@ -192,12 +185,12 @@ class FollmerStochasticInterpolant(nn.Module):
             "field_history": field_history,
             "field_cond": field_cond,
             "pars_cond": pars_cond,
-            "dt": dt
+            "dt": dt,
         }
 
         base = self._compute_first_step(
-            base=base, 
-            t=t_vec[:, 0], 
+            base=base,
+            t=t_vec[:, 0],
             sde_stepper=sde_stepper,
             **fixed_input,
         ).detach()
@@ -256,7 +249,7 @@ class FollmerStochasticInterpolant(nn.Module):
                     base=base,
                     field_history=field_history,
                     **cond_input(i),
-                    **fixed_input,
+                    **fixed_input,  # type: ignore[arg-type]
                 )
                 trajectory.append(base.cpu())
 
@@ -285,7 +278,6 @@ class FollmerStochasticInterpolant(nn.Module):
 
         return A * (beta * drift - c)
 
-
     def _drift_with_prior_score(
         self,
         x: torch.Tensor,
@@ -293,7 +285,7 @@ class FollmerStochasticInterpolant(nn.Module):
         field_history: torch.Tensor,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
-        diffusion_term: Callable | None = None,
+        diffusion_term: Callable = lambda t: 1 - t,
     ) -> torch.Tensor:
         """Compute the posterior drift of the Follmer stochastic interpolant."""
 
@@ -303,9 +295,7 @@ class FollmerStochasticInterpolant(nn.Module):
             return drift
 
         # Compute the posterior drift
-        prior_score = self._prior_score(
-            x, field_history[:, :, :, :, -1], drift, t
-        )
+        prior_score = self._prior_score(x, field_history[:, :, :, :, -1], drift, t)
         drift = (
             drift
             + 0.5
@@ -314,101 +304,3 @@ class FollmerStochasticInterpolant(nn.Module):
         )
 
         return drift
-
-    def posterior_sample_trajectory(
-        self,
-        base: torch.Tensor,
-        field_history: torch.Tensor,
-        observations: torch.Tensor,
-        likelihood_model: nn.Module,
-        batch_size: int = 1,
-        num_steps: int = 100,
-        num_physical_steps: int = 10,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
-        sde_stepper: Callable = euler_maruyama_step,
-        diffusion_term: Callable | None = None,
-    ) -> torch.Tensor:
-        """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
-
-        trajectory = [
-            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
-        ]
-
-        if diffusion_term is not None:
-            self.diffusion_term = diffusion_term
-
-        self.likelihood_model = likelihood_model
-
-        pbar = tqdm.tqdm(
-            enumerate(range(0, num_physical_steps - field_history.shape[-1]))
-        )
-        for i, _ in pbar:
-            self.observations = observations[:, :, i].to(self._get_device())
-            self.likelihood_model.update_obs(self.observations)
-
-            base, field_history = self.sample(
-                base=base,
-                batch_size=batch_size,
-                num_steps=num_steps,
-                field_history=field_history,
-                field_cond=field_cond,
-                pars_cond=pars_cond,
-                return_field_history=True,
-                sde_stepper=sde_stepper,
-                drift_model=self.posterior_drift,
-            )
-            trajectory.append(base.detach().cpu())
-
-        trajectory = torch.stack(trajectory, dim=-1)
-
-        return trajectory
-
-    def posterior_drift(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Compute the posterior drift of the Follmer stochastic interpolant."""
-
-        prior_drift = self.drift_model(x, t, field_history, field_cond, pars_cond)
-
-        if t < MIN_TIME:
-            return prior_drift
-
-        # Compute the interpolant of the observation
-        base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])  # type: ignore[union-attr]
-        interpolant_obs = self.interpolation.forward(
-            base_obs, self.observations, t, torch.zeros_like(base_obs)
-        )
-
-        # Compute the scale of the interpolant of the observation
-        interpolant_scale = (
-            self.interpolation.beta(t) ** 2 * self.likelihood_model.original_scale  # type: ignore[union-attr]
-        )
-        interpolant_scale = interpolant_scale + self.interpolation.gamma(t) ** 2 * t
-
-        # Update the observation and scale of the likelihood model
-        self.likelihood_model.update_obs(interpolant_obs)  # type: ignore[union-attr]
-        self.likelihood_model.update_scale(interpolant_scale)  # type: ignore[union-attr]
-        likelihood_score = self.likelihood_model.score(x)  # type: ignore[union-attr]
-
-        # Compute the posterior drift
-        prior_score = self._prior_score(
-            x, field_history[:, :, :, :, -1], prior_drift, t
-        )
-        posterior_drift = (
-            prior_drift
-            + 0.5
-            * (self.diffusion_term(t) ** 2 - self.interpolation.gamma(t) ** 2)  # type: ignore[misc]
-            * prior_score
-        )
-
-        posterior_drift = (
-            posterior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score  # type: ignore[misc]
-        )
-
-        return posterior_drift
