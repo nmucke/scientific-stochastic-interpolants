@@ -17,7 +17,7 @@ VERBOSE = True
 MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "resourceful-plain-37"
+DEFAULT_NAME = "sincere-ridge-38"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
