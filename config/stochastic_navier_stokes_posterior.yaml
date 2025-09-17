@@ -1,6 +1,8 @@
-project: stochastic_navier_stokes
-name: noble-dune-33
-# name: optimistic-spring-34
+pre_trained_model:
+  project: stochastic_navier_stokes
+  name: resourceful-plain-37 
+  # name: quirky-cave-36
+  # name: optimistic-spring-34
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator

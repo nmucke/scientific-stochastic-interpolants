@@ -8,7 +8,10 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
-from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
+from scisi.sampling.sde_solvers import (
+    euler_maruyama_step,
+    heun_step,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +21,12 @@ torch.manual_seed(42)
 
 VERBOSE = True
 NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 250
+NUM_STEPS = 2500
 MIXED_PRECISION = True
+BATCH_SIZE = 1
+SDE_STEPPER = heun_step
+TEST_SAMPLE_INDEX = 0
+DIFFUSION_MULTIPLIER = 4.5
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -34,10 +41,16 @@ mixed_precision_context = (
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:
-    project = posterior_cfg.project
-    name = posterior_cfg.name
+    project = posterior_cfg.pre_trained_model.project
+    name = posterior_cfg.pre_trained_model.name
+    logger.info(f"Project: {project}")
+    logger.info(f"Name: {name}")
 
     cfg = OmegaConf.load(f"checkpoints/{project}/{name}/config.yaml")
+    logger.info(f"Loading config from checkpoint:")
+    logger.info(f"Project: {project}")
+    logger.info(f"Name: {name}")
+
     len_field_history = cfg.model.drift_model.len_field_history
 
     logger.info(f"Instantiating observation operator...")
@@ -54,7 +67,7 @@ def main(posterior_cfg: DictConfig) -> None:
 
     logger.info(f"Instantiating test data...")
     test_dataset = hydra.utils.instantiate(cfg.test_data)
-    trajectory = test_dataset[0]["x"].unsqueeze(0)
+    trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
     logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
@@ -80,7 +93,7 @@ def main(posterior_cfg: DictConfig) -> None:
         posterior_cfg.posterior_model,
         model=model,
         likelihood_model=likelihood_model,
-        diffusion_term=lambda t: 3.0 * model.interpolation.gamma(t),
+        diffusion_term=lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t),
     )
 
     logger.info(f"Preparing observations...")
@@ -90,10 +103,10 @@ def main(posterior_cfg: DictConfig) -> None:
 
     input_dict = {
         "base": base,
-        "batch_size": 1,
+        "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": field_history,
-        "sde_stepper": heun_step,
+        "sde_stepper": SDE_STEPPER,
     }
 
     logger.info(

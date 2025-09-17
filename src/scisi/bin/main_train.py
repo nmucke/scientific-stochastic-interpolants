@@ -29,7 +29,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 VERBOSE = True
 CONTINUE_FROM_CHECKPOINT = True
 CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "patient-brook-35"
+CHECKPOINT_NAME = "quirky-cave-36"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
@@ -47,6 +47,7 @@ def main(cfg: DictConfig) -> None:
         cfg = OmegaConf.load(
             f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/config.yaml"
         )
+    
 
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(

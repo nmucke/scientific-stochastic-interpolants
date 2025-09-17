@@ -14,14 +14,15 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = False
+MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "quirky-cave-36"
+DEFAULT_NAME = "resourceful-plain-37"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
 PLOTTING_TIMES = [10, 30, 45]
+SDE_STEPPER = heun_step
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -76,9 +77,7 @@ def main(cfg: DictConfig) -> None:
         "num_steps": NUM_STEPS,
         "field_history": field_history,
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "sde_stepper": heun_step,
-        # "sde_stepper": euler_maruyama_step,
-        # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
+        "sde_stepper": SDE_STEPPER,
     }
 
     # Use mixed precision if available
