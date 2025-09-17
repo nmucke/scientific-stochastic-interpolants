@@ -54,11 +54,6 @@ class StochasticInterpolantPosterior(nn.Module):
     ) -> torch.Tensor:
         """Sample from the posterior."""
 
-        drift_model = partial(
-            self._posterior_drift,
-            observations=observations,
-        )
-
         base, field_history, field_cond, pars_cond = self.model._prepare_batch(
             base, field_history, field_cond, pars_cond, batch_size
         )
@@ -80,12 +75,14 @@ class StochasticInterpolantPosterior(nn.Module):
             **fixed_input,
         ).detach()
 
-        fixed_input["drift_model"] = drift_model
+        fixed_input["drift_model"] = partial(
+            self._posterior_drift,
+            observations=observations,
+        )
         fixed_input["diffusion_term"] = self.diffusion_term
 
         for i in range(1, num_steps):
             t = t_vec[:, i : i + 1]
-
             base.requires_grad = True
             base = sde_stepper(x=base, t=t, **fixed_input).detach()
 
@@ -151,51 +148,46 @@ class StochasticInterpolantPosterior(nn.Module):
 
         return prior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score
 
-    # def posterior_sample_trajectory(
-    #     self,
-    #     base: torch.Tensor,
-    #     field_history: torch.Tensor,
-    #     observations: torch.Tensor,
-    #     likelihood_model: nn.Module,
-    #     batch_size: int = 1,
-    #     num_steps: int = 100,
-    #     num_physical_steps: int = 10,
-    #     field_cond: torch.Tensor | None = None,
-    #     pars_cond: torch.Tensor | None = None,
-    #     sde_stepper: Callable = euler_maruyama_step,
-    #     diffusion_term: Callable | None = None,
-    # ) -> torch.Tensor:
-    #     """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
+    def sample_trajectory(
+        self,
+        base: torch.Tensor,
+        field_history: torch.Tensor,
+        observations: torch.Tensor,
+        batch_size: int = 1,
+        num_steps: int = 100,
+        num_physical_steps: int = 10,
+        field_cond: torch.Tensor | None = None,
+        pars_cond: torch.Tensor | None = None,
+        sde_stepper: Callable = euler_maruyama_step,
+    ) -> torch.Tensor:
+        """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
 
-    #     trajectory = [
-    #         field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
-    #     ]
+        trajectory = [
+            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
+        ]
 
-    #     if diffusion_term is not None:
-    #         self.diffusion_term = diffusion_term
+        fixed_input = {
+            "num_steps": num_steps,
+            "batch_size": batch_size,
+            "return_field_history": True,
+            "sde_stepper": sde_stepper,
+        }
 
-    #     self.likelihood_model = likelihood_model
+        cond_input = lambda i: {
+            "field_cond": field_cond[:, :, :, :, i] if field_cond is not None else None,
+            "pars_cond": pars_cond[:, i : i + 1] if pars_cond is not None else None,
+            "observations": observations[:, :, i],
+        }
+        pbar = tqdm.tqdm(range(0, num_physical_steps - field_history.shape[-1]))
 
-    #     pbar = tqdm.tqdm(
-    #         enumerate(range(0, num_physical_steps - field_history.shape[-1]))
-    #     )
-    #     for i, _ in pbar:
-    #         self.observations = observations[:, :, i].to(self._get_device())
-    #         self.likelihood_model.update_obs(self.observations)
+        for i in pbar:
+            base, field_history = self.sample(
+                base=base,
+                field_history=field_history,
+                **cond_input(i),
+                **fixed_input,  # type: ignore[arg-type]
+            )
 
-    #         base, field_history = self.sample(
-    #             base=base,
-    #             batch_size=batch_size,
-    #             num_steps=num_steps,
-    #             field_history=field_history,
-    #             field_cond=field_cond,
-    #             pars_cond=pars_cond,
-    #             return_field_history=True,
-    #             sde_stepper=sde_stepper,
-    #             drift_model=self.posterior_drift,
-    #         )
-    #         trajectory.append(base.detach().cpu())
+            trajectory.append(base.cpu())
 
-    #     trajectory = torch.stack(trajectory, dim=-1)
-
-    #     return trajectory
+        return torch.stack(trajectory, dim=-1)

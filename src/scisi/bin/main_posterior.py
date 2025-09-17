@@ -4,14 +4,12 @@ import pdb
 
 import hydra
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
-from scisi.sampling.sde_solvers import (
-    euler_maruyama_step,
-    heun_step,
-)
+from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +17,13 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-VERBOSE = True
-NUM_PHYSICAL_STEPS = 50
+NUM_PHYSICAL_STEPS = 20
 NUM_STEPS = 500
-MIXED_PRECISION = False
+MIXED_PRECISION = True
 BATCH_SIZE = 1
 SDE_STEPPER = heun_step
 TEST_SAMPLE_INDEX = 0
-DIFFUSION_MULTIPLIER = 4.5
+DIFFUSION_MULTIPLIER = 4.0
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -107,6 +104,7 @@ def main(posterior_cfg: DictConfig) -> None:
         "num_steps": NUM_STEPS,
         "field_history": field_history,
         "sde_stepper": SDE_STEPPER,
+        "num_physical_steps": NUM_PHYSICAL_STEPS,
     }
 
     logger.info(
@@ -116,57 +114,87 @@ def main(posterior_cfg: DictConfig) -> None:
     )
     with mixed_precision_context:
         logger.info(f"Sampling from the posterior model...")
-        x_post = posterior_model.sample(
-            **input_dict, observations=observations[:, :, len_field_history].to("cuda")
+        posterior_trajectory = posterior_model.sample_trajectory(
+            **input_dict,
+            observations=observations[:, :, len_field_history:].to("cuda"),
         )
 
         logger.info(f"Sampling from the prior model...")
-        x_prior = model.sample(**input_dict)
+        prior_trajectory = model.sample_trajectory(**input_dict)
 
-    true_trajectory = trajectory[0, 0].cpu()
-    predicted_trajectory = x_prior[0, 0].cpu()
-    predicted_trajectory_post = x_post[0, 0].cpu()
+    true_trajectory = trajectory.to("cpu")
 
-    rmse_post = torch.sqrt(
-        nn.MSELoss()(
-            predicted_trajectory_post, true_trajectory[:, :, len_field_history]
-        )
-    )
-    rmse_prior = torch.sqrt(
-        nn.MSELoss()(predicted_trajectory, true_trajectory[:, :, len_field_history])
-    )
-    logger.info(f"RMSE of posterior: {rmse_post:.6f}")
-    logger.info(f"RMSE of prior: {rmse_prior:.6f}")
+    logger.info(f"Inverse transforming predicted trajectory...")
+    posterior_trajectory = preprocesser.inverse_transform(
+        base=posterior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    prior_trajectory = preprocesser.inverse_transform(
+        base=prior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    true_trajectory = preprocesser.inverse_transform(
+        base=true_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
 
-    plt.figure()
-    plt.subplot(1, 3, 1)
-    plt.imshow(true_trajectory[:, :, len_field_history])
+    posterior_trajectory = posterior_trajectory[0, 0]
+    prior_trajectory = prior_trajectory[0, 0]
+    true_trajectory = true_trajectory[0, 0]
+
+    logger.info(f"Computing RMSE...")
+    rmse_post = [
+        torch.sqrt(
+            nn.MSELoss()(posterior_trajectory[:, :, i], true_trajectory[:, :, i])
+        ).item()
+        for i in range(len_field_history, NUM_PHYSICAL_STEPS)
+    ]
+    rmse_prior = [
+        torch.sqrt(
+            nn.MSELoss()(prior_trajectory[:, :, i], true_trajectory[:, :, i])
+        ).item()
+        for i in range(len_field_history, NUM_PHYSICAL_STEPS)
+    ]
+    logger.info(f"RMSE of posterior: {np.mean(rmse_post):.6f}")
+    logger.info(f"RMSE of prior: {np.mean(rmse_prior):.6f}")
+
+    true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
+    posterior_state = posterior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
+    prior_state = prior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
+
+    logger.info(f"Plotting results...")
+    plt.figure(figsize=(15, 10))
+    plt.subplot(2, 3, 1)
+    plt.imshow(true_state)
     plt.title("True")
-    plt.subplot(1, 3, 2)
-    plt.imshow(predicted_trajectory)
-    plt.title("Prior")
-    plt.subplot(1, 3, 3)
-    plt.imshow(predicted_trajectory_post)
+    plt.subplot(2, 3, 2)
+    plt.imshow(posterior_state)
     plt.title("Posterior")
+    plt.subplot(2, 3, 3)
+    plt.imshow(prior_state)
+    plt.title("Prior")
+    plt.subplot(2, 3, 4)
+    plt.plot(
+        range(len_field_history, NUM_PHYSICAL_STEPS),
+        rmse_post,
+        label="Posterior RMSE",
+        linewidth=3,
+    )
+    plt.plot(
+        range(len_field_history, NUM_PHYSICAL_STEPS),
+        rmse_prior,
+        label="Prior RMSE",
+        linewidth=3,
+    )
+    plt.grid(True)
+    plt.legend()
+    plt.title("RMSE")
+    plt.subplot(2, 3, 5)
+    plt.imshow(np.abs(posterior_state - true_state))
+    plt.colorbar()
+    plt.title("Posterior Error")
+    plt.subplot(2, 3, 6)
+    plt.imshow(np.abs(prior_state - true_state))
+    plt.colorbar()
+    plt.title("Prior Error")
     plt.show()
-
-    # logger.info(f"Inverse transforming predicted trajectory...")
-    # predicted_trajectory = preprocesser.inverse_transform(
-    #     base=predicted_trajectory, is_batch=True, is_trajectory=True
-    # )["base"].numpy()
-    # predicted_trajectory = predicted_trajectory[0, 0]
-
-    # logger.info(f"Plotting trajectory...")
-    # plotting_times = [2, 4, 6]
-    # plt.figure()
-    # for i, t in enumerate(plotting_times):
-    #     plt.subplot(2, len(plotting_times), i + 1)
-    #     plt.imshow(true_trajectory[:, :, t])
-    #     plt.title(f"True Trajectory at t={t}")
-    #     plt.subplot(2, len(plotting_times), len(plotting_times) + 1 + i)
-    #     plt.imshow(predicted_trajectory[:, :, t])
-    #     plt.title(f"Predicted Trajectory at t={t}")
-    # plt.show()
 
 
 if __name__ == "__main__":

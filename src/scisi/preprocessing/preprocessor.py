@@ -79,33 +79,45 @@ class Preprocesser:
 
         if base is not None:
             base = self._transform(
-                base, self.base_mean, self.base_std, is_batch, is_trajectory
+                base,
+                self.base_mean.to(base.device),
+                self.base_std.to(base.device),
+                is_batch,
+                is_trajectory,
             )
         if target is not None:
             target = self._transform(
-                target, self.target_mean, self.target_std, is_batch, is_trajectory
+                target,
+                self.target_mean.to(target.device),
+                self.target_std.to(target.device),
+                is_batch,
+                is_trajectory,
             )
         if field_history is not None:
             field_history = self._transform(
                 field_history,
-                self.base_mean,  # Field history is always normalized with the base mean and std
-                self.base_std,  # Field history is always normalized with the base mean and std
+                self.base_mean.to(
+                    field_history.device
+                ),  # Field history is always normalized with the base mean and std
+                self.base_std.to(
+                    field_history.device
+                ),  # Field history is always normalized with the base mean and std
                 is_batch,
                 True,  # Field history is always a trajectory
             )
         if field_cond is not None:
             field_cond = self._transform(
                 field_cond,
-                self.field_cond_mean,
-                self.field_cond_std,
+                self.field_cond_mean.to(field_cond.device),
+                self.field_cond_std.to(field_cond.device),
                 is_batch,
                 is_trajectory,
             )
         if pars_cond is not None:
             pars_cond = self._transform(
                 pars_cond,
-                self.pars_cond_mean,
-                self.pars_cond_std,
+                self.pars_cond_mean.to(pars_cond.device),
+                self.pars_cond_std.to(pars_cond.device),
                 is_batch,
                 is_trajectory,
             )
@@ -146,33 +158,45 @@ class Preprocesser:
 
         if base is not None:
             base = self._inverse_transform(
-                base, self.base_mean, self.base_std, is_batch, is_trajectory
+                base,
+                self.base_mean.to(base.device),
+                self.base_std.to(base.device),
+                is_batch,
+                is_trajectory,
             )
         if target is not None:
             target = self._inverse_transform(
-                target, self.target_mean, self.target_std, is_batch, is_trajectory
+                target,
+                self.target_mean.to(target.device),
+                self.target_std.to(target.device),
+                is_batch,
+                is_trajectory,
             )
         if field_history is not None:
             field_history = self._inverse_transform(
                 field_history,
-                self.base_mean,  # Field history is always normalized with the base mean and std
-                self.base_std,  # Field history is always normalized with the base mean and std
+                self.base_mean.to(
+                    field_history.device
+                ),  # Field history is always normalized with the base mean and std
+                self.base_std.to(
+                    field_history.device
+                ),  # Field history is always normalized with the base mean and std
                 is_batch,
                 True,  # Field history is always a trajectory
             )
         if field_cond is not None:
             field_cond = self._inverse_transform(
                 field_cond,
-                self.field_cond_mean,
-                self.field_cond_std,
+                self.field_cond_mean.to(field_cond.device),
+                self.field_cond_std.to(field_cond.device),
                 is_batch,
                 is_trajectory,
             )
         if pars_cond is not None:
             pars_cond = self._inverse_transform(
                 pars_cond,
-                self.pars_cond_mean,
-                self.pars_cond_std,
+                self.pars_cond_mean.to(pars_cond.device),
+                self.pars_cond_std.to(pars_cond.device),
                 is_batch,
                 is_trajectory,
             )

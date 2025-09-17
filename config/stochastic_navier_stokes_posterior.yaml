@@ -1,6 +1,7 @@
 pre_trained_model:
   project: stochastic_navier_stokes
-  name: resourceful-plain-37 
+  name: sincere-ridge-38
+  # name: resourceful-plain-37
   # name: quirky-cave-36
   # name: optimistic-spring-34
 
