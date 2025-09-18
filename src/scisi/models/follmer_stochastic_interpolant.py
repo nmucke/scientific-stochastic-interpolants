@@ -174,9 +174,10 @@ class FollmerStochasticInterpolant(nn.Module):
                 self._drift_with_prior_score, diffusion_term=diffusion_term
             )
 
-        base, field_history, field_cond, pars_cond = self._prepare_batch(
-            base, field_history, field_cond, pars_cond, batch_size
-        )
+        if (batch_size > 1) and (base.shape[0] == 1):
+            base, field_history, field_cond, pars_cond = self._prepare_batch(
+                base, field_history, field_cond, pars_cond, batch_size
+            )
 
         dt = torch.tensor(1 / num_steps, device=self._get_device())
         t_vec = torch.linspace(0, 1, num_steps, device=self._get_device()).unsqueeze(0)
@@ -225,6 +226,11 @@ class FollmerStochasticInterpolant(nn.Module):
         diffusion_term: Callable | None = None,
     ) -> torch.Tensor:
         """Sample a trajectory from the Follmer stochastic interpolant."""
+
+        if (batch_size > 1) and (base.shape[0] == 1):
+            base, field_history, field_cond, pars_cond = self._prepare_batch(
+                base, field_history, field_cond, pars_cond, batch_size
+            )
 
         trajectory = [
             field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
