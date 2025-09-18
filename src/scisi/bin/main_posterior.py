@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 import pdb
 
 import hydra
@@ -9,6 +10,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.plotting.animation import create_animation_from_tensors
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
@@ -17,13 +19,13 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 20
-NUM_STEPS = 500
+NUM_PHYSICAL_STEPS = 4
+NUM_STEPS = 1000
 MIXED_PRECISION = True
 BATCH_SIZE = 1
 SDE_STEPPER = heun_step
 TEST_SAMPLE_INDEX = 0
-DIFFUSION_MULTIPLIER = 4.0
+DIFFUSION_MULTIPLIER = 5.0
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -105,6 +107,7 @@ def main(posterior_cfg: DictConfig) -> None:
         "field_history": field_history,
         "sde_stepper": SDE_STEPPER,
         "num_physical_steps": NUM_PHYSICAL_STEPS,
+        "observations": observations[:, :, len_field_history:].to("cuda"),
     }
 
     logger.info(
@@ -114,13 +117,12 @@ def main(posterior_cfg: DictConfig) -> None:
     )
     with mixed_precision_context:
         logger.info(f"Sampling from the posterior model...")
-        posterior_trajectory = posterior_model.sample_trajectory(
-            **input_dict,
-            observations=observations[:, :, len_field_history:].to("cuda"),
-        )
+        posterior_trajectory = posterior_model.sample_trajectory(**input_dict)
 
+        input_dict.pop("num_steps")
+        input_dict.pop("observations")
         logger.info(f"Sampling from the prior model...")
-        prior_trajectory = model.sample_trajectory(**input_dict)
+        prior_trajectory = model.sample_trajectory(**input_dict, num_steps=50)
 
     true_trajectory = trajectory.to("cpu")
 
@@ -152,12 +154,30 @@ def main(posterior_cfg: DictConfig) -> None:
         ).item()
         for i in range(len_field_history, NUM_PHYSICAL_STEPS)
     ]
+    rmse_prior = np.array(rmse_prior)
+    rmse_post = np.array(rmse_post)
     logger.info(f"RMSE of posterior: {np.mean(rmse_post):.6f}")
     logger.info(f"RMSE of prior: {np.mean(rmse_prior):.6f}")
 
     true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
     posterior_state = posterior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
     prior_state = prior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
+
+    figure_path = f"figures/{project}"
+    os.makedirs(figure_path, exist_ok=True)
+
+    logger.info(f"Creating animation...")
+    create_animation_from_tensors(
+        [
+            true_trajectory[:, :, 0:NUM_PHYSICAL_STEPS],
+            posterior_trajectory,
+            prior_trajectory,
+        ],
+        fps=10,
+        file_name=f"{figure_path}/posterior_trajectory.mp4",
+        colormaps="viridis",
+        titles=["True", "Posterior", "Prior"],
+    )
 
     logger.info(f"Plotting results...")
     plt.figure(figsize=(15, 10))
@@ -176,12 +196,16 @@ def main(posterior_cfg: DictConfig) -> None:
         rmse_post,
         label="Posterior RMSE",
         linewidth=3,
+        linestyle="." if len(rmse_post) == 1 else "-.",
+        markersize=10,
     )
     plt.plot(
         range(len_field_history, NUM_PHYSICAL_STEPS),
         rmse_prior,
         label="Prior RMSE",
         linewidth=3,
+        linestyle="." if len(rmse_prior) == 1 else "-.",
+        markersize=10,
     )
     plt.grid(True)
     plt.legend()
@@ -194,6 +218,7 @@ def main(posterior_cfg: DictConfig) -> None:
     plt.imshow(np.abs(prior_state - true_state))
     plt.colorbar()
     plt.title("Prior Error")
+    plt.savefig(f"{figure_path}/posterior_trajectory.png")
     plt.show()
 
 

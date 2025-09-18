@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 import pdb
 
 import hydra
@@ -7,6 +8,7 @@ import matplotlib.pyplot as plt
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.plotting.animation import create_animation_from_tensors
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 torch.set_default_dtype(torch.float32)
@@ -14,7 +16,7 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = True
+MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
 DEFAULT_NAME = "sincere-ridge-38"
@@ -89,14 +91,26 @@ def main(cfg: DictConfig) -> None:
     with mixed_precision_context:
         predicted_trajectory = model.sample_trajectory(**input_dict)
 
-    true_trajectory = trajectory[0, 0].cpu().numpy()
+    true_trajectory = trajectory[0, 0].cpu()
     predicted_trajectory = predicted_trajectory.cpu()
 
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(
         base=predicted_trajectory, is_batch=True, is_trajectory=True
-    )["base"].numpy()
+    )["base"]
     predicted_trajectory = predicted_trajectory[0, 0]
+
+    figure_path = f"figures/{project}"
+    os.makedirs(figure_path, exist_ok=True)
+
+    logger.info(f"Creating animation...")
+    create_animation_from_tensors(
+        [true_trajectory[:, :, 0:NUM_PHYSICAL_STEPS], predicted_trajectory],
+        fps=10,
+        file_name=f"{figure_path}/predicted_trajectory.mp4",
+        colormaps="viridis",
+        titles=["True", "Predicted"],
+    )
 
     logger.info(f"Plotting trajectory...")
     plt.figure()
@@ -107,6 +121,7 @@ def main(cfg: DictConfig) -> None:
         plt.subplot(2, len(PLOTTING_TIMES), len(PLOTTING_TIMES) + 1 + i)
         plt.imshow(predicted_trajectory[:, :, t])
         plt.title(f"Predicted Trajectory at t={t}")
+    plt.savefig(f"{figure_path}/predicted_trajectory.png")
     plt.show()
 
 
