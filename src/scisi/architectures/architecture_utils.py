@@ -10,6 +10,11 @@ from scisi.architectures.conv_next import ConvNextBlock
 from scisi.architectures.embeddings import FourierScalarEncoder
 
 
+def count_model_parameters(model: nn.Module) -> int:
+    """Count the number of parameters in a model."""
+    return sum(p.numel() for p in model.parameters())
+
+
 class InitConvWithHistory(nn.Module):
     """Init conv with field cond."""
 

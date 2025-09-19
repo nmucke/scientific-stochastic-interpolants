@@ -81,11 +81,12 @@ scheduler:
   T_max: 500
   eta_min: 0.00001
 
+loss_fn:
+  _target_: torch.nn.MSELoss
+
 trainer:
   _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
-  loss_fn:
-    _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping

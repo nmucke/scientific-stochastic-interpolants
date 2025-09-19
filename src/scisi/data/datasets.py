@@ -212,8 +212,8 @@ class KNMIDataset(torch.utils.data.Dataset):
             tas.append(data["tas"])  # temperature at surface
             ym.append(data["ym"])  # yearly mean temperature per grid cell
 
-        lat = data["lat"]
-        lon = data["lon"]
+        lat = torch.from_numpy(data["lat"])
+        lon = torch.from_numpy(data["lon"])
 
         # Stack the data
         time = np.stack(time, axis=0)
@@ -234,6 +234,8 @@ class KNMIDataset(torch.utils.data.Dataset):
         ym = ym.unsqueeze(1)  # type: ignore[attr-defined]
 
         time = time.float()  # type: ignore[attr-defined]
+        lat = lat.float()
+        lon = lon.float()
 
         return tas, ym, time, lat, lon
 

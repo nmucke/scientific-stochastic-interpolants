@@ -1,6 +1,7 @@
 pre_trained_model:
   project: stochastic_navier_stokes
-  name: sincere-ridge-38
+  name: valiant-petal-41
+  # name: sincere-ridge-38
   # name: resourceful-plain-37
   # name: quirky-cave-36
   # name: optimistic-spring-34
@@ -11,7 +12,7 @@ obs_operator:
     _target_: scisi.likelihood_models.observation_operators.get_grid_indices
     height: 128
     width: 128
-    skip_grid: 4
+    skip_grid: 2
     start_grid: 0
 
 likelihood_model:

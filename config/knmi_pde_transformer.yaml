@@ -1,6 +1,8 @@
 experiment_tracking:
   project: knmi
 
+len_field_history: 5
+
 preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
@@ -23,7 +25,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 64
   shuffle: True
   num_workers: 4
   # Dataset
@@ -37,7 +39,7 @@ train_data:
       - sim_3.npz
       - sim_4.npz
       - sim_5.npz
-    len_field_history: 5
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
     use_exisiting_cache: True
@@ -46,7 +48,7 @@ train_data:
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 64
   shuffle: False
   num_workers: 4
   dataset:
@@ -56,7 +58,7 @@ val_data:
     files:
       - sim_8.npz
       - sim_9.npz
-    len_field_history: 5
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
     use_exisiting_cache: True
@@ -71,7 +73,7 @@ test_data:
     - sim_10.npz
     # - sim_11.npz
     # - sim_12.npz
-  len_field_history: 5
+  len_field_history: ${len_field_history}
   train_or_test: test
   save_in_memory: True
   starting_time: null
@@ -87,8 +89,8 @@ model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    len_field_history: 5 # number of field history steps
-    type: PDE-B # type of the PDE transformer
+    len_field_history: ${len_field_history} # number of field history steps
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 4 # patch size
     periodic: false # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
@@ -106,11 +108,12 @@ scheduler:
   T_max: 100
   eta_min: 0.000001
 
+loss_fn:
+  _target_: scisi.training.loss_functions.LatitudeWeightedMSELoss
+
 trainer:
   _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
-  loss_fn:
-    _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping

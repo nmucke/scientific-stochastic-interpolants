@@ -40,7 +40,7 @@ train_data:
     len_field_history: 5
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
@@ -59,7 +59,7 @@ val_data:
     len_field_history: 5
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
@@ -118,11 +118,13 @@ scheduler:
   T_max: 100
   eta_min: 0.000001
 
+
+loss_fn:
+  _target_: scisi.training.loss_functions.LatitudeWeightedMSELoss
+
 trainer:
   _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
-  loss_fn:
-    _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping

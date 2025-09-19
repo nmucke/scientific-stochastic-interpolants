@@ -10,6 +10,8 @@ import torch.nn as nn
 import trackio
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.architectures.architecture_utils import count_model_parameters
+
 torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cuda.enable_mem_efficient_sdp(True)
 torch.backends.cuda.enable_math_sdp(True)
@@ -74,23 +76,35 @@ def main(cfg: DictConfig) -> None:
         dataset={"preprocesser": preprocesser},
     )
 
-    logger.info(f"Instantiating model...")
+    logger.info(f"Instantiating model: {cfg.model._target_}")
     model = hydra.utils.instantiate(cfg.model)
     if CONTINUE_FROM_CHECKPOINT:
         logger.info(f"Loading model from checkpoint:")
         logger.info(f"{CHECKPOINT_PATH}")
         model.load_state_dict(torch.load(CHECKPOINT_PATH))
 
-    logger.info(f"Instantiating optimizer...")
+    logger.info(f"Model parameters: {count_model_parameters(model)/1e6:.2f}M")
+
+    logger.info(f"Instantiating optimizer: {cfg.optimizer._target_}")
     optimizer = hydra.utils.instantiate(
         cfg.optimizer,
         params=model.drift_model.parameters(),
     )
 
-    logger.info(f"Instantiating scheduler...")
+    logger.info(f"Instantiating scheduler: {cfg.scheduler._target_}")
     scheduler = hydra.utils.instantiate(
         cfg.scheduler,
         optimizer=optimizer,
+    )
+
+    logger.info(f"Instantiating loss function: {cfg.loss_fn._target_}")
+    loss_fn_kwargs = {}
+    if "LatitudeWeightedMSELoss" in cfg.loss_fn._target_:
+        latitudes = locals()["train_dataloader"].dataset.lat
+        loss_fn_kwargs = {"latitudes": latitudes}
+    loss_fn = hydra.utils.instantiate(
+        cfg.loss_fn,
+        **loss_fn_kwargs,
     )
 
     logger.info(f"Instantiating trainer...")
@@ -99,6 +113,7 @@ def main(cfg: DictConfig) -> None:
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
+        loss_fn=loss_fn,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         tracker=tracker,

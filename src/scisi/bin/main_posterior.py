@@ -19,8 +19,8 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 4
-NUM_STEPS = 1000
+NUM_PHYSICAL_STEPS = 10
+NUM_STEPS = 500
 MIXED_PRECISION = True
 BATCH_SIZE = 1
 SDE_STEPPER = heun_step
@@ -99,6 +99,7 @@ def main(posterior_cfg: DictConfig) -> None:
     observations = torch.zeros(1, len(obs_operator.obs_indices), NUM_PHYSICAL_STEPS)
     for i in range(NUM_PHYSICAL_STEPS):
         observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
+        observations[:, :, i] += torch.randn_like(observations[:, :, i]) * 0.05
 
     input_dict = {
         "base": base,
@@ -196,7 +197,7 @@ def main(posterior_cfg: DictConfig) -> None:
         rmse_post,
         label="Posterior RMSE",
         linewidth=3,
-        linestyle="." if len(rmse_post) == 1 else "-.",
+        # linestyle="." if len(rmse_post) == 1 else "-",
         markersize=10,
     )
     plt.plot(
@@ -204,7 +205,7 @@ def main(posterior_cfg: DictConfig) -> None:
         rmse_prior,
         label="Prior RMSE",
         linewidth=3,
-        linestyle="." if len(rmse_prior) == 1 else "-.",
+        # linestyle="." if len(rmse_prior) == 1 else "-",
         markersize=10,
     )
     plt.grid(True)
