@@ -35,7 +35,8 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
-    config_name="stochastic_navier_stokes.yaml",
+    config_name="stochastic_navier_stokes_pde_transformer.yaml",
+    # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
@@ -51,7 +52,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
         project=cfg.experiment_tracking.project,
-        config=cfg,
+        config=OmegaConf.to_container(cfg, resolve=True),
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")

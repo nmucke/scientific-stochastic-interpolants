@@ -90,7 +90,7 @@ class Trainer:
         if self.mixed_precision_warmup > 0:
             logger.info(f"Mixed precision warmup: {self.mixed_precision_warmup}")
             self.full_precision = False
-            self.scaler = torch.cuda.amp.GradScaler()
+            self.scaler = torch.amp.GradScaler()
             self._train_step = self._train_step_mixed_precision
         else:
             logger.info(f"Mixed precision warmup not set, using full precision")

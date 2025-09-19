@@ -313,7 +313,7 @@ class KNMIDataset(torch.utils.data.Dataset):
                         ] = pars_cond_window
                     else:
                         np.savez(
-                            os.path.join(self.cache_dir, f"data_{counter}.npz"),  # type: ignore[arg-type]
+                            os.path.join(self.cache_dir, f"sample_{counter}.npz"),  # type: ignore[arg-type]
                             data=data_window.numpy(),
                             field_cond=field_cond_window.numpy(),
                             pars_cond=pars_cond_window.numpy(),
@@ -372,16 +372,16 @@ class KNMIDataset(torch.utils.data.Dataset):
         if self.save_in_memory:
             sample = self.data[idx]
             field_cond = self.field_cond[idx]
-            pars_cond = self.pars_cond[idx] / 365.0
+            pars_cond = self.pars_cond[idx]
         else:
-            data = np.load(os.path.join(self.cache_dir, f"data_{idx}.npz"))  # type: ignore[arg-type]
+            data = np.load(os.path.join(self.cache_dir, f"sample_{idx}.npz"))  # type: ignore[arg-type]
             sample = data["data"]
             field_cond = data["field_cond"]
             pars_cond = data["pars_cond"]
 
             sample = torch.from_numpy(sample)
             field_cond = torch.from_numpy(field_cond)
-            pars_cond = torch.from_numpy(pars_cond) / 365.0
+            pars_cond = torch.from_numpy(pars_cond)
             pars_cond = pars_cond.unsqueeze(0)
             pars_cond = pars_cond.float()
 
@@ -501,7 +501,7 @@ class WeatherDataset(torch.utils.data.Dataset):
                         data_windows[counter] = window
                     else:
                         np.savez(
-                            os.path.join(self.cache_dir, f"data_{counter}.npz"),  # type: ignore[arg-type]
+                            os.path.join(self.cache_dir, f"sample_{counter}.npz"),  # type: ignore[arg-type]
                             data=window.numpy(),
                         )
 
@@ -555,7 +555,7 @@ class WeatherDataset(torch.utils.data.Dataset):
         if self.save_in_memory:
             sample = self.data[idx]  # type: ignore[index]
         else:
-            sample = np.load(os.path.join(self.cache_dir, f"data_{idx}.npz"))["data"]  # type: ignore[arg-type]
+            sample = np.load(os.path.join(self.cache_dir, f"sample_{idx}.npz"))["data"]  # type: ignore[arg-type]
 
             sample = torch.from_numpy(sample)
         if self.train_or_test == "train":
