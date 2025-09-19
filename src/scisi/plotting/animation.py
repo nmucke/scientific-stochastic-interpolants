@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from matplotlib.colors import Colormap
+from matplotlib.image import AxesImage
 
 
 def tensor_to_mp4(
@@ -274,7 +275,7 @@ def tensors_to_mp4(
         colorbar = fig.colorbar(images[0], cax=cbar_ax, orientation="vertical")
         colorbar.set_label(colorbar_label, rotation=270, labelpad=20)
 
-    def animate(frame: int) -> List[plt.AxesImage]:
+    def animate(frame: int) -> List[AxesImage]:
         """Update all images for each frame."""
         for im, data in zip(images, data_list):
             im.set_array(data[:, :, frame])

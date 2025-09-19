@@ -191,7 +191,7 @@ class FollmerStochasticInterpolant(nn.Module):
 
         base = self._compute_first_step(
             base=base,
-            t=t_vec[:, 0],
+            t=t_vec[:, 0:1],
             sde_stepper=sde_stepper,
             **fixed_input,
         ).detach()

@@ -19,7 +19,7 @@ VERBOSE = True
 MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "sincere-ridge-38"
+DEFAULT_NAME = "valiant-petal-41"
 NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
