@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = False
-CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "quirky-cave-36"
+CONTINUE_FROM_CHECKPOINT = True
+CHECKPOINT_PROJECT = "knmi"
+CHECKPOINT_NAME = "jolly-valley-7"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
@@ -54,7 +54,6 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
         project=cfg.experiment_tracking.project,
-        config=OmegaConf.to_container(cfg, resolve=True),
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")

@@ -123,7 +123,9 @@ class FollmerStochasticInterpolant(nn.Module):
         base = base.repeat(batch_size, 1, 1, 1)
         field_history = field_history.repeat(batch_size, 1, 1, 1, 1)
         field_cond = (
-            field_cond.repeat(batch_size, 1, 1, 1) if field_cond is not None else None
+            field_cond.repeat(batch_size, 1, 1, 1, 1)
+            if field_cond is not None
+            else None
         )
         pars_cond = pars_cond.repeat(batch_size, 1) if pars_cond is not None else None
 

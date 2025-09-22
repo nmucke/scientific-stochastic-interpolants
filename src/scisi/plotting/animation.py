@@ -184,10 +184,10 @@ def tensors_to_mp4(
         )
 
     # Validate vmin/vmax (now single values applied to all tensors)
-    if vmin is not None and not isinstance(vmin, (int, float)):
+    if vmin is not None and not isinstance(vmin, (int, float, np.float32, np.float64)):
         raise ValueError("vmin must be a single float value or None")
 
-    if vmax is not None and not isinstance(vmax, (int, float)):
+    if vmax is not None and not isinstance(vmax, (int, float, np.float32, np.float64)):
         raise ValueError("vmax must be a single float value or None")
 
     # Set up titles

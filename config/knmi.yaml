@@ -69,8 +69,8 @@ test_data:
     - /export/scratch2/ntm/SciGenML/data/knmi/
   files:
     - sim_10.npz
-    # - sim_11.npz
-    # - sim_12.npz
+    - sim_11.npz
+    - sim_12.npz
   len_field_history: 5
   train_or_test: test
   save_in_memory: True

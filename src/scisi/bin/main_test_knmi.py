@@ -1,4 +1,6 @@
+import contextlib
 import logging
+import os
 import pdb
 
 import hydra
@@ -8,7 +10,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
-from scisi.preprocessing.preprocessor import Preprocesser
+from scisi.plotting.animation import create_animation_from_tensors
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 torch.set_default_dtype(torch.float32)
@@ -16,13 +18,23 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = True
+MIXED_PRECISION = False
+BATCH_SIZE = 3
 
 DEFAULT_PROJECT = "knmi"
-DEFAULT_NAME = "fancy-breeze-4"
-NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 50
+DEFAULT_NAME = "jolly-valley-7"
+NUM_PHYSICAL_STEPS = 5 * 365
+NUM_STEPS = 150
 STARTING_TIME = 20000
+# SDE_STEPPER = heun_step
+SDE_STEPPER = euler_maruyama_step
+
+
+mixed_precision_context = (
+    torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if MIXED_PRECISION
+    else contextlib.nullcontext()
+)
 
 
 @hydra.main(  # type: ignore[misc]
@@ -59,8 +71,8 @@ def main(cfg: DictConfig) -> None:
         :, :, :, :, STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS
     ]
 
-    x = trajectory[:, :, :, :, len_field_history - 1]
-    x_history = trajectory[:, :, :, :, 0:len_field_history]
+    base = trajectory[:, :, :, :, len_field_history - 1]
+    field_history = trajectory[:, :, :, :, 0:len_field_history]
 
     field_cond = sample["field_cond"].unsqueeze(0)
     field_cond = field_cond[
@@ -75,36 +87,38 @@ def main(cfg: DictConfig) -> None:
     del sample
 
     logger.info(f"Preprocessing trajectory...")
-    x = preprocesser.transform(base=x, is_batch=True)["base"]
-    x_history = preprocesser.transform(field_history=x_history, is_batch=True)[
+    base = preprocesser.transform(base=base, is_batch=True)["base"]
+    field_history = preprocesser.transform(field_history=field_history, is_batch=True)[
         "field_history"
     ]
     field_cond = preprocesser.transform(
         field_cond=field_cond, is_batch=True, is_trajectory=True
     )["field_cond"]
 
-    x = x.to("cuda")
-    x_history = x_history.to("cuda")
+    base = base.to("cuda")
+    field_history = field_history.to("cuda")
     field_cond = field_cond.to("cuda")
     pars_cond = pars_cond.to("cuda")
 
     input_dict = {
-        "base": x,
-        "batch_size": 1,
+        "base": base,
+        "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
-        "field_history": x_history,
+        "field_history": field_history,
         "field_cond": field_cond,
         "pars_cond": pars_cond,
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "sde_stepper": heun_step,
-        "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
+        "sde_stepper": SDE_STEPPER,
+        # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
     }
-    if MIXED_PRECISION:
-        logger.info(f"Sampling from the model using mixed precision...")
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            predicted_trajectory = model.sample_trajectory(**input_dict)
-    else:
-        logger.info(f"Sampling from the model using full precision...")
+
+    # Use mixed precision if available
+    logger.info(
+        f"Sampling from the model using mixed precision..."
+        if MIXED_PRECISION
+        else f"Sampling from the model using full precision..."
+    )
+    with mixed_precision_context:
         predicted_trajectory = model.sample_trajectory(**input_dict)
 
     predicted_trajectory = predicted_trajectory.cpu()
@@ -112,62 +126,100 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(
         base=predicted_trajectory, is_batch=True, is_trajectory=True
-    )["base"].numpy()
+    )["base"]
 
-    predicted_trajectory = predicted_trajectory[0, 0]
-    true_trajectory = trajectory[0, 0, :, :].cpu().numpy()
+    predicted_trajectory = predicted_trajectory[:, 0]
+    true_trajectory = trajectory[0, 0, :, :, 0:NUM_PHYSICAL_STEPS].cpu()
 
     # Set indices for plotting
-    lat_1_idx, lon_1_idx = 32, 0
-    lat_30_idx, lon_30_idx = 42, 10
+
+    lat_lon_idx_to_plot = [(32, 64), (42, 10), (2, 120)]
     lat_lon_to_plot = [
-        (lat[lat_1_idx].item(), lon[lon_1_idx].item()),
-        (lat[lat_30_idx].item(), lon[lon_30_idx].item()),
+        (lat[lat_lon_idx[0]], lon[lat_lon_idx[1]])
+        for lat_lon_idx in lat_lon_idx_to_plot
     ]
-    true_grid_cell_to_plot_1 = true_trajectory[lat_1_idx, lon_1_idx, :]
-    predicted_grid_cell_to_plot_1 = predicted_trajectory[lat_1_idx, lon_1_idx, :]
-    true_grid_cell_to_plot_30 = true_trajectory[lat_30_idx, lon_30_idx, :]
-    predicted_grid_cell_to_plot_30 = predicted_trajectory[lat_30_idx, lon_30_idx, :]
+
+    true_grid_cells_to_plot = [
+        true_trajectory[lat_lon_idx[0], lat_lon_idx[1], :]
+        for lat_lon_idx in lat_lon_idx_to_plot
+    ]
+
+    predicted_grid_cells_to_plot = [
+        predicted_trajectory[:, lat_lon_idx[0], lat_lon_idx[1], :]
+        for lat_lon_idx in lat_lon_idx_to_plot
+    ]
+
+    figure_path = f"figures/{project}"
+    os.makedirs(figure_path, exist_ok=True)
+
+    logger.info(f"Creating animation...")
+    create_animation_from_tensors(
+        [true_trajectory] + [predicted_trajectory[i] for i in range(BATCH_SIZE)],
+        fps=10,
+        file_name=f"{figure_path}/predicted_trajectory.mp4",
+        colormaps="viridis",
+        titles=["True"] + [f"Emseble member {i}" for i in range(BATCH_SIZE)],
+        vmin=np.min(true_trajectory.numpy()),
+        vmax=np.max(true_trajectory.numpy()),
+        normalize=False,
+    )
 
     logger.info(f"Plotting trajectory...")
-    plotting_times = [10, 25, 45]
+    plotting_times = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
     num_plot_times = len(plotting_times)
-    plt.figure()
+    plt.figure(figsize=(25, 20))
     for i, t in enumerate(plotting_times):
         plt.subplot(3, num_plot_times, i + 1)
         plt.imshow(
             true_trajectory[:, :, t],
-            vmin=np.min(true_trajectory),
-            vmax=np.max(true_trajectory),
+            vmin=np.min(true_trajectory.numpy()),
+            vmax=np.max(true_trajectory.numpy()),
         )
-        plt.scatter(lat_1_idx, lon_1_idx, color="red", marker="x", s=100)
-        plt.scatter(lat_30_idx, lon_30_idx, color="red", marker="x", s=100)
         plt.colorbar()
-        plt.title(f"True Trajectory at t={t}")
+        for lat_lon in lat_lon_idx_to_plot:
+            plt.scatter(lat_lon[1], lat_lon[0], color="red", marker="x", s=100)
+        plt.title(f"True trajectory at t={t}")
         plt.subplot(3, num_plot_times, num_plot_times + 1 + i)
         plt.imshow(
-            predicted_trajectory[:, :, t],
-            vmin=np.min(true_trajectory),
-            vmax=np.max(true_trajectory),
+            predicted_trajectory[0, :, :, t],
+            vmin=np.min(true_trajectory.numpy()),
+            vmax=np.max(true_trajectory.numpy()),
         )
-        plt.scatter(lat_1_idx, lon_1_idx, color="red", marker="x", s=100)
-        plt.scatter(lat_30_idx, lon_30_idx, color="red", marker="x", s=100)
         plt.colorbar()
-        plt.title(f"Predicted Trajectory at t={t}")
+        for lat_lon in lat_lon_idx_to_plot:
+            plt.scatter(lat_lon[1], lat_lon[0], color="tab:red", marker="x", s=100)
+        plt.title(f"Ensemble member 1 trajectory at t={t}")
 
     plt.subplot(3, num_plot_times, 2 * num_plot_times + 1)
-    plt.plot(true_grid_cell_to_plot_1, label="True", linewidth=3)
-    plt.plot(predicted_grid_cell_to_plot_1, label="Predicted", linewidth=3)
-    plt.legend()
-    plt.grid(True)
-    plt.title(f"Lat, Lon = {lat_lon_to_plot[0][0]:.2f}, {lat_lon_to_plot[0][1]:.2f}")
-    plt.subplot(3, num_plot_times, 2 * num_plot_times + 2)
-    plt.plot(true_grid_cell_to_plot_30, label="True", linewidth=3)
-    plt.plot(predicted_grid_cell_to_plot_30, label="Predicted", linewidth=3)
-    plt.legend()
-    plt.grid(True)
-    plt.title(f"Lat, Lon = {lat_lon_to_plot[1][0]:.2f}, {lat_lon_to_plot[1][1]:.2f}")
+    for i in range(len(lat_lon_idx_to_plot)):
+        plt.subplot(3, num_plot_times, 2 * num_plot_times + i + 1)
+        plt.plot(
+            true_grid_cells_to_plot[i], label="True", linewidth=4, color="tab:green"
+        )
+        plt.plot(
+            predicted_grid_cells_to_plot[i][0],
+            label="Emseble predictions",
+            linewidth=1,
+            color="tab:blue",
+            alpha=0.5,
+        )
+        for j in range(BATCH_SIZE):
+            plt.plot(
+                predicted_grid_cells_to_plot[i][j],
+                linewidth=3,
+                color="tab:blue",
+                alpha=0.5,
+            )
 
+        y_min = 0.975 * np.min(true_grid_cells_to_plot[i].numpy())
+        y_max = 1.025 * np.max(true_grid_cells_to_plot[i].numpy())
+        plt.ylim(y_min, y_max)
+        plt.legend()
+        plt.grid(True)
+        plt.title(
+            f"Lat, Lon = {lat_lon_to_plot[i][0]:.2f}, {lat_lon_to_plot[i][1]:.2f}"
+        )
+    plt.savefig(f"{figure_path}/predicted_trajectory.png")
     plt.show()
 
 
