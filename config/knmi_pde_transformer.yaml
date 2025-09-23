@@ -89,27 +89,25 @@ model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    len_field_history: ${len_field_history} # number of field history steps
-    type: PDE-S # type of the PDE transformer. S for small, B for medium, L for large
+    len_field_history: 3 # number of field history steps
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 4 # patch size
-    periodic: false # whether to use periodic padding
+    periodic: true # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
-    field_cond_channels: 1 # number of channels in the field conditional input
-
-
+    field_cond_channels: null # number of channels in the field conditional input
 
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0001
-  weight_decay: 0.00001
+  weight_decay: 0.0000001
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 100
-  eta_min: 0.000001
+  T_max: 500
+  eta_min: 0.00001
 
 loss_fn:
-  _target_: scisi.training.loss_functions.LatitudeWeightedMSELoss
+  _target_: torch.nn.MSELoss
 
 trainer:
   _target_: scisi.training.trainer.Trainer
@@ -117,6 +115,6 @@ trainer:
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping
-    patience: 25
+    patience: 50
   max_grad_norm: 5.0
-  mixed_precision_warmup: 50
+  mixed_precision_warmup: 100

@@ -22,7 +22,8 @@ MIXED_PRECISION = False
 BATCH_SIZE = 3
 
 DEFAULT_PROJECT = "knmi"
-DEFAULT_NAME = "jolly-valley-7"
+# DEFAULT_NAME = "jolly-valley-7" # Medium PDE-Transformer
+DEFAULT_NAME = "kind-sky-8" # Small PDE-Transformer
 NUM_PHYSICAL_STEPS = 5 * 365
 NUM_STEPS = 300
 STARTING_TIME = 20000

@@ -54,6 +54,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
         project=cfg.experiment_tracking.project,
+        config=OmegaConf.to_container(cfg, resolve=True),
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")

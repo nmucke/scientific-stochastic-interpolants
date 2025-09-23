@@ -18,13 +18,15 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = False
 
-DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "valiant-petal-41"
-NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 100
+DEFAULT_PROJECT = "weather"
+# DEFAULT_NAME = "valiant-petal-41" # PDE-Transformer Navier-Stokes
+DEFAULT_NAME = "dainty-sunset-0" # PDE-Transformer Weather
+NUM_PHYSICAL_STEPS = 25
+NUM_STEPS = 500
 BATCH_SIZE = 1
-PLOTTING_TIMES = [10, 30, 45]
-SDE_STEPPER = heun_step
+PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS//2, NUM_PHYSICAL_STEPS-1]
+TEST_SAMPLE_INDEX = 5
+SDE_STEPPER = euler_maruyama_step
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -62,7 +64,7 @@ def main(cfg: DictConfig) -> None:
     model.to("cuda")
 
     logger.info(f"Preparing trajectory...")
-    trajectory = test_dataset[0]["x"].unsqueeze(0)
+    trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
     logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
