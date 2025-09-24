@@ -89,12 +89,12 @@ model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    len_field_history: 3 # number of field history steps
+    len_field_history: ${len_field_history} # number of field history steps
     type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 4 # patch size
-    periodic: true # whether to use periodic padding
+    periodic: false # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
-    field_cond_channels: null # number of channels in the field conditional input
+    field_cond_channels: 1 # number of channels in the field conditional input
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -107,7 +107,7 @@ scheduler:
   eta_min: 0.00001
 
 loss_fn:
-  _target_: torch.nn.MSELoss
+  _target_: scisi.training.loss_functions.LatitudeWeightedMSELoss
 
 trainer:
   _target_: scisi.training.trainer.Trainer
