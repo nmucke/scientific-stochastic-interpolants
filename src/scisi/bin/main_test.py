@@ -10,6 +10,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.plotting.animation import create_animation_from_tensors
+from scisi.plotting.plot_fields import plot_fields
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 torch.set_default_dtype(torch.float32)
@@ -75,14 +76,12 @@ def main(cfg: DictConfig) -> None:
         field_history=trajectory[:, :, :, :, 0:len_field_history],
         is_batch=True,
     )
-    field_history = init_data["field_history"].to("cuda")
-    base = init_data["base"].to("cuda")
 
     input_dict = {
-        "base": base,
+        "base": init_data["base"].to("cuda"),
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
-        "field_history": field_history,
+        "field_history": init_data["field_history"].to("cuda"),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
         "sde_stepper": SDE_STEPPER,
     }
@@ -121,16 +120,20 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(f"Plotting trajectory...")
-    plt.figure()
-    for i, t in enumerate(PLOTTING_TIMES):
-        plt.subplot(2, len(PLOTTING_TIMES), i + 1)
-        plt.imshow(true_trajectory[:, :, t])
-        plt.title(f"True Trajectory at t={t}")
-        plt.subplot(2, len(PLOTTING_TIMES), len(PLOTTING_TIMES) + 1 + i)
-        plt.imshow(predicted_trajectory[:, :, t])
-        plt.title(f"Predicted Trajectory at t={t}")
-    plt.savefig(f"{figure_path}/predicted_trajectory.png")
-    plt.show()
+    plot_fields(
+        fields=[
+            [true_trajectory[:, :, t] for t in PLOTTING_TIMES],
+            [predicted_trajectory[:, :, t] for t in PLOTTING_TIMES],
+        ],
+        titles=[
+            [f"True Trajectory at t={t}" for t in PLOTTING_TIMES],
+            [f"Predicted Trajectory at t={t}" for t in PLOTTING_TIMES],
+        ],
+        vmin=np.min(true_trajectory.numpy()),
+        vmax=np.max(true_trajectory.numpy()),
+        figsize=(15, 10),
+        figure_path=f"{figure_path}/predicted_trajectory.png",
+    )
 
 
 if __name__ == "__main__":

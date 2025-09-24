@@ -11,6 +11,7 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.plotting.animation import create_animation_from_tensors
+from scisi.plotting.plot_fields import plot_fields
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 torch.set_default_dtype(torch.float32)
@@ -23,6 +24,8 @@ NAME = "jolly-valley-7"
 NUM_PHYSICAL_STEPS = 75
 NUM_STEPS = 50
 STARTING_TIME = 20000
+
+PLOTTING_TIMES = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 
 END_TIME = STARTING_TIME + NUM_PHYSICAL_STEPS
 # SDE_STEPPER = heun_step
@@ -146,10 +149,9 @@ def main(cfg: DictConfig) -> None:
     )
 
     logger.info(f"Plotting trajectory...")
-    plotting_times = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
-    num_plot_times = len(plotting_times)
+    num_plot_times = len(PLOTTING_TIMES)
     plt.figure(figsize=(25, 20))
-    for i, t in enumerate(plotting_times):
+    for i, t in enumerate(PLOTTING_TIMES):
         plt.subplot(3, num_plot_times, i + 1)
         plt.imshow(
             true_trajectory[:, :, t],
