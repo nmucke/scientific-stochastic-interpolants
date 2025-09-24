@@ -5,6 +5,7 @@ import pdb
 
 import hydra
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
@@ -18,11 +19,11 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = False
 
-# DEFAULT_PROJECT = "stochastic_navier_stokes"
-# DEFAULT_NAME = "valiant-petal-41" # PDE-Transformer Navier-Stokes
+DEFAULT_PROJECT = "stochastic_navier_stokes"
+DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
 
-DEFAULT_PROJECT = "weather"
-DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
+# DEFAULT_PROJECT = "weather"
+# DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 NUM_PHYSICAL_STEPS = 25
 NUM_STEPS = 100
 BATCH_SIZE = 1
@@ -114,6 +115,9 @@ def main(cfg: DictConfig) -> None:
         file_name=f"{figure_path}/predicted_trajectory.mp4",
         colormaps="viridis",
         titles=["True", "Predicted"],
+        vmin=np.min(true_trajectory.numpy()),
+        vmax=np.max(true_trajectory.numpy()),
+        normalize=False,
     )
 
     logger.info(f"Plotting trajectory...")

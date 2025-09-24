@@ -17,19 +17,14 @@ torch.set_default_dtype(torch.float32)
 
 logger = logging.getLogger(__name__)
 
-VERBOSE = True
 MIXED_PRECISION = False
 BATCH_SIZE = 3
-
-DEFAULT_PROJECT = "knmi"
-# DEFAULT_NAME = "jolly-valley-7" # Medium PDE-Transformer
-DEFAULT_NAME = "kind-sky-8" # Small PDE-Transformer
-NUM_PHYSICAL_STEPS = 5 * 365
-NUM_STEPS = 300
+NAME = "jolly-valley-7"
+NUM_PHYSICAL_STEPS = 75
+NUM_STEPS = 50
 STARTING_TIME = 20000
 # SDE_STEPPER = heun_step
 SDE_STEPPER = euler_maruyama_step
-
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -40,7 +35,7 @@ mixed_precision_context = (
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../checkpoints",
-    config_name=f"{DEFAULT_PROJECT}/{DEFAULT_NAME}/config.yaml",
+    config_name=f"knmi/{NAME}/config.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
@@ -66,40 +61,30 @@ def main(cfg: DictConfig) -> None:
     model.to("cuda")
 
     logger.info(f"Preparing trajectory...")
-    sample = test_dataset[0]
-    trajectory = sample["x"].unsqueeze(0)
-    trajectory = trajectory[
-        :, :, :, :, STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS
-    ]
-
-    base = trajectory[:, :, :, :, len_field_history - 1]
-    field_history = trajectory[:, :, :, :, 0:len_field_history]
-
-    field_cond = sample["field_cond"].unsqueeze(0)
-    field_cond = field_cond[
-        :, :, :, :, STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS
-    ]
-    pars_cond = sample["pars_cond"].unsqueeze(0)
-    pars_cond = pars_cond[:, STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS]
-
-    field_cond = field_cond[:, :, :, :, len_field_history:NUM_PHYSICAL_STEPS]
-    pars_cond = pars_cond[:, len_field_history:NUM_PHYSICAL_STEPS]
-
+    sample = test_dataset[0:1]
+    trajectory = sample["x"]
+    field_cond = sample["field_cond"]
+    pars_cond = sample["pars_cond"]
     del sample
 
-    logger.info(f"Preprocessing trajectory...")
-    base = preprocesser.transform(base=base, is_batch=True)["base"]
-    field_history = preprocesser.transform(field_history=field_history, is_batch=True)[
-        "field_history"
-    ]
-    field_cond = preprocesser.transform(
-        field_cond=field_cond, is_batch=True, is_trajectory=True
-    )["field_cond"]
+    trajectory = trajectory[..., STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS]
 
-    base = base.to("cuda")
-    field_history = field_history.to("cuda")
-    field_cond = field_cond.to("cuda")
-    pars_cond = pars_cond.to("cuda")
+    logger.info(f"Preprocessing trajectory...")
+    processed_data = preprocesser.transform(
+        base=trajectory[..., len_field_history - 1 : len_field_history],
+        field_history=trajectory[..., 0:len_field_history],
+        field_cond=field_cond[
+            ..., STARTING_TIME + len_field_history : STARTING_TIME + NUM_PHYSICAL_STEPS
+        ],
+        is_batch=True,
+        is_trajectory=True,
+    )
+    base = processed_data["base"].squeeze(-1).to("cuda")
+    field_history = processed_data["field_history"].to("cuda")
+    field_cond = processed_data["field_cond"].to("cuda")
+    pars_cond = pars_cond[
+        :, STARTING_TIME + len_field_history : STARTING_TIME + NUM_PHYSICAL_STEPS
+    ].to("cuda")
 
     input_dict = {
         "base": base,
@@ -130,10 +115,9 @@ def main(cfg: DictConfig) -> None:
     )["base"]
 
     predicted_trajectory = predicted_trajectory[:, 0]
-    true_trajectory = trajectory[0, 0, :, :, 0:NUM_PHYSICAL_STEPS].cpu()
+    true_trajectory = trajectory[0, 0].cpu()
 
     # Set indices for plotting
-
     lat_lon_idx_to_plot = [(32, 64), (42, 10), (2, 120)]
     lat_lon_to_plot = [
         (lat[lat_lon_idx[0]], lon[lat_lon_idx[1]])
