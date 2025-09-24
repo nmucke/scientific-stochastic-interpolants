@@ -19,7 +19,7 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 5
+NUM_PHYSICAL_STEPS = 6
 NUM_STEPS = 500
 MIXED_PRECISION = False
 BATCH_SIZE = 4
