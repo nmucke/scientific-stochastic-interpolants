@@ -23,6 +23,8 @@ NAME = "jolly-valley-7"
 NUM_PHYSICAL_STEPS = 75
 NUM_STEPS = 50
 STARTING_TIME = 20000
+
+END_TIME = STARTING_TIME + NUM_PHYSICAL_STEPS
 # SDE_STEPPER = heun_step
 SDE_STEPPER = euler_maruyama_step
 
@@ -67,32 +69,26 @@ def main(cfg: DictConfig) -> None:
     pars_cond = sample["pars_cond"]
     del sample
 
-    trajectory = trajectory[..., STARTING_TIME : STARTING_TIME + NUM_PHYSICAL_STEPS]
+    trajectory = trajectory[..., STARTING_TIME:END_TIME]
 
     logger.info(f"Preprocessing trajectory...")
     processed_data = preprocesser.transform(
         base=trajectory[..., len_field_history - 1 : len_field_history],
         field_history=trajectory[..., 0:len_field_history],
-        field_cond=field_cond[
-            ..., STARTING_TIME + len_field_history : STARTING_TIME + NUM_PHYSICAL_STEPS
-        ],
+        field_cond=field_cond[..., STARTING_TIME + len_field_history : END_TIME],
         is_batch=True,
         is_trajectory=True,
     )
-    base = processed_data["base"].squeeze(-1).to("cuda")
-    field_history = processed_data["field_history"].to("cuda")
-    field_cond = processed_data["field_cond"].to("cuda")
-    pars_cond = pars_cond[
-        :, STARTING_TIME + len_field_history : STARTING_TIME + NUM_PHYSICAL_STEPS
-    ].to("cuda")
 
     input_dict = {
-        "base": base,
+        "base": processed_data["base"].squeeze(-1).to("cuda"),
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
-        "field_history": field_history,
-        "field_cond": field_cond,
-        "pars_cond": pars_cond,
+        "field_history": processed_data["field_history"].to("cuda"),
+        "field_cond": processed_data["field_cond"].to("cuda"),
+        "pars_cond": pars_cond[:, STARTING_TIME + len_field_history : END_TIME].to(
+            "cuda"
+        ),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
         "sde_stepper": SDE_STEPPER,
         # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
