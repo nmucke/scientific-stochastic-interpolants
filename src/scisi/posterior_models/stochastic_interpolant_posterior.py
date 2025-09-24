@@ -32,7 +32,8 @@ class StochasticInterpolantPosterior(nn.Module):
         self.likelihood_model = likelihood_model
         self.diffusion_term = diffusion_term
 
-    def _get_device(self) -> str:
+    @property
+    def device(self) -> str:
         """Get the device of the model."""
         return next(self.parameters()).device  # type: ignore[no-any-return]
 
@@ -55,12 +56,12 @@ class StochasticInterpolantPosterior(nn.Module):
         """Sample from the posterior."""
 
         if (batch_size > 1) and (base.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
+            base, field_history, field_cond, pars_cond = self.model._prepare_batch(
                 base, field_history, field_cond, pars_cond, batch_size
             )
 
-        dt = torch.tensor(1 / num_steps, device=self._get_device())
-        t_vec = torch.linspace(0, 1, num_steps, device=self._get_device()).unsqueeze(0)
+        dt = torch.tensor(1 / num_steps, device=self.device)
+        t_vec = torch.linspace(0, 1, num_steps, device=self.device).unsqueeze(0)
 
         fixed_input = {
             "field_history": field_history,
@@ -79,13 +80,26 @@ class StochasticInterpolantPosterior(nn.Module):
         fixed_input["drift_model"] = partial(
             self._posterior_drift,
             observations=observations,
+            dt=dt,
         )
         fixed_input["diffusion_term"] = self.diffusion_term
 
-        for i in range(1, num_steps):
-            t = t_vec[:, i : i + 1]
-            base.requires_grad = True
-            base = sde_stepper(x=base, t=t, **fixed_input).detach()
+        with torch.no_grad():
+            for i in range(1, num_steps - 1):
+                t = t_vec[:, i : i + 1]
+                base = sde_stepper(x=base, t=t, **fixed_input).detach()
+
+        base = (
+            base
+            + self.model.drift_model(
+                base, t_vec[:, -1:], field_history, field_cond, pars_cond
+            )
+            * dt
+        )
+        base = base + torch.sqrt(dt) * self.diffusion_term(
+            t_vec[:, -1:]
+        ) * torch.randn_like(base)
+        base = base.detach()
 
         # Add the new base to the field history
         if return_field_history:
@@ -104,13 +118,17 @@ class StochasticInterpolantPosterior(nn.Module):
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         observations: torch.Tensor | None = None,
+        dt: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Likelihood score."""
 
         # Compute the interpolant of the observation
-        base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])
+        # base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])
+
+        field_history_mean = field_history[:, :, :, :, -1].mean(dim=0, keepdim=True)
+        base_obs = self.likelihood_model.obs_operator(field_history_mean)
         interpolant_obs = self.model.interpolation.forward(
-            base_obs, observations, t, torch.zeros_like(base_obs)
+            base_obs, observations, t + dt, torch.zeros_like(base_obs)
         )
 
         # Compute the scale of the interpolant of the observation
@@ -118,12 +136,18 @@ class StochasticInterpolantPosterior(nn.Module):
             self.model.interpolation.beta(t) ** 2
             * self.likelihood_model.original_variance
         )
-        interpolant_variance = (
-            interpolant_variance + self.model.interpolation.gamma(t) ** 2 * t
+        interpolant_variance = interpolant_variance + self.model.interpolation.gamma(
+            t
+        ) ** 2 * (t + dt)
+
+        pred = (
+            x + self.model.drift_model(x, t, field_history, field_cond, pars_cond) * dt
         )
+        pred = pred.repeat(self.likelihood_model.ensemble_size, 1, 1, 1, 1)
+        pred = pred + torch.sqrt(dt) * self.diffusion_term(t) * torch.randn_like(pred)
 
         return self.likelihood_model.score(
-            x=x,
+            x=pred,
             observations=interpolant_obs,
             variance=interpolant_variance,
         )
@@ -136,6 +160,7 @@ class StochasticInterpolantPosterior(nn.Module):
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         observations: torch.Tensor | None = None,
+        dt: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Posterior drift."""
 
@@ -144,7 +169,7 @@ class StochasticInterpolantPosterior(nn.Module):
         )
 
         likelihood_score = self._likelihood_score(
-            x, t, field_history, field_cond, pars_cond, observations
+            x, t, field_history, field_cond, pars_cond, observations, dt
         )
 
         return prior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score
@@ -164,7 +189,7 @@ class StochasticInterpolantPosterior(nn.Module):
         """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
 
         if (batch_size > 1) and (base.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
+            base, field_history, field_cond, pars_cond = self.model._prepare_batch(
                 base, field_history, field_cond, pars_cond, batch_size
             )
 

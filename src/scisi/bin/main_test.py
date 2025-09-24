@@ -18,13 +18,15 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = False
 
-DEFAULT_PROJECT = "weather"
+# DEFAULT_PROJECT = "stochastic_navier_stokes"
 # DEFAULT_NAME = "valiant-petal-41" # PDE-Transformer Navier-Stokes
-DEFAULT_NAME = "dainty-sunset-0" # PDE-Transformer Weather
+
+DEFAULT_PROJECT = "weather"
+DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 NUM_PHYSICAL_STEPS = 25
-NUM_STEPS = 500
+NUM_STEPS = 100
 BATCH_SIZE = 1
-PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS//2, NUM_PHYSICAL_STEPS-1]
+PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 5
 SDE_STEPPER = euler_maruyama_step
 

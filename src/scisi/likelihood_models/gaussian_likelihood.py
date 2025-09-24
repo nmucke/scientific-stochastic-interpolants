@@ -1,3 +1,5 @@
+import pdb
+
 import torch
 import torch.nn as nn
 
@@ -72,6 +74,7 @@ class MultivariateGaussianLikelihood(nn.Module):
         self,
         obs_operator: nn.Module = LinearObservationOperator,
         variance: float = 0.05,
+        ensemble_size: int = 1,
     ) -> None:
         """
         Initialize Multivariate Gaussian likelihood.
@@ -85,7 +88,7 @@ class MultivariateGaussianLikelihood(nn.Module):
         super(MultivariateGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
         self.original_variance = variance
-
+        self.ensemble_size = ensemble_size
         self.dist = torch.distributions.MultivariateNormal
 
     def forward(
@@ -124,6 +127,24 @@ class MultivariateGaussianLikelihood(nn.Module):
             variance: Variance.
         """
 
-        log_prob = self.forward(x, observations, variance)
+        # return torch.autograd.grad(self.forward(x, observations, variance).sum(), x, create_graph=True)[0]
 
-        return torch.autograd.grad(log_prob.sum(), x, create_graph=True)[0]
+        # x = x.repeat(self.ensemble_size, 1, 1, 1)
+
+        if len(x.shape) > 4:
+            x = x.mean(dim=0, keepdim=False)
+
+        b, c, h, w = x.shape
+
+        obs_diff = observations - self.obs_operator(x)
+
+        I_obs_cov_inv = 1 / variance
+        out = I_obs_cov_inv[0, 0] * obs_diff
+
+        # out = torch.matmul(self.obs_operator.obs_matrix.T, out)
+        out = out @ self.obs_operator.obs_matrix  # H.T * out in batched mode
+
+        out = torch.reshape(out, [b, c, h, w])
+        # out = torch.reshape(out, [self.ensemble_size, c, h, w])
+
+        return out.mean(dim=0, keepdim=True)

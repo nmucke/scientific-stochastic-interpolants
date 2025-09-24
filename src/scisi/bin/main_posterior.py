@@ -19,13 +19,13 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 10
+NUM_PHYSICAL_STEPS = 5
 NUM_STEPS = 500
-MIXED_PRECISION = True
-BATCH_SIZE = 1
-SDE_STEPPER = heun_step
+MIXED_PRECISION = False
+BATCH_SIZE = 4
+SDE_STEPPER = euler_maruyama_step
 TEST_SAMPLE_INDEX = 0
-DIFFUSION_MULTIPLIER = 5.0
+DIFFUSION_MULTIPLIER = 8.0
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -36,14 +36,13 @@ mixed_precision_context = (
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
+    # config_name=f"weather_posterior.yaml",
     config_name=f"stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:
     project = posterior_cfg.pre_trained_model.project
     name = posterior_cfg.pre_trained_model.name
-    logger.info(f"Project: {project}")
-    logger.info(f"Name: {name}")
 
     cfg = OmegaConf.load(f"checkpoints/{project}/{name}/config.yaml")
     logger.info(f"Loading config from checkpoint:")
@@ -51,15 +50,6 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Name: {name}")
 
     len_field_history = cfg.model.drift_model.len_field_history
-
-    logger.info(f"Instantiating observation operator...")
-    obs_operator = hydra.utils.instantiate(posterior_cfg.obs_operator)
-
-    logger.info(f"Instantiating likelihood model...")
-    likelihood_model = hydra.utils.instantiate(
-        posterior_cfg.likelihood_model,
-        obs_operator=obs_operator,
-    )
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
@@ -87,6 +77,23 @@ def main(posterior_cfg: DictConfig) -> None:
     model.eval()
     model.to("cuda")
 
+    logger.info(f"Instantiating observation operator:")
+    logger.info(f"Type: {posterior_cfg.obs_operator.type}")
+    obs_operator = hydra.utils.instantiate(
+        posterior_cfg.obs_operator,
+        data_size=base[0].shape,
+    )
+    logger.info(f"Number of observations: {obs_operator.num_obs}")
+    logger.info(
+        f"{obs_operator.num_obs / obs_operator.num_dofs * 100}% of the data is observed"
+    )
+
+    logger.info(f"Instantiating likelihood model...")
+    likelihood_model = hydra.utils.instantiate(
+        posterior_cfg.likelihood_model,
+        obs_operator=obs_operator,
+    )
+
     logger.info(f"Instantiating posterior model...")
     posterior_model = hydra.utils.instantiate(
         posterior_cfg.posterior_model,
@@ -96,10 +103,12 @@ def main(posterior_cfg: DictConfig) -> None:
     )
 
     logger.info(f"Preparing observations...")
-    observations = torch.zeros(1, len(obs_operator.obs_indices), NUM_PHYSICAL_STEPS)
+    observations = torch.zeros(1, obs_operator.num_obs, NUM_PHYSICAL_STEPS)
     for i in range(NUM_PHYSICAL_STEPS):
         observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
-        observations[:, :, i] += torch.randn_like(observations[:, :, i]) * 0.05
+        observations[:, :, i] += torch.randn_like(observations[:, :, i]) * torch.sqrt(
+            torch.tensor(posterior_cfg.likelihood_model.variance)
+        )
 
     input_dict = {
         "base": base,
@@ -167,6 +176,9 @@ def main(posterior_cfg: DictConfig) -> None:
     figure_path = f"figures/{project}"
     os.makedirs(figure_path, exist_ok=True)
 
+    vmin = np.min(true_state.numpy())
+    vmax = np.max(true_state.numpy())
+
     logger.info(f"Creating animation...")
     create_animation_from_tensors(
         [
@@ -178,26 +190,39 @@ def main(posterior_cfg: DictConfig) -> None:
         file_name=f"{figure_path}/posterior_trajectory.mp4",
         colormaps="viridis",
         titles=["True", "Posterior", "Prior"],
+        normalize=False,
+        vmin=vmin,
+        vmax=vmax,
     )
+
+    obs_indices = obs_operator.obs_indices_c_h_w
+    obs_indices_on_grid = obs_operator.obs_indices_on_grid
 
     logger.info(f"Plotting results...")
     plt.figure(figsize=(15, 10))
-    plt.subplot(2, 3, 1)
-    plt.imshow(true_state)
+    plt.subplot(2, 4, 1)
+    plt.imshow(true_state, vmin=vmin, vmax=vmax)
+    # plt.scatter(obs_indices[:, 2], obs_indices[:, 1], color="red", marker=".", s=5)
+    plt.colorbar()
     plt.title("True")
-    plt.subplot(2, 3, 2)
-    plt.imshow(posterior_state)
+    plt.subplot(2, 4, 2)
+    plt.imshow(obs_indices_on_grid[0] * true_state, vmin=vmin, vmax=vmax)
+    plt.colorbar()
+    plt.title("True (Observed)")
+    plt.subplot(2, 4, 3)
+    plt.imshow(posterior_state, vmin=vmin, vmax=vmax)
+    plt.colorbar()
     plt.title("Posterior")
-    plt.subplot(2, 3, 3)
-    plt.imshow(prior_state)
+    plt.subplot(2, 4, 4)
+    plt.imshow(prior_state, vmin=vmin, vmax=vmax)
+    plt.colorbar()
     plt.title("Prior")
-    plt.subplot(2, 3, 4)
+    plt.subplot(2, 4, 5)
     plt.plot(
         range(len_field_history, NUM_PHYSICAL_STEPS),
         rmse_post,
         label="Posterior RMSE",
         linewidth=3,
-        # linestyle="." if len(rmse_post) == 1 else "-",
         markersize=10,
     )
     plt.plot(
@@ -205,17 +230,16 @@ def main(posterior_cfg: DictConfig) -> None:
         rmse_prior,
         label="Prior RMSE",
         linewidth=3,
-        # linestyle="." if len(rmse_prior) == 1 else "-",
         markersize=10,
     )
     plt.grid(True)
     plt.legend()
     plt.title("RMSE")
-    plt.subplot(2, 3, 5)
+    plt.subplot(2, 4, 6)
     plt.imshow(np.abs(posterior_state - true_state))
     plt.colorbar()
     plt.title("Posterior Error")
-    plt.subplot(2, 3, 6)
+    plt.subplot(2, 4, 7)
     plt.imshow(np.abs(prior_state - true_state))
     plt.colorbar()
     plt.title("Prior Error")

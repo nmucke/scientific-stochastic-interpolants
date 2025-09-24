@@ -1,55 +1,60 @@
 import pdb
+from typing import Optional
 
 import torch
 import torch.nn as nn
 
 
-def get_grid_indices(height: int, width: int, skip_grid: int, start_grid: int) -> torch.Tensor:
-    """
-    Get all grid indices.
+def get_grid_observation_matrix(
+    data_size: tuple[int, int, int], skip_grid: int
+) -> torch.Tensor:
+    """Get grid observation matrix."""
 
-    Args:
-        height: Height.
-        width: Width.
-        skip_grid: Skip grid.
+    C, H, W = data_size
+    num_dofs = C * H * W
 
-    Returns:
-        Grid indices. [num_obs, 3] where each row is [C_idx, H_idx, W_idx]
-    """
-    return torch.tensor(
-        [
-            (0, i, j)
-            for i in range(start_grid, height, skip_grid)
-            for j in range(start_grid, width, skip_grid)
-        ]
-    )
+    # Calculate number of observed points based on grid spacing
+    obs_h = H // skip_grid
+    obs_w = W // skip_grid
+    num_obs = C * obs_h * obs_w
+
+    # Create observation matrix
+    obs_matrix = torch.zeros(num_obs, num_dofs)
+
+    # Fill in ones at grid points
+    obs_idx = 0
+    for c in range(C):
+        for h in range(0, H, skip_grid):
+            for w in range(0, W, skip_grid):
+                flat_idx = c * (H * W) + h * W + w
+                obs_matrix[obs_idx, flat_idx] = 1.0
+                obs_idx += 1
+
+    # Get indices where observations are made
+    obs_indices = torch.nonzero(obs_matrix.sum(dim=0))
+
+    return obs_matrix, num_obs, obs_indices
 
 
-def extract_observations(x: torch.Tensor, obs_indices: torch.Tensor) -> torch.Tensor:
-    """
-    Extract values from tensor x using gather.
+def get_random_observation_matrix(
+    data_size: tuple[int, int, int],
+    percent_obs: float,
+) -> torch.Tensor:
+    """Get random observation matrix."""
+    num_obs = int(data_size[0] * data_size[1] * data_size[2] * percent_obs)
+    num_dofs = data_size[0] * data_size[1] * data_size[2]
+    perm = torch.randperm(num_dofs)
+    obs_indices = perm[:num_obs]
+    obs_matrix = torch.zeros(num_obs, num_dofs)
+    for row in range(num_obs):
+        obs_matrix[row, obs_indices[row]] = 1.0
+    return obs_matrix, num_obs, obs_indices
 
-    Args:
-        x: Input tensor of shape [B, C, H, W]
-        obs_indices: Indices tensor of shape [num_obs, 3] where each row is [C_idx, H_idx, W_idx]
 
-    Returns:
-        Extracted values of shape [B, num_obs]
-    """
-    # Convert 3D indices to linear indices
-    linear_indices = (
-        obs_indices[:, 0] * x.size(2) * x.size(3)
-        + obs_indices[:, 1] * x.size(3)
-        + obs_indices[:, 2]
-    )
-
-    linear_indices = linear_indices.to(x.device)
-
-    # Reshape x to [B, C*H*W] for gather
-    x_flat = x.view(x.size(0), -1)  # [B, C*H*W]
-
-    # Use gather to extract values
-    return x_flat.gather(1, linear_indices.unsqueeze(0).expand(x.size(0), -1))
+get_observation_matrix_factory = {
+    "grid": get_grid_observation_matrix,
+    "random": get_random_observation_matrix,
+}
 
 
 class LinearObservationOperator(nn.Module):
@@ -57,16 +62,66 @@ class LinearObservationOperator(nn.Module):
 
     def __init__(
         self,
-        obs_indices: torch.Tensor,
+        type: str = "grid",
+        data_size: tuple[int, int, int] = (1, 128, 128),
+        skip_grid: Optional[int] = None,
+        percent_obs: Optional[float] = None,
     ) -> None:
         """
         Initialize linear observation operator.
 
         Args:
-            obs_indices: Observation indices. [num_obs, 3] where each row is [C_idx, H_idx, W_idx]
+            type: Type of observation operator.
+            data_size: Data size.
+            skip_grid: Skip grid.
+            percent_obs: Percent of observations.
         """
         super(LinearObservationOperator, self).__init__()
-        self.obs_indices = obs_indices
+
+        self.C, self.H, self.W = data_size
+
+        self.num_dofs = self.C * self.H * self.W
+
+        self.type = type
+
+        (
+            self.obs_matrix,
+            self.num_obs,
+            self.obs_indices,
+        ) = get_observation_matrix_factory[type](
+            data_size, skip_grid if type == "grid" else percent_obs  # type: ignore[arg-type]
+        )
+
+        self.obs_matrix = self.obs_matrix.to("cuda")
+
+    @property
+    def obs_indices_on_grid(self) -> torch.Tensor:
+        """Get observation indices."""
+        indices = torch.zeros(self.num_dofs)
+        indices[self.obs_indices] = 1
+        return indices.view(self.C, self.H, self.W)
+
+    @property
+    def obs_indices_c_h_w(self) -> torch.Tensor:
+        """Get observation indices."""
+        """Get x, y coordinates of observation points.
+
+        Returns:
+            Tensor of shape (num_obs, 3) containing [channel, height, width] indices of observations.
+        """
+        indices = self.obs_indices_on_grid
+        obs_indices = torch.zeros((self.num_obs, 3), dtype=torch.long)
+        idx = 0
+
+        for c in range(self.C):
+            y_coords, x_coords = torch.where(indices[c] == 1)
+            num_coords = len(y_coords)
+            obs_indices[idx : idx + num_coords, 0] = c
+            obs_indices[idx : idx + num_coords, 1] = y_coords
+            obs_indices[idx : idx + num_coords, 2] = x_coords
+            idx += num_coords
+
+        return obs_indices
 
     def forward(
         self,
@@ -81,4 +136,7 @@ class LinearObservationOperator(nn.Module):
         Returns:
             Output tensor. [B, num_obs]
         """
-        return extract_observations(x, self.obs_indices)
+
+        b = x.shape[0]
+
+        return x.view(b, -1) @ self.obs_matrix.T

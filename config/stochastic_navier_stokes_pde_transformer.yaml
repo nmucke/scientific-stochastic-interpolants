@@ -1,6 +1,8 @@
 experiment_tracking:
   project: stochastic_navier_stokes
 
+len_field_history: 5
+
 preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
@@ -18,7 +20,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 64
   shuffle: True
   # Dataset
   dataset:
@@ -27,12 +29,12 @@ train_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_field_history: 3
+    len_field_history: ${len_field_history}
     tajectories_ids: (0, 160)
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 64
   shuffle: False
   dataset:
     _target_: scisi.data.datasets.StochasticNavierStokesDataset
@@ -40,7 +42,7 @@ val_data:
       - data/stochastic_navier_stokes
     files:
       - data.npz
-    len_field_history: 3
+    len_field_history: ${len_field_history}
     tajectories_ids: (160, 180)
 
 
@@ -50,7 +52,7 @@ test_data:
     - data/stochastic_navier_stokes
   files:
     - data.npz
-  len_field_history: 3
+  len_field_history: ${len_field_history}
   tajectories_ids: (180, 200)
   train_or_test: test
 
@@ -64,8 +66,8 @@ model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    len_field_history: 3 # number of field history steps
-    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
+    len_field_history: ${len_field_history} # number of field history steps
+    type: PDE-S # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 4 # patch size
     periodic: true # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
