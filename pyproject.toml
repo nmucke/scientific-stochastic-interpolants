@@ -42,24 +42,12 @@ pytorch = "*"
 
 [tool.pixi.feature.gpu.dependencies]
 cuda-version = "12.6.*"
-# pytorch-gpu = "*"
-
-# [tool.pixi.feature.cpu.dependencies]
-# pytorch-cpu = "*"
-
-# [tool.pixi.target.osx.dependencies]
-# pytorch-cpu = "*"
 
 [tool.pixi.pypi-dependencies]
 scientific-stochastic-interpolants = { path = ".", editable = true }
 hydra-core = ">=1.3.2,<2"
 trackio = ">=0.3.3"
 pdetransformer = ">=0.1.0"
-
-# [tool.pixi.target.osx.pypi-dependencies]
-# # OSX has no CUDA support so use the CPU here
-# torch = { version = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu" }
-# torchvision = { version = ">=0.20.1", index = "https://download.pytorch.org/whl/cpu" }
 
 # Pixi tasks
 [tool.pixi.tasks]
