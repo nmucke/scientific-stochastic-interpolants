@@ -168,14 +168,6 @@ class KNMIDataset(torch.utils.data.Dataset):
         self.files = files
         self.starting_time = starting_time
         self.ending_time = ending_time
-
-        tas, ym, time, self.lat, self.lon = self._load_file(self.paths[0], self.files)
-
-        self.num_trajectories = tas.shape[0]
-        self.num_channels = tas.shape[1]
-        self.height = tas.shape[2]
-        self.width = tas.shape[3]
-        self.num_steps = tas.shape[-1]
         self.len_field_history = len_field_history
         self.preprocesser = preprocesser
         self.train_or_test = train_or_test
@@ -183,34 +175,47 @@ class KNMIDataset(torch.utils.data.Dataset):
         self.cache_dir = cache_dir
         self.use_exisiting_cache = use_exisiting_cache
 
-        if self.train_or_test == "train":
-            self.data, self.field_cond, self.pars_cond = self._prepare_data_windows(
-                tas, ym, time
-            )
-        else:
-            self.data = tas
-            self.field_cond = ym
-            self.pars_cond = time
+        self.num_trajectories = len(self.files)
 
-        del tas, ym, time
+        if self.train_or_test == "train":
+            self.data, self.field_cond, self.pars_cond = self._prepare_data_windows()
+        else:
+            self.data = []
+            self.field_cond = []
+            self.pars_cond = []
+
+            for trajectory in range(self.num_trajectories):
+                tas, ym, time, self.lat, self.lon = self._load_file(
+                    self.paths[trajectory], 
+                    self.files[trajectory]
+                )
+
+                self.data.append(tas)
+                self.field_cond.append(ym)
+                self.pars_cond.append(time)
+
+            self.data = torch.concat(self.data, dim=0)
+            self.field_cond = torch.concat(self.field_cond, dim=0)
+            self.pars_cond = torch.concat(self.pars_cond, dim=0)
+
+            del tas, ym, time
 
     def _load_file(
-        self, path: str, files: list[str]
+        self, path: str, file: str
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Load the file."""
 
         time = []
         tas = []
         ym = []
-        for file in files:
-            data = np.load(os.path.join(path, file))
-            if self.starting_time is not None:
-                data["time"] = data["time"][self.starting_time : self.ending_time]
-                data["tas"] = data["tas"][self.starting_time : self.ending_time]
-                data["ym"] = data["ym"][self.starting_time : self.ending_time]
-            time.append(data["time"] % 365)  # days
-            tas.append(data["tas"])  # temperature at surface
-            ym.append(data["ym"])  # yearly mean temperature per grid cell
+        data = np.load(os.path.join(path, file))
+        if self.starting_time is not None:
+            data["time"] = data["time"][self.starting_time : self.ending_time]
+            data["tas"] = data["tas"][self.starting_time : self.ending_time]
+            data["ym"] = data["ym"][self.starting_time : self.ending_time]
+        time.append(data["time"] % 365)  # days
+        tas.append(data["tas"])  # temperature at surface
+        ym.append(data["ym"])  # yearly mean temperature per grid cell
 
         lat = torch.from_numpy(data["lat"])
         lon = torch.from_numpy(data["lon"])
@@ -241,9 +246,6 @@ class KNMIDataset(torch.utils.data.Dataset):
 
     def _prepare_data_windows(
         self,
-        tas: torch.Tensor,
-        ym: torch.Tensor,
-        time: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Prepare the data.
@@ -254,33 +256,31 @@ class KNMIDataset(torch.utils.data.Dataset):
 
         logger.info(
             f"Preparing data windows for {self.num_trajectories} "
-            f"trajectories with {self.num_steps} steps and "
-            f"{self.len_field_history} history."
+            f"and {self.len_field_history} history."
         )
 
         if self.save_in_memory:
-            data = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
-                self.num_channels,
-                self.height,
-                self.width,
-                self.len_field_history + 1,
-            )
-            field_cond = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
-                self.num_channels,
-                self.height,
-                self.width,
-            )
-            pars_cond = torch.zeros(
-                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
-                1,
-            )
+            data = []
+            field_cond = []
+            pars_cond = []
 
         if self.use_exisiting_cache and (not self.save_in_memory):
             logger.info(f"Using existing cache directory {self.cache_dir}...")
+
+            tas, ym, time, self.lat, self.lon = self._load_file(
+                self.paths[0], 
+                self.files[0]
+            )
+
+            self.num_channels = tas.shape[1]
+            self.height = tas.shape[2]
+            self.width = tas.shape[3]
+            self.num_steps = tas.shape[-1]
+
+            del tas, ym, time
         else:
             if not self.save_in_memory:
+
                 logger.info(
                     f"Saving data windows to cache directory {self.cache_dir}..."
                 )
@@ -289,30 +289,30 @@ class KNMIDataset(torch.utils.data.Dataset):
                 counter = 0
 
             for trajectory in range(self.num_trajectories):
+
+                tas, ym, time, self.lat, self.lon = self._load_file(
+                    self.paths[0], 
+                    self.files[trajectory]
+                )
+
+                self.num_channels = tas.shape[1]
+                self.height = tas.shape[2]
+                self.width = tas.shape[3]
+                self.num_steps = tas.shape[-1]
+
+                tas = tas.squeeze(0)
+                ym = ym.squeeze(0)
+                time = time.squeeze(0)
+
                 for step in range(self.num_steps - self.len_field_history - 1):
-                    data_window = tas[
-                        trajectory, :, :, :, step : step + self.len_field_history + 1
-                    ]
-                    field_cond_window = ym[
-                        trajectory, :, :, :, step + self.len_field_history + 1
-                    ]
-                    pars_cond_window = time[
-                        trajectory, step + self.len_field_history + 1
-                    ]
+                    data_window = tas[:, :, :, step : step + self.len_field_history + 1]
+                    field_cond_window = ym[:, :, :, step + self.len_field_history + 1]
+                    pars_cond_window = time[step + self.len_field_history + 1]
 
                     if self.save_in_memory:
-                        data[
-                            trajectory * (self.num_steps - self.len_field_history - 1)
-                            + step
-                        ] = data_window
-                        field_cond[
-                            trajectory * (self.num_steps - self.len_field_history - 1)
-                            + step
-                        ] = field_cond_window
-                        pars_cond[
-                            trajectory * (self.num_steps - self.len_field_history - 1)
-                            + step
-                        ] = pars_cond_window
+                        data.append(data_window)
+                        field_cond.append(field_cond_window)
+                        pars_cond.append(pars_cond_window)
                     else:
                         np.savez(
                             os.path.join(self.cache_dir, f"sample_{counter}.npz"),  # type: ignore[arg-type]
@@ -321,8 +321,12 @@ class KNMIDataset(torch.utils.data.Dataset):
                             pars_cond=pars_cond_window.numpy(),
                         )
                         counter += 1
+                logger.info(f"Saved trajectory {trajectory} to cache directory.")
 
         if self.save_in_memory:
+            data = torch.stack(data)
+            field_cond = torch.stack(field_cond)
+            pars_cond = torch.stack(pars_cond)
             return data, field_cond, pars_cond
         else:
             return None, None, None

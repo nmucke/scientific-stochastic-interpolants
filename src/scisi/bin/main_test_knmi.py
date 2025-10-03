@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.plotting.plot_fields import plot_fields
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
+from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
 
@@ -47,6 +48,8 @@ def main(cfg: DictConfig) -> None:
     project = list(cfg.keys())[0]
     name = list(cfg[project].keys())[0]
     cfg = OmegaConf.select(cfg, f"{project}.{name}")
+
+    set_device(cfg)
 
     len_field_history = cfg.model.drift_model.len_field_history
 
