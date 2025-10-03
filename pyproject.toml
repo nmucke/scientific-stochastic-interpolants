@@ -12,7 +12,7 @@ version = "0.1.1"
 [tool.pixi.workspace]
 preview = ["pixi-build"]
 channels = ["conda-forge"]
-platforms = ["linux-64"] #, "osx-arm64", "win-64"]
+platforms = ["linux-64", "osx-arm64"] #, "win-64"]
 
 [tool.pixi.package.build]
 backend = { name = "pixi-build-python", version = "*" }
@@ -25,7 +25,7 @@ channels = [
 packages = ["src/scisi"]
 
 # System requirements
-[tool.pixi.system-requirements]
+[tool.pixi.feature.gpu.system-requirements]
 cuda = "12.6"
 
 [tool.pixi.feature.py312.dependencies]
@@ -38,8 +38,14 @@ h5py = ">=3.14.0,<4"
 pdbpp = ">=0.11.6,<0.12"
 tqdm = "*"
 matplotlib = ">=3.10.5,<4"
+pytorch = "*"
+
+[tool.pixi.feature.gpu.dependencies]
 cuda-version = "12.6.*"
-pytorch-gpu = "*"
+# pytorch-gpu = "*"
+
+# [tool.pixi.feature.cpu.dependencies]
+# pytorch-cpu = "*"
 
 
 [tool.pixi.pypi-dependencies]
@@ -114,5 +120,6 @@ sort-imports = { cmd = "isort src", description = "Sort imports" }
 
 
 [tool.pixi.environments]
-default = { features = ["py312"], solve-group="default" }
-dev = { features = ["dev", "py312"], solve-group="default" }
+default = ["py312"] #{ features = ["py312"], solve-group="default" }
+dev-gpu = { features = ["dev", "py312", "gpu"]}
+dev-cpu = { features = ["dev", "py312"]}
