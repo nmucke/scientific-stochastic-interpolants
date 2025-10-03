@@ -13,10 +13,6 @@ from omegaconf import DictConfig, OmegaConf
 from scisi.architectures.architecture_utils import count_model_parameters
 from scisi.utils.device_utils import set_device
 
-torch.backends.cuda.enable_flash_sdp(True)
-torch.backends.cuda.enable_mem_efficient_sdp(True)
-torch.backends.cuda.enable_math_sdp(True)
-
 torch.set_default_dtype(torch.float32)
 
 # Disable slow attention warnings

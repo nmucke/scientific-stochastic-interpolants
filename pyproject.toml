@@ -12,7 +12,7 @@ version = "0.1.1"
 [tool.pixi.workspace]
 preview = ["pixi-build"]
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-arm64"] #, "win-64"]
+platforms = ["linux-64"] #, "osx-arm64"] #, "win-64"]
 
 [tool.pixi.package.build]
 backend = { name = "pixi-build-python", version = "*" }
@@ -38,12 +38,18 @@ h5py = ">=3.14.0,<4"
 pdbpp = ">=0.11.6,<0.12"
 tqdm = "*"
 matplotlib = ">=3.10.5,<4"
-pytorch = "*"
-torchvision = "*"
+# pytorch = "*"
+# torchvision = "*"
+cuda-version = "12.6.*"
+pytorch-gpu = "*"
+# cuda-version = "12.6.*"
 
 [tool.pixi.feature.gpu.dependencies]
-cuda-version = "12.6.*"
 # pytorch-gpu = "*"
+
+# [tool.pixi.feature.gpu.pypi-dependencies]
+# torch = {index = "https://download.pytorch.org/whl/cu126" }
+# torchvision = {index = "https://download.pytorch.org/whl/cu126" }
 
 # [tool.pixi.feature.cpu.dependencies]
 # pytorch-cpu = "*"
@@ -54,6 +60,8 @@ scientific-stochastic-interpolants = { path = ".", editable = true }
 hydra-core = ">=1.3.2,<2"
 trackio = ">=0.3.3"
 pdetransformer = ">=0.1.0"
+# torch = {index = "https://download.pytorch.org/whl/cu126" }
+# torchvision = {index = "https://download.pytorch.org/whl/cu126" }
 
 # [tool.pixi.target.osx.pypi-dependencies]
 # # OSX has no CUDA support so use the CPU here
@@ -124,3 +132,4 @@ sort-imports = { cmd = "isort src", description = "Sort imports" }
 default = ["py312"] #{ features = ["py312"], solve-group="default" }
 dev-gpu = { features = ["dev", "py312", "gpu"]}
 dev-cpu = { features = ["dev", "py312"]}
+dev = { features = ["dev", "py312"]}
