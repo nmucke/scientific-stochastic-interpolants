@@ -39,6 +39,7 @@ pdbpp = ">=0.11.6,<0.12"
 tqdm = "*"
 matplotlib = ">=3.10.5,<4"
 pytorch = "*"
+torchvision = "*"
 
 [tool.pixi.feature.gpu.dependencies]
 cuda-version = "12.6.*"
