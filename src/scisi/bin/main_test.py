@@ -25,7 +25,7 @@ DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
 
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 25
+NUM_PHYSICAL_STEPS = 50
 NUM_STEPS = 100
 BATCH_SIZE = 1
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]

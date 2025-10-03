@@ -19,12 +19,12 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 6
-NUM_STEPS = 500
+NUM_PHYSICAL_STEPS = 4
+NUM_STEPS = 200
 MIXED_PRECISION = False
-BATCH_SIZE = 4
+BATCH_SIZE = 1
 SDE_STEPPER = euler_maruyama_step
-TEST_SAMPLE_INDEX = 0
+TEST_SAMPLE_INDEX = 2
 DIFFUSION_MULTIPLIER = 8.0
 
 mixed_precision_context = (
@@ -92,6 +92,7 @@ def main(posterior_cfg: DictConfig) -> None:
     likelihood_model = hydra.utils.instantiate(
         posterior_cfg.likelihood_model,
         obs_operator=obs_operator,
+        model=model,
     )
 
     logger.info(f"Instantiating posterior model...")
@@ -236,11 +237,11 @@ def main(posterior_cfg: DictConfig) -> None:
     plt.legend()
     plt.title("RMSE")
     plt.subplot(2, 4, 6)
-    plt.imshow(np.abs(posterior_state - true_state))
+    plt.imshow(np.abs(posterior_state.numpy() - true_state.numpy()))
     plt.colorbar()
     plt.title("Posterior Error")
     plt.subplot(2, 4, 7)
-    plt.imshow(np.abs(prior_state - true_state))
+    plt.imshow(np.abs(prior_state.numpy() - true_state.numpy()))
     plt.colorbar()
     plt.title("Prior Error")
     plt.savefig(f"{figure_path}/posterior_trajectory.png")

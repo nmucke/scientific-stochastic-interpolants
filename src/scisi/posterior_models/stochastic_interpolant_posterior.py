@@ -84,10 +84,10 @@ class StochasticInterpolantPosterior(nn.Module):
         )
         fixed_input["diffusion_term"] = self.diffusion_term
 
-        with torch.no_grad():
-            for i in range(1, num_steps - 1):
-                t = t_vec[:, i : i + 1]
-                base = sde_stepper(x=base, t=t, **fixed_input).detach()
+        # with torch.no_grad():
+        for i in range(1, num_steps - 1):
+            t = t_vec[:, i : i + 1]
+            base = sde_stepper(x=base, t=t, **fixed_input).detach()
 
         base = (
             base
@@ -122,34 +122,14 @@ class StochasticInterpolantPosterior(nn.Module):
     ) -> torch.Tensor:
         """Likelihood score."""
 
-        # Compute the interpolant of the observation
-        # base_obs = self.likelihood_model.obs_operator(field_history[:, :, :, :, -1])
-
-        field_history_mean = field_history[:, :, :, :, -1].mean(dim=0, keepdim=True)
-        base_obs = self.likelihood_model.obs_operator(field_history_mean)
-        interpolant_obs = self.model.interpolation.forward(
-            base_obs, observations, t + dt, torch.zeros_like(base_obs)
-        )
-
-        # Compute the scale of the interpolant of the observation
-        interpolant_variance = (
-            self.model.interpolation.beta(t) ** 2
-            * self.likelihood_model.original_variance
-        )
-        interpolant_variance = interpolant_variance + self.model.interpolation.gamma(
-            t
-        ) ** 2 * (t + dt)
-
-        pred = (
-            x + self.model.drift_model(x, t, field_history, field_cond, pars_cond) * dt
-        )
-        pred = pred.repeat(self.likelihood_model.ensemble_size, 1, 1, 1, 1)
-        pred = pred + torch.sqrt(dt) * self.diffusion_term(t) * torch.randn_like(pred)
-
         return self.likelihood_model.score(
-            x=pred,
-            observations=interpolant_obs,
-            variance=interpolant_variance,
+            observations=observations,
+            x=x,
+            t=t,
+            field_history=field_history,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            dt=dt,
         )
 
     def _posterior_drift(

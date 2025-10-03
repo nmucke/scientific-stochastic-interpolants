@@ -18,7 +18,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 64
+  batch_size: 8
   shuffle: True
   num_workers: 4
   # Dataset
@@ -29,16 +29,16 @@ train_data:
     files:
       - "2017/random_0901_1231.npz"
       - "2017/random_0501_0831.npz"
-      # - "2017/storm_0701_1231.npz"
-      # - "2017/storm_0101_0630.npz"
+      - "2017/storm_0701_1231.npz"
+      - "2017/storm_0101_0630.npz"
       - "2018/random_0901_1231.npz"
       - "2018/random_0501_0831.npz"
       - "2018/random_0101_0430.npz"
-      # - "2018/storm_0701_1231.npz"
-      # - "2018/storm_0101_0630.npz"
+      - "2018/storm_0701_1231.npz"
+      - "2018/storm_0101_0630.npz"
       # - "2019/random_0901_1231.npz"
       # - "2019/random_0501_0831.npz"
-      # - "2019/random_0101_0430.npz"
+      - "2019/random_0101_0430.npz"
       # - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
     len_field_history: 5
@@ -50,7 +50,7 @@ train_data:
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 8
   shuffle: False
   num_workers: 4
   dataset:
@@ -67,10 +67,10 @@ val_data:
       # - "2018/random_0101_0430.npz"
       # - "2018/storm_0701_1231.npz"
       # - "2018/storm_0101_0630.npz"
-      - "2019/random_0901_1231.npz"
+      # - "2019/random_0901_1231.npz"
       - "2019/random_0501_0831.npz"
       # - "2019/random_0101_0430.npz"
-      # - "2019/storm_0701_1231.npz"
+      - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
     len_field_history: 5
     save_in_memory: False
@@ -93,9 +93,9 @@ test_data:
       # - "2018/random_0101_0430.npz"
       # - "2018/storm_0701_1231.npz"
       # - "2018/storm_0101_0630.npz"
-      # - "2019/random_0901_1231.npz"
+      - "2019/random_0901_1231.npz"
       # - "2019/random_0501_0831.npz"
-      - "2019/random_0101_0430.npz"
+      # - "2019/random_0101_0430.npz"
       # - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
   len_field_history: 5
@@ -115,8 +115,8 @@ model:
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
     len_field_history: 5 # number of field history steps
-    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
-    patch_size: 4 # patch size
+    type: PDE-L # type of the PDE transformer. S for small, B for medium, L for large
+    patch_size: 8 # patch size
     periodic: false # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: null # number of channels in the field conditional input
