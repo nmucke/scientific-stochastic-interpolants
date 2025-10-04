@@ -25,7 +25,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 64
+  batch_size: 8
   shuffle: True
   num_workers: 4
   # Dataset
@@ -48,7 +48,7 @@ train_data:
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 64
+  batch_size: 8
   shuffle: False
   num_workers: 4
   dataset:

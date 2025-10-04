@@ -87,7 +87,7 @@ class Trainer:
 
         # Initialize mixed precision
         self.mixed_precision_warmup = mixed_precision_warmup
-        if self.mixed_precision_warmup > 0:
+        if (self.mixed_precision_warmup > 0) and (self.device == "cuda"):
             logger.info(f"Mixed precision warmup: {self.mixed_precision_warmup}")
             self.full_precision = False
             self.scaler = torch.amp.GradScaler()

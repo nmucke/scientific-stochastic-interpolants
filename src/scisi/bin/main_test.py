@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.plotting.plot_fields import plot_fields
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
+from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
 
@@ -21,7 +22,8 @@ VERBOSE = True
 MIXED_PRECISION = False
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
+DEFAULT_NAME = "brave-forest-1"  # PDE-Transformer Navier-Stokes
+# DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
 
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
@@ -49,6 +51,8 @@ def main(cfg: DictConfig) -> None:
     name = list(cfg[project].keys())[0]
     cfg = OmegaConf.select(cfg, f"{project}.{name}")
 
+    set_device(cfg)
+
     len_field_history = cfg.model.drift_model.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
@@ -65,7 +69,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Name: {name}")
     model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
     model.eval()
-    model.to("cuda")
+    model.to(cfg.trainer.device)
 
     logger.info(f"Preparing trajectory...")
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
@@ -78,10 +82,10 @@ def main(cfg: DictConfig) -> None:
     )
 
     input_dict = {
-        "base": init_data["base"].to("cuda"),
+        "base": init_data["base"].to(cfg.trainer.device),
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
-        "field_history": init_data["field_history"].to("cuda"),
+        "field_history": init_data["field_history"].to(cfg.trainer.device),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
         "sde_stepper": SDE_STEPPER,
     }

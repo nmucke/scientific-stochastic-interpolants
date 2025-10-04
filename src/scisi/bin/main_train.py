@@ -11,10 +11,7 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
-
-torch.backends.cuda.enable_flash_sdp(True)
-torch.backends.cuda.enable_mem_efficient_sdp(True)
-torch.backends.cuda.enable_math_sdp(True)
+from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
 
@@ -42,6 +39,8 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
+
+    set_device(cfg)
 
     if CONTINUE_FROM_CHECKPOINT:
         logger.info(f"Loading config from checkpoint:")
