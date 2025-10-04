@@ -25,7 +25,7 @@ MIXED_PRECISION = False
 BATCH_SIZE = 1
 SDE_STEPPER = euler_maruyama_step
 TEST_SAMPLE_INDEX = 2
-DIFFUSION_MULTIPLIER = 8.0
+DIFFUSION_MULTIPLIER = 1.0
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)

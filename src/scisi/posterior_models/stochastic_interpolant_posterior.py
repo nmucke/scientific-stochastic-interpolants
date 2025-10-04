@@ -144,15 +144,18 @@ class StochasticInterpolantPosterior(nn.Module):
     ) -> torch.Tensor:
         """Posterior drift."""
 
-        prior_drift = self.model._drift_with_prior_score(
-            x, t, field_history, field_cond, pars_cond, self.diffusion_term
+        # prior_drift = self.model._drift_with_prior_score(
+        #     x, t, field_history, field_cond, pars_cond, self.diffusion_term
+        # )
+        prior_drift = self.model.drift_model(
+            x, t, field_history, field_cond, pars_cond
         )
 
         likelihood_score = self._likelihood_score(
             x, t, field_history, field_cond, pars_cond, observations, dt
         )
 
-        return prior_drift + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score
+        return prior_drift + 12.0 * self.model.interpolation.gamma(t)**2 * likelihood_score
 
     def sample_trajectory(
         self,
