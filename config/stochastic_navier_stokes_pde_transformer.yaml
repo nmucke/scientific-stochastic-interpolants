@@ -20,7 +20,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 64
+  batch_size: 32
   shuffle: True
   # Dataset
   dataset:
@@ -34,7 +34,7 @@ train_data:
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 64
+  batch_size: 32
   shuffle: False
   dataset:
     _target_: scisi.data.datasets.StochasticNavierStokesDataset
@@ -68,7 +68,7 @@ model:
     out_channels: 1 # number of channels in the output
     len_field_history: ${len_field_history} # number of field history steps
     type: PDE-S # type of the PDE transformer. S for small, B for medium, L for large
-    patch_size: 4 # patch size
+    patch_size: 8 # patch size
     periodic: true # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: null # number of channels in the field conditional input
@@ -76,7 +76,7 @@ model:
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0001
-  weight_decay: 0.0000001
+  weight_decay: 0.000001
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR

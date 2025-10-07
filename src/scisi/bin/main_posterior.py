@@ -19,12 +19,12 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 4
-NUM_STEPS = 200
+NUM_PHYSICAL_STEPS = 40
+NUM_STEPS = 500
 MIXED_PRECISION = False
 BATCH_SIZE = 1
 SDE_STEPPER = euler_maruyama_step
-TEST_SAMPLE_INDEX = 2
+TEST_SAMPLE_INDEX = 0
 DIFFUSION_MULTIPLIER = 1.0
 
 mixed_precision_context = (

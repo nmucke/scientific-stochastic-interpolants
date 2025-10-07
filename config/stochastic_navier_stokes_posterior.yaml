@@ -12,7 +12,7 @@ obs_operator:
   # type: random
   # percent_obs: 0.05
   type: grid
-  skip_grid: 2
+  skip_grid: 4
   # obs_indices:
   #   _target_: scisi.likelihood_models.observation_operators.get_grid_indices
   #   height: 128
@@ -21,9 +21,10 @@ obs_operator:
   #   start_grid: 0
 
 likelihood_model:
-  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantMultivariateGaussianLikelihood
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
-  ensemble_size: 16
+  ensemble_size: 25
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
