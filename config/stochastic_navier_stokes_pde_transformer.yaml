@@ -60,14 +60,14 @@ model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 0.1
+    gamma_multiplier: 1.0
     wiener_process: true
   drift_model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
     len_field_history: ${len_field_history} # number of field history steps
-    type: PDE-S # type of the PDE transformer. S for small, B for medium, L for large
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 8 # patch size
     periodic: true # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
@@ -79,8 +79,10 @@ optimizer:
   weight_decay: 0.000001
 
 scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 500
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  T_0: 25
+  T_mult: 1
   eta_min: 0.00001
 
 loss_fn:
