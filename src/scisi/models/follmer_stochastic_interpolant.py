@@ -1,6 +1,6 @@
 import pdb
 from functools import partial
-from typing import Callable
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -21,9 +21,9 @@ class FollmerStochasticInterpolant(nn.Module):
         self,
         interpolation: nn.Module,
         drift_model: nn.Module,
-        likelihood_model: nn.Module | None = None,
-        diffusion_term: nn.Module | None = None,
-        observations: torch.Tensor | None = None,
+        likelihood_model: Optional[nn.Module] = None,
+        diffusion_term: Optional[nn.Module] = None,
+        observations: Optional[torch.Tensor] = None,
     ) -> None:
         """Initialize Follmer stochastic interpolant."""
         super(FollmerStochasticInterpolant, self).__init__()
@@ -46,9 +46,9 @@ class FollmerStochasticInterpolant(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
-        field_history: torch.Tensor | None = None,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_history: Optional[torch.Tensor] = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Compute the drift of the Follmer stochastic interpolant.
@@ -68,9 +68,9 @@ class FollmerStochasticInterpolant(nn.Module):
         target: torch.Tensor,
         t: torch.Tensor,
         noise: torch.Tensor,
-        field_history: torch.Tensor | None = None,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_history: Optional[torch.Tensor] = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass for the Follmer stochastic interpolant when training the drift model.
@@ -114,10 +114,12 @@ class FollmerStochasticInterpolant(nn.Module):
         self,
         base: torch.Tensor,
         field_history: torch.Tensor,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
         batch_size: int = 1,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]
+    ]:
         """Prepare the batch for the sample method."""
 
         base = base.repeat(batch_size, 1, 1, 1)
@@ -137,8 +139,8 @@ class FollmerStochasticInterpolant(nn.Module):
         t: torch.Tensor,
         dt: torch.Tensor,
         field_history: torch.Tensor,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
         sde_stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
@@ -159,11 +161,11 @@ class FollmerStochasticInterpolant(nn.Module):
         field_history: torch.Tensor,
         batch_size: int = DEFAULT_BATCH_SIZE,
         num_steps: int = DEFAULT_NUM_STEPS,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
         return_field_history: bool = False,
         sde_stepper: Callable = euler_maruyama_step,
-        diffusion_term: Callable | None = None,
+        diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Sample from the Follmer stochastic interpolant."""
 
@@ -222,10 +224,10 @@ class FollmerStochasticInterpolant(nn.Module):
         batch_size: int = DEFAULT_BATCH_SIZE,
         num_steps: int = DEFAULT_NUM_STEPS,
         num_physical_steps: int = DEFAULT_NUM_PHYSICAL_STEPS,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
         sde_stepper: Callable = euler_maruyama_step,
-        diffusion_term: Callable | None = None,
+        diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Sample a trajectory from the Follmer stochastic interpolant."""
 
@@ -291,8 +293,8 @@ class FollmerStochasticInterpolant(nn.Module):
         x: torch.Tensor,
         t: torch.Tensor,
         field_history: torch.Tensor,
-        field_cond: torch.Tensor | None = None,
-        pars_cond: torch.Tensor | None = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
         diffusion_term: Callable = lambda t: 1 - t,
     ) -> torch.Tensor:
         """Compute the posterior drift of the Follmer stochastic interpolant."""
