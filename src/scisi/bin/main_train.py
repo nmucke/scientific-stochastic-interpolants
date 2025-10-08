@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = False
-CHECKPOINT_PROJECT = "knmi"
-CHECKPOINT_NAME = "jolly-valley-7"
+CONTINUE_FROM_CHECKPOINT = True
+CHECKPOINT_PROJECT = "weather"
+CHECKPOINT_NAME = "eager-mountain-3"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 

@@ -27,7 +27,7 @@ DEFAULT_NAME = "jolly-valley-7"
 
 MIXED_PRECISION = False
 BATCH_SIZE = 3
-NUM_PHYSICAL_STEPS = 75
+NUM_PHYSICAL_STEPS = 20
 NUM_STEPS = 50
 STARTING_TIME = 20000
 PLOTTING_TIMES = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
@@ -47,7 +47,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     set_device(cfg)
 
-    len_field_history = cfg.model.drift_model.len_field_history
+    len_field_history = cfg.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
