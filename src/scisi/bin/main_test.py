@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import logging
 import os
@@ -7,6 +8,7 @@ import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.models.flow_matching_model import FlowMatchingModel
@@ -34,7 +36,7 @@ DEFAULT_NAME = "adventurous-acorn-45"
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 # DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 10
+NUM_PHYSICAL_STEPS = 20
 NUM_STEPS = 100
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
@@ -49,15 +51,8 @@ mixed_precision_context = (
 )
 
 
-@hydra.main(  # type: ignore[misc]
-    config_path="../../../checkpoints",
-    config_name=f"{DEFAULT_PROJECT}/{DEFAULT_NAME}/config.yaml",
-    version_base=None,
-)
-def main(cfg: DictConfig) -> None:
-    project = list(cfg.keys())[0]
-    name = list(cfg[project].keys())[0]
-    cfg = OmegaConf.select(cfg, f"{project}.{name}")
+def main(cfg: DictConfig, project: str, name: str) -> None:
+    """Main function."""
 
     set_device(cfg)
 
@@ -168,4 +163,38 @@ def main(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Configure basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s][%(name)s][%(levelname)s] - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Parse command line arguments for project and name
+    parser = argparse.ArgumentParser(description="Test a trained model")
+    parser.add_argument(
+        "--project",
+        type=str,
+        default=DEFAULT_PROJECT,
+        help="Project name (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        default=DEFAULT_NAME,
+        help="Model name (default: %(default)s)",
+    )
+    args, unknown = parser.parse_known_args()
+
+    # Construct config directory path
+    config_dir = os.path.abspath(f"checkpoints/{args.project}/{args.name}")
+
+    logger.info(f"Loading config from: {config_dir}")
+    logger.info(f"Project: {args.project}")
+    logger.info(f"Name: {args.name}")
+
+    # Initialize Hydra with the config directory
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        # Compose the config, allowing overrides from command line
+        cfg = compose(config_name="config", overrides=unknown)
+        main(cfg, args.project, args.name)
