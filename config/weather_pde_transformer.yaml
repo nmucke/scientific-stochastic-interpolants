@@ -5,14 +5,16 @@ preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
     mean:
-      - 21.073786
+      - 21.9577
     std:
-      - 41.259544
+      - 41.2952
   target:
     mean:
-      - 21.073786
+      - 21.9577
     std:
-      - 41.259544
+      - 41.2952
+
+len_field_history: 7
 
 # Data
 train_data:
@@ -41,10 +43,10 @@ train_data:
       - "2019/random_0101_0430.npz"
       # - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
-    len_field_history: 5
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/train
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 
@@ -72,10 +74,10 @@ val_data:
       # - "2019/random_0101_0430.npz"
       - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
-    len_field_history: 5
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/val
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 
@@ -98,7 +100,7 @@ test_data:
       # - "2019/random_0101_0430.npz"
       # - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
-  len_field_history: 5
+  len_field_history: ${len_field_history}
   train_or_test: test
   save_in_memory: True
   starting_time: null
@@ -114,8 +116,8 @@ model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    len_field_history: 5 # number of field history steps
-    type: PDE-L # type of the PDE transformer. S for small, B for medium, L for large
+    len_field_history: ${len_field_history} # number of field history steps
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
     patch_size: 8 # patch size
     periodic: false # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
@@ -124,11 +126,13 @@ model:
 optimizer:
   _target_: torch.optim.AdamW
   lr: 0.0001
-  weight_decay: 0.0000001
+  weight_decay: 0.000001
 
 scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 500
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  T_0: 50
+  T_mult: 1
   eta_min: 0.00001
 
 loss_fn:
@@ -142,4 +146,4 @@ trainer:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 50
   max_grad_norm: 5.0
-  mixed_precision_warmup: 100
+  mixed_precision_warmup: 200
