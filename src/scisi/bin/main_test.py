@@ -102,14 +102,10 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
         "num_physical_steps": NUM_PHYSICAL_STEPS,
     }
     if isinstance(model, FlowMatchingModel):
-        logger.info(
-            f"Model is a {type(model)}. Setting ode_stepper to {ODE_STEPPER}..."
-        )
+        logger.info(f"Model is {type(model)}. Use ode_stepper {ODE_STEPPER}...")
         input_dict["ode_stepper"] = ODE_STEPPER
     else:
-        logger.info(
-            f"Model is a {type(model)}. Setting sde_stepper to {SDE_STEPPER}..."
-        )
+        logger.info(f"Model is {type(model)}. Use sde_stepper {SDE_STEPPER}...")
         input_dict["sde_stepper"] = SDE_STEPPER
 
     # Use mixed precision if available
