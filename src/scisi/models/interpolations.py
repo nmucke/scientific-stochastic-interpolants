@@ -103,7 +103,7 @@ class LinearStochasticInterpolation(nn.Module):
 
     def __init__(
         self,
-        gamma_multiplier: float = 0.1,
+        gamma_multiplier: float = 1.0,
         wiener_process: bool = True,
     ) -> None:
         """Initialize linear stochastic interpolant."""

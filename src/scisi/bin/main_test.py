@@ -21,14 +21,16 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = False
 
-DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "brave-forest-1"  # PDE-Transformer Navier-Stokes
+# DEFAULT_PROJECT = "stochastic_navier_stokes"
+# DEFAULT_NAME = "adventurous-acorn-45"
+# DEFAULT_NAME = "brave-forest-1"  # PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
 
-# DEFAULT_PROJECT = "weather"
+DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 50
-NUM_STEPS = 100
+DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
+NUM_PHYSICAL_STEPS = 20
+NUM_STEPS = 300
 BATCH_SIZE = 1
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 5
