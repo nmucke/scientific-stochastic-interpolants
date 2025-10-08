@@ -1,0 +1,97 @@
+experiment_tracking:
+  project: stochastic_navier_stokes
+
+len_field_history: 5
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  target:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+
+# Data
+train_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (0, 160)
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: False
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (160, 180)
+
+
+test_data:
+  _target_: scisi.data.datasets.StochasticNavierStokesDataset
+  paths:
+    - data/stochastic_navier_stokes
+  files:
+    - data.npz
+  len_field_history: ${len_field_history}
+  tajectories_ids: (180, 200)
+  train_or_test: test
+
+model:
+  _target_: scisi.models.diffusion_model.DiffusionModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  score_model:
+    _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
+    in_channels: 1 # number of channels in the input
+    out_channels: 1 # number of channels in the output
+    len_field_history: ${len_field_history} # number of field history steps
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
+    patch_size: 8 # patch size
+    periodic: true # whether to use periodic padding
+    carrier_token_active: false # whether to use carrier tokens
+    field_cond_channels: null # number of channels in the field conditional input
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.000001
+
+scheduler:
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  T_0: 25
+  T_mult: 1
+  eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.trainer.Trainer
+  num_epochs: 1000
+  device: cuda
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 50
+  max_grad_norm: 5.0
+  mixed_precision_warmup: 200
