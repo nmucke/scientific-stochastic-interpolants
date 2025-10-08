@@ -14,8 +14,8 @@ DEFAULT_NUM_STEPS = 100
 DEFAULT_NUM_PHYSICAL_STEPS = 10
 
 
-class FollmerStochasticInterpolant(nn.Module):
-    """Follmer stochastic interpolant."""
+class DiffusionModel(nn.Module):
+    """Diffusion model."""
 
     def __init__(
         self,
@@ -23,11 +23,14 @@ class FollmerStochasticInterpolant(nn.Module):
         drift_model: nn.Module,
         diffusion_term: Optional[nn.Module] = None,
     ) -> None:
-        """Initialize Follmer stochastic interpolant."""
-        super(FollmerStochasticInterpolant, self).__init__()
+        """Initialize Diffusion model."""
+        super(DiffusionModel, self).__init__()
 
         self.interpolation = interpolation
         self.drift_model = drift_model
+
+        self.likelihood_model = likelihood_model
+        self.observations = observations
 
         self.diffusion_term = diffusion_term
         if diffusion_term is None:
