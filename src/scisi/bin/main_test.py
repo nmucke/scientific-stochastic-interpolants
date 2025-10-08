@@ -9,8 +9,11 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.models.flow_matching_model import FlowMatchingModel
+from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.plotting.plot_fields import plot_fields
+from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 from scisi.utils.device_utils import set_device
 
@@ -21,20 +24,23 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = False
 
-# DEFAULT_PROJECT = "stochastic_navier_stokes"
-# DEFAULT_NAME = "adventurous-acorn-45"
-# DEFAULT_NAME = "brave-forest-1"  # PDE-Transformer Navier-Stokes
-# DEFAULT_NAME = "warm-root-42"  # PDE-Transformer Navier-Stokes
+DEFAULT_PROJECT = "stochastic_navier_stokes"
+DEFAULT_NAME = "adventurous-acorn-45"
+# DEFAULT_NAME = "brave-forest-1"  # SI PDE-Transformer Navier-Stokes
+# DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes
+# DEFAULT_NAME = "breezy-pine-46" # Flow Matching PDE-transformer Navier-Stokes
+# DEFAULT_NAME = "cheerful-willow-47"  # Diffusion model PDE-transformer Navier-Stokes
 
-DEFAULT_PROJECT = "weather"
+# DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
-DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 20
-NUM_STEPS = 300
-BATCH_SIZE = 1
+# DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
+NUM_PHYSICAL_STEPS = 10
+NUM_STEPS = 100
+BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 5
 SDE_STEPPER = euler_maruyama_step
+ODE_STEPPER = euler_step
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -55,7 +61,7 @@ def main(cfg: DictConfig) -> None:
 
     set_device(cfg)
 
-    len_field_history = cfg.model.drift_model.len_field_history
+    len_field_history = cfg.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
@@ -69,7 +75,9 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Loading model from checkpoint:")
     logger.info(f"Project: {project}")
     logger.info(f"Name: {name}")
-    model.load_state_dict(torch.load(f"checkpoints/{project}/{name}/model.pth"))
+    model.load_state_dict(
+        torch.load(f"checkpoints/{project}/{name}/model.pth", map_location="cpu")
+    )
     model.eval()
     model.to(cfg.trainer.device)
 
@@ -83,14 +91,31 @@ def main(cfg: DictConfig) -> None:
         is_batch=True,
     )
 
+    if not isinstance(model, FollmerStochasticInterpolant):
+        logger.info(f"Model is a {type(model)}. Setting base to None...")
+        init_data["base"] = None
+
     input_dict = {
-        "base": init_data["base"].to(cfg.trainer.device),
+        "base": (
+            init_data["base"].to(cfg.trainer.device)
+            if init_data["base"] is not None
+            else None
+        ),
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": init_data["field_history"].to(cfg.trainer.device),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "sde_stepper": SDE_STEPPER,
     }
+    if isinstance(model, FlowMatchingModel):
+        logger.info(
+            f"Model is a {type(model)}. Setting ode_stepper to {ODE_STEPPER}..."
+        )
+        input_dict["ode_stepper"] = ODE_STEPPER
+    else:
+        logger.info(
+            f"Model is a {type(model)}. Setting sde_stepper to {SDE_STEPPER}..."
+        )
+        input_dict["sde_stepper"] = SDE_STEPPER
 
     # Use mixed precision if available
     logger.info(
