@@ -8,12 +8,14 @@ import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
 
+from scisi.models.flow_matching_model import FlowMatchingModel
+from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
-from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
+from scisi.sampling.ode_solvers import euler_step
+from scisi.sampling.sde_solvers import euler_maruyama_step
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
@@ -25,12 +27,13 @@ DEFAULT_NAME = "jolly-valley-7"
 
 MIXED_PRECISION = False
 BATCH_SIZE = 3
-NUM_PHYSICAL_STEPS = 75
+NUM_PHYSICAL_STEPS = 20
 NUM_STEPS = 50
 STARTING_TIME = 20000
 PLOTTING_TIMES = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 END_TIME = STARTING_TIME + NUM_PHYSICAL_STEPS
 SDE_STEPPER = euler_maruyama_step
+ODE_STEPPER = euler_step
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -44,7 +47,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     set_device(cfg)
 
-    len_field_history = cfg.model.drift_model.len_field_history
+    len_field_history = cfg.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
@@ -79,8 +82,16 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
         is_trajectory=True,
     )
 
+    if not isinstance(model, FollmerStochasticInterpolant):
+        logger.info(f"Model is a {type(model)}. Setting base to None...")
+        processed_data["base"] = None
+
     input_dict = {
-        "base": processed_data["base"].squeeze(-1).to("cuda"),
+        "base": (
+            processed_data["base"].squeeze(-1).to("cuda")
+            if processed_data["base"] is not None
+            else None
+        ),
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": processed_data["field_history"].to("cuda"),
@@ -89,9 +100,13 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             "cuda"
         ),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "sde_stepper": SDE_STEPPER,
-        # "diffusion_term": lambda t: 2.0 * model.interpolation.gamma(t),
     }
+    if isinstance(model, FlowMatchingModel):
+        logger.info(f"Model is {type(model)}. Use ode_stepper {ODE_STEPPER}...")
+        input_dict["ode_stepper"] = ODE_STEPPER
+    else:
+        logger.info(f"Model is {type(model)}. Use sde_stepper {SDE_STEPPER}...")
+        input_dict["sde_stepper"] = SDE_STEPPER
 
     # Use mixed precision if available
     logger.info(
