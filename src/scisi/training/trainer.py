@@ -93,7 +93,12 @@ class Trainer:
             self.scaler = torch.amp.GradScaler()
             self._train_step = self._train_step_mixed_precision
         else:
-            logger.info(f"Mixed precision warmup not set, using full precision")
+            if (self.mixed_precision_warmup > 0) and (self.device != "cuda"):
+                logger.info(
+                    f"Mixed precision not compatible with device {self.device}, using full precision"
+                )
+            else:
+                logger.info(f"Mixed precision warmup not set, using full precision")
             self.full_precision = True
             self._train_step = self._train_step_full_precision
 

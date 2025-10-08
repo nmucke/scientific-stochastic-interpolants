@@ -57,10 +57,10 @@ test_data:
   train_or_test: test
 
 model:
-  _target_: scisi.models.diffusion_model.DiffusionModel
+  _target_: scisi.models.flow_matching_model.FlowMatchingModel
   interpolation:
     _target_: scisi.models.interpolations.LinearDeterministicInterpolation
-  score_model:
+  drift_model:
     _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
