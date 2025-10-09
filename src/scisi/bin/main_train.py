@@ -11,6 +11,7 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
+from scisi.training.gradient_clipping import EmaGradientClipper
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)

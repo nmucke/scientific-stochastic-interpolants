@@ -95,5 +95,11 @@ trainer:
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 50
-  max_grad_norm: 5.0
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EMAGradientClipper
+    beta1: 0.99
+    beta2: 0.999
+    clip_threshold_coef: 1.1
+    clip_value_coef: 2.0
+    eps: 1e-8
   mixed_precision_warmup: 200
