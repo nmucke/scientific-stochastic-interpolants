@@ -68,19 +68,15 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
 
-    logger.info(f"Loading model from checkpoint:")
-    logger.info(f"Project: {project}")
-    logger.info(f"Name: {name}")
+    logger.info(f"Loading model from checkpoint...")
     model.load_state_dict(
         torch.load(f"checkpoints/{project}/{name}/model.pth", map_location="cpu")
     )
     model.eval()
     model.to(cfg.trainer.device)
 
-    logger.info(f"Preparing trajectory...")
+    logger.info(f"Preparing and preprocessing trajectory...")
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
-
-    logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
         base=trajectory[:, :, :, :, len_field_history - 1],
         field_history=trajectory[:, :, :, :, 0:len_field_history],
