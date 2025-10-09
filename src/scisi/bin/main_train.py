@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = True
+CONTINUE_FROM_CHECKPOINT = False
 CHECKPOINT_PROJECT = "weather"
 CHECKPOINT_NAME = "eager-mountain-3"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
@@ -87,7 +87,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating optimizer: {cfg.optimizer._target_}")
     optimizer = hydra.utils.instantiate(
         cfg.optimizer,
-        params=model.drift_model.parameters(),
+        params=model.parameters(),
     )
 
     logger.info(f"Instantiating scheduler: {cfg.scheduler._target_}")
