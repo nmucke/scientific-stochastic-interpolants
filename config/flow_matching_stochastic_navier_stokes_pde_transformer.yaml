@@ -30,7 +30,7 @@ train_data:
     files:
       - data.npz
     len_field_history: ${len_field_history}
-    tajectories_ids: (0,5) # (0, 160)
+    tajectories_ids: (0, 160)
 
 val_data:
   _target_: torch.utils.data.DataLoader
@@ -66,7 +66,7 @@ model:
     out_channels: 1 # number of channels in the output
     len_field_history: ${len_field_history} # number of field history steps
     type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
-    patch_size: 8 # patch size
+    patch_size: 4 # patch size
     periodic: true # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: null # number of channels in the field conditional input

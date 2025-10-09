@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import tqdm
 
+from scisi.models.base_model import BaseModel
 from scisi.models.interpolations import _expand_t
 from scisi.sampling.sde_solvers import euler_maruyama_step
 
@@ -15,7 +16,7 @@ DEFAULT_NUM_STEPS = 100
 DEFAULT_NUM_PHYSICAL_STEPS = 10
 
 
-class DiffusionModel(nn.Module):
+class DiffusionModel(BaseModel):
     """Diffusion model."""
 
     def __init__(
@@ -35,7 +36,7 @@ class DiffusionModel(nn.Module):
             self.diffusion_term = self.interpolation.alpha
 
     @property
-    def drift_model(self) -> nn.Module:
+    def model(self) -> nn.Module:
         """
         Get the drift model.
 
@@ -45,10 +46,6 @@ class DiffusionModel(nn.Module):
             nn.Module: The drift model.
         """
         return self.score_model
-
-    def _get_device(self) -> str:
-        """Get the device of the model."""
-        return next(self.parameters()).device  # type: ignore[no-any-return]
 
     def _get_velocity_from_score(
         self,
@@ -139,29 +136,6 @@ class DiffusionModel(nn.Module):
 
         return pred_score, true_score
 
-    def _prepare_batch(
-        self,
-        field_history: torch.Tensor,
-        base: Optional[torch.Tensor] = None,
-        field_cond: Optional[torch.Tensor] = None,
-        pars_cond: Optional[torch.Tensor] = None,
-        batch_size: int = 1,
-    ) -> tuple[
-        torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]
-    ]:
-        """Prepare the batch for the sample method."""
-
-        base = base.repeat(batch_size, 1, 1, 1) if base is not None else None
-        field_history = field_history.repeat(batch_size, 1, 1, 1, 1)
-        field_cond = (
-            field_cond.repeat(batch_size, 1, 1, 1, 1)
-            if field_cond is not None
-            else None
-        )
-        pars_cond = pars_cond.repeat(batch_size, 1) if pars_cond is not None else None
-
-        return base, field_history, field_cond, pars_cond
-
     def _compute_first_step(
         self,
         base: torch.Tensor,
@@ -170,11 +144,18 @@ class DiffusionModel(nn.Module):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
-        sde_stepper: Callable = euler_maruyama_step,
+        stepper: Optional[Callable] = euler_maruyama_step,
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
-        return sde_stepper(
-            drift_model=self.score_model,
+
+        drift = lambda x, t, field_history, field_cond, pars_cond: (
+            0.5
+            * self.diffusion_term(t) ** 2  # type: ignore[misc]
+            * self.score_model(x, t, field_history, field_cond, pars_cond)
+        )
+
+        return stepper(  # type: ignore[misc]
+            drift_model=drift,
             diffusion_term=self.diffusion_term,
             x=base,
             t=t,
@@ -193,56 +174,23 @@ class DiffusionModel(nn.Module):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
         return_field_history: bool = False,
-        sde_stepper: Callable = euler_maruyama_step,
+        stepper: Callable = euler_maruyama_step,
         diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Sample from the Diffusion model."""
 
-        if diffusion_term is not None:
-            self.diffusion_term = diffusion_term
-
-        if (batch_size > 1) and (field_history.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
-                field_history, base, field_cond, pars_cond, batch_size
-            )
-
-        if base is None:
-            # The diffusion model always solves the SDE from noise to data
-            base = torch.randn_like(field_history[:, :, :, :, 0])
-
-        dt = torch.tensor(1 / num_steps, device=self._get_device())
-        t_vec = torch.linspace(0, 1, num_steps, device=self._get_device()).unsqueeze(0)
-
-        fixed_input = {
-            "field_history": field_history,
-            "field_cond": field_cond,
-            "pars_cond": pars_cond,
-            "dt": dt,
-        }
-
-        base = self._compute_first_step(
+        return self._sample(
             base=base,
-            t=t_vec[:, 0:1],
-            sde_stepper=sde_stepper,
-            **fixed_input,
-        ).detach()
-
-        fixed_input["drift_model"] = self.drift
-        fixed_input["diffusion_term"] = self.diffusion_term
-
-        # Sample from the Diffusion model
-        for i in range(1, num_steps):
-            t = t_vec[:, i : i + 1]
-            base = sde_stepper(x=base, t=t, **fixed_input).detach()
-
-        # Add the new base to the field history
-        if return_field_history:
-            field_history = torch.cat(
-                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1
-            )
-            return base, field_history
-
-        return base
+            field_history=field_history,
+            batch_size=batch_size,
+            num_steps=num_steps,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            return_field_history=return_field_history,
+            stepper=stepper,
+            diffusion_term=diffusion_term,
+            with_first_step=True,
+        )
 
     def sample_trajectory(
         self,
@@ -253,41 +201,18 @@ class DiffusionModel(nn.Module):
         base: Optional[torch.Tensor] = None,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
-        sde_stepper: Callable = euler_maruyama_step,
-        diffusion_term: Optional[Callable] = None,
+        stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
-        """Sample a trajectory from the Diffusion model."""
+        """Sample a trajectory from the Flow Matching model."""
 
-        if (batch_size > 1) and (field_history.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
-                field_history, base, field_cond, pars_cond, batch_size
-            )
-
-        trajectory = [
-            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
-        ]
-
-        fixed_input = {
-            "num_steps": num_steps,
-            "batch_size": batch_size,
-            "return_field_history": True,
-            "sde_stepper": sde_stepper,
-            "diffusion_term": diffusion_term,
-        }
-        cond_input = lambda i: {
-            "field_cond": field_cond[:, :, :, :, i] if field_cond is not None else None,
-            "pars_cond": pars_cond[:, i : i + 1] if pars_cond is not None else None,
-        }
-
-        with torch.no_grad():
-            pbar = tqdm.tqdm(range(0, num_physical_steps - field_history.shape[-1]))
-            for i in pbar:
-                base, field_history = self.sample(
-                    base=base,
-                    field_history=field_history,
-                    **cond_input(i),
-                    **fixed_input,  # type: ignore[arg-type]
-                )
-                trajectory.append(base.cpu())
-
-        return torch.stack(trajectory, dim=-1)
+        return self._sample_trajectory(
+            field_history=field_history,
+            batch_size=batch_size,
+            num_steps=num_steps,
+            num_physical_steps=num_physical_steps,
+            base=base,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            stepper=stepper,
+            gaussian_base=True,
+        )

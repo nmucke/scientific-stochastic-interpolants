@@ -53,6 +53,7 @@ mixed_precision_context = (
 
 def main(cfg: DictConfig, project: str, name: str) -> None:
     """Main function."""
+    logger.info(f"Model is {cfg.model._target_}...")
 
     set_device(cfg)
 
@@ -100,13 +101,8 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
         "num_steps": NUM_STEPS,
         "field_history": init_data["field_history"].to(cfg.trainer.device),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
+        "stepper": ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER,
     }
-    if isinstance(model, FlowMatchingModel):
-        logger.info(f"Model is {type(model)}. Use ode_stepper {ODE_STEPPER}...")
-        input_dict["ode_stepper"] = ODE_STEPPER
-    else:
-        logger.info(f"Model is {type(model)}. Use sde_stepper {SDE_STEPPER}...")
-        input_dict["sde_stepper"] = SDE_STEPPER
 
     # Use mixed precision if available
     logger.info(

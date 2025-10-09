@@ -1,11 +1,12 @@
 import pdb
 from functools import partial
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 import torch.nn as nn
 import tqdm
 
+from scisi.models.base_model import BaseModel
 from scisi.models.interpolations import _expand_t
 from scisi.sampling.ode_solvers import euler_step
 
@@ -15,7 +16,7 @@ DEFAULT_NUM_STEPS = 100
 DEFAULT_NUM_PHYSICAL_STEPS = 10
 
 
-class FlowMatchingModel(nn.Module):
+class FlowMatchingModel(BaseModel):
     """Flow Matching model."""
 
     def __init__(
@@ -29,9 +30,14 @@ class FlowMatchingModel(nn.Module):
         self.interpolation = interpolation
         self.drift_model = drift_model
 
-    def _get_device(self) -> str:
-        """Get the device of the model."""
-        return next(self.parameters()).device  # type: ignore[no-any-return]
+    @property
+    def model(self) -> nn.Module:
+        """
+        Get the drift model.
+
+        This is to ensure compatibility with the rest of the code base.
+        """
+        return self.drift_model
 
     def drift(
         self,
@@ -99,29 +105,6 @@ class FlowMatchingModel(nn.Module):
 
         return pred_drift, true_drift
 
-    def _prepare_batch(
-        self,
-        base: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: Optional[torch.Tensor] = None,
-        pars_cond: Optional[torch.Tensor] = None,
-        batch_size: int = 1,
-    ) -> tuple[
-        torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]
-    ]:
-        """Prepare the batch for the sample method."""
-
-        base = base.repeat(batch_size, 1, 1, 1) if base is not None else None
-        field_history = field_history.repeat(batch_size, 1, 1, 1, 1)
-        field_cond = (
-            field_cond.repeat(batch_size, 1, 1, 1, 1)
-            if field_cond is not None
-            else None
-        )
-        pars_cond = pars_cond.repeat(batch_size, 1) if pars_cond is not None else None
-
-        return base, field_history, field_cond, pars_cond
-
     def sample(
         self,
         field_history: torch.Tensor,
@@ -131,43 +114,22 @@ class FlowMatchingModel(nn.Module):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
         return_field_history: bool = False,
-        ode_stepper: Callable = euler_step,
+        stepper: Callable = euler_step,
+        gaussian_base: bool = True,
+        **kwargs: Any,
     ) -> torch.Tensor:
         """Sample from the Flow Matching model."""
 
-        if (batch_size > 1) and (field_history.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
-                base, field_history, field_cond, pars_cond, batch_size
-            )
-
-        if base is None:
-            # The flow matching model always solves the ODE from noise to data
-            base = torch.randn_like(field_history[:, :, :, :, 0])
-
-        dt = torch.tensor(1 / num_steps, device=self._get_device())
-        t_vec = torch.linspace(0, 1, num_steps, device=self._get_device()).unsqueeze(0)
-
-        fixed_input = {
-            "field_history": field_history,
-            "field_cond": field_cond,
-            "pars_cond": pars_cond,
-            "drift_model": self.drift,
-            "dt": dt,
-        }
-
-        # Sample from the Flow Matching model
-        for i in range(0, num_steps):
-            t = t_vec[:, i : i + 1]
-            base = ode_stepper(x=base, t=t, **fixed_input).detach()
-
-        # Add the new base to the field history
-        if return_field_history:
-            field_history = torch.cat(
-                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1
-            )
-            return base, field_history
-
-        return base
+        return self._sample(
+            field_history=field_history,
+            stepper=stepper,
+            batch_size=batch_size,
+            num_steps=num_steps,
+            base=base,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            return_field_history=return_field_history,
+        )
 
     def sample_trajectory(
         self,
@@ -178,39 +140,18 @@ class FlowMatchingModel(nn.Module):
         base: Optional[torch.Tensor] = None,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
-        ode_stepper: Callable = euler_step,
+        stepper: Callable = euler_step,
     ) -> torch.Tensor:
-        """Sample a trajectory from the Diffusion model."""
+        """Sample a trajectory from the Flow Matching model."""
 
-        if (batch_size > 1) and (field_history.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self._prepare_batch(
-                base, field_history, field_cond, pars_cond, batch_size
-            )
-
-        trajectory = [
-            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
-        ]
-
-        fixed_input = {
-            "num_steps": num_steps,
-            "batch_size": batch_size,
-            "return_field_history": True,
-            "ode_stepper": ode_stepper,
-        }
-        cond_input = lambda i: {
-            "field_cond": field_cond[:, :, :, :, i] if field_cond is not None else None,
-            "pars_cond": pars_cond[:, i : i + 1] if pars_cond is not None else None,
-        }
-
-        with torch.no_grad():
-            pbar = tqdm.tqdm(range(0, num_physical_steps - field_history.shape[-1]))
-            for i in pbar:
-                base, field_history = self.sample(
-                    base=base,
-                    field_history=field_history,
-                    **cond_input(i),
-                    **fixed_input,  # type: ignore[arg-type]
-                )
-                trajectory.append(base.cpu())
-
-        return torch.stack(trajectory, dim=-1)
+        return self._sample_trajectory(
+            field_history=field_history,
+            batch_size=batch_size,
+            num_steps=num_steps,
+            num_physical_steps=num_physical_steps,
+            base=base,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            stepper=stepper,
+            gaussian_base=True,
+        )
