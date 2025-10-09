@@ -13,6 +13,8 @@ from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from scisi.training.gradient_clipping import EmaGradientClipper
+
 logger = logging.getLogger(__name__)
 
 SCHEDULERS_THAT_REQUIRE_LOSS = [
@@ -57,11 +59,11 @@ class Trainer:
         train_dataloader: DataLoader,
         val_dataloader: DataLoader,
         optimizer: Optimizer,
+        gradient_clipper: EmaGradientClipper,
         early_stopping: EarlyStopping,
         loss_fn: nn.Module = nn.MSELoss(),
         scheduler: LRScheduler = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        max_grad_norm: float = 1.0,
         tracker: trackio.Run | None = None,
         mixed_precision_warmup: int = 0,
     ):
@@ -74,7 +76,7 @@ class Trainer:
         self.loss_fn = loss_fn
         self.num_epochs = num_epochs
         self.early_stopping = early_stopping
-        self.max_grad_norm = max_grad_norm
+        self.gradient_clipper = gradient_clipper
 
         # Initialize scheduler
         self.scheduler = scheduler
@@ -157,12 +159,11 @@ class Trainer:
         with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
             loss = self._compute_loss(batch)
 
-        # Clip gradients to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), max_norm=self.max_grad_norm
-        )
-
         self.scaler.scale(loss).backward()
+
+        # Clip gradients to prevent exploding gradients
+        self.gradient_clipper.clip_grads(self.model.parameters())
+
         self.scaler.step(self.optimizer)
         self.scaler.update()
         return loss
@@ -172,11 +173,11 @@ class Trainer:
         self.optimizer.zero_grad()
         loss = self._compute_loss(batch)
 
-        # Clip gradients to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(
-            self.model.parameters(), max_norm=self.max_grad_norm
-        )
         loss.backward()
+
+        # Clip gradients to prevent exploding gradients
+        self.gradient_clipper.clip_grads(self.model.parameters())
+
         self.optimizer.step()
         return loss
 
