@@ -1,6 +1,8 @@
 experiment_tracking:
   project: weather
 
+len_field_history: 7
+
 preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
@@ -13,8 +15,6 @@ preprocesser:
       - 21.9577
     std:
       - 41.2952
-
-len_field_history: 7
 
 # Data
 train_data:
@@ -46,7 +46,7 @@ train_data:
     len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/train
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
@@ -77,7 +77,7 @@ val_data:
     len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/val
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
@@ -118,7 +118,7 @@ model:
     out_channels: 1 # number of channels in the output
     len_field_history: ${len_field_history} # number of field history steps
     type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
-    patch_size: 8 # patch size
+    patch_size: 4 # patch size
     periodic: false # whether to use periodic padding
     carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: null # number of channels in the field conditional input
@@ -129,11 +129,13 @@ optimizer:
   weight_decay: 0.000001
 
 scheduler:
-  # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-  T_0: 50
-  T_mult: 1
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 250
   eta_min: 0.00001
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  # T_0: 50
+  # T_mult: 1
+  # eta_min: 0.00001
 
 loss_fn:
   _target_: torch.nn.MSELoss

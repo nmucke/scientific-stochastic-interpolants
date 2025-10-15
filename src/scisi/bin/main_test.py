@@ -32,6 +32,7 @@ DEFAULT_NAME = "adventurous-acorn-45"
 # DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "breezy-pine-46" # Flow Matching PDE-transformer Navier-Stokes
 # DEFAULT_NAME = "cheerful-willow-47"  # Diffusion model PDE-transformer Navier-Stokes
+# DEFAULT_NAME = "playful-fox-60"  # Flow Matching model Navier-Stokes
 
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
@@ -40,7 +41,7 @@ NUM_PHYSICAL_STEPS = 20
 NUM_STEPS = 100
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
-TEST_SAMPLE_INDEX = 5
+TEST_SAMPLE_INDEX = 3
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 
@@ -87,19 +88,6 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
         logger.info(f"Model is a {type(model)}. Setting base to None...")
         init_data["base"] = None
 
-    input_dict = {
-        "base": (
-            init_data["base"].to(cfg.trainer.device)
-            if init_data["base"] is not None
-            else None
-        ),
-        "batch_size": BATCH_SIZE,
-        "num_steps": NUM_STEPS,
-        "field_history": init_data["field_history"].to(cfg.trainer.device),
-        "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "stepper": ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER,
-    }
-
     # Use mixed precision if available
     logger.info(
         f"Sampling from the model using mixed precision..."
@@ -107,7 +95,20 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
         else f"Sampling from the model using full precision..."
     )
     with mixed_precision_context:
-        predicted_trajectory = model.sample_trajectory(**input_dict)
+        predicted_trajectory = model.sample_trajectory(
+            base=(
+                init_data["base"].to(cfg.trainer.device)
+                if init_data["base"] is not None
+                else None
+            ),
+            batch_size=BATCH_SIZE,
+            num_steps=NUM_STEPS,
+            field_history=init_data["field_history"].to(cfg.trainer.device),
+            num_physical_steps=NUM_PHYSICAL_STEPS,
+            stepper=(
+                ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER
+            ),
+        )
 
     true_trajectory = trajectory[0, 0].cpu()
     predicted_trajectory = predicted_trajectory.cpu()

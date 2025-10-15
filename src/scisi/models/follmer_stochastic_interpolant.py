@@ -7,6 +7,7 @@ import torch.nn as nn
 import tqdm
 
 from scisi.models.base_model import BaseModel
+from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step
 
 MIN_TIME = 1e-4
@@ -144,6 +145,7 @@ class FollmerStochasticInterpolant(BaseModel):
         return_field_history: bool = False,
         stepper: Callable = euler_maruyama_step,
         diffusion_term: Optional[Callable] = None,
+        ode_drift: bool = False,
     ) -> torch.Tensor:
         """Sample from the Follmer stochastic interpolant."""
 
@@ -155,6 +157,10 @@ class FollmerStochasticInterpolant(BaseModel):
             drift_model = partial(
                 self._drift_with_prior_score, diffusion_term=diffusion_term
             )
+
+        if ode_drift:
+            drift_model = self._ode_drift  # type: ignore[assignment]
+            stepper = euler_step
 
         return self._sample(
             field_history=field_history,
@@ -235,7 +241,7 @@ class FollmerStochasticInterpolant(BaseModel):
         if t < MIN_TIME:
             return drift
 
-        # Compute the posterior drift
+        # Compute the prior score
         prior_score = self._prior_score(x, field_history[:, :, :, :, -1], drift, t)
         drift = (
             drift
@@ -245,3 +251,22 @@ class FollmerStochasticInterpolant(BaseModel):
         )
 
         return drift
+
+    def _ode_drift(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: torch.Tensor,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute the ODE drift of the Follmer stochastic interpolant."""
+        drift = self.drift_model(x, t, field_history, field_cond, pars_cond)
+
+        if t < MIN_TIME:
+            return drift
+
+        # Compute the prior score
+        prior_score = self._prior_score(x, field_history[:, :, :, :, -1], drift, t)
+
+        return drift  # - 0.5 * self.interpolation.gamma(t) ** 2 * prior_score
