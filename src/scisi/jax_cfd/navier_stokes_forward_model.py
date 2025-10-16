@@ -52,12 +52,12 @@ def _get_grid_variable(
     return grids.GridVariable(grids.GridArray(arr, offset, grid), bc)
 
 
-VISCOSITY = 1e-2
+VISCOSITY = 1e-3
 MAX_VELOCITY = 7
-GRID = grids.Grid((128, 128), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
-HF_DT = 1e-3
-REDUCED_DT = 1.0
-SMOOTH = True  # use anti-aliasing
+GRID = grids.Grid((256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
+HF_DT = 1e-4
+REDUCED_DT = 5.0
+SMOOTH = False  # use anti-aliasing
 FINAL_TIME = 25.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
@@ -293,8 +293,8 @@ def set_up_forward_model(
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
-    forcing = lambda grid: kolmogorov_forcing(grid)
-    # forcing = None
+    # forcing = lambda grid: kolmogorov_forcing(grid)
+    forcing = None
     # forcing = lambda grid: spectral.forcings.random_forcing_module(GRID)
 
     if use_true_model:
@@ -306,7 +306,7 @@ def set_up_forward_model(
         )
         step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
     else:
-        step_fn = forward_euler(
+        step_fn = forward_euler_maruyama(
             NavierStokes2D(
                 VISCOSITY,
                 GRID,
@@ -351,7 +351,7 @@ def main() -> None:
     t1 = time.time()
     # create an initial velocity field and compute the fft of the vorticity.
     vorticity_hat0 = jax.vmap(get_initial_vorticity)(
-        jax.random.split(jax.random.PRNGKey(0), 2)
+        jax.random.split(jax.random.PRNGKey(0), 1)
     )
 
     trajectory = []
