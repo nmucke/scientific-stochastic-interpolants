@@ -15,10 +15,7 @@ channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64"] #, "win-64"]
 
 [tool.pixi.package.build]
-backend = {name = "pixi-build-python", version = "*", channels = [
-    "https://prefix.dev/pixi-build-backends",
-    "https://prefix.dev/conda-forge",
-]}
+backend = {name = "pixi-build-python", version = "*", channel = "https://prefix.dev/conda-forge" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scisi"]
@@ -50,11 +47,14 @@ scientific-stochastic-interpolants = { path = ".", editable = true }
 hydra-core = ">=1.3.2,<2"
 trackio = ">=0.3.3"
 pdetransformer = ">=0.1.0"
-
-[tool.pixi.feature.gpu.target.linux-64.pypi-dependencies]
 jax = "*"
 jaxlib = "*"
 jax-cfd = "*"
+
+# [tool.pixi.feature.gpu.target.linux-64.pypi-dependencies]
+# jax = "*"
+# jaxlib = "*"
+# jax-cfd = "*"
 
 # Pixi tasks
 [tool.pixi.tasks]
