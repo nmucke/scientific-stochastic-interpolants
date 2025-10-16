@@ -52,13 +52,13 @@ def _get_grid_variable(
     return grids.GridVariable(grids.GridArray(arr, offset, grid), bc)
 
 
-VISCOSITY = 1e-3
+VISCOSITY = 1e-2
 MAX_VELOCITY = 7
-GRID = grids.Grid((256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
-HF_DT = 1e-4
-REDUCED_DT = 2.0
+GRID = grids.Grid((128, 128), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
+HF_DT = 1e-3
+REDUCED_DT = 1.0
 SMOOTH = True  # use anti-aliasing
-FINAL_TIME = 10.0
+FINAL_TIME = 25.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 COMPILE = True
@@ -350,19 +350,22 @@ def main() -> None:
 
     t1 = time.time()
     # create an initial velocity field and compute the fft of the vorticity.
-    init_conditions = jax.vmap(get_initial_vorticity)(
-        jax.random.split(jax.random.PRNGKey(0), 10)
+    vorticity_hat0 = jax.vmap(get_initial_vorticity)(
+        jax.random.split(jax.random.PRNGKey(0), 2)
     )
 
     trajectory = []
     for _ in range(OUTER_STEPS):
-        vorticity_hat0 = jax.vmap(step_repeated)(init_conditions)
+        vorticity_hat0 = jax.vmap(step_repeated)(vorticity_hat0)
         trajectory.append(vorticity_hat0)
     trajectory = jnp.stack(trajectory)
     trajectory = jnp.swapaxes(trajectory, 0, 1)
     trajectory = ifft_fn(trajectory)
     t2 = time.time()
     print(f"Time taken: {t2 - t1} seconds")
+
+    trajectory_to_save = trajectory[0]
+    np.savez("trajectory.npz", trajectory=np.array(trajectory_to_save))
 
     # transform the trajectory into real-space and wrap in xarray for plotting
     spatial_coord = (

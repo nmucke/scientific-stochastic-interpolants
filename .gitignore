@@ -3,6 +3,7 @@
 
 # Data
 data/stochastic_navier_stokes/
+*.npz
 
 # Logs
 logs/
