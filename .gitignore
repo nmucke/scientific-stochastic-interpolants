@@ -17,7 +17,6 @@ outputs/
 # Checkpoints
 checkpoints/
 
-
 # Pixi
 .pixi/
 
@@ -29,3 +28,6 @@ figures/
 
 # Archive
 archive/
+
+# Animations
+*.mp4

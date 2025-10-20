@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.likelihood_models.observation_operators import LinearObservationOperator
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
 from scisi.posterior_models.stochastic_interpolant_posterior import (

@@ -20,6 +20,7 @@ import tqdm
 import tree_math
 import xarray
 from jax_cfd.base import boundaries
+from jax_cfd.base.funcutils import scan
 
 PyTreeState = TypeVar("PyTreeState")
 TimeStepFn = Callable[[PyTreeState], PyTreeState]
@@ -31,6 +32,19 @@ Array = grids.Array
 GridArrayVector = grids.GridArrayVector
 GridVariableVector = grids.GridVariableVector
 ForcingFn = Callable[[GridVariableVector], GridArrayVector]  # type: ignore[valid-type]
+
+
+VISCOSITY = 1e-3
+MAX_VELOCITY = 7
+GRID = grids.Grid((256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
+HF_DT = 1e-4
+REDUCED_DT = 0.5
+SMOOTH = True  # use anti-aliasing
+FINAL_TIME = 100.0
+OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
+INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
+COMPILE = True
+DRAG = 0.1
 
 
 # pylint: disable=invalid-name
@@ -52,18 +66,6 @@ def _get_grid_variable(
     return grids.GridVariable(grids.GridArray(arr, offset, grid), bc)
 
 
-VISCOSITY = 1e-3
-MAX_VELOCITY = 7
-GRID = grids.Grid((256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
-HF_DT = 1e-4
-REDUCED_DT = 5.0
-SMOOTH = False  # use anti-aliasing
-FINAL_TIME = 25.0
-OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
-INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
-COMPILE = True
-
-
 class NavierStokes2D:
     """Navier-Stokes equation in vorticity formulation."""
 
@@ -74,7 +76,6 @@ class NavierStokes2D:
         drag: float = 0.0,
         smooth: bool = True,
         forcing_fn: Optional[Callable[[grids.Grid], Any]] = None,
-        rng_key: jax.random.PRNGKey = jax.random.PRNGKey(42),
     ):
         """
         Initialize the Navier-Stokes equation.
@@ -93,7 +94,6 @@ class NavierStokes2D:
         self.drag = drag
         self.smooth = smooth
         self.forcing_fn = forcing_fn
-        self.rng_key = rng_key
         self._forcing_fn_with_grid = None
 
         self.kx, self.ky = self.grid.rfft_mesh()
@@ -143,6 +143,7 @@ class NavierStokes2D:
     def stochastic_explicit_terms(
         self,
         vorticity_hat: jnp.ndarray,
+        rng_key: jax.random.PRNGKey,
     ) -> jnp.ndarray:
         """Compute the stochastic explicit terms of the Navier-Stokes equation.
         Args:
@@ -150,51 +151,66 @@ class NavierStokes2D:
         Returns:
             Stochastic explicit terms
         """
-        # Generate 8 independent Wiener increments: ΔW_i ~ N(0, dt)
-        dW = jax.random.normal(self.rng_key, shape=(8,))
 
-        # Initialize zero array (complex)
-        dQ_hat = jnp.zeros_like(vorticity_hat)
+        Nx = self.grid.shape[0]
+        Ny = self.grid.shape[1]
 
-        # W₁: sin(6x) + W₅: cos(6x) affect modes (±6, 0)
-        # Note: kx = -6 is at index 256 - 6 = 250 (wraparound)
-        dQ_hat = dQ_hat.at[6, 0].add((-1j / 2) * dW[0] + (1 / 2) * dW[4])
-        dQ_hat = dQ_hat.at[250, 0].add((1j / 2) * dW[0] + (1 / 2) * dW[4])
+        # Initialize Fourier array
+        dB_fourier = jnp.zeros((Nx, Ny // 2 + 1), dtype=jnp.complex64)
 
-        # W₂: cos(7x) + W₆: sin(7x) affect modes (±7, 0)
-        dQ_hat = dQ_hat.at[7, 0].add((1 / 2) * dW[1] + (-1j / 2) * dW[5])
-        dQ_hat = dQ_hat.at[249, 0].add((1 / 2) * dW[1] + (1j / 2) * dW[5])
+        # Sample Wiener increments
+        # keys = jax.random.split(rng_key, 8)
+        # dW = jnp.array([jax.random.normal(k) for k in keys])
+        rng_key = jax.random.split(rng_key)[0]
+        dW = jax.random.normal(rng_key, (8,))
 
-        # W₃: sin(5(x+y)) + W₇: cos(5(x+y)) affect modes (±5, ±5)
-        # Only (5, 5) stored; (-5, -5) handled by Hermitian symmetry in rfftn
-        dQ_hat = dQ_hat.at[5, 5].add((-1j / 2) * dW[2] + (1 / 2) * dW[6])
+        # Normalization factor for FFT (depends on convention)
+        # For jnp.fft: forward transform has no normalization
+        norm = Nx * Ny
 
-        # W₄: cos(8(x+y)) + W₈: sin(8(x+y)) affect modes (±8, ±8)
-        dQ_hat = dQ_hat.at[8, 8].add((1 / 2) * dW[3] + (-1j / 2) * dW[7])
+        # Helper function to set mode
+        def set_mode(arr: jnp.ndarray, kx: int, ky: int, value: float) -> jnp.ndarray:
+            """Set Fourier mode at (kx, ky)"""
+            # Handle negative kx (wraps around)
+            idx_x = kx if kx >= 0 else Nx + kx
+            # ky must be non-negative for rfftn
+            if ky >= 0 and ky <= Ny // 2:
+                arr = arr.at[idx_x, ky].set(value * norm)
+            return arr
 
-        self.rng_key, subkey = jax.random.split(self.rng_key)
+        # Mode (6, 0): W5 cos(6x) + W1 sin(6x)
+        # cos(6x) → (δ(k-6) + δ(k+6))/2, sin(6x) → (δ(k-6) - δ(k+6))/(2i)
+        dB_fourier = set_mode(dB_fourier, 6, 0, 0.5 * (dW[4] - 1j * dW[0]))
+        dB_fourier = set_mode(dB_fourier, -6, 0, 0.5 * (dW[4] + 1j * dW[0]))
 
-        return dQ_hat
+        # Mode (7, 0): W2 cos(7x) + W6 sin(7x)
+        dB_fourier = set_mode(dB_fourier, 7, 0, 0.5 * (dW[1] - 1j * dW[5]))
+        dB_fourier = set_mode(dB_fourier, -7, 0, 0.5 * (dW[1] + 1j * dW[5]))
 
-        # x = self.grid.mesh((0,0))[0]
-        # y = self.grid.mesh((0,0))[1]
+        # Mode (5, 5): W7 cos(5(x+y)) + W3 sin(5(x+y))
+        dB_fourier = set_mode(dB_fourier, 5, 5, 0.5 * (dW[6] - 1j * dW[2]))
+        dB_fourier = set_mode(dB_fourier, -5, -5, 0.5 * (dW[6] + 1j * dW[2]))
+        # Note: (-5, -5) is outside rfftn range, handled by Hermitian symmetry
 
-        # noise = []
-        # for _ in range(8):
-        #     self.key, subkey = jax.random.split(self.key)
-        #     noise.append(jax.random.normal(subkey, x.shape))
+        # Mode (8, 8): W4 cos(8(x+y)) + W8 sin(8(x+y))
+        dB_fourier = set_mode(dB_fourier, 8, 8, 0.5 * (dW[3] - 1j * dW[7]))
+        dB_fourier = set_mode(dB_fourier, -8, -8, 0.5 * (dW[3] + 1j * dW[7]))
 
-        # out = noise[0] * jnp.sin(6.0 * x)
-        # out += noise[1] * jnp.cos(7.0 * x)
-        # out += noise[2] * jnp.sin(5.0 * (x + y))
-        # out += noise[3] * jnp.cos(8.0 * (x + y))
-        # out += noise[4] * jnp.cos(6.0 * x)
-        # out += noise[5] * jnp.sin(7.0 * x)
-        # out += noise[6] * jnp.cos(5.0 * (x + y))
-        # out += noise[7] * jnp.sin(8.0 * (x + y))
+        return dB_fourier
 
-        # # return out
-        # return jnp.fft.rfftn(out)
+
+def repeated(f: Callable, steps: int) -> Callable:
+    """Returns a repeatedly applied version of f()."""
+
+    def f_repeated(
+        x_initial: jnp.ndarray, rng_key: jax.random.PRNGKey
+    ) -> Tuple[jnp.ndarray, jax.random.PRNGKey]:
+        rng_keys = jax.random.split(rng_key, steps)
+        x_final, _ = jax.lax.scan(f, x_initial, xs=rng_keys, length=steps)
+        rng_keys_final = jax.random.split(rng_keys[-1], 1)
+        return x_final, rng_keys_final[-1]
+
+    return f_repeated
 
 
 def forward_euler(
@@ -206,16 +222,17 @@ def forward_euler(
     F = tree_math.unwrap(equation.explicit_terms)
 
     @tree_math.wrap  # type: ignore[misc]
-    def step_fn(u0: jnp.ndarray) -> jnp.ndarray:
+    def step_fn(u0: jnp.ndarray, rng_key: jax.random.PRNGKey) -> jnp.ndarray:
         """Time step the Navier-Stokes equation.
         Args:
             u0: initial vorticity field
+            rng_key: random key
         Returns:
             Final vorticity field
         """
         u_final = u0 + dt * F(u0)
 
-        return u_final
+        return u_final, None
 
     return step_fn  # type: ignore[no-any-return]
 
@@ -230,7 +247,7 @@ def forward_euler_maruyama(
     G = tree_math.unwrap(equation.stochastic_explicit_terms)
 
     @tree_math.wrap  # type: ignore[misc]
-    def step_fn(u0: jnp.ndarray) -> jnp.ndarray:
+    def step_fn(u0: jnp.ndarray, rng_key: jax.random.PRNGKey) -> jnp.ndarray:
         """Time step the Navier-Stokes equation.
         Args:
             u0: initial vorticity field
@@ -239,9 +256,9 @@ def forward_euler_maruyama(
         """
         u_final = u0 + dt * F(u0)
 
-        u_final = u_final + G(u0) * jnp.sqrt(dt)
+        u_final = u_final + G(u0, rng_key) * jnp.sqrt(dt)
 
-        return u_final
+        return u_final, None
 
     return step_fn  # type: ignore[no-any-return]
 
@@ -289,13 +306,12 @@ def kolmogorov_forcing(
 def set_up_forward_model(
     compile: bool = COMPILE,
     use_true_model: bool = False,
-    rng_key: jax.random.PRNGKey = jax.random.PRNGKey(42),
+    stochastic: bool = False,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
     # forcing = lambda grid: kolmogorov_forcing(grid)
     forcing = None
-    # forcing = lambda grid: spectral.forcings.random_forcing_module(GRID)
 
     if use_true_model:
         step_fn = spectral.time_stepping.crank_nicolson_rk4(
@@ -306,18 +322,20 @@ def set_up_forward_model(
         )
         step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
     else:
-        step_fn = forward_euler_maruyama(
+        stepper = forward_euler_maruyama if stochastic else forward_euler
+
+        step_fn = stepper(
             NavierStokes2D(
                 VISCOSITY,
                 GRID,
                 smooth=SMOOTH,
                 forcing_fn=forcing,
-                drag=0.1,
-                rng_key=rng_key,
+                drag=DRAG,
             ),
             HF_DT,
         )
-        step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
+        # step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
+        step_repeated = repeated(step_fn, INNER_STEPS)
 
     if compile:
         step_repeated = jax.jit(step_repeated)
@@ -343,20 +361,30 @@ def get_initial_vorticity(rng_key: jax.random.PRNGKey) -> jnp.ndarray:
 def main() -> None:
     """Main function."""
     # Check if CUDA is available
+    # Hide GPU from JAX
+    # jax.config.update('jax_platforms', 'cpu')
     print("JAX devices:", jax.devices())
 
     # setup step function using crank-nicolson runge-kutta order 4
-    step_repeated = set_up_forward_model(compile=COMPILE, use_true_model=False)
+    step_repeated = set_up_forward_model(
+        compile=COMPILE,
+        use_true_model=False,
+        stochastic=True,
+    )
 
     t1 = time.time()
     # create an initial velocity field and compute the fft of the vorticity.
-    vorticity_hat0 = jax.vmap(get_initial_vorticity)(
-        jax.random.split(jax.random.PRNGKey(0), 1)
-    )
+    vorticity_hat0 = get_initial_vorticity(jax.random.PRNGKey(0))
+    vorticity_hat0 = jnp.stack([vorticity_hat0, vorticity_hat0], axis=0)
 
+    rng_key = jax.random.PRNGKey(10)
+    rng_keys = jax.random.split(rng_key, vorticity_hat0.shape[0])
+
+    # Temporarily disable JIT compilation for this section
+    # with jax.disable_jit():
     trajectory = []
     for _ in range(OUTER_STEPS):
-        vorticity_hat0 = jax.vmap(step_repeated)(vorticity_hat0)
+        vorticity_hat0, rng_keys = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
         trajectory.append(vorticity_hat0)
     trajectory = jnp.stack(trajectory)
     trajectory = jnp.swapaxes(trajectory, 0, 1)
@@ -372,7 +400,7 @@ def main() -> None:
         jnp.arange(GRID.shape[0]) * 2 * jnp.pi / GRID.shape[0]
     )  # same for x and y
     coords = {
-        "time": REDUCED_DT * jnp.arange(OUTER_STEPS) * INNER_STEPS,
+        "time": REDUCED_DT * jnp.arange(OUTER_STEPS),
         "x": spatial_coord,
         "y": spatial_coord,
     }
