@@ -1,7 +1,8 @@
 # https://mail.python.org/pipermail/scipy-user/2011-May/029521.html
 
-import numpy as np
 from typing import Any
+
+import numpy as np
 from scipy.spatial import cKDTree as KDTree
 
 
