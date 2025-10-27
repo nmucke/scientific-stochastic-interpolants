@@ -32,7 +32,7 @@ BATCH_SIZE = 8
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
-DIFFUSION_MULTIPLIER = 7.5
+DIFFUSION_MULTIPLIER = 2
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -108,7 +108,8 @@ def main(posterior_cfg: DictConfig) -> None:
         posterior_cfg.likelihood_model._target_
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
-        diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
+        # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
+        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
     else:
         diffusion_term = None
     posterior_model = hydra.utils.instantiate(

@@ -138,16 +138,24 @@ class InterpolantGaussianLikelihood(nn.Module):
         """Interpolate the observations."""
 
         base_obs = self.obs_operator(field_history[:, :, :, :, -1])
-        interpolant_obs = (
-            self.model.interpolation.alpha(t) * base_obs
-            + self.model.interpolation.beta(t) * observations
+        # interpolant_obs = (
+        #     self.model.interpolation.alpha(t) * base_obs
+        #     + self.model.interpolation.beta(t) * observations
+        # )
+
+        interpolant_obs = self.model.interpolation.forward(
+            base_obs,
+            observations,
+            t,
+            torch.randn_like(base_obs),  # torch.zeros_like(x0_obs) #
         )
 
         # Compute the scale of the interpolant of the observation
         # interpolant_variance = self.interpolation.beta(t) ** 2 * self.original_variance + 1e-2
         interpolant_variance = (
-            self.model.interpolation.beta(t) ** 2 * self.original_variance
-            + self.model.interpolation.gamma(t) ** 2 * t
+            self.model.interpolation.beta(t) ** 2
+            * self.original_variance
+            # + self.model.interpolation.gamma(t) ** 2 * t
         )
 
         return interpolant_obs, interpolant_variance
@@ -234,7 +242,7 @@ class InterpolantGaussianLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Compute the likelihood."""
 
-        interpolant_obs, interpolant_variance = self._interpolate_observations(
+        interpolant_obs, _ = self._interpolate_observations(
             observations, x, t, field_history, field_cond, pars_cond
         )
 
@@ -265,9 +273,13 @@ class InterpolantGaussianLikelihood(nn.Module):
         interpolant_obs, interpolant_variance = self._interpolate_observations(
             observations, x, t, field_history, field_cond, pars_cond
         )
-        likelihood_score = self._compute_likelihood_score(
-            x, interpolant_obs, interpolant_variance
-        )
+        # likelihood_score = self._compute_likelihood_score(
+        #     x, interpolant_obs, interpolant_variance
+        # )
+        diff = interpolant_obs - self.obs_operator(x)
+        diff_norm = (diff * diff).sum(dim=-1)
+        diff_norm = -0.5 * diff_norm / (interpolant_variance + 1e-3)
+        likelihood_score = torch.autograd.grad(diff_norm.sum(), x)[0]
 
         if diffusion_term is None:
             diffusion_term = self.model.interpolation.gamma
