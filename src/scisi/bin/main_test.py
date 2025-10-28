@@ -8,6 +8,7 @@ import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
@@ -27,23 +28,24 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 VERBOSE = True
-MIXED_PRECISION = False
+MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-# DEFAULT_NAME = "vivid-otter-65"
+DEFAULT_NAME = "vivid-otter-65"  # SI UNet Navier-Stokes
 # DEFAULT_NAME = "adventurous-acorn-45"
 # DEFAULT_NAME = "brave-forest-1"  # SI PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "breezy-pine-46" # Flow Matching PDE-transformer Navier-Stokes
 # DEFAULT_NAME = "cheerful-willow-47"  # Diffusion model PDE-transformer Navier-Stokes
-DEFAULT_NAME = "playful-fox-60"  # Flow Matching model Navier-Stokes
+# DEFAULT_NAME = "zany-lynx-67"  # Diffusion model UNet Navier-Stokes
+# DEFAULT_NAME = "playful-fox-60"  # Flow Matching model UNet Navier-Stokes
 
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 # DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 25
-NUM_STEPS = 100
-BATCH_SIZE = 5
+NUM_PHYSICAL_STEPS = 20
+NUM_STEPS = 500
+BATCH_SIZE = 2
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 3
 SDE_STEPPER = euler_maruyama_step
@@ -111,6 +113,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             stepper=(
                 ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER
             ),
+            # diffusion_term=lambda t: 2 * model.interpolation.gamma(t),
         )
 
     true_trajectory = trajectory[0, 0].cpu()
@@ -162,7 +165,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     rmse = [
         torch.sqrt(
-            torch.mean((true_trajectory[:, :, i] - predicted_trajectory[:, :, i]) ** 2)
+            nn.MSELoss()(true_trajectory[:, :, i], predicted_trajectory[:, :, i])
         )
         for i in range(NUM_PHYSICAL_STEPS)
     ]

@@ -72,7 +72,7 @@ class BaseModel(nn.Module):
     ) -> torch.Tensor:
         """Integrate the model."""
 
-        for i in range(0, t_vec.shape[1]):
+        for i in range(0, t_vec.shape[1] - 1):
             base = stepper(x=base, t=t_vec[:, i : i + 1], **fixed_input).detach()
 
         return base

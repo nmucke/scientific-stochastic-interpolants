@@ -35,7 +35,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
-    config_name="stochastic_navier_stokes.yaml",
+    config_name="diffusion_stochastic_navier_stokes.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
