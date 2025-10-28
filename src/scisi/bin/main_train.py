@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = True
+CONTINUE_FROM_CHECKPOINT = False
 CHECKPOINT_PROJECT = "stochastic_navier_stokes"
 CHECKPOINT_NAME = "spirited-bear-62"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
@@ -35,7 +35,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
-    config_name="stochastic_navier_stokes_pde_transformer.yaml",
+    config_name="stochastic_navier_stokes.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
@@ -50,9 +50,9 @@ def main(cfg: DictConfig) -> None:
         cfg = OmegaConf.load(
             f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/config.yaml"
         )
+        cfg.pop("_Username"), cfg.pop("_Created"), cfg.pop("_Group")
 
     logger.info(f"Instantiating experiment tracking...")
-    cfg.pop("_Username"), cfg.pop("_Created"), cfg.pop("_Group")
     tracker = trackio.init(
         project=cfg.experiment_tracking.project,
         config=OmegaConf.to_container(cfg, resolve=True),

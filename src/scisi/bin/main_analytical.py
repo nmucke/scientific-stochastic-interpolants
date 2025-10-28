@@ -8,7 +8,7 @@ import torch.nn as nn
 import tqdm
 from scipy.stats import gaussian_kde
 
-from scisi.bin.analytical_utils.kl_divergence import KLdivergence
+from scisi.bin.analytical_utils.kl_divergence import kl_divergence
 from scisi.bin.analytical_utils.likelihood import (
     FlowdasLikelihood,
     InterpolantLikelihood,
@@ -95,6 +95,21 @@ def get_2d_kde(
     return xi, yi, zi
 
 
+def prepare_samples(
+    samples: torch.Tensor,
+    nbins: int,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+    """Prepare samples for KL-div and plotting."""
+
+    samples = samples.numpy()
+    xi, yi, zi = get_2d_kde(samples, nbins, x_range, y_range)
+
+    diag_samples = np.diag(zi)
+    return samples, (xi, yi, zi), diag_samples
+
+
 def main() -> None:
     """Main function."""
     # Create test tensors
@@ -107,9 +122,9 @@ def main() -> None:
     dim = 2
     num_steps = 500
     x0_mean = 5
-    diffusion_term = lambda t: 2.0 * torch.sqrt(1 - t)
-    # diffusion_term = lambda t: 2.0 * (1 - t)
-    # diffusion_term = lambda t: 1 * (1 - t)
+    diffusion_term = lambda t: 2.0 * (1 - t)
+    flow_das_diffusion_term = lambda t: 1 - t
+    interpolant_diffusion_term = lambda t: 2.0 * torch.sqrt(1 - t)
 
     obs = torch.tensor([[1.0, 1.0]])
     obs_cov = torch.eye(dim) * original_variance
@@ -133,88 +148,133 @@ def main() -> None:
 
     # Initialize components
     interpolation = LinearStochasticInterpolation()
-    drift_model = AnalyticalDriftModel(
+    true_drift_model = AnalyticalDriftModel(
         interpolation, target_mean, target_cov, diffusion_term
     )
-    stochastic_interpolant = AnalyticalStochasticInterpolant(
-        interpolation, drift_model, diffusion_term
+    flow_das_drift_model = AnalyticalDriftModel(
+        interpolation, target_mean, target_cov, flow_das_diffusion_term
+    )
+    interpolant_drift_model = AnalyticalDriftModel(
+        interpolation, target_mean, target_cov, interpolant_diffusion_term
+    )
+    true_stochastic_interpolant = AnalyticalStochasticInterpolant(
+        interpolation, true_drift_model, diffusion_term
     )
 
-    # likelihood_model = FlowdasLikelihood(obs_matrix, drift_model, original_variance=original_variance)
-    likelihood_model = InterpolantLikelihood(
-        obs_matrix, drift_model, original_variance=original_variance
+    flow_das_likelihood_model = FlowdasLikelihood(
+        obs_matrix, flow_das_drift_model, original_variance
     )
-    posterior_model = PosteriorModel(drift_model, likelihood_model)
+    flow_das_posterior_model = PosteriorModel(
+        true_drift_model, flow_das_likelihood_model
+    )
+
+    interpolant_likelihood_model = InterpolantLikelihood(
+        obs_matrix, interpolant_drift_model, original_variance
+    )
+    interpolant_posterior_model = PosteriorModel(
+        interpolant_drift_model, interpolant_likelihood_model
+    )
 
     x = x0.repeat(batch_size, 1)
     t = torch.ones(batch_size, 1)
 
-    si_prior_samples = stochastic_interpolant.sample(x, num_steps=num_steps)
-    si_prior_samples = si_prior_samples.numpy()
-    si_prior_xi, si_prior_yi, si_prior_zi = get_2d_kde(
-        si_prior_samples, nbins, x_range, y_range
+    si_prior_samples = true_stochastic_interpolant.sample(x, num_steps=num_steps)
+    si_prior_samples, (si_prior_xi, si_prior_yi, si_prior_zi), si_prior_diag = (
+        prepare_samples(si_prior_samples, nbins, x_range, y_range)
     )
 
-    si_posterior_samples = posterior_model.sample(
+    flow_das_si_posterior_samples = flow_das_posterior_model.sample(
         x, num_steps=num_steps, observations=obs
     )
-    si_posterior_samples = si_posterior_samples.numpy()
-    si_posterior_xi, si_posterior_yi, si_posterior_zi = get_2d_kde(
-        si_posterior_samples, nbins, x_range, y_range
-    )
+    (
+        flow_das_si_posterior_samples,
+        (flow_das_si_posterior_xi, flow_das_si_posterior_yi, flow_das_si_posterior_zi),
+        flow_das_si_posterior_diag,
+    ) = prepare_samples(flow_das_si_posterior_samples, nbins, x_range, y_range)
 
-    true_prior_samples = true_prior_samples.numpy()
-    true_prior_xi, true_prior_yi, true_prior_zi = get_2d_kde(
-        true_prior_samples, nbins, x_range, y_range
+    interpolant_si_posterior_samples = interpolant_posterior_model.sample(
+        x, num_steps=num_steps, observations=obs
     )
+    (
+        interpolant_si_posterior_samples,
+        (
+            interpolant_si_posterior_xi,
+            interpolant_si_posterior_yi,
+            interpolant_si_posterior_zi,
+        ),
+        interpolant_si_posterior_diag,
+    ) = prepare_samples(interpolant_si_posterior_samples, nbins, x_range, y_range)
+
+    (
+        true_prior_samples,
+        (true_prior_xi, true_prior_yi, true_prior_zi),
+        true_prior_diag,
+    ) = prepare_samples(true_prior_samples, nbins, x_range, y_range)
 
     likelihood_samples = likelihood_dist.sample((batch_size,))
-    likelihood_xi, likelihood_yi, likelihood_zi = get_2d_kde(
-        likelihood_samples, nbins, x_range, y_range
-    )
+    (
+        likelihood_samples,
+        (likelihood_xi, likelihood_yi, likelihood_zi),
+        likelihood_diag,
+    ) = prepare_samples(likelihood_samples, nbins, x_range, y_range)
 
     true_posterior_samples = true_posterior_dist.sample((batch_size,))
-    true_posterior_samples = true_posterior_samples.numpy()
-    true_posterior_xi, true_posterior_yi, true_posterior_zi = get_2d_kde(
-        true_posterior_samples, nbins, x_range, y_range
+    (
+        true_posterior_samples,
+        (true_posterior_xi, true_posterior_yi, true_posterior_zi),
+        true_posterior_diag,
+    ) = prepare_samples(true_posterior_samples, nbins, x_range, y_range)
+
+    flow_das_si_posterior_div = kl_divergence(
+        true_posterior_samples, flow_das_si_posterior_samples
+    )
+    interpolant_si_posterior_div = kl_divergence(
+        true_posterior_samples, interpolant_si_posterior_samples
     )
 
-    si_posterior_div = KLdivergence(true_posterior_samples, si_posterior_samples)
-
-    print(f"KL-Divergence: {si_posterior_div:0.4f}")
-
-    # Get diagonal values from density matrices
-    si_prior_diag = np.diag(si_prior_zi)
-    true_prior_diag = np.diag(true_prior_zi)
-    true_posterior_diag = np.diag(true_posterior_zi)
-    likelihood_diag = np.diag(likelihood_zi)
-    si_posterior_diag = np.diag(si_posterior_zi)
+    print(f"FlowDAS SI Posterior KL-Divergence: {flow_das_si_posterior_div:0.4f}")
+    print(
+        f"Interpolant SI Posterior KL-Divergence: {interpolant_si_posterior_div:0.4f}"
+    )
 
     # plot a density
     plt.figure(figsize=(20, 10))
-    plt.subplot(2, 3, 1)
+    plt.subplot(3, 3, 1)
     plt.pcolormesh(si_prior_xi, si_prior_yi, si_prior_zi, shading="gouraud")
     plt.title("SI Prior")
-    plt.subplot(2, 3, 2)
+    plt.subplot(3, 3, 2)
     plt.pcolormesh(true_prior_xi, true_prior_yi, true_prior_zi, shading="gouraud")
     plt.title("True prior")
-    plt.subplot(2, 3, 3)
-    plt.pcolormesh(si_posterior_xi, si_posterior_yi, si_posterior_zi, shading="gouraud")
-    plt.title("SI Posterior")
-    plt.subplot(2, 3, 4)
+    plt.subplot(3, 3, 3)
+    plt.pcolormesh(
+        flow_das_si_posterior_xi,
+        flow_das_si_posterior_yi,
+        flow_das_si_posterior_zi,
+        shading="gouraud",
+    )
+    plt.title("FlowDAS SI Posterior")
+    plt.subplot(3, 3, 4)
+    plt.pcolormesh(
+        interpolant_si_posterior_xi,
+        interpolant_si_posterior_yi,
+        interpolant_si_posterior_zi,
+        shading="gouraud",
+    )
+    plt.title("Interpolant SI Posterior")
+    plt.subplot(3, 3, 5)
     plt.pcolormesh(likelihood_xi, likelihood_yi, likelihood_zi, shading="gouraud")
     plt.title("Likelihood")
-    plt.subplot(2, 3, 5)
+    plt.subplot(3, 3, 6)
     plt.pcolormesh(
         true_posterior_xi, true_posterior_yi, true_posterior_zi, shading="gouraud"
     )
     plt.title("True Posterior")
-    plt.subplot(2, 3, 6)
-    plt.plot(si_prior_diag, label="SI Prior")
+    plt.subplot(3, 3, 7)
+    plt.plot(flow_das_si_posterior_diag, label="FlowDAS SI Posterior")
+    plt.plot(interpolant_si_posterior_diag, label="Interpolant SI Posterior")
     plt.plot(true_prior_diag, label="True prior")
     plt.plot(true_posterior_diag, label="True Posterior")
     plt.plot(likelihood_diag, label="Likelihood")
-    plt.plot(si_posterior_diag, label="SI Posterior")
     plt.legend()
     plt.title("Diagonal values")
 

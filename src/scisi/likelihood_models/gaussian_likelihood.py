@@ -3,6 +3,7 @@ from functools import partial
 from re import T
 from typing import Any, Callable, Dict, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -11,6 +12,83 @@ from scisi.models.interpolations import (
     LinearDeterministicInterpolation,
     QuadraticDeterministicInterpolation,
 )
+
+
+def diffuse_mask(
+    value_ids: torch.Tensor,
+    A: float = 1,
+    sig: float = 0.44,
+    search_dist: int = -1,
+    N: int = 256,
+    tol: float = 1e-6,
+) -> np.ndarray:
+    """Diffuse mask."""
+    L = 2 * np.pi
+    dx = dy = L / N
+    grid = np.zeros((N, N))
+
+    grid[0, :] = 1
+    grid[-1, :] = 1
+    grid[:, 0] = 1
+    grid[:, -1] = 1
+
+    def gauss(x0: float, y0: float, x: float, y: float) -> Any:
+        """Gaussian function."""
+        return A * np.exp(-((x0 - x) ** 2 + (y0 - y) ** 2) / (2 * sig**2))
+
+    if search_dist < 0:
+        min_search_steps = 0
+        while gauss(0, 0, dx * min_search_steps, 0) > tol:
+            min_search_steps += 1
+        search_dist = min_search_steps
+
+    gaussian = np.zeros((search_dist * 2 + 1, search_dist * 2 + 1))
+    x0 = y0 = search_dist * dx
+    for i in range(len(gaussian)):
+        for j in range(len(gaussian)):
+            gaussian[i, j] = gauss(x0, y0, i * dx, j * dx)
+
+    for sid in value_ids:
+        i = sid // N
+        j = sid % N
+
+        ilb = max(0, i - search_dist)
+        iub = min(N, i + search_dist + 1)
+        jlb = max(0, j - search_dist)
+        jub = min(N, j + search_dist + 1)
+
+        S = search_dist * 2 + 1
+
+        if i - search_dist < 0:
+            gilb = search_dist - i
+            giub = S
+        else:
+            gilb = 0
+            if i + search_dist > N - 1:
+                giub = N - i + search_dist
+            else:
+                giub = S
+
+        if j - search_dist < 0:
+            gjlb = search_dist - j
+            gjub = S
+        else:
+            gjlb = 0
+            if j + search_dist > N - 1:
+                gjub = N - j + search_dist
+            else:
+                gjub = S
+
+        grid[ilb:iub, jlb:jub] = np.fmax(
+            gaussian[gilb:giub, gjlb:gjub], grid[ilb:iub, jlb:jub]
+        )
+
+        grid[:, 0] = 0
+        grid[:, -1] = 0
+        grid[0, :] = 0
+        grid[-1, :] = 0
+
+    return grid
 
 
 class GaussianLikelihood(nn.Module):
@@ -101,6 +179,17 @@ class InterpolantGaussianLikelihood(nn.Module):
         self.ensemble_size = ensemble_size
         self.dist = torch.distributions.MultivariateNormal
 
+        mask = diffuse_mask(
+            self.obs_operator.obs_indices,
+            A=1,
+            sig=0.05,
+            search_dist=-1,
+            N=128,
+            tol=1e-6,
+        )
+        mask = torch.from_numpy(mask).to("cuda")
+        self.mask = mask
+
     def forward(
         self, x: torch.Tensor, observations: torch.Tensor, variance: torch.Tensor
     ) -> torch.Tensor:
@@ -137,18 +226,20 @@ class InterpolantGaussianLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Interpolate the observations."""
 
-        base_obs = self.obs_operator(field_history[:, :, :, :, -1])
-        # interpolant_obs = (
-        #     self.model.interpolation.alpha(t) * base_obs
-        #     + self.model.interpolation.beta(t) * observations
-        # )
-
-        interpolant_obs = self.model.interpolation.forward(
-            base_obs,
-            observations,
-            t,
-            torch.randn_like(base_obs),  # torch.zeros_like(x0_obs) #
+        base_obs = field_history[:, :, :, :, -1]
+        # base_obs = self.obs_operator(field_history[:, :, :, :, -1])
+        interpolant_obs = (
+            self.model.interpolation.alpha(t) * base_obs
+            + self.model.interpolation.beta(t) * observations
         )
+
+        # interpolant_obs = self.model.interpolation.forward(
+        #     base_obs,
+        #     observations,
+        #     t,
+        #     # torch.randn_like(base_obs),  # torch.zeros_like(x0_obs) #
+        #     torch.zeros_like(base_obs) #
+        # )
 
         # Compute the scale of the interpolant of the observation
         # interpolant_variance = self.interpolation.beta(t) ** 2 * self.original_variance + 1e-2
@@ -269,23 +360,54 @@ class InterpolantGaussianLikelihood(nn.Module):
         diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Compute the likelihood score."""
+        b, c, h, w = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
+
+        num_obs = observations.shape[1]
+
+        observations = torch.reshape(
+            observations,
+            [
+                1,
+                c,
+                torch.tensor(np.sqrt(num_obs), dtype=torch.int32),
+                torch.tensor(np.sqrt(num_obs), dtype=torch.int32),
+            ],
+        )
+        observations = nn.functional.interpolate(
+            observations, size=(h, w), mode="bilinear"
+        )
 
         interpolant_obs, interpolant_variance = self._interpolate_observations(
             observations, x, t, field_history, field_cond, pars_cond
         )
+
+        var_mask = 1 / (interpolant_variance + 1e-3)
+        var_mask = var_mask * self.mask
+        var_mask = var_mask.reshape(1, 1, 128, 128)
+
+        # import matplotlib.pyplot as plt
+        # plt.figure()
+        # plt.imshow(var_mask[0, 0].cpu().detach())
+        # plt.colorbar()
+        # plt.show()
+        # pdb.set_trace()
+
         # likelihood_score = self._compute_likelihood_score(
         #     x, interpolant_obs, interpolant_variance
         # )
-        diff = interpolant_obs - self.obs_operator(x)
-        diff_norm = (diff * diff).sum(dim=-1)
-        diff_norm = -0.5 * diff_norm / (interpolant_variance + 1e-3)
+        # diff = interpolant_obs - self.obs_operator(x)
+        diff = interpolant_obs - x
+        diff_norm = (diff * diff * var_mask).sum(dim=-1)
+        # diff_norm = (diff * diff / (interpolant_variance + 1e-3)).sum(dim=-1)
+        diff_norm = -0.5 * diff_norm
+
+        # diff_norm = -0.5 * diff_norm / (interpolant_variance + 1e-3)
         likelihood_score = torch.autograd.grad(diff_norm.sum(), x)[0]
 
         if diffusion_term is None:
             diffusion_term = self.model.interpolation.gamma
 
-        return likelihood_score * dt * 0.5 * diffusion_term(t) ** 2
-
+        return likelihood_score * dt * diffusion_term(t) ** 2 * 0.1
         # drift = (
         #     drift
         #     if drift is not None

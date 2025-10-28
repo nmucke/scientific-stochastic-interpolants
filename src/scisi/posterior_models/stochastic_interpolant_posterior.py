@@ -151,10 +151,10 @@ class StochasticInterpolantPosterior(nn.Module):
 
             base = base.detach()
 
-            if self.resample:
-                base, field_history = self._resample(
-                    base, observations, t, field_history, field_cond, pars_cond
-                )
+            # if self.resample:
+            #     base, field_history = self._resample(
+            #         base, observations, t, field_history, field_cond, pars_cond
+            #     )
 
         # Add the new base to the field history
         if return_field_history:

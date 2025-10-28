@@ -11,6 +11,7 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
 from scisi.posterior_models.stochastic_interpolant_posterior import (
@@ -28,7 +29,7 @@ torch.manual_seed(42)
 NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 500
 MIXED_PRECISION = False
-BATCH_SIZE = 8
+BATCH_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -44,8 +45,8 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    config_name=f"stochastic_navier_stokes_posterior.yaml",
-    # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:
@@ -128,7 +129,7 @@ def main(posterior_cfg: DictConfig) -> None:
         )
 
     input_dict = {
-        "base": base,
+        "base": base if isinstance(model, FollmerStochasticInterpolant) else None,
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": field_history,

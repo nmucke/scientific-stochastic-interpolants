@@ -53,9 +53,13 @@ class FlowMatchingPosterior(nn.Module):
     ) -> torch.Tensor:
         """Sample from the posterior."""
 
-        if (batch_size > 1) and (base.shape[0] == 1):
+        if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self.model._prepare_batch(
-                batch_size, base, field_history, field_cond, pars_cond
+                batch_size=batch_size,
+                base=base,
+                field_history=field_history,
+                field_cond=field_cond,
+                pars_cond=pars_cond,
             )
 
         dt = torch.tensor(1 / num_steps, device=self.device)
@@ -118,9 +122,13 @@ class FlowMatchingPosterior(nn.Module):
     ) -> torch.Tensor:
         """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
 
-        if (batch_size > 1) and (base.shape[0] == 1):
+        if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self.model._prepare_batch(
-                batch_size, base, field_history, field_cond, pars_cond
+                batch_size=batch_size,
+                base=base,
+                field_history=field_history,
+                field_cond=field_cond,
+                pars_cond=pars_cond,
             )
 
         trajectory = [

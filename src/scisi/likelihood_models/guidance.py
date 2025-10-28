@@ -1,3 +1,4 @@
+import pdb
 from typing import Optional
 
 import torch
@@ -111,7 +112,7 @@ class GuidanceGaussianLikelihood(nn.Module):
 
         # Compute weighted gradient
         score = torch.autograd.grad(
-            outputs=diff_norm,
+            outputs=diff_norm.sum(),
             inputs=x,
         )[0]
 

@@ -141,7 +141,8 @@ class FlowdasLikelihood(nn.Module):
         obs_matrix: torch.Tensor,
         drift_model: nn.Module,
         original_variance: float,
-        ensemble_size: int = 5,
+        ensemble_size: int = 25,
+        multiplier: float = 4.0,
     ) -> None:
         """Initialize interpolant likelihood."""
         super(FlowdasLikelihood, self).__init__()
@@ -149,6 +150,7 @@ class FlowdasLikelihood(nn.Module):
         self.obs_matrix = obs_matrix
         self.original_variance = original_variance
         self.ensemble_size = ensemble_size
+        self.multiplier = multiplier
 
     def forward(
         self,
@@ -203,4 +205,8 @@ class FlowdasLikelihood(nn.Module):
 
         weights = torch.softmax(diff_norm.detach(), dim=0)
 
-        return torch.autograd.grad((diff_norm * weights).sum(), x)[0] * dt * 3
+        return (
+            torch.autograd.grad((diff_norm * weights).sum(), x)[0]
+            * dt
+            * self.multiplier
+        )

@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial import cKDTree as KDTree
 
 
-def KLdivergence(x: np.ndarray, y: np.ndarray) -> Any:
+def kl_divergence(x: np.ndarray, y: np.ndarray) -> Any:
     """
     Compute the Kullback-Leibler divergence between two multivariate samples.
 
