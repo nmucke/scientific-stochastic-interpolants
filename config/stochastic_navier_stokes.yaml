@@ -59,8 +59,8 @@ test_data:
 model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
-    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 0.1
+    _target_: scisi.models.interpolations.LinearStochasticInterpolation
+    gamma_multiplier: 0.05
     wiener_process: true
   drift_model:
     _target_: scisi.architectures.u_net.UNet
@@ -93,11 +93,13 @@ optimizer:
   weight_decay: 0.000001
 
 scheduler:
-  # _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
-  T_0: 25
-  T_mult: 1
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 1000
   eta_min: 0.00001
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  # T_0: 25
+  # T_mult: 1
+  # eta_min: 0.00001
 
 loss_fn:
   _target_: torch.nn.MSELoss

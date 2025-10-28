@@ -1,5 +1,7 @@
 experiment_tracking:
-  project: knmi
+  project: weather
+
+len_field_history: 7
 
 preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
@@ -18,7 +20,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 16
   shuffle: True
   num_workers: 4
   # Dataset
@@ -29,28 +31,28 @@ train_data:
     files:
       - "2017/random_0901_1231.npz"
       - "2017/random_0501_0831.npz"
-      # - "2017/storm_0701_1231.npz"
-      # - "2017/storm_0101_0630.npz"
+      - "2017/storm_0701_1231.npz"
+      - "2017/storm_0101_0630.npz"
       - "2018/random_0901_1231.npz"
       - "2018/random_0501_0831.npz"
       - "2018/random_0101_0430.npz"
-      # - "2018/storm_0701_1231.npz"
-      # - "2018/storm_0101_0630.npz"
-      # - "2019/random_0101_0430.npz"
-      # - "2019/random_0501_0831.npz"
+      - "2018/storm_0701_1231.npz"
+      - "2018/storm_0101_0630.npz"
       # - "2019/random_0901_1231.npz"
+      # - "2019/random_0501_0831.npz"
+      - "2019/random_0101_0430.npz"
       # - "2019/storm_0701_1231.npz"
       # - "2019/storm_0101_0630.npz"
-    len_field_history: 5
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/train
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 16
   shuffle: False
   num_workers: 4
   dataset:
@@ -58,11 +60,24 @@ val_data:
     paths:
       - /export/scratch2/ntm/SciGenML/data/weather_npz/
     files:
-      - "2017/random_0501_0831.npz"
-    len_field_history: 5
+      # - "2017/random_0901_1231.npz"
+      # - "2017/random_0501_0831.npz"
+      # - "2017/storm_0701_1231.npz"
+      # - "2017/storm_0101_0630.npz"
+      # - "2018/random_0901_1231.npz"
+      # - "2018/random_0501_0831.npz"
+      # - "2018/random_0101_0430.npz"
+      # - "2018/storm_0701_1231.npz"
+      # - "2018/storm_0101_0630.npz"
+      # - "2019/random_0901_1231.npz"
+      - "2019/random_0501_0831.npz"
+      # - "2019/random_0101_0430.npz"
+      - "2019/storm_0701_1231.npz"
+      # - "2019/storm_0101_0630.npz"
+    len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/val
-    use_exisiting_cache: False
+    use_exisiting_cache: True
     starting_time: null
     ending_time: null
 
@@ -71,8 +86,21 @@ test_data:
   paths:
     - /export/scratch2/ntm/SciGenML/data/weather_npz/
   files:
-      - "2017/random_0501_0831.npz"
-  len_field_history: 5
+      # - "2017/random_0901_1231.npz"
+      # - "2017/random_0501_0831.npz"
+      # - "2017/storm_0701_1231.npz"
+      # - "2017/storm_0101_0630.npz"
+      # - "2018/random_0901_1231.npz"
+      # - "2018/random_0501_0831.npz"
+      # - "2018/random_0101_0430.npz"
+      # - "2018/storm_0701_1231.npz"
+      # - "2018/storm_0101_0630.npz"
+      - "2019/random_0901_1231.npz"
+      # - "2019/random_0501_0831.npz"
+      # - "2019/random_0101_0430.npz"
+      # - "2019/storm_0701_1231.npz"
+      # - "2019/storm_0101_0630.npz"
+  len_field_history: ${len_field_history}
   train_or_test: test
   save_in_memory: True
   starting_time: null
@@ -91,7 +119,7 @@ model:
     hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
     cond_embedding_dim: 256 # dimension of the scalar conditional embedding
-    len_field_history: 5 # number of field history steps
+    len_field_history: ${len_field_history} # number of field history steps
     field_cond_channels: null # number of channels in the field conditional input
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
@@ -99,7 +127,7 @@ model:
     num_blocks: 2 # number of convnext blocks per layer
     dropout_rate: 0.1 # dropout rate
     padding: torch.nn.CircularPad2d
-    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention_in_layers: [false, false, false, false] # whether to use attention in the layers. Last layer is the bottleneck layer.
     attention: # attention module and its arguments
       target: scisi.architectures.attention.SpatialAttention # attention module
       pos_embedding_type: rotary # positional embedding type
@@ -116,22 +144,23 @@ optimizer:
 
 scheduler:
   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 100
+  T_max: 500
   eta_min: 0.000001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
 
 trainer:
   _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
-  loss_fn:
-    _target_: torch.nn.MSELoss
   device: cuda
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping
-    patience: 25
+    patience: 50
   gradient_clipper:
     _target_: scisi.training.gradient_clipping.EmaGradientClipper
     ema_coef1: 0.9
     ema_coef2: 0.99
     max_norm_ratio: 2.0
     clip_norm_ratio: 1.1
-  mixed_precision_warmup: 50
+  mixed_precision_warmup: 100

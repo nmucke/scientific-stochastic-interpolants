@@ -10,7 +10,14 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
+from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
+from scisi.posterior_models.stochastic_interpolant_posterior import (
+    StochasticInterpolantPosterior,
+)
+from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
@@ -19,13 +26,14 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 40
+NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 500
 MIXED_PRECISION = False
-BATCH_SIZE = 1
+BATCH_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
+ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
-DIFFUSION_MULTIPLIER = 1.0
+DIFFUSION_MULTIPLIER = 2
 
 mixed_precision_context = (
     torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -37,7 +45,8 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    config_name=f"stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:
@@ -96,11 +105,19 @@ def main(posterior_cfg: DictConfig) -> None:
     )
 
     logger.info(f"Instantiating posterior model...")
+    if (
+        posterior_cfg.likelihood_model._target_
+        == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
+    ):
+        # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
+        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+    else:
+        diffusion_term = None
     posterior_model = hydra.utils.instantiate(
         posterior_cfg.posterior_model,
         model=model,
         likelihood_model=likelihood_model,
-        diffusion_term=lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t),
+        diffusion_term=diffusion_term,
     )
 
     logger.info(f"Preparing observations...")
@@ -112,11 +129,15 @@ def main(posterior_cfg: DictConfig) -> None:
         )
 
     input_dict = {
-        "base": base,
+        "base": base if isinstance(model, FollmerStochasticInterpolant) else None,
         "batch_size": BATCH_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": field_history,
-        "sde_stepper": SDE_STEPPER,
+        "stepper": (
+            ODE_STEPPER
+            if isinstance(posterior_model, FlowMatchingPosterior)
+            else SDE_STEPPER
+        ),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
         "observations": observations[:, :, len_field_history:].to("cuda"),
     }
@@ -138,37 +159,38 @@ def main(posterior_cfg: DictConfig) -> None:
     true_trajectory = trajectory.to("cpu")
 
     logger.info(f"Inverse transforming predicted trajectory...")
-    posterior_trajectory = preprocesser.inverse_transform(
-        base=posterior_trajectory, is_batch=True, is_trajectory=True
-    )["base"]
-    prior_trajectory = preprocesser.inverse_transform(
-        base=prior_trajectory, is_batch=True, is_trajectory=True
-    )["base"]
-    true_trajectory = preprocesser.inverse_transform(
-        base=true_trajectory, is_batch=True, is_trajectory=True
-    )["base"]
+    # posterior_trajectory = preprocesser.inverse_transform(
+    #     base=posterior_trajectory, is_batch=True, is_trajectory=True
+    # )["base"]
+    # prior_trajectory = preprocesser.inverse_transform(
+    #     base=prior_trajectory, is_batch=True, is_trajectory=True
+    # )["base"]
+    # true_trajectory = preprocesser.inverse_transform(
+    #     base=true_trajectory, is_batch=True, is_trajectory=True
+    # )["base"]
 
-    posterior_trajectory = posterior_trajectory[0, 0]
     prior_trajectory = prior_trajectory[0, 0]
     true_trajectory = true_trajectory[0, 0]
 
     logger.info(f"Computing RMSE...")
     rmse_post = [
         torch.sqrt(
-            nn.MSELoss()(posterior_trajectory[:, :, i], true_trajectory[:, :, i])
-        ).item()
+            torch.mean((posterior_trajectory[..., i] - true_trajectory[..., i]) ** 2)
+        )
         for i in range(len_field_history, NUM_PHYSICAL_STEPS)
     ]
     rmse_prior = [
         torch.sqrt(
-            nn.MSELoss()(prior_trajectory[:, :, i], true_trajectory[:, :, i])
-        ).item()
+            torch.mean((prior_trajectory[..., i] - true_trajectory[..., i]) ** 2)
+        )
         for i in range(len_field_history, NUM_PHYSICAL_STEPS)
     ]
     rmse_prior = np.array(rmse_prior)
     rmse_post = np.array(rmse_post)
     logger.info(f"RMSE of posterior: {np.mean(rmse_post):.6f}")
     logger.info(f"RMSE of prior: {np.mean(rmse_prior):.6f}")
+
+    posterior_trajectory = posterior_trajectory[0, 0]
 
     true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
     posterior_state = posterior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]

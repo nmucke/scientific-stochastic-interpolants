@@ -25,7 +25,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 8
+  batch_size: 64
   shuffle: True
   num_workers: 4
   # Dataset
@@ -35,20 +35,20 @@ train_data:
       - /export/scratch2/ntm/SciGenML/data/knmi/
     files:
       - sim_1.npz
-      - sim_2.npz
-      - sim_3.npz
-      - sim_4.npz
-      - sim_5.npz
+      # - sim_2.npz
+      # - sim_3.npz
+      # - sim_4.npz
+      # - sim_5.npz
     len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 8
+  batch_size: 64
   shuffle: False
   num_workers: 4
   dataset:
@@ -57,11 +57,11 @@ val_data:
       - /export/scratch2/ntm/SciGenML/data/knmi/
     files:
       - sim_8.npz
-      - sim_9.npz
+      # - sim_9.npz
     len_field_history: ${len_field_history}
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
-    use_exisiting_cache: True
+    use_exisiting_cache: False
     starting_time: null
     ending_time: null
 

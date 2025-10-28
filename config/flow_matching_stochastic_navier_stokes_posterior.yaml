@@ -7,7 +7,7 @@ pre_trained_model:
   # name: quirky-cave-36
   # name: optimistic-spring-34
   # name: mysterious-crane-57
-  name: spirited-bear-62
+  name: playful-fox-60
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
@@ -17,11 +17,10 @@ obs_operator:
   skip_grid: 4
 
 likelihood_model:
-  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood
   # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
   ensemble_size: 25
 
 posterior_model:
-  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
-  # _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantParticleFlowPosterior
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

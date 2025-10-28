@@ -3,6 +3,7 @@
 
 # Data
 data/stochastic_navier_stokes/
+*.npz
 
 # Logs
 logs/
@@ -16,7 +17,6 @@ outputs/
 # Checkpoints
 checkpoints/
 
-
 # Pixi
 .pixi/
 
@@ -28,3 +28,6 @@ figures/
 
 # Archive
 archive/
+
+# Animations
+*.mp4
