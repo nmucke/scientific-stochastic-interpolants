@@ -43,10 +43,10 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 10
+NUM_PHYSICAL_STEPS = 7
 NUM_STEPS = 250
 MIXED_PRECISION = False
-BATCH_SIZE = 32
+ENSEMBLE_SIZE = 4
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -95,9 +95,9 @@ def main(posterior_cfg: DictConfig) -> None:
         is_batch=True,
         is_trajectory=True,
     )
-    trajectory = init_data["base"].to("cuda")
-    base = init_data["base"][:, :, :, :, len_field_history - 1].to("cuda")
-    field_history = init_data["field_history"].to("cuda")
+    trajectory = init_data["base"]
+    base = init_data["base"][:, :, :, :, len_field_history - 1]
+    field_history = init_data["field_history"]
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -131,8 +131,8 @@ def main(posterior_cfg: DictConfig) -> None:
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
-        # diffusion_term = lambda t: 3.0 * torch.sqrt(model.interpolation.gamma(t))
-        diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
+        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+        # diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
 
@@ -146,14 +146,14 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Preparing observations...")
     observations = torch.zeros(1, obs_operator.num_obs, NUM_PHYSICAL_STEPS)
     for i in range(NUM_PHYSICAL_STEPS):
-        observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
+        observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i].to("cuda")).cpu()
         observations[:, :, i] += torch.randn_like(observations[:, :, i]) * torch.sqrt(
             torch.tensor(posterior_cfg.likelihood_model.variance)
         )
 
     input_dict = {
         "base": base if isinstance(model, FollmerStochasticInterpolant) else None,
-        "batch_size": BATCH_SIZE,
+        "ensemble_size": ENSEMBLE_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": field_history,
         "stepper": (
@@ -162,7 +162,7 @@ def main(posterior_cfg: DictConfig) -> None:
             else SDE_STEPPER
         ),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "observations": observations[:, :, len_field_history:].to("cuda"),
+        "observations": observations[:, :, len_field_history:],
     }
 
     logger.info(
@@ -176,6 +176,7 @@ def main(posterior_cfg: DictConfig) -> None:
 
         input_dict.pop("num_steps")
         input_dict.pop("observations")
+        input_dict.pop("ensemble_size")
         logger.info(f"Sampling from the prior model...")
         prior_trajectory = model.sample_trajectory(**input_dict, num_steps=50)
 

@@ -326,7 +326,7 @@ class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
         obs_operator: nn.Module = LinearObservationOperator,
         variance: float = 0.05,
         ensemble_size: int = 1,
-        spatial_sigma: float = 0.1,
+        spatial_sigma: float = 0.05,
         interpolant: Optional[nn.Module] = None,
     ) -> None:
         """Initialize Spatial Interpolant Gaussian likelihood."""
@@ -399,7 +399,7 @@ class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
         )
 
         return (
-            likelihood_score * dt * diffusion_term(t) ** 2 * t  # type: ignore[misc]
+            likelihood_score * dt * diffusion_term(t) ** 2  # type: ignore[misc]
         )  # self.interpolant.beta(t)
 
 

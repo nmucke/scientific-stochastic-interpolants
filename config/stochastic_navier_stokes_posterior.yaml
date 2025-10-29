@@ -16,20 +16,20 @@ obs_operator:
   # type: random
   # percent_obs: 0.05
   type: grid
-  skip_grid: 16
+  skip_grid: 4
 
 likelihood_model:
-  _target_: scisi.likelihood_models.gaussian_likelihood.KalmanInterpolantGaussianLikelihood
+  # _target_: scisi.likelihood_models.gaussian_likelihood.KalmanInterpolantGaussianLikelihood
   # _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
   # _target_: scisi.likelihood_models.gaussian_likelihood.SpatialInterpolantGaussianLikelihood
-  # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
+  _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
   ensemble_size: 25
-  interpolant:
-    # _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    _target_: scisi.models.interpolations.LinearStochasticInterpolation
-    gamma_multiplier: 1.0
-    wiener_process: true
+  # interpolant:
+  #   # _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+  #   _target_: scisi.models.interpolations.LinearStochasticInterpolation
+  #   gamma_multiplier: 1.0
+  #   wiener_process: true
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
