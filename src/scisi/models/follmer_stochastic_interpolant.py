@@ -159,7 +159,7 @@ class FollmerStochasticInterpolant(BaseModel):
             )
 
         if ode_drift:
-            drift_model = self._ode_drift  # type: ignore[assignment]
+            drift_model = self._ode_drift
             stepper = euler_step
 
         return self._sample(
@@ -251,22 +251,3 @@ class FollmerStochasticInterpolant(BaseModel):
         )
 
         return drift
-
-    def _ode_drift(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: Optional[torch.Tensor] = None,
-        pars_cond: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Compute the ODE drift of the Follmer stochastic interpolant."""
-        drift = self.drift_model(x, t, field_history, field_cond, pars_cond)
-
-        if t < MIN_TIME:
-            return drift
-
-        # Compute the prior score
-        prior_score = self._prior_score(x, field_history[:, :, :, :, -1], drift, t)
-
-        return drift  # - 0.5 * self.interpolation.gamma(t) ** 2 * prior_score

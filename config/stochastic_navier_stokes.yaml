@@ -59,8 +59,8 @@ test_data:
 model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
-    _target_: scisi.models.interpolations.LinearStochasticInterpolation
-    gamma_multiplier: 0.05
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: 1.0
     wiener_process: true
   drift_model:
     _target_: scisi.architectures.u_net.UNet

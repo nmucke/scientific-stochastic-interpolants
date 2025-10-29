@@ -72,7 +72,7 @@ class FlowMatchingPosterior(nn.Module):
             "dt": dt,
         }
 
-        base = torch.randn_like(field_history[:, :, :, :, 0]) if base is None else base
+        base = torch.randn_like(field_history[..., 0]) if base is None else base
 
         for i in range(0, num_steps - 1):
             t = t_vec[:, i : i + 1]
@@ -132,7 +132,7 @@ class FlowMatchingPosterior(nn.Module):
             )
 
         trajectory = [
-            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
+            field_history[..., i].cpu() for i in range(field_history.shape[-1])
         ]
 
         fixed_input = {

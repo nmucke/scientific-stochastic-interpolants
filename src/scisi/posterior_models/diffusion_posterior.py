@@ -12,8 +12,8 @@ from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 MIN_TIME = 1e-4
 
 
-class StochasticInterpolantPosterior(nn.Module):
-    """Stochastic interpolant posterior."""
+class DiffusionPosterior(nn.Module):
+    """Diffusion posterior."""
 
     def __init__(
         self,
@@ -23,13 +23,14 @@ class StochasticInterpolantPosterior(nn.Module):
         resample: bool = True,
     ) -> None:
         """
-        Initialize stochastic interpolant posterior.
+        Initialize diffusion posterior.
 
         Args:
             model: Model.
             likelihood_model: Likelihood model.
         """
-        super(StochasticInterpolantPosterior, self).__init__()
+        super(DiffusionPosterior, self).__init__()
+
         self.model = model
         self.likelihood_model = likelihood_model
         self.diffusion_term = diffusion_term
@@ -59,7 +60,7 @@ class StochasticInterpolantPosterior(nn.Module):
     ) -> torch.Tensor:
         """Sample from the posterior."""
 
-        if (batch_size > 1) and (base.shape[0] == 1):
+        if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self.model._prepare_batch(
                 batch_size=batch_size,
                 base=base,
@@ -78,6 +79,8 @@ class StochasticInterpolantPosterior(nn.Module):
             "dt": dt,
         }
 
+        base = torch.randn_like(field_history[..., 0]) if base is None else base
+
         base = self.model._compute_first_step(
             base=base,
             t=t_vec[:, 0],
@@ -91,15 +94,19 @@ class StochasticInterpolantPosterior(nn.Module):
             base.requires_grad = True
 
             # Compute the drift
-            drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
+            drift = self.model.drift(
+                base, t, field_history, field_cond, pars_cond
+            ).detach()
+
+            score = self.model.score(base, t, field_history, field_cond, pars_cond)
+            velocity = self.model._get_velocity_from_score(base, t, score)
 
             # Compute the likelihood score
             likelihood_score = self.likelihood_model.score(
                 observations=observations,
                 x=base,
                 t=t,
-                drift=drift,
-                diffusion_term=self.diffusion_term,
+                drift=velocity,
                 **fixed_input,
             ).detach()
             # Euler-Maruyama drift step
@@ -108,8 +115,9 @@ class StochasticInterpolantPosterior(nn.Module):
             base = base + self.diffusion_term(t) * torch.randn_like(base) * torch.sqrt(  # type: ignore[misc]
                 dt
             )
+
             # Likelihood score step
-            base = base + likelihood_score
+            base = base + likelihood_score * dt * torch.sqrt(t)
 
             base = base.detach()
 
@@ -134,9 +142,9 @@ class StochasticInterpolantPosterior(nn.Module):
         pars_cond: torch.Tensor | None = None,
         stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
-        """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
+        """Sample a trajectory from the diffusion model with posterior drift."""
 
-        if (batch_size > 1) and (base.shape[0] == 1):
+        if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self.model._prepare_batch(
                 batch_size=batch_size,
                 base=base,
@@ -165,7 +173,7 @@ class StochasticInterpolantPosterior(nn.Module):
 
         for i in pbar:
             base, field_history = self.sample(
-                base=base,
+                base=None,
                 field_history=field_history,
                 **cond_input(i),
                 **fixed_input,  # type: ignore[arg-type]

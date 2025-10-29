@@ -43,8 +43,8 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 20
-NUM_STEPS = 500
+NUM_PHYSICAL_STEPS = 10
+NUM_STEPS = 250
 MIXED_PRECISION = False
 BATCH_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
@@ -62,8 +62,9 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    config_name=f"stochastic_navier_stokes_posterior.yaml",
-    # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
+    config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:
@@ -75,7 +76,10 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Project: {project}")
     logger.info(f"Name: {name}")
 
-    len_field_history = cfg.model.drift_model.len_field_history
+    try:
+        len_field_history = cfg.model.drift_model.len_field_history
+    except:
+        len_field_history = cfg.model.denoise_model.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
@@ -127,9 +131,11 @@ def main(posterior_cfg: DictConfig) -> None:
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
-        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+        # diffusion_term = lambda t: 3.0 * torch.sqrt(model.interpolation.gamma(t))
+        diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
+
     posterior_model = hydra.utils.instantiate(
         posterior_cfg.posterior_model,
         model=model,

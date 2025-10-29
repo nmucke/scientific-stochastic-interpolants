@@ -31,7 +31,8 @@ VERBOSE = True
 MIXED_PRECISION = True
 
 DEFAULT_PROJECT = "stochastic_navier_stokes"
-DEFAULT_NAME = "vivid-otter-65"  # SI UNet Navier-Stokes
+# DEFAULT_NAME = "bubbly-badger-69""vivid-otter-65"  # Linear SI UNet Navier-Stokes
+DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
 # DEFAULT_NAME = "adventurous-acorn-45"
 # DEFAULT_NAME = "brave-forest-1"  # SI PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes

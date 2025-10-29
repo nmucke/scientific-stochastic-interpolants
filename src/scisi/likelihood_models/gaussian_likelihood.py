@@ -91,67 +91,6 @@ def diffuse_mask(
     return grid
 
 
-class GaussianLikelihood(nn.Module):
-    """Gaussian likelihood."""
-
-    def __init__(
-        self,
-        obs_operator: nn.Module = LinearObservationOperator,
-        loc: torch.Tensor | None = None,
-        scale: torch.Tensor | None = None,
-    ) -> None:
-        """
-        Initialize Gaussian likelihood.
-
-        Args:
-            obs_operator: Observation operator.
-            loc: Location.
-            scale: Scale.
-        """
-        super(GaussianLikelihood, self).__init__()
-        self.obs_operator = obs_operator
-        self.original_loc = loc
-        self.original_scale = scale
-
-        self.dist = torch.distributions.Normal(loc=loc, scale=scale)
-
-    def update_obs(self, obs: torch.Tensor) -> None:
-        """
-        Update the observation.
-        """
-        self.dist.loc = obs
-
-    def update_scale(self, scale: torch.Tensor) -> None:
-        """
-        Update the scale.
-        """
-        self.dist.scale = scale
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass.
-
-        Args:
-            x: Input tensor. [B, C, H, W]
-
-        Returns:
-            torch.Tensor: Log probability.
-        """
-        return self.dist.log_prob(self.obs_operator(x)).mean(dim=1)
-
-    def score(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Score function.
-
-        Args:
-            x: Input tensor. [B, C, H, W]
-        """
-
-        x.requires_grad = True
-
-        return torch.autograd.grad(self.forward(x).sum(), x, create_graph=True)[0]
-
-
 class InterpolantGaussianLikelihood(nn.Module):
     """Interpolant Gaussian likelihood."""
 
@@ -161,6 +100,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         obs_operator: nn.Module = LinearObservationOperator,
         variance: float = 0.05,
         ensemble_size: int = 1,
+        interpolant: Optional[nn.Module] = None,
     ) -> None:
         """
         Initialize Interpolant Gaussian likelihood.
@@ -177,18 +117,11 @@ class InterpolantGaussianLikelihood(nn.Module):
         self.model = model
         self.original_variance = variance
         self.ensemble_size = ensemble_size
-        self.dist = torch.distributions.MultivariateNormal
 
-        mask = diffuse_mask(
-            self.obs_operator.obs_indices,
-            A=1,
-            sig=0.05,
-            search_dist=-1,
-            N=128,
-            tol=1e-6,
-        )
-        mask = torch.from_numpy(mask).to("cuda")
-        self.mask = mask
+        if interpolant is not None:
+            self.interpolant = interpolant
+        else:
+            self.interpolant = self.model.interpolation
 
     def forward(
         self, x: torch.Tensor, observations: torch.Tensor, variance: torch.Tensor
@@ -205,47 +138,27 @@ class InterpolantGaussianLikelihood(nn.Module):
             torch.Tensor: Log probability.
         """
         pass
-        # precision_matrix = (
-        #     torch.eye(self.obs_operator.obs_indices.shape[0], device=variance.device)
-        #     * 1
-        #     / variance
-        # )
-
-        # dist = self.dist(loc=observations, precision_matrix=precision_matrix)
-
-        # return dist.log_prob(self.obs_operator(x))
 
     def _interpolate_observations(
         self,
         observations: torch.Tensor,
         x: torch.Tensor,
         t: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: Optional[torch.Tensor] = None,
-        pars_cond: Optional[torch.Tensor] = None,
+        base_obs: torch.Tensor,
     ) -> torch.Tensor:
         """Interpolate the observations."""
 
-        base_obs = field_history[:, :, :, :, -1]
-        # base_obs = self.obs_operator(field_history[:, :, :, :, -1])
         interpolant_obs = (
-            self.model.interpolation.alpha(t) * base_obs
-            + self.model.interpolation.beta(t) * observations
+            self.interpolant.alpha(t) * base_obs
+            + self.interpolant.beta(t) * observations
+            + self.diffusion_term(t) * torch.randn_like(base_obs) * torch.sqrt(t)
         )
 
-        # interpolant_obs = self.model.interpolation.forward(
-        #     base_obs,
-        #     observations,
-        #     t,
-        #     # torch.randn_like(base_obs),  # torch.zeros_like(x0_obs) #
-        #     torch.zeros_like(base_obs) #
-        # )
-
         # Compute the scale of the interpolant of the observation
-        # interpolant_variance = self.interpolation.beta(t) ** 2 * self.original_variance + 1e-2
         interpolant_variance = (
-            self.model.interpolation.beta(t) ** 2
+            self.interpolant.beta(t) ** 2
             * self.original_variance
+            # + self.diffusion_term(t) ** 2 * t
             # + self.model.interpolation.gamma(t) ** 2 * t
         )
 
@@ -269,12 +182,11 @@ class InterpolantGaussianLikelihood(nn.Module):
 
     def _compute_likelihood(
         self,
-        x: torch.Tensor,
+        x_obs: torch.Tensor,
         observations: torch.Tensor,
         variance: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the likelihood."""
-        x_obs = self.obs_operator(x)
         obs_diff_inner = observations - x_obs
         obs_diff_inner = torch.bmm(
             obs_diff_inner.unsqueeze(1), obs_diff_inner.unsqueeze(2)
@@ -285,12 +197,11 @@ class InterpolantGaussianLikelihood(nn.Module):
 
     def _compute_log_likelihood(
         self,
-        x: torch.Tensor,
+        x_obs: torch.Tensor,
         observations: torch.Tensor,
         variance: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the log likelihood."""
-        x_obs = self.obs_operator(x)
         obs_diff_inner = observations - x_obs
         obs_diff_inner = torch.bmm(
             obs_diff_inner.unsqueeze(1), obs_diff_inner.unsqueeze(2)
@@ -300,52 +211,17 @@ class InterpolantGaussianLikelihood(nn.Module):
 
     def _compute_likelihood_score(
         self,
-        x: torch.Tensor,
+        x_obs: torch.Tensor,
         observations: torch.Tensor,
         variance: torch.Tensor,
     ) -> torch.Tensor:
         """Compute the likelihood score."""
-        # log_likelihood = self._compute_log_likelihood(x, observations, variance)
-        # return torch.autograd.grad(log_likelihood.sum(), x, create_graph=True)[0]
 
-        # x_obs = self.obs_operator(x)
-        # obs_diff_inner = observations - x_obs
-        # return - 0.5 * obs_diff_inner / variance
-
-        b, c, h, w = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
-
-        obs_diff = observations - self.obs_operator(x)
+        obs_diff = observations - x_obs
 
         out = obs_diff @ self.obs_operator.obs_matrix  # H.T * obs_diff in batched mode
 
-        out = out / variance
-
-        return torch.reshape(out, [b, c, h, w])
-
-    def likelihood_weights(
-        self,
-        observations: torch.Tensor,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: Optional[torch.Tensor] = None,
-        pars_cond: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """Compute the likelihood."""
-
-        interpolant_obs, _ = self._interpolate_observations(
-            observations, x, t, field_history, field_cond, pars_cond
-        )
-
-        likelihood = self._compute_likelihood(
-            x=x,
-            observations=interpolant_obs,
-            variance=torch.tensor(1.0),  # interpolant_variance,
-        )
-
-        weights = likelihood / likelihood.sum()
-
-        return weights
+        return out / (variance + 1e-3)
 
     def score(
         self,
@@ -362,82 +238,222 @@ class InterpolantGaussianLikelihood(nn.Module):
         """Compute the likelihood score."""
         b, c, h, w = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
 
-        num_obs = observations.shape[1]
+        if diffusion_term is None:
+            self.diffusion_term = self.model.interpolation.gamma
+        else:
+            self.diffusion_term = diffusion_term
 
+        interpolant_obs, interpolant_variance = self._interpolate_observations(
+            observations, x, t, self.obs_operator(field_history[..., -1])
+        )
+
+        x_obs = self.obs_operator(x)
+        likelihood_score = self._compute_likelihood_score(
+            x_obs, interpolant_obs, interpolant_variance
+        )
+        likelihood_score = likelihood_score.reshape(b, c, h, w)
+
+        return likelihood_score * dt * diffusion_term(t) ** 2  # type: ignore[misc]
+
+
+class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
+    """Spatial Interpolant Gaussian likelihood."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        obs_operator: nn.Module = LinearObservationOperator,
+        variance: float = 0.05,
+        ensemble_size: int = 1,
+        spatial_sigma: float = 0.1,
+        interpolant: Optional[nn.Module] = None,
+    ) -> None:
+        """Initialize Spatial Interpolant Gaussian likelihood."""
+        super(SpatialInterpolantGaussianLikelihood, self).__init__(
+            model, obs_operator, variance, ensemble_size, interpolant
+        )
+        self.obs_operator = obs_operator
+        self.model = model
+        self.original_variance = variance
+
+        self.mask = diffuse_mask(
+            self.obs_operator.obs_indices,
+            A=1,
+            sig=spatial_sigma,
+            search_dist=-1,
+            N=self.obs_operator.H,
+            tol=1e-6,
+        )
+        self.mask = torch.tensor(self.mask, dtype=torch.float32).to("cuda")
+        self.mask = self.mask.unsqueeze(0).unsqueeze(0)
+
+    def _compute_likelihood_score(
+        self,
+        x_obs: torch.Tensor,
+        observations: torch.Tensor,
+        variance: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the likelihood score."""
+
+        likelihood_score = observations - x_obs
+        likelihood_score = likelihood_score * self.mask
+
+        return likelihood_score / (variance + 1e-3)
+
+    def score(
+        self,
+        observations: torch.Tensor,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: torch.Tensor,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+        dt: Optional[torch.Tensor] = None,
+        drift: Optional[torch.Tensor] = None,
+        diffusion_term: Optional[Callable] = None,
+    ) -> torch.Tensor:
+        """Compute the likelihood score."""
+        b, c, h, w = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
+
+        if diffusion_term is None:
+            self.diffusion_term = self.model.interpolation.gamma
+        else:
+            self.diffusion_term = diffusion_term
+
+        sqrt_num_obs = torch.tensor(np.sqrt(observations.shape[1]), dtype=torch.int32)
         observations = torch.reshape(
             observations,
-            [
-                1,
-                c,
-                torch.tensor(np.sqrt(num_obs), dtype=torch.int32),
-                torch.tensor(np.sqrt(num_obs), dtype=torch.int32),
-            ],
+            [1, c, sqrt_num_obs, sqrt_num_obs],
         )
         observations = nn.functional.interpolate(
-            observations, size=(h, w), mode="bilinear"
+            observations, size=(h, w), mode="nearest"
         )
 
         interpolant_obs, interpolant_variance = self._interpolate_observations(
-            observations, x, t, field_history, field_cond, pars_cond
+            observations, x, t, field_history[..., -1]
         )
 
-        var_mask = 1 / (interpolant_variance + 1e-3)
-        var_mask = var_mask * self.mask
-        var_mask = var_mask.reshape(1, 1, 128, 128)
+        likelihood_score = self._compute_likelihood_score(
+            x, interpolant_obs, interpolant_variance
+        )
 
-        # import matplotlib.pyplot as plt
-        # plt.figure()
-        # plt.imshow(var_mask[0, 0].cpu().detach())
-        # plt.colorbar()
-        # plt.show()
-        # pdb.set_trace()
+        return (
+            likelihood_score * dt * diffusion_term(t) ** 2 * t  # type: ignore[misc]
+        )  # self.interpolant.beta(t)
 
-        # likelihood_score = self._compute_likelihood_score(
-        #     x, interpolant_obs, interpolant_variance
-        # )
-        # diff = interpolant_obs - self.obs_operator(x)
-        diff = interpolant_obs - x
-        diff_norm = (diff * diff * var_mask).sum(dim=-1)
-        # diff_norm = (diff * diff / (interpolant_variance + 1e-3)).sum(dim=-1)
-        diff_norm = -0.5 * diff_norm
 
-        # diff_norm = -0.5 * diff_norm / (interpolant_variance + 1e-3)
-        likelihood_score = torch.autograd.grad(diff_norm.sum(), x)[0]
+class KalmanInterpolantGaussianLikelihood(nn.Module):
+    """Spatial Interpolant Gaussian likelihood."""
 
-        if diffusion_term is None:
-            diffusion_term = self.model.interpolation.gamma
+    def __init__(
+        self,
+        model: nn.Module,
+        obs_operator: nn.Module = LinearObservationOperator,
+        variance: float = 0.05,
+        ensemble_size: int = 1,
+    ) -> None:
+        """Initialize Spatial Interpolant Gaussian likelihood."""
+        super(KalmanInterpolantGaussianLikelihood, self).__init__()
+        self.obs_operator = obs_operator
+        self.model = model
+        self.original_variance = variance
+        self.original_std = torch.sqrt(torch.tensor(variance, dtype=torch.float32))
 
-        return likelihood_score * dt * diffusion_term(t) ** 2 * 0.1
-        # drift = (
-        #     drift
-        #     if drift is not None
-        #     else self.model.drift_model(x, t, field_history, field_cond, pars_cond)
-        # )
-        # preds = x + drift * dt
+    def forward(
+        self,
+    ) -> torch.Tensor:
+        """Forward pass."""
+        pass
 
-        # # preds = preds.repeat(self.ensemble_size, 1, 1, 1)
-        # preds = (
-        #     preds + diffusion_term(t) * torch.randn_like(preds)
-        # ) * torch.sqrt(dt)
+    def _interpolate_observations(
+        self,
+        observations: torch.Tensor,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        base_obs: torch.Tensor,
+    ) -> torch.Tensor:
+        """Interpolate the observations."""
 
-        # interpolant_obs, interpolant_variance = self._interpolate_observations(
-        #     observations, preds.detach(), t + dt, field_history, field_cond, pars_cond
-        # )
-        # interpolant_obs = interpolant_obs
-        # interpolant_variance = interpolant_variance
+        interpolant_obs = (
+            self.model.interpolation.alpha(t) * base_obs
+            + self.model.interpolation.beta(t) * observations
+        )
 
-        # log_likelihood = self._compute_log_likelihood(
-        #     preds, interpolant_obs, interpolant_variance
-        # )
+        # Compute the scale of the interpolant of the observation
+        interpolant_variance = (
+            self.model.interpolation.beta(t) ** 2
+            * self.original_variance
+            # + self.model.interpolation.gamma(t) ** 2 * t
+        )
 
-        # # weights = torch.softmax(log_likelihood.detach(), dim=0)
-        # # log_likelihood_score = torch.autograd.grad(
-        # #     (log_likelihood * weights).sum(), x
-        # # )[0]
-        # log_likelihood_score = torch.autograd.grad(
-        #     log_likelihood.sum(), x
-        # )[0]
-        # return diffusion_term(t) ** 2 * log_likelihood_score * dt
+        return interpolant_obs, interpolant_variance
+
+    def _compute_kalman_gain(
+        self,
+        obs_diff: torch.Tensor,
+        x_cov: torch.Tensor,
+        gain_matrix: torch.Tensor,
+        pivots: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute the kalman gain."""
+
+        gain_matrix = torch.linalg.lu_solve(gain_matrix, pivots, obs_diff)
+        # gain_matrix = torch.linalg.solve(gain_matrix, obs_diff)
+
+        return x_cov @ self.obs_operator.obs_matrix.t() @ gain_matrix
+
+    def score(
+        self,
+        observations: torch.Tensor,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: torch.Tensor,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+        dt: Optional[torch.Tensor] = None,
+        drift: Optional[torch.Tensor] = None,
+        diffusion_term: Optional[Callable] = None,
+    ) -> torch.Tensor:
+        """Compute the likelihood score."""
+
+        b, c, h, w = x.shape[0], x.shape[1], x.shape[2], x.shape[3]
+
+        interpolant_obs, interpolant_variance = self._interpolate_observations(
+            observations, x, t, self.obs_operator(field_history[..., -1])
+        )
+
+        x = x.reshape(b, c * h * w)
+
+        obs_diff = (
+            interpolant_obs
+            - self.obs_operator(x)
+            + torch.randn_like(interpolant_obs) * torch.sqrt(interpolant_variance)
+        )
+
+        x_cov = torch.cov(x.t())
+        obs_cov = (
+            torch.eye(interpolant_obs.shape[1], device=x.device) * interpolant_variance
+        )
+        kalman_gain = (
+            self.obs_operator.obs_matrix @ x_cov @ self.obs_operator.obs_matrix.t()
+        )
+        kalman_gain = kalman_gain + obs_cov
+
+        kalman_gain, pivots = torch.linalg.lu_factor(kalman_gain)
+
+        kalman_gain_vmap = torch.vmap(
+            partial(
+                self._compute_kalman_gain,
+                obs_diff=obs_diff,
+                x_cov=x_cov,
+                gain_matrix=kalman_gain,
+                pivots=pivots,
+            )
+        )
+
+        kalman_gain = kalman_gain_vmap(obs_diff)
+
+        return kalman_gain.reshape(b, c, h, w)
 
 
 class FlowdasGaussianLikelihood(nn.Module):
