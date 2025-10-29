@@ -44,7 +44,7 @@ torch.set_default_dtype(torch.float32)
 torch.manual_seed(42)
 
 NUM_PHYSICAL_STEPS = 7
-NUM_STEPS = 250
+NUM_STEPS = 200
 MIXED_PRECISION = False
 ENSEMBLE_SIZE = 4
 SDE_STEPPER = euler_maruyama_step
@@ -62,8 +62,8 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    config_name=f"stochastic_navier_stokes_posterior.yaml",
-    # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
