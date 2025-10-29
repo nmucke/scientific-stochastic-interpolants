@@ -14,6 +14,67 @@ from scisi.models.interpolations import (
 )
 
 
+def gaspari_cohn(r: np.ndarray) -> np.ndarray:
+    """
+    Gaspari-Cohn correlation function for covariance localization.
+
+    This is a fifth-order piecewise polynomial function with compact support
+    that smoothly tapers to zero, commonly used in ensemble data assimilation.
+
+    Parameters:
+    -----------
+    r : float or np.ndarray
+        Normalized distance(s), typically computed as d/R_l where:
+        - d is the distance between two points
+        - R_l is the localization radius (decorrelation length scale)
+
+    Returns:
+    --------
+    float or np.ndarray
+        Correlation value(s) in [0, 1]
+        - Returns 1 at r=0 (perfect correlation)
+        - Returns 0 for r >= 2 (zero correlation beyond cutoff)
+
+    Reference:
+    ----------
+    Gaspari, G., and S. E. Cohn, 1999: Construction of correlation functions
+    in two and three dimensions. Q. J. R. Meteorol. Soc., 125, 723–757.
+    """
+    r = np.asarray(r)
+    rabs = np.abs(r)
+
+    # Initialize output
+    psi = np.zeros_like(rabs, dtype=float)
+
+    # Region 1: 0 <= |r| <= 1
+    mask1 = rabs <= 1
+    r1 = rabs[mask1]
+    psi[mask1] = (
+        1.0
+        - 5.0 / 3.0 * r1**2
+        + 5.0 / 8.0 * r1**3
+        + 1.0 / 2.0 * r1**4
+        - 1.0 / 4.0 * r1**5
+    )
+
+    # Region 2: 1 < |r| <= 2
+    mask2 = (rabs > 1) & (rabs <= 2)
+    r2 = rabs[mask2]
+    psi[mask2] = (
+        4.0
+        - 5.0 * r2
+        + 5.0 / 3.0 * r2**2
+        + 5.0 / 8.0 * r2**3
+        - 1.0 / 2.0 * r2**4
+        + 1.0 / 12.0 * r2**5
+        - 2.0 / (3.0 * r2)
+    )
+
+    # Region 3: |r| > 2 (already initialized to zero)
+
+    return psi if r.shape else float(psi)
+
+
 def diffuse_mask(
     value_ids: torch.Tensor,
     A: float = 1,
@@ -351,6 +412,7 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
         obs_operator: nn.Module = LinearObservationOperator,
         variance: float = 0.05,
         ensemble_size: int = 1,
+        interpolant: Optional[nn.Module] = None,
     ) -> None:
         """Initialize Spatial Interpolant Gaussian likelihood."""
         super(KalmanInterpolantGaussianLikelihood, self).__init__()
@@ -358,6 +420,24 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
         self.model = model
         self.original_variance = variance
         self.original_std = torch.sqrt(torch.tensor(variance, dtype=torch.float32))
+
+        if interpolant is not None:
+            self.interpolant = interpolant
+        else:
+            self.interpolant = self.model.interpolation
+
+        # Create a 2D grid of points
+        x = torch.linspace(0, 2 * torch.pi, 128)
+        y = torch.linspace(0, 2 * torch.pi, 128)
+        X, Y = torch.meshgrid(x, y, indexing="ij")
+
+        # Flatten the grid to a list of coordinates
+        coords = torch.stack([X.flatten(), Y.flatten()], dim=-1)
+
+        # Compute the pairwise distance matrix
+        diff = coords.unsqueeze(1) - coords.unsqueeze(0)
+        self.dist_matrix = torch.sqrt(torch.sum(diff**2, dim=-1))
+        self.dist_matrix = self.dist_matrix.to("cuda")
 
     def forward(
         self,
@@ -375,13 +455,13 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
         """Interpolate the observations."""
 
         interpolant_obs = (
-            self.model.interpolation.alpha(t) * base_obs
-            + self.model.interpolation.beta(t) * observations
+            self.interpolant.alpha(t) * base_obs
+            + self.interpolant.beta(t) * observations
         )
 
         # Compute the scale of the interpolant of the observation
         interpolant_variance = (
-            self.model.interpolation.beta(t) ** 2
+            self.interpolant.beta(t) ** 2
             * self.original_variance
             # + self.model.interpolation.gamma(t) ** 2 * t
         )
@@ -397,8 +477,8 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Compute the kalman gain."""
 
-        gain_matrix = torch.linalg.lu_solve(gain_matrix, pivots, obs_diff)
-        # gain_matrix = torch.linalg.solve(gain_matrix, obs_diff)
+        # gain_matrix = torch.linalg.lu_solve(gain_matrix, pivots, obs_diff)
+        gain_matrix = torch.linalg.solve(gain_matrix, obs_diff)
 
         return x_cov @ self.obs_operator.obs_matrix.t() @ gain_matrix
 
@@ -430,7 +510,9 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
             + torch.randn_like(interpolant_obs) * torch.sqrt(interpolant_variance)
         )
 
-        x_cov = torch.cov(x.t())
+        x_cov = torch.cov(x.detach().t())
+        x_cov = x_cov * self.dist_matrix
+
         obs_cov = (
             torch.eye(interpolant_obs.shape[1], device=x.device) * interpolant_variance
         )
@@ -439,15 +521,14 @@ class KalmanInterpolantGaussianLikelihood(nn.Module):
         )
         kalman_gain = kalman_gain + obs_cov
 
-        kalman_gain, pivots = torch.linalg.lu_factor(kalman_gain)
+        # kalman_gain, pivots = torch.linalg.lu_factor(kalman_gain)
 
         kalman_gain_vmap = torch.vmap(
             partial(
                 self._compute_kalman_gain,
-                obs_diff=obs_diff,
                 x_cov=x_cov,
                 gain_matrix=kalman_gain,
-                pivots=pivots,
+                pivots=0,
             )
         )
 
