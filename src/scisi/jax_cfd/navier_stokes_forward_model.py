@@ -208,7 +208,7 @@ def repeated(f: Callable, steps: int) -> Callable:
         rng_keys = jax.random.split(rng_key, steps)
         x_final, _ = jax.lax.scan(f, x_initial, xs=rng_keys, length=steps)
         rng_keys_final = jax.random.split(rng_keys[-1], 1)
-        return x_final, rng_keys_final[-1]
+        return x_final, rng_keys_final
 
     return f_repeated
 
@@ -384,7 +384,8 @@ def main() -> None:
     # with jax.disable_jit():
     trajectory = []
     for _ in range(OUTER_STEPS):
-        vorticity_hat0, rng_keys = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
+        rng_keys = jax.random.split(rng_keys[0], vorticity_hat0.shape[0])
+        vorticity_hat0 = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
         trajectory.append(vorticity_hat0)
     trajectory = jnp.stack(trajectory)
     trajectory = jnp.swapaxes(trajectory, 0, 1)
