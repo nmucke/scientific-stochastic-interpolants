@@ -11,14 +11,31 @@ import torch.nn as nn
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.metrics.lsim import LSiM_distance
+from scisi.metrics.spectral import compute_enstrophy_error
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
+from scisi.plotting.spectrum import plot_enstrophy_spectrum
 from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
 from scisi.posterior_models.stochastic_interpolant_posterior import (
     StochasticInterpolantPosterior,
 )
 from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
+
+COLORS = [
+    "tab:green",
+    "tab:blue",
+    "tab:red",
+    "tab:purple",
+    "tab:orange",
+    "tab:brown",
+    "tab:pink",
+    "tab:gray",
+    "tab:olive",
+    "tab:cyan",
+]
+LINESTYLES = ["--", ":", "-."]
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +44,7 @@ torch.set_default_dtype(torch.float32)
 torch.manual_seed(42)
 
 NUM_PHYSICAL_STEPS = 10
-NUM_STEPS = 500
+NUM_STEPS = 250
 MIXED_PRECISION = False
 BATCH_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
@@ -46,6 +63,7 @@ mixed_precision_context = (
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
     # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
@@ -58,7 +76,10 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Project: {project}")
     logger.info(f"Name: {name}")
 
-    len_field_history = cfg.model.drift_model.len_field_history
+    try:
+        len_field_history = cfg.model.drift_model.len_field_history
+    except:
+        len_field_history = cfg.model.denoise_model.len_field_history
 
     logger.info(f"Instantiating preprocesser...")
     preprocesser = hydra.utils.instantiate(cfg.preprocesser)
@@ -110,9 +131,11 @@ def main(posterior_cfg: DictConfig) -> None:
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
-        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+        # diffusion_term = lambda t: 3.0 * torch.sqrt(model.interpolation.gamma(t))
+        diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
+
     posterior_model = hydra.utils.instantiate(
         posterior_cfg.posterior_model,
         model=model,
@@ -172,24 +195,6 @@ def main(posterior_cfg: DictConfig) -> None:
     prior_trajectory = prior_trajectory[0, 0]
     true_trajectory = true_trajectory[0, 0]
 
-    logger.info(f"Computing RMSE...")
-    rmse_post = [
-        torch.sqrt(
-            torch.mean((posterior_trajectory[..., i] - true_trajectory[..., i]) ** 2)
-        )
-        for i in range(len_field_history, NUM_PHYSICAL_STEPS)
-    ]
-    rmse_prior = [
-        torch.sqrt(
-            torch.mean((prior_trajectory[..., i] - true_trajectory[..., i]) ** 2)
-        )
-        for i in range(len_field_history, NUM_PHYSICAL_STEPS)
-    ]
-    rmse_prior = np.array(rmse_prior)
-    rmse_post = np.array(rmse_post)
-    logger.info(f"RMSE of posterior: {np.mean(rmse_post):.6f}")
-    logger.info(f"RMSE of prior: {np.mean(rmse_prior):.6f}")
-
     posterior_trajectory = posterior_trajectory[0, 0]
 
     true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
@@ -221,51 +226,95 @@ def main(posterior_cfg: DictConfig) -> None:
     obs_indices = obs_operator.obs_indices_c_h_w
     obs_indices_on_grid = obs_operator.obs_indices_on_grid
 
+    logger.info(f"Computing metrics...")
+    metrics: dict[str, dict[str, list[float]]] = {
+        title: {
+            "LSiM": [],
+            "RMSE": [],
+            "Enstrophy error": [],
+        }
+        for title in ["Posterior", "Prior"]
+    }
+    time_range_ids = range(len_field_history, NUM_PHYSICAL_STEPS)
+    for pred_trajectory, title in zip(
+        [posterior_trajectory, prior_trajectory], ["Posterior", "Prior"]
+    ):
+        logger.info(f"================================================")
+        logger.info(f"{title} metrics:")
+        get_true_and_pred = lambda i: (
+            true_trajectory[:, :, i],
+            pred_trajectory[:, :, i],
+        )
+        metrics[title]["LSiM"] = [
+            LSiM_distance(*get_true_and_pred(i)).item() for i in time_range_ids
+        ]
+        metrics[title]["RMSE"] = [
+            torch.sqrt(nn.MSELoss()(*get_true_and_pred(i))).item()
+            for i in time_range_ids
+        ]
+
+        logger.info(
+            f"LSiM: {np.mean(metrics[title]['LSiM']):.4f} ± {np.std(metrics[title]['LSiM']):.4f}"
+        )
+        logger.info(
+            f"RMSE: {np.mean(metrics[title]['RMSE']):.4f} ± {np.std(metrics[title]['RMSE']):.4f}"
+        )
+
+        if project == "stochastic_navier_stokes":
+            ens_error, ens_error_array = compute_enstrophy_error(
+                true_trajectory[:, :, len_field_history:],
+                pred_trajectory[:, :, len_field_history:],
+                dx=2 * torch.pi / 128,
+            )
+            logger.info(
+                f"Enstrophy error: {ens_error:.4f} ± {ens_error_array.std():.4f}"
+            )
+            metrics[title]["Enstrophy error"] = ens_error_array
+
+    if project == "stochastic_navier_stokes":
+        plot_enstrophy_spectrum(
+            trajectories=[true_trajectory, posterior_trajectory, prior_trajectory],
+            titles=["True", "Posterior", "Prior"],
+            figure_path=figure_path,
+        )
+
     logger.info(f"Plotting results...")
     plt.figure(figsize=(15, 10))
-    plt.subplot(2, 4, 1)
-    plt.imshow(true_state, vmin=vmin, vmax=vmax)
-    # plt.scatter(obs_indices[:, 2], obs_indices[:, 1], color="red", marker=".", s=5)
-    plt.colorbar()
-    plt.title("True")
-    plt.subplot(2, 4, 2)
+    for i, (title, state) in enumerate(
+        zip(["True", "Posterior", "Prior"], [true_state, posterior_state, prior_state])
+    ):
+        plt.subplot(2, 4, i + 1)
+        plt.imshow(state, vmin=vmin, vmax=vmax)
+        plt.colorbar()
+        plt.title(title)
+
+        plt.subplot(2, 4, i + 5)
+        plt.imshow(np.abs(state.numpy() - true_state.numpy()))
+        plt.colorbar()
+        plt.title(f"{title} Error")
+
+    plt.subplot(2, 4, 4)
     plt.imshow(obs_indices_on_grid[0] * true_state, vmin=vmin, vmax=vmax)
     plt.colorbar()
     plt.title("True (Observed)")
-    plt.subplot(2, 4, 3)
-    plt.imshow(posterior_state, vmin=vmin, vmax=vmax)
-    plt.colorbar()
-    plt.title("Posterior")
-    plt.subplot(2, 4, 4)
-    plt.imshow(prior_state, vmin=vmin, vmax=vmax)
-    plt.colorbar()
-    plt.title("Prior")
+
     plt.subplot(2, 4, 5)
-    plt.plot(
-        range(len_field_history, NUM_PHYSICAL_STEPS),
-        rmse_post,
-        label="Posterior RMSE",
-        linewidth=3,
-        markersize=10,
-    )
-    plt.plot(
-        range(len_field_history, NUM_PHYSICAL_STEPS),
-        rmse_prior,
-        label="Prior RMSE",
-        linewidth=3,
-        markersize=10,
-    )
+    plot_settings = {"linewidth": 3, "markersize": 10}
+    for i, title in enumerate(["Posterior", "Prior"]):
+        for j, metric in enumerate(["RMSE", "LSiM", "Enstrophy error"]):
+            plot_settings["color"] = COLORS[i]  # type: ignore[assignment]
+            plot_settings["linestyle"] = LINESTYLES[j]  # type: ignore[assignment]
+            plt.plot(
+                time_range_ids,
+                metrics[title][metric],
+                label=f"{title} {metric}",
+                **plot_settings,
+            )
+
+    plt.ylim(0, 2)
     plt.grid(True)
     plt.legend()
-    plt.title("RMSE")
-    plt.subplot(2, 4, 6)
-    plt.imshow(np.abs(posterior_state.numpy() - true_state.numpy()))
-    plt.colorbar()
-    plt.title("Posterior Error")
-    plt.subplot(2, 4, 7)
-    plt.imshow(np.abs(prior_state.numpy() - true_state.numpy()))
-    plt.colorbar()
-    plt.title("Prior Error")
+    plt.title("Metrics")
     plt.savefig(f"{figure_path}/posterior_trajectory.png")
     plt.show()
 

@@ -122,6 +122,7 @@ class StochasticInterpolantPosterior(nn.Module):
         # with torch.no_grad():
         for i in range(1, num_steps - 1):
             t = t_vec[:, i : i + 1]
+
             base.requires_grad = True
 
             # Compute the drift

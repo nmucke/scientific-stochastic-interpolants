@@ -1,5 +1,7 @@
 import pdb
-from typing import Any, Callable
+from functools import partial
+from re import L
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -10,25 +12,30 @@ from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 MIN_TIME = 1e-4
 
 
-class FlowMatchingPosterior(nn.Module):
-    """Stochastic interpolant posterior."""
+class DiffusionPosterior(nn.Module):
+    """Diffusion posterior."""
 
     def __init__(
         self,
         model: nn.Module,
         likelihood_model: nn.Module,
-        **kwargs: Any,
+        diffusion_term: Optional[Callable] = None,
+        resample: bool = True,
     ) -> None:
         """
-        Initialize stochastic interpolant posterior.
+        Initialize diffusion posterior.
 
         Args:
             model: Model.
             likelihood_model: Likelihood model.
         """
-        super(FlowMatchingPosterior, self).__init__()
+        super(DiffusionPosterior, self).__init__()
+
         self.model = model
         self.likelihood_model = likelihood_model
+        self.diffusion_term = diffusion_term
+        self.diffusion_term = self.model.diffusion_term
+        self.resample = resample
 
     @property
     def device(self) -> str:
@@ -74,32 +81,47 @@ class FlowMatchingPosterior(nn.Module):
 
         base = torch.randn_like(field_history[..., 0]) if base is None else base
 
-        for i in range(0, num_steps - 1):
+        base = self.model._compute_first_step(
+            base=base,
+            t=t_vec[:, 0],
+            stepper=stepper,
+            **fixed_input,
+        ).detach()
+
+        # with torch.no_grad():
+        for i in range(1, num_steps - 1):
             t = t_vec[:, i : i + 1]
             base.requires_grad = True
 
             # Compute the drift
-            drift = self.model.drift_model(
+            drift = self.model.drift(
                 base, t, field_history, field_cond, pars_cond
-            )
+            ).detach()
 
-            # Compute the guidance score
+            score = self.model.score(base, t, field_history, field_cond, pars_cond)
+            velocity = self.model._get_velocity_from_score(base, t, score)
+
+            # Compute the likelihood score
             likelihood_score = self.likelihood_model.score(
                 observations=observations,
                 x=base,
                 t=t,
-                drift=drift,
+                drift=velocity,
                 **fixed_input,
             ).detach()
-
-            # Euler drift step
+            # Euler-Maruyama drift step
             base = base + drift * dt
+            # Euler-Maruyama diffusion step
+            base = base + self.diffusion_term(t) * torch.randn_like(base) * torch.sqrt(  # type: ignore[misc]
+                dt
+            )
 
-            # Guidance score step
-            base = base + likelihood_score * dt
+            # Likelihood score step
+            base = base + likelihood_score * dt * torch.sqrt(t)
 
             base = base.detach()
 
+        # Add the new base to the field history
         if return_field_history:
             field_history = torch.cat(
                 [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1
@@ -120,7 +142,7 @@ class FlowMatchingPosterior(nn.Module):
         pars_cond: torch.Tensor | None = None,
         stepper: Callable = euler_maruyama_step,
     ) -> torch.Tensor:
-        """Sample a trajectory from the Follmer stochastic interpolant with posterior drift."""
+        """Sample a trajectory from the diffusion model with posterior drift."""
 
         if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self.model._prepare_batch(
@@ -132,7 +154,7 @@ class FlowMatchingPosterior(nn.Module):
             )
 
         trajectory = [
-            field_history[..., i].cpu() for i in range(field_history.shape[-1])
+            field_history[:, :, :, :, i].cpu() for i in range(field_history.shape[-1])
         ]
 
         fixed_input = {

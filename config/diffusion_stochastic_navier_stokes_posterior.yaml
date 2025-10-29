@@ -1,0 +1,18 @@
+pre_trained_model:
+  project: stochastic_navier_stokes
+  name: zany-lynx-67
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  # type: random
+  # percent_obs: 0.05
+  type: grid
+  skip_grid: 16
+
+likelihood_model:
+  _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood
+  variance: 0.0025
+  ensemble_size: 25
+
+posterior_model:
+  _target_: scisi.posterior_models.diffusion_posterior.DiffusionPosterior

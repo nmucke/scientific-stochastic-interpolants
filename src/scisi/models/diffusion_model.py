@@ -16,20 +16,20 @@ DEFAULT_NUM_STEPS = 100
 DEFAULT_NUM_PHYSICAL_STEPS = 10
 
 
-class DiffusionModel(BaseModel):
+class DenoiseDiffusionModel(BaseModel):
     """Diffusion model."""
 
     def __init__(
         self,
         interpolation: nn.Module,
-        score_model: nn.Module,
+        denoise_model: nn.Module,
         diffusion_term: Optional[nn.Module] = None,
     ) -> None:
         """Initialize Diffusion model."""
-        super(DiffusionModel, self).__init__()
+        super(DenoiseDiffusionModel, self).__init__()
 
         self.interpolation = interpolation
-        self.score_model = score_model
+        self.denoise_model = denoise_model
 
         self.diffusion_term = diffusion_term
         if diffusion_term is None:
@@ -45,7 +45,21 @@ class DiffusionModel(BaseModel):
         Returns:
             nn.Module: The drift model.
         """
-        return self.score_model
+        return self.denoise_model
+
+    def score(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: Optional[torch.Tensor] = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Compute the score of the Diffusion model."""
+
+        return -self.denoise_model(
+            x, t, field_history, field_cond, pars_cond
+        ) / self.interpolation.alpha(t)
 
     def _get_velocity_from_score(
         self,
@@ -83,7 +97,7 @@ class DiffusionModel(BaseModel):
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
         """
 
-        score = self.score_model(x, t, field_history, field_cond, pars_cond)
+        score = self.score(x, t, field_history, field_cond, pars_cond)
 
         velocity = self._get_velocity_from_score(x, t, score)
 
@@ -122,7 +136,7 @@ class DiffusionModel(BaseModel):
             t=t,
         )
 
-        pred_score = self.score_model(
+        pred_noise = self.denoise_model(
             x=interpolant,
             cond=t,
             field_history=field_history,
@@ -130,11 +144,7 @@ class DiffusionModel(BaseModel):
             pars_cond=pars_cond,
         )
 
-        # We return the negative score because the trainer is set to minimize pred_score - true_score
-        # But the actual loss is pred_score + noise / alpha(t)
-        true_score = -noise / self.interpolation.alpha(_expand_t(t, noise))
-
-        return pred_score, true_score
+        return pred_noise, noise
 
     def _compute_first_step(
         self,
@@ -148,22 +158,20 @@ class DiffusionModel(BaseModel):
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
 
-        drift = lambda x, t, field_history, field_cond, pars_cond: (
+        # drift = lambda x, t, field_history, field_cond, pars_cond: (
+        #     0.5
+        #     * self.diffusion_term(t) ** 2  # type: ignore[misc]
+        #     * self.score(x, t, field_history, field_cond, pars_cond)
+        # )
+
+        drift = (
             0.5
             * self.diffusion_term(t) ** 2  # type: ignore[misc]
-            * self.score_model(x, t, field_history, field_cond, pars_cond)
+            * self.score(base, t, field_history, field_cond, pars_cond)
         )
+        diffusion = self.diffusion_term(t) * torch.randn_like(base)  # type: ignore[misc]
 
-        return stepper(  # type: ignore[misc]
-            drift_model=drift,
-            diffusion_term=self.diffusion_term,
-            x=base,
-            t=t,
-            dt=dt,
-            field_history=field_history,
-            field_cond=field_cond,
-            pars_cond=pars_cond,
-        )
+        return base + drift * dt + diffusion * torch.sqrt(dt)
 
     def sample(
         self,
@@ -178,6 +186,9 @@ class DiffusionModel(BaseModel):
         diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Sample from the Diffusion model."""
+
+        if diffusion_term is not None:
+            self.diffusion_term = diffusion_term  # type: ignore[assignment]
 
         return self._sample(
             base=base,
