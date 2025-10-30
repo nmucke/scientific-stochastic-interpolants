@@ -43,10 +43,10 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 7
+NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 200
 MIXED_PRECISION = False
-ENSEMBLE_SIZE = 4
+ENSEMBLE_SIZE = 64
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -62,8 +62,8 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    # config_name=f"stochastic_navier_stokes_posterior.yaml",
-    config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
+    config_name=f"stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
 )
@@ -193,10 +193,9 @@ def main(posterior_cfg: DictConfig) -> None:
     #     base=true_trajectory, is_batch=True, is_trajectory=True
     # )["base"]
 
+    posterior_trajectory = posterior_trajectory[0, 0]
     prior_trajectory = prior_trajectory[0, 0]
     true_trajectory = true_trajectory[0, 0]
-
-    posterior_trajectory = posterior_trajectory[0, 0]
 
     true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
     posterior_state = posterior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]

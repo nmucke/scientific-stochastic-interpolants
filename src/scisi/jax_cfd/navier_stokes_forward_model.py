@@ -307,6 +307,7 @@ def set_up_forward_model(
     compile: bool = COMPILE,
     use_true_model: bool = False,
     stochastic: bool = False,
+    grid: grids.Grid = GRID,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
@@ -316,7 +317,7 @@ def set_up_forward_model(
     if use_true_model:
         step_fn = spectral.time_stepping.crank_nicolson_rk4(
             spectral.equations.NavierStokes2D(
-                VISCOSITY, GRID, smooth=SMOOTH, forcing_fn=forcing, drag=0.1
+                VISCOSITY, grid, smooth=SMOOTH, forcing_fn=forcing, drag=0.1
             ),
             HF_DT,
         )
@@ -327,7 +328,7 @@ def set_up_forward_model(
         step_fn = stepper(
             NavierStokes2D(
                 VISCOSITY,
-                GRID,
+                grid,
                 smooth=SMOOTH,
                 forcing_fn=forcing,
                 drag=DRAG,

@@ -8,8 +8,8 @@ pre_trained_model:
   # name: optimistic-spring-34
   # name: mysterious-crane-57
   # name: spirited-bear-62
-  # name: vivid-otter-65
-  name: artful-hare-68
+  name: vivid-otter-65
+  # name: artful-hare-68
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
@@ -20,9 +20,9 @@ obs_operator:
 
 likelihood_model:
   # _target_: scisi.likelihood_models.gaussian_likelihood.KalmanInterpolantGaussianLikelihood
-  # _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
   # _target_: scisi.likelihood_models.gaussian_likelihood.SpatialInterpolantGaussianLikelihood
-  _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
+  # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
   ensemble_size: 25
   # interpolant:

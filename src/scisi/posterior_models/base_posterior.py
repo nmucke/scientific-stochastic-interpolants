@@ -14,7 +14,7 @@ from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 logger = logging.getLogger(__name__)
 
 MIN_TIME = 1e-4
-MAX_BATCH_SIZE = 4
+MAX_BATCH_SIZE = 128
 
 
 class BasePosterior(nn.Module):
@@ -58,6 +58,25 @@ class BasePosterior(nn.Module):
     def device(self) -> str:
         """Get the device of the model."""
         return next(self.parameters()).device  # type: ignore[no-any-return]
+
+    def _pre_step(
+        self,
+        base: torch.Tensor,
+        observations: torch.Tensor,
+        t: torch.Tensor,
+    ) -> torch.Tensor:
+        """Actions to be taken before the step."""
+        return base
+
+    def _post_step(
+        self,
+        base: torch.Tensor,
+        observations: torch.Tensor,
+        t: torch.Tensor,
+        field_history: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Actions to be taken after the step."""
+        return base, field_history
 
     @abstractmethod
     def _one_step(
@@ -151,6 +170,7 @@ class BasePosterior(nn.Module):
         # Sample remaining steps
         for i in range(start_time, num_steps - 1):
             t = t_vec[:, i : i + 1]
+            base = self._pre_step(base=base, observations=observations, t=t)
             for batch_idx in range(0, ensemble_size, batch_size):
 
                 # Prepare the batch
@@ -165,6 +185,9 @@ class BasePosterior(nn.Module):
                     t=t,
                     **fixed_input(batch_ids),
                 ).cpu()
+            base, field_history = self._post_step(
+                base=base, observations=observations, t=t, field_history=field_history
+            )
 
         # Add the new base to the field history
         if return_field_history:
@@ -230,7 +253,6 @@ class BasePosterior(nn.Module):
                 **cond_input(t_idx),
                 **fixed_input,  # type: ignore[arg-type]
             )
-
-            trajectory.append(base.cpu())
+            trajectory.append(base.cpu().clone())
 
         return torch.stack(trajectory, dim=-1)

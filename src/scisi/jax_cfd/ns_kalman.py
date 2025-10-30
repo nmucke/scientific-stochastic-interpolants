@@ -3,16 +3,18 @@ from typing import Callable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
+import jax_cfd.base.grids as grids
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import random
 
-from scisi.jax_cfd.kalman_filter import SpectralEnKF
+from scisi.jax_cfd.ENKF import LocalizedSpectralEnKF, SpectralEnKF
+from scisi.jax_cfd.ETKF import ETKF
 from scisi.jax_cfd.navier_stokes_forward_model import set_up_forward_model
-from scisi.jax_cfd.netf import SpectralNETF
+from scisi.jax_cfd.NETF import SpectralNETF
 
 
-def get_grid_observation_matrix(
+def get_grid_observation_indices(
     data_size: tuple[int, int], skip_grid: int
 ) -> np.ndarray:
     """Get grid observation indices in (x, y) format.
@@ -38,15 +40,16 @@ def main() -> None:
     key = random.PRNGKey(123)
 
     nx, ny = 256, 256
+    grid = grids.Grid((nx, nx), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
 
-    ensemble_size = 1500
+    ensemble_size = 200
     skip_grid = 4
     obs_noise_std = 0.005
 
-    n_timesteps = 5
+    n_timesteps = 3
 
     forward_model = set_up_forward_model(
-        compile=True, use_true_model=False, stochastic=True
+        compile=True, use_true_model=False, stochastic=True, grid=grid
     )
 
     def pde(u_spectral: jnp.ndarray, rng_key: jax.random.PRNGKey) -> jnp.ndarray:
@@ -61,19 +64,25 @@ def main() -> None:
     # obs_y = random.randint(subkey, (n_obs,), 0, ny)
     # obs_indices = jnp.column_stack([obs_x, obs_y])
 
-    obs_indices = get_grid_observation_matrix((nx, ny), 16)
+    obs_indices = get_grid_observation_indices((nx, ny), 8)
     obs_indices = jnp.array(obs_indices)  # Convert to JAX array
     n_obs = obs_indices.shape[0]
     print(f"Number of observations: {n_obs}")
 
+    jnp.savez(f"enkf_ns/obs_indices", obs_indices)
+
     # Initialize EnKF
-    enkf = SpectralEnKF(
-        # enkf = SpectralNETF(
+    enkf = LocalizedSpectralEnKF(
+        # enkf = SpectralEnKF(
         grid_shape=(nx, ny),
         ensemble_size=ensemble_size,
         model_noise_std=0,
         obs_noise_std=obs_noise_std,
         real_space=True,
+        # adaptive_inflation=True,
+        adaptive_localization=True,
+        localization_radius=20,
+        # rho=1.0,
     )
 
     Lx, Ly = 2 * jnp.pi, 2 * jnp.pi
@@ -81,14 +90,12 @@ def main() -> None:
     y = jnp.linspace(0, Ly, ny, endpoint=False)
     X, Y = jnp.meshgrid(x, y, indexing="ij")
 
-    # obs_matrix = np.load(f"obs_matrix_{skip_grid}.npz")["obs_matrix"]
-    # obs_matrix = jnp.array(obs_matrix)
-
     # Load the trajectory
     true_trajectory_physical = np.load("trajectory.npz")["trajectory"]
     # init_condition = jax.vmap(get_initial_vorticity)(
     #     jax.random.split(jax.random.PRNGKey(0), ensemble_size)
     # )
+    # true_trajectory_physical = true_trajectory_physical[:, ::2, ::2]
     true_trajectory_physical = true_trajectory_physical[100 : 100 + n_timesteps + 1]
 
     # Generate observations
@@ -117,6 +124,8 @@ def main() -> None:
             inflation=1.02,
             # localization_radius=15
         )
+
+        # jnp.savez(f"enkf_ns/ensemble_physical_{t}", jax.vmap(jnp.fft.irfft2)(ensemble_spectral))
 
         # Store mean in physical space
         mean_hat = jnp.mean(ensemble_spectral, axis=0)
