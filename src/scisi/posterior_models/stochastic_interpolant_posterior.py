@@ -63,6 +63,7 @@ class StochasticInterpolantPosterior(BasePosterior):
             drift = self.model._drift_with_prior_score(
                 base, t, field_history, field_cond, pars_cond, self.diffusion_term
             )
+
         # Compute the likelihood score
         likelihood_score = self.likelihood_model.score(
             observations=observations,
@@ -83,14 +84,14 @@ class StochasticInterpolantPosterior(BasePosterior):
         # Likelihood score step
         base = base + likelihood_score
 
-        # Compute the drift
-        if self.default_diffusion_term:
-            drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
-        else:
-            drift = self.model._drift_with_prior_score(
-                base, t, field_history, field_cond, pars_cond, self.diffusion_term
-            )
-        self.drift_term.append(drift.detach().to("cpu"))
+        # # Compute the drift
+        # if self.default_diffusion_term:
+        #     drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
+        # else:
+        #     drift = self.model._drift_with_prior_score(
+        #         base, t, field_history, field_cond, pars_cond, self.diffusion_term
+        #     )
+        # self.drift_term.append(drift.detach().to("cpu"))
 
         return base.detach()
 
@@ -115,28 +116,30 @@ class StochasticInterpolantPosterior(BasePosterior):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Post-step of the posterior."""
 
-        t = t.cpu()
+        return base, field_history
 
-        self.counter += 1
-        if self.weights is None:
-            self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
+        # t = t.cpu()
 
-        drift_term = torch.cat(self.drift_term, dim=0)
+        # self.counter += 1
+        # if self.weights is None:
+        #     self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
 
-        pred = base + drift_term * (1.0 - t)
+        # drift_term = torch.cat(self.drift_term, dim=0)
 
-        # Add noise = integral of the diffusion term from t to 1
-        pred = pred + torch.randn_like(base) * self.integral_variance(t)
+        # pred = base + drift_term * (1.0 - t)
 
-        pred_obs = self.likelihood_model.obs_operator(pred.to(self.device))
+        # # Add noise = integral of the diffusion term from t to 1
+        # pred = pred + torch.randn_like(base) * self.integral_variance(t)
 
-        obs_diff = observations - pred_obs
+        # pred_obs = self.likelihood_model.obs_operator(pred.to(self.device))
 
-        prob = torch.distributions.Normal(
-            0, self.likelihood_model.original_variance + 1e-3
-        ).log_prob(obs_diff)
-        self.weights = prob.mean(dim=1) * self.weights
-        self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
+        # obs_diff = observations - pred_obs
+
+        # prob = torch.distributions.Normal(
+        #     0, self.likelihood_model.original_variance + 1e-3
+        # ).log_prob(obs_diff)
+        # self.weights = prob.mean(dim=1) * self.weights
+        # self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
 
         # log_likelihood = self.likelihood_model._compute_log_likelihood(
         #     x_obs=self.likelihood_model.obs_operator(pred.to(self.device)),
@@ -149,14 +152,14 @@ class StochasticInterpolantPosterior(BasePosterior):
         # self.weights = self.weights * temp_weights
         # self.weights = self.weights / self.weights.sum()
 
-        if self.counter % 25 == 0:
-            resample_indices = torch.multinomial(
-                self.weights, num_samples=base.shape[0], replacement=True
-            )
-            resample_indices = resample_indices.to("cpu")
+        # if self.counter % 25 == 0:
+        #     resample_indices = torch.multinomial(
+        #         self.weights, num_samples=base.shape[0], replacement=True
+        #     )
+        #     resample_indices = resample_indices.to("cpu")
 
-            self.weights = 1 / base.shape[0] * torch.ones_like(self.weights)
+        #     self.weights = 1 / base.shape[0] * torch.ones_like(self.weights)
 
-            return base[resample_indices], field_history[resample_indices]
-        else:
-            return base, field_history
+        #     return base[resample_indices], field_history[resample_indices]
+        # else:
+        #     return base, field_history

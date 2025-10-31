@@ -46,7 +46,7 @@ torch.manual_seed(42)
 NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 200
 MIXED_PRECISION = False
-ENSEMBLE_SIZE = 64
+ENSEMBLE_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -87,6 +87,11 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Instantiating test data...")
     test_dataset = hydra.utils.instantiate(cfg.test_data)
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
+
+    trajectory = np.load("trajectory.npz")["trajectory"][100:, ::2, ::2]
+    trajectory = trajectory.transpose(1, 2, 0)
+    trajectory = trajectory.reshape(1, 1, 128, 128, 100)
+    trajectory = torch.from_numpy(trajectory).float()
 
     logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
@@ -131,8 +136,8 @@ def main(posterior_cfg: DictConfig) -> None:
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
-        diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
-        # diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
+        # diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+        diffusion_term = lambda t: 2.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
 
@@ -183,15 +188,15 @@ def main(posterior_cfg: DictConfig) -> None:
     true_trajectory = trajectory.to("cpu")
 
     logger.info(f"Inverse transforming predicted trajectory...")
-    # posterior_trajectory = preprocesser.inverse_transform(
-    #     base=posterior_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
-    # prior_trajectory = preprocesser.inverse_transform(
-    #     base=prior_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
-    # true_trajectory = preprocesser.inverse_transform(
-    #     base=true_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
+    posterior_trajectory = preprocesser.inverse_transform(
+        base=posterior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    prior_trajectory = preprocesser.inverse_transform(
+        base=prior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    true_trajectory = preprocesser.inverse_transform(
+        base=true_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
 
     posterior_trajectory = posterior_trajectory[0, 0]
     prior_trajectory = prior_trajectory[0, 0]

@@ -12,12 +12,14 @@ Observation equation: y_{t+1} = H(x_{t+1}) + obs_noise  (Physical space)
 where H is the transformation from Fourier to physical space at observation points.
 """
 
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random
+
+from scisi.jax_cfd.ns_kalman import ObservationOperator
 
 
 class SpectralEnKF:
@@ -45,6 +47,7 @@ class SpectralEnKF:
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
+        observation_operator: ObservationOperator,
         real_space: bool = True,
     ):
         self.grid_shape = grid_shape
@@ -53,6 +56,7 @@ class SpectralEnKF:
         self.model_noise_std = model_noise_std
         self.obs_noise_std = obs_noise_std
         self.real_space = real_space
+        self.observation_operator = observation_operator
 
         # For real-valued fields, we use rfft which returns (N//2 + 1) coefficients
         if real_space:
@@ -89,35 +93,6 @@ class SpectralEnKF:
             elif self.ndim == 2:
                 return jnp.fft.ifft2(u_spectral).real
 
-    def observation_operator(
-        self, u_spectral: jnp.ndarray, obs_indices: jnp.ndarray
-    ) -> jnp.ndarray:
-        """
-        Observation operator H: maps Fourier coefficients to physical space observations.
-
-        Parameters
-        ----------
-        u_spectral : jnp.ndarray
-            State in Fourier space
-        obs_indices : jnp.ndarray
-            Indices of observation locations in physical space
-            For 1D: shape (n_obs,)
-            For 2D: shape (n_obs, 2)
-
-        Returns
-        -------
-        jnp.ndarray
-            Observations in physical space, shape (n_obs,)
-        """
-        # Transform to physical space
-        u_physical = self.spectral_to_physical(u_spectral)
-
-        # Extract observations at specified locations
-        if self.ndim == 1:
-            return u_physical[obs_indices]
-        elif self.ndim == 2:
-            return u_physical[obs_indices[:, 0], obs_indices[:, 1]]
-
     def forecast_step(
         self,
         ensemble_spectral: jnp.ndarray,
@@ -151,7 +126,6 @@ class SpectralEnKF:
         self,
         forecast_ensemble_spectral: jnp.ndarray,
         observations: jnp.ndarray,
-        obs_indices: jnp.ndarray,
         key: jax.random.PRNGKey,
         inflation: float,
         *args: Any,
@@ -172,11 +146,7 @@ class SpectralEnKF:
         X_pert_real = inflation * (ensemble_real - x_mean_real)
 
         # Map ensemble to observation space
-        HX = jax.vmap(
-            lambda u: self.observation_operator(
-                u.reshape(original_shape[1:]), obs_indices
-            )
-        )(forecast_ensemble_spectral)
+        HX = jax.vmap(self.observation_operator)(forecast_ensemble_spectral)
 
         HX_mean = jnp.mean(HX, axis=0)
         HX_pert = HX - HX_mean
@@ -212,7 +182,6 @@ class SpectralEnKF:
         self,
         ensemble_spectral: jnp.ndarray,
         observations: jnp.ndarray,
-        obs_indices: jnp.ndarray,
         dynamics: Callable,
         key: jax.random.PRNGKey,
         inflation: float = 1.0,
@@ -225,7 +194,6 @@ class SpectralEnKF:
         analysis_ensemble = self.analysis_step(
             forecast_ensemble,
             observations,
-            obs_indices,
             key2,
             inflation,
             localization_radius,
@@ -280,6 +248,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         model_noise_std: float,
         obs_noise_std: float,
         localization_radius: float,
+        observation_operator: ObservationOperator,
         real_space: bool = True,
         adaptive_localization: bool = False,
         min_radius: Optional[float] = None,
@@ -292,6 +261,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             model_noise_std=model_noise_std,
             obs_noise_std=obs_noise_std,
             real_space=real_space,
+            observation_operator=observation_operator,
         )
         self.localization_radius = localization_radius
         self.adaptive_localization = adaptive_localization
@@ -378,21 +348,14 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             # Normalize
             correlations = jnp.where(ref_var > 1e-10, correlations / ref_var, 0.0)
 
-            # Compute distances from reference point
-            if self.ndim == 1:
-                ref_coord = ref_idx
-                distances = jnp.abs(jnp.arange(n_state) - ref_coord)
-                # Periodic distance
-                distances = jnp.minimum(distances, n_state - distances)
-            elif self.ndim == 2:
-                ref_coord = self.grid_coords[ref_idx]
-                diff = self.grid_coords - ref_coord[None, :]
-                diff_x = jnp.abs(diff[:, 0])
-                diff_y = jnp.abs(diff[:, 1])
-                Lx, Ly = self.grid_shape
-                diff_x = jnp.minimum(diff_x, Lx - diff_x)
-                diff_y = jnp.minimum(diff_y, Ly - diff_y)
-                distances = jnp.sqrt(diff_x**2 + diff_y**2)
+            ref_coord = self.grid_coords[ref_idx]
+            diff = self.grid_coords - ref_coord[None, :]
+            diff_x = jnp.abs(diff[:, 0])
+            diff_y = jnp.abs(diff[:, 1])
+            Lx, Ly = self.grid_shape
+            diff_x = jnp.minimum(diff_x, Lx - diff_x)
+            diff_y = jnp.minimum(diff_y, Ly - diff_y)
+            distances = jnp.sqrt(diff_x**2 + diff_y**2)
 
             distances_list.append(distances)
             correlations_list.append(correlations)
@@ -546,35 +509,10 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             "max_radius": self.max_radius,
         }
 
-    def reset_adaptation_history(self) -> None:
+    def reset_adaptation_history(self) -> jnp.ndarray:
         """Reset the adaptation history."""
         self.radius_history = []
         self.innovation_stats = []
-
-    def observation_operator_physical(
-        self, u_physical: jnp.ndarray, obs_indices: jnp.ndarray
-    ) -> jnp.ndarray:
-        """
-        Observation operator for physical space: extract observations at specified locations.
-
-        Parameters
-        ----------
-        u_physical : jnp.ndarray
-            State in physical space
-        obs_indices : jnp.ndarray
-            Indices of observation locations
-            For 1D: shape (n_obs,)
-            For 2D: shape (n_obs, 2)
-
-        Returns
-        -------
-        jnp.ndarray
-            Observations in physical space, shape (n_obs,)
-        """
-        if self.ndim == 1:
-            return u_physical[obs_indices]
-        elif self.ndim == 2:
-            return u_physical[obs_indices[:, 0], obs_indices[:, 1]]
 
     def gaspari_cohn(self, distance: jnp.ndarray, radius: float) -> jnp.ndarray:
         """
@@ -620,15 +558,13 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         return term1 + term2
 
     def compute_distance_matrix(
-        self, obs_indices: jnp.ndarray, periodic: bool = True
+        self, periodic: bool = True
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         Compute distance matrices for localization.
 
         Parameters
         ----------
-        obs_indices : jnp.ndarray
-            Observation locations
         periodic : bool
             Whether to use periodic boundary conditions for distance
 
@@ -638,55 +574,36 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             (distances_state_to_obs, distances_obs_to_obs)
             Both with localization applied via Gaspari-Cohn function
         """
-        n_obs = len(obs_indices)
+        n_obs = len(self.observation_operator.obs_coords)
 
-        if self.ndim == 1:
-            # 1D case
-            obs_coords = obs_indices
-            state_coords = self.grid_coords
+        # 2D case
+        obs_coords = self.observation_operator.obs_coords  # shape (n_obs, 2)
+        state_coords = self.grid_coords  # shape (n_state, 2)
 
-            if periodic:
-                # Periodic distance
-                L = self.grid_shape[0]
-                diff_state_obs = jnp.abs(state_coords[:, None] - obs_coords[None, :])
-                dist_state_obs = jnp.minimum(diff_state_obs, L - diff_state_obs)
+        if periodic:
+            # Periodic distance in 2D
+            Lx, Ly = self.grid_shape
 
-                diff_obs_obs = jnp.abs(obs_coords[:, None] - obs_coords[None, :])
-                dist_obs_obs = jnp.minimum(diff_obs_obs, L - diff_obs_obs)
-            else:
-                # Euclidean distance
-                dist_state_obs = jnp.abs(state_coords[:, None] - obs_coords[None, :])
-                dist_obs_obs = jnp.abs(obs_coords[:, None] - obs_coords[None, :])
+            diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
+            diff_state_obs_x = jnp.abs(diff_state_obs[:, :, 0])
+            diff_state_obs_y = jnp.abs(diff_state_obs[:, :, 1])
+            diff_state_obs_x = jnp.minimum(diff_state_obs_x, Lx - diff_state_obs_x)
+            diff_state_obs_y = jnp.minimum(diff_state_obs_y, Ly - diff_state_obs_y)
+            dist_state_obs = jnp.sqrt(diff_state_obs_x**2 + diff_state_obs_y**2)
 
-        elif self.ndim == 2:
-            # 2D case
-            obs_coords = obs_indices  # shape (n_obs, 2)
-            state_coords = self.grid_coords  # shape (n_state, 2)
+            diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
+            diff_obs_obs_x = jnp.abs(diff_obs_obs[:, :, 0])
+            diff_obs_obs_y = jnp.abs(diff_obs_obs[:, :, 1])
+            diff_obs_obs_x = jnp.minimum(diff_obs_obs_x, Lx - diff_obs_obs_x)
+            diff_obs_obs_y = jnp.minimum(diff_obs_obs_y, Ly - diff_obs_obs_y)
+            dist_obs_obs = jnp.sqrt(diff_obs_obs_x**2 + diff_obs_obs_y**2)
+        else:
+            # Euclidean distance
+            diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
+            dist_state_obs = jnp.linalg.norm(diff_state_obs, axis=2)
 
-            if periodic:
-                # Periodic distance in 2D
-                Lx, Ly = self.grid_shape
-
-                diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
-                diff_state_obs_x = jnp.abs(diff_state_obs[:, :, 0])
-                diff_state_obs_y = jnp.abs(diff_state_obs[:, :, 1])
-                diff_state_obs_x = jnp.minimum(diff_state_obs_x, Lx - diff_state_obs_x)
-                diff_state_obs_y = jnp.minimum(diff_state_obs_y, Ly - diff_state_obs_y)
-                dist_state_obs = jnp.sqrt(diff_state_obs_x**2 + diff_state_obs_y**2)
-
-                diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
-                diff_obs_obs_x = jnp.abs(diff_obs_obs[:, :, 0])
-                diff_obs_obs_y = jnp.abs(diff_obs_obs[:, :, 1])
-                diff_obs_obs_x = jnp.minimum(diff_obs_obs_x, Lx - diff_obs_obs_x)
-                diff_obs_obs_y = jnp.minimum(diff_obs_obs_y, Ly - diff_obs_obs_y)
-                dist_obs_obs = jnp.sqrt(diff_obs_obs_x**2 + diff_obs_obs_y**2)
-            else:
-                # Euclidean distance
-                diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
-                dist_state_obs = jnp.linalg.norm(diff_state_obs, axis=2)
-
-                diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
-                dist_obs_obs = jnp.linalg.norm(diff_obs_obs, axis=2)
+            diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
+            dist_obs_obs = jnp.linalg.norm(diff_obs_obs, axis=2)
 
         # Apply Gaspari-Cohn localization
         rho_state_obs = self.gaspari_cohn(dist_state_obs, self.localization_radius)
@@ -698,7 +615,6 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         self,
         forecast_ensemble_spectral: jnp.ndarray,
         observations: jnp.ndarray,
-        obs_indices: jnp.ndarray,
         key: jax.random.PRNGKey,
         inflation: float = 1.0,
         localization_radius: Optional[float] = None,
@@ -717,8 +633,6 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             Forecasted ensemble in Fourier space
         observations : jnp.ndarray
             Observations in physical space
-        obs_indices : jnp.ndarray
-            Indices of observation locations
         key : jax.random.PRNGKey
             Random key for perturbed observations
         inflation : float
@@ -750,7 +664,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
             and self.localization_radius > self.min_radius
         ):
             # Compute innovations for adaptation
-            HX = jax.vmap(lambda u: self.observation_operator_physical(u, obs_indices))(
+            HX = jax.vmap(self.observation_operator.physical_observation_operator)(
                 forecast_ensemble_physical
             )
             HX_mean = jnp.mean(HX, axis=0)
@@ -790,7 +704,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         X_pert = inflation * (ensemble_flat - x_mean)
 
         # Map ensemble to observation space (use physical space ensemble)
-        HX = jax.vmap(lambda u: self.observation_operator_physical(u, obs_indices))(
+        HX = jax.vmap(self.observation_operator.physical_observation_operator)(
             forecast_ensemble_physical
         )
 
@@ -798,9 +712,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         HX_pert = HX - HX_mean
 
         # Compute localization matrices
-        rho_state_obs, rho_obs_obs = self.compute_distance_matrix(
-            obs_indices, periodic=periodic
-        )
+        rho_state_obs, rho_obs_obs = self.compute_distance_matrix(periodic=periodic)
 
         # Compute localized covariances
         # P_xy = (X_pert^T @ HX_pert / (N-1)) ⊙ ρ_state_obs

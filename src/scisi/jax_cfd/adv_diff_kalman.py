@@ -20,10 +20,8 @@ import matplotlib.pyplot as plt
 from jax import random
 
 from scisi.jax_cfd.ENKF import LocalizedSpectralEnKF, SpectralEnKF
-from scisi.jax_cfd.ETKF import ETKF
-from scisi.jax_cfd.NETF import LocalizedSpectralNETF, SpectralNETF
-
-# from scisi.jax_cfd.netf import SpectralNETF
+from scisi.jax_cfd.ETKF import LocalizedSpectralETKF, SpectralETKF
+from scisi.jax_cfd.ns_kalman import ObservationOperator
 
 
 class AdvectionDiffusion2D:
@@ -133,8 +131,10 @@ def run_2d_enkf_example() -> None:
     obs_y = random.randint(subkey, (n_obs,), 0, ny)
     obs_indices = jnp.column_stack([obs_x, obs_y])
 
+    observation_operator = ObservationOperator(nx, ny, obs_indices)
+
     # ETKF parameters
-    ensemble_size = 100
+    ensemble_size = 250
     model_noise_std = 0.05
     obs_noise_std = 0.02
 
@@ -142,23 +142,24 @@ def run_2d_enkf_example() -> None:
     pde = AdvectionDiffusion2D(nx, ny, Lx, Ly, cx, cy, nu, dt)
 
     # Initialize EnKF
-    etkf = LocalizedSpectralEnKF(
+    etkf = LocalizedSpectralETKF(
         grid_shape=(nx, ny),
         ensemble_size=ensemble_size,
         model_noise_std=model_noise_std,
         obs_noise_std=obs_noise_std,
         real_space=True,
-        # adaptive_inflation=True,
-        localization_radius=4.0,
+        localization_radius=5.0,
         adaptive_localization=True,
+        observation_operator=observation_operator,
     )
 
-    enkf = SpectralEnKF(
+    enkf = SpectralETKF(
         grid_shape=(nx, ny),
         ensemble_size=ensemble_size,
         model_noise_std=model_noise_std,
         obs_noise_std=obs_noise_std,
         real_space=True,
+        observation_operator=observation_operator,
     )
 
     # Create initial condition: Gaussian blob
@@ -211,7 +212,6 @@ def run_2d_enkf_example() -> None:
         ensemble_spectral, _ = etkf.assimilate(
             ensemble_spectral=ensemble_spectral,
             observations=observations[t + 1],
-            obs_indices=obs_indices,
             dynamics=pde.step,
             key=subkey,
             inflation=1.02,
@@ -246,7 +246,6 @@ def run_2d_enkf_example() -> None:
         ensemble_spectral, _ = enkf.assimilate(
             ensemble_spectral=ensemble_spectral,
             observations=observations[t + 1],
-            obs_indices=obs_indices,
             dynamics=pde.step,
             key=subkey,
             inflation=1.02,
