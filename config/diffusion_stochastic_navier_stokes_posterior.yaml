@@ -7,7 +7,7 @@ obs_operator:
   # type: random
   # percent_obs: 0.05
   type: grid
-  skip_grid: 16
+  skip_grid: 4
 
 likelihood_model:
   _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood

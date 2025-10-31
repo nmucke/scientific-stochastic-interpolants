@@ -44,9 +44,9 @@ torch.set_default_dtype(torch.float32)
 torch.manual_seed(42)
 
 NUM_PHYSICAL_STEPS = 10
-NUM_STEPS = 250
+NUM_STEPS = 200
 MIXED_PRECISION = False
-BATCH_SIZE = 32
+ENSEMBLE_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -88,6 +88,11 @@ def main(posterior_cfg: DictConfig) -> None:
     test_dataset = hydra.utils.instantiate(cfg.test_data)
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
+    trajectory = np.load("trajectory.npz")["trajectory"][100:, ::2, ::2]
+    trajectory = trajectory.transpose(1, 2, 0)
+    trajectory = trajectory.reshape(1, 1, 128, 128, 100)
+    trajectory = torch.from_numpy(trajectory).float()
+
     logger.info(f"Preprocessing trajectory...")
     init_data = preprocesser.transform(
         base=trajectory,
@@ -95,9 +100,9 @@ def main(posterior_cfg: DictConfig) -> None:
         is_batch=True,
         is_trajectory=True,
     )
-    trajectory = init_data["base"].to("cuda")
-    base = init_data["base"][:, :, :, :, len_field_history - 1].to("cuda")
-    field_history = init_data["field_history"].to("cuda")
+    trajectory = init_data["base"]
+    base = init_data["base"][:, :, :, :, len_field_history - 1]
+    field_history = init_data["field_history"]
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -131,8 +136,8 @@ def main(posterior_cfg: DictConfig) -> None:
         == "scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood"
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
-        # diffusion_term = lambda t: 3.0 * torch.sqrt(model.interpolation.gamma(t))
-        diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
+        # diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
+        diffusion_term = lambda t: 2.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
 
@@ -146,14 +151,14 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Preparing observations...")
     observations = torch.zeros(1, obs_operator.num_obs, NUM_PHYSICAL_STEPS)
     for i in range(NUM_PHYSICAL_STEPS):
-        observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i])
+        observations[:, :, i] = obs_operator(trajectory[:, :, :, :, i].to("cuda")).cpu()
         observations[:, :, i] += torch.randn_like(observations[:, :, i]) * torch.sqrt(
             torch.tensor(posterior_cfg.likelihood_model.variance)
         )
 
     input_dict = {
         "base": base if isinstance(model, FollmerStochasticInterpolant) else None,
-        "batch_size": BATCH_SIZE,
+        "ensemble_size": ENSEMBLE_SIZE,
         "num_steps": NUM_STEPS,
         "field_history": field_history,
         "stepper": (
@@ -162,7 +167,7 @@ def main(posterior_cfg: DictConfig) -> None:
             else SDE_STEPPER
         ),
         "num_physical_steps": NUM_PHYSICAL_STEPS,
-        "observations": observations[:, :, len_field_history:].to("cuda"),
+        "observations": observations[:, :, len_field_history:],
     }
 
     logger.info(
@@ -176,26 +181,26 @@ def main(posterior_cfg: DictConfig) -> None:
 
         input_dict.pop("num_steps")
         input_dict.pop("observations")
+        input_dict.pop("ensemble_size")
         logger.info(f"Sampling from the prior model...")
         prior_trajectory = model.sample_trajectory(**input_dict, num_steps=50)
 
     true_trajectory = trajectory.to("cpu")
 
     logger.info(f"Inverse transforming predicted trajectory...")
-    # posterior_trajectory = preprocesser.inverse_transform(
-    #     base=posterior_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
-    # prior_trajectory = preprocesser.inverse_transform(
-    #     base=prior_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
-    # true_trajectory = preprocesser.inverse_transform(
-    #     base=true_trajectory, is_batch=True, is_trajectory=True
-    # )["base"]
-
-    prior_trajectory = prior_trajectory[0, 0]
-    true_trajectory = true_trajectory[0, 0]
+    posterior_trajectory = preprocesser.inverse_transform(
+        base=posterior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    prior_trajectory = preprocesser.inverse_transform(
+        base=prior_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
+    true_trajectory = preprocesser.inverse_transform(
+        base=true_trajectory, is_batch=True, is_trajectory=True
+    )["base"]
 
     posterior_trajectory = posterior_trajectory[0, 0]
+    prior_trajectory = prior_trajectory[0, 0]
+    true_trajectory = true_trajectory[0, 0]
 
     true_state = true_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]
     posterior_state = posterior_trajectory[:, :, NUM_PHYSICAL_STEPS - 1]

@@ -212,15 +212,14 @@ class InterpolantGaussianLikelihood(nn.Module):
         interpolant_obs = (
             self.interpolant.alpha(t) * base_obs
             + self.interpolant.beta(t) * observations
-            + self.diffusion_term(t) * torch.randn_like(base_obs) * torch.sqrt(t)
+            # + self.diffusion_term(t) * torch.randn_like(base_obs) * torch.sqrt(t)
         )
 
         # Compute the scale of the interpolant of the observation
         interpolant_variance = (
-            self.interpolant.beta(t) ** 2
-            * self.original_variance
+            self.interpolant.beta(t) ** 2 * self.original_variance
             # + self.diffusion_term(t) ** 2 * t
-            # + self.model.interpolation.gamma(t) ** 2 * t
+            + self.model.interpolation.gamma(t) ** 2  # * t
         )
 
         return interpolant_obs, interpolant_variance
@@ -228,18 +227,20 @@ class InterpolantGaussianLikelihood(nn.Module):
     def _compute_one_step_prediction(
         self,
         x: torch.Tensor,
-        drift_model: nn.Module,
+        drift: nn.Module,
         diffusion_term: nn.Module,
         t: torch.Tensor,
         dt: torch.Tensor,
-        field_history: torch.Tensor,
+        field_history: Optional[torch.Tensor] = None,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Compute the one step predictions."""
-        drift = drift_model(x, t, field_history, field_cond, pars_cond, diffusion_term)
-        diffusion = diffusion_term(t)
-        return x + drift * dt + diffusion * torch.randn_like(x) * torch.sqrt(dt)
+        # drift = drift_model(x, t, field_history, field_cond, pars_cond, diffusion_term)
+        x = x + drift * dt
+
+        x = x.repeat(self.ensemble_size, 1, 1, 1)
+        return x + diffusion_term(t) * torch.randn_like(x) * torch.sqrt(dt)
 
     def _compute_likelihood(
         self,
@@ -268,7 +269,7 @@ class InterpolantGaussianLikelihood(nn.Module):
             obs_diff_inner.unsqueeze(1), obs_diff_inner.unsqueeze(2)
         ).squeeze()
         # obs_diff_inner = torch.linalg.norm(observations - self.obs_operator(x), dim=1)**2
-        return -0.5 * obs_diff_inner / variance
+        return -0.5 * obs_diff_inner / (variance)
 
     def _compute_likelihood_score(
         self,
@@ -304,17 +305,51 @@ class InterpolantGaussianLikelihood(nn.Module):
         else:
             self.diffusion_term = diffusion_term
 
+        pred = self._compute_one_step_prediction(
+            x=x,
+            drift=drift,
+            diffusion_term=self.diffusion_term,
+            t=t,
+            dt=dt,
+        )
+
         interpolant_obs, interpolant_variance = self._interpolate_observations(
-            observations, x, t, self.obs_operator(field_history[..., -1])
+            observations, pred, t + dt, self.obs_operator(field_history[..., -1])
         )
+        interpolant_obs = interpolant_obs.repeat(self.ensemble_size, 1)
 
-        x_obs = self.obs_operator(x)
-        likelihood_score = self._compute_likelihood_score(
-            x_obs, interpolant_obs, interpolant_variance
-        )
-        likelihood_score = likelihood_score.reshape(b, c, h, w)
+        diff_norm = torch.linalg.norm(interpolant_obs - self.obs_operator(pred), dim=1)
+        diff_norm = -diff_norm / (2 * interpolant_variance)
 
-        return likelihood_score * dt * diffusion_term(t) ** 2  # type: ignore[misc]
+        # Compute weights
+        weights = torch.softmax(diff_norm.detach(), dim=0)
+
+        # Compute weighted gradient
+        likelihood_score = torch.autograd.grad(
+            outputs=(diff_norm * weights).sum(),
+            inputs=x,
+        )[0]
+
+        # x_obs = self.obs_operator(pred)
+
+        # likelihood_score = torch.autograd.grad(
+        #     outputs=self._compute_log_likelihood(
+        #         x_obs, interpolant_obs, interpolant_variance
+        #     ).sum(),
+        #     inputs=x,
+        # )[0]
+
+        # interpolant_obs, interpolant_variance = self._interpolate_observations(
+        #     observations, x, t, self.obs_operator(field_history[..., -1])
+        # )
+
+        # x_obs = self.obs_operator(x)
+        # likelihood_score = self._compute_likelihood_score(
+        #     x_obs, interpolant_obs, interpolant_variance
+        # )
+        # likelihood_score = likelihood_score.reshape(b, c, h, w)
+
+        return likelihood_score * diffusion_term(t) ** 2  # type: ignore[misc]
 
 
 class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
@@ -326,7 +361,7 @@ class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
         obs_operator: nn.Module = LinearObservationOperator,
         variance: float = 0.05,
         ensemble_size: int = 1,
-        spatial_sigma: float = 0.1,
+        spatial_sigma: float = 0.005,
         interpolant: Optional[nn.Module] = None,
     ) -> None:
         """Initialize Spatial Interpolant Gaussian likelihood."""
@@ -390,16 +425,42 @@ class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):
             observations, size=(h, w), mode="nearest"
         )
 
-        interpolant_obs, interpolant_variance = self._interpolate_observations(
-            observations, x, t, field_history[..., -1]
+        pred = self._compute_one_step_prediction(
+            x=x,
+            drift=drift,
+            diffusion_term=self.diffusion_term,
+            t=t,
+            dt=dt,
         )
 
-        likelihood_score = self._compute_likelihood_score(
-            x, interpolant_obs, interpolant_variance
+        interpolant_obs, interpolant_variance = self._interpolate_observations(
+            observations, pred, t + dt, field_history[..., -1]
         )
+
+        # x_obs = self.obs_operator(pred)
+
+        pred = pred * self.mask
+        interpolant_obs = interpolant_obs * self.mask
+
+        likelihood_score = torch.autograd.grad(
+            outputs=self._compute_log_likelihood(
+                pred.reshape(b, -1),
+                interpolant_obs.reshape(b, -1),
+                interpolant_variance,
+            ).sum(),
+            inputs=x,
+        )[0]
+
+        # interpolant_obs, interpolant_variance = self._interpolate_observations(
+        #     observations, x, t, field_history[..., -1]
+        # )
+
+        # likelihood_score = self._compute_likelihood_score(
+        #     x, interpolant_obs, interpolant_variance
+        # )
 
         return (
-            likelihood_score * dt * diffusion_term(t) ** 2 * t  # type: ignore[misc]
+            likelihood_score * dt * diffusion_term(t) ** 2  # type: ignore[misc]
         )  # self.interpolant.beta(t)
 
 
@@ -662,4 +723,4 @@ class FlowdasGaussianLikelihood(nn.Module):
             inputs=x,
         )[0]
 
-        return 0.01 * score
+        return score * 0.01

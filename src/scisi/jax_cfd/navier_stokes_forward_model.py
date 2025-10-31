@@ -207,7 +207,7 @@ def repeated(f: Callable, steps: int) -> Callable:
     ) -> Tuple[jnp.ndarray, jax.random.PRNGKey]:
         rng_keys = jax.random.split(rng_key, steps)
         x_final, _ = jax.lax.scan(f, x_initial, xs=rng_keys, length=steps)
-        rng_keys_final = jax.random.split(rng_keys[-1], 1)
+        rng_keys_final, _ = jax.random.split(rng_keys[-1])
         return x_final, rng_keys_final
 
     return f_repeated
@@ -307,6 +307,7 @@ def set_up_forward_model(
     compile: bool = COMPILE,
     use_true_model: bool = False,
     stochastic: bool = False,
+    grid: grids.Grid = GRID,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
@@ -316,7 +317,7 @@ def set_up_forward_model(
     if use_true_model:
         step_fn = spectral.time_stepping.crank_nicolson_rk4(
             spectral.equations.NavierStokes2D(
-                VISCOSITY, GRID, smooth=SMOOTH, forcing_fn=forcing, drag=0.1
+                VISCOSITY, grid, smooth=SMOOTH, forcing_fn=forcing, drag=0.1
             ),
             HF_DT,
         )
@@ -327,7 +328,7 @@ def set_up_forward_model(
         step_fn = stepper(
             NavierStokes2D(
                 VISCOSITY,
-                GRID,
+                grid,
                 smooth=SMOOTH,
                 forcing_fn=forcing,
                 drag=DRAG,
@@ -374,9 +375,9 @@ def main() -> None:
 
     t1 = time.time()
     # create an initial velocity field and compute the fft of the vorticity.
-    vorticity_hat0 = get_initial_vorticity(jax.random.PRNGKey(0))
-    vorticity_hat0 = jnp.stack([vorticity_hat0, vorticity_hat0], axis=0)
-
+    vorticity_hat0 = jax.vmap(get_initial_vorticity)(
+        jax.random.split(jax.random.PRNGKey(0), 200)
+    )
     rng_key = jax.random.PRNGKey(10)
     rng_keys = jax.random.split(rng_key, vorticity_hat0.shape[0])
 
@@ -385,11 +386,17 @@ def main() -> None:
     trajectory = []
     for _ in range(OUTER_STEPS):
         rng_keys = jax.random.split(rng_keys[0], vorticity_hat0.shape[0])
-        vorticity_hat0 = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
+        vorticity_hat0, rng_keys = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
         trajectory.append(vorticity_hat0)
     trajectory = jnp.stack(trajectory)
     trajectory = jnp.swapaxes(trajectory, 0, 1)
     trajectory = ifft_fn(trajectory)
+
+    np.savez(
+        "data/stochastic_navier_stokes/data_jax.npz",
+        state=np.array(trajectory[:, 100:, ::2, ::2]),  # type: ignore[call-overload]
+    )
+    pdb.set_trace()
     t2 = time.time()
     print(f"Time taken: {t2 - t1} seconds")
 

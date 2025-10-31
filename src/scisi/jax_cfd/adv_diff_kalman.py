@@ -19,10 +19,9 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random
 
-from scisi.jax_cfd.ETKF import ETKF
-from scisi.jax_cfd.kalman_filter import SpectralEnKF
-from scisi.jax_cfd.letkf import LETKF
-from scisi.jax_cfd.netf import SpectralNETF
+from scisi.jax_cfd.ENKF import LocalizedSpectralEnKF, SpectralEnKF
+from scisi.jax_cfd.ETKF import LocalizedSpectralETKF, SpectralETKF
+from scisi.jax_cfd.ns_kalman import ObservationOperator
 
 
 class AdvectionDiffusion2D:
@@ -132,8 +131,10 @@ def run_2d_enkf_example() -> None:
     obs_y = random.randint(subkey, (n_obs,), 0, ny)
     obs_indices = jnp.column_stack([obs_x, obs_y])
 
+    observation_operator = ObservationOperator(nx, ny, obs_indices)
+
     # ETKF parameters
-    ensemble_size = 5000
+    ensemble_size = 250
     model_noise_std = 0.05
     obs_noise_std = 0.02
 
@@ -141,20 +142,24 @@ def run_2d_enkf_example() -> None:
     pde = AdvectionDiffusion2D(nx, ny, Lx, Ly, cx, cy, nu, dt)
 
     # Initialize EnKF
-    etkf = ETKF(
+    etkf = LocalizedSpectralETKF(
         grid_shape=(nx, ny),
         ensemble_size=ensemble_size,
         model_noise_std=model_noise_std,
         obs_noise_std=obs_noise_std,
         real_space=True,
+        localization_radius=5.0,
+        adaptive_localization=True,
+        observation_operator=observation_operator,
     )
 
-    netf = SpectralNETF(
+    enkf = SpectralETKF(
         grid_shape=(nx, ny),
         ensemble_size=ensemble_size,
         model_noise_std=model_noise_std,
         obs_noise_std=obs_noise_std,
         real_space=True,
+        observation_operator=observation_operator,
     )
 
     # Create initial condition: Gaussian blob
@@ -191,7 +196,7 @@ def run_2d_enkf_example() -> None:
     )
 
     # Initialize ensemble
-    u00 = jnp.exp(-((X - 0.1) ** 2 + (Y - 0.1) ** 2) / 0.02)
+    u00 = jnp.exp(-((X - 0.2) ** 2 + (Y - 0.2) ** 2) / 0.02)
     key, subkey = random.split(key)
     perturbations = random.normal(subkey, (ensemble_size, nx, ny)) * 0.1
     ensemble_physical = u00 + perturbations
@@ -207,11 +212,9 @@ def run_2d_enkf_example() -> None:
         ensemble_spectral, _ = etkf.assimilate(
             ensemble_spectral=ensemble_spectral,
             observations=observations[t + 1],
-            obs_indices=obs_indices,
             dynamics=pde.step,
             key=subkey,
             inflation=1.02,
-            localization_radius=50.5,
         )
 
         # Store mean in physical space
@@ -231,7 +234,7 @@ def run_2d_enkf_example() -> None:
     non_localized_means_physical = []
 
     # Initialize ensemble
-    u00 = jnp.exp(-((X - 0.1) ** 2 + (Y - 0.1) ** 2) / 0.02)
+    u00 = jnp.exp(-((X - 0.2) ** 2 + (Y - 0.2) ** 2) / 0.02)
     key, subkey = random.split(key)
     perturbations = random.normal(subkey, (ensemble_size, nx, ny)) * 0.1
     ensemble_physical = u00 + perturbations
@@ -240,14 +243,16 @@ def run_2d_enkf_example() -> None:
     for t in range(n_timesteps):
         key, subkey = random.split(key)
 
-        ensemble_spectral, _ = netf.assimilate(
+        ensemble_spectral, _ = enkf.assimilate(
             ensemble_spectral=ensemble_spectral,
             observations=observations[t + 1],
-            obs_indices=obs_indices,
             dynamics=pde.step,
             key=subkey,
             inflation=1.02,
         )
+        # key, subkey = random.split(key)
+
+        # ensemble_spectral = pde.step(ensemble_spectral, key) + noise
 
         # Store mean in physical space
         mean_hat = jnp.mean(ensemble_spectral, axis=0)
@@ -304,7 +309,7 @@ def run_2d_enkf_example() -> None:
         ax = axes[1, i]
         if t_idx == 0:
             im = ax.imshow(
-                true_trajectory_physical[0].T,
+                ensemble_means_physical[0].T,
                 origin="lower",
                 cmap="viridis",
                 extent=[0, Lx, 0, Ly],
@@ -334,7 +339,7 @@ def run_2d_enkf_example() -> None:
         ax = axes[2, i]
         if t_idx == 0:
             im = ax.imshow(
-                true_trajectory_physical[0].T,
+                non_localized_means_physical[0].T,
                 origin="lower",
                 cmap="viridis",
                 extent=[0, Lx, 0, Ly],

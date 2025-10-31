@@ -101,21 +101,29 @@ class BaseModel(nn.Module):
                 pars_cond=pars_cond,
             )
 
-        # If base is not provided, sample from the noise
-        base = torch.randn_like(field_history[:, :, :, :, 0]) if base is None else base
+        # If base is not provided, sample noise
+        base = (
+            torch.randn_like(field_history[:, :, :, :, 0], device=self.device)
+            if base is None
+            else base
+        )
 
         dt, t_vec = self._prepare_time(num_steps=num_steps)
 
         fixed_input = {
-            "field_history": field_history,
-            "field_cond": field_cond,
-            "pars_cond": pars_cond,
+            "field_history": (
+                field_history.to(self.device) if field_history is not None else None
+            ),
+            "field_cond": (
+                field_cond.to(self.device) if field_cond is not None else None
+            ),
+            "pars_cond": pars_cond.to(self.device) if pars_cond is not None else None,
             "dt": dt,
         }
 
         if with_first_step:
             base = self._compute_first_step(
-                base=base,
+                base=base.to(self.device),
                 t=t_vec[:, 0:1],
                 stepper=stepper,
                 **fixed_input,
@@ -132,12 +140,12 @@ class BaseModel(nn.Module):
             t_vec=t_vec,
             fixed_input=fixed_input,
             stepper=stepper,
-        )
+        ).cpu()
 
         # Add the new base to the field history
         if return_field_history:
             field_history = torch.cat(
-                [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1
+                [field_history[:, :, :, :, 1:].cpu(), base.unsqueeze(-1)], dim=-1
             )
             return base, field_history
 
