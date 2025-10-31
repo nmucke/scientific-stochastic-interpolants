@@ -87,7 +87,7 @@ def main() -> None:
     )
 
     def pde(u_spectral: jnp.ndarray, rng_key: jax.random.PRNGKey) -> jnp.ndarray:
-        u_final, _ = forward_model(u_spectral, rng_key)  # type: ignore[call-arg]
+        u_final, _ = forward_model(u_spectral, rng_key)
         return u_final
 
     # Observation setup: sparse spatial observations
