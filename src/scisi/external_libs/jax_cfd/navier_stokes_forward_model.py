@@ -1,50 +1,23 @@
-import dataclasses
-import time
-from functools import partial
-from typing import Any, Callable, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Callable, Optional, Tuple, TypeVar
 
 import jax
 import jax.numpy as jnp
 import jax_cfd.base as cfd
-import jax_cfd.base as base
 import jax_cfd.base.grids as grids
 import jax_cfd.spectral as spectral
-import jax_cfd.spectral.equations as equations
-import jax_cfd.spectral.time_stepping as time_stepping
-import jax_cfd.spectral.types as types
 import jax_cfd.spectral.utils as spectral_utils
-import matplotlib.pyplot as plt
-import numpy as np
-import seaborn as sns
-import tqdm
 import tree_math
-import xarray
 from jax_cfd.base import boundaries
-from jax_cfd.base.funcutils import scan
 
 PyTreeState = TypeVar("PyTreeState")
 TimeStepFn = Callable[[PyTreeState], PyTreeState]
 
-import pdb
 from typing import Callable
 
 Array = grids.Array
 GridArrayVector = grids.GridArrayVector
 GridVariableVector = grids.GridVariableVector
 ForcingFn = Callable[[GridVariableVector], GridArrayVector]  # type: ignore[valid-type]
-
-
-VISCOSITY = 1e-3
-MAX_VELOCITY = 7
-GRID = grids.Grid((256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
-HF_DT = 1e-4
-REDUCED_DT = 0.5
-SMOOTH = True  # use anti-aliasing
-FINAL_TIME = 100.0
-OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
-INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
-COMPILE = True
-DRAG = 0.1
 
 
 # pylint: disable=invalid-name
@@ -304,10 +277,17 @@ def kolmogorov_forcing(
 
 
 def set_up_forward_model(
-    compile: bool = COMPILE,
+    compile: bool = True,
     use_true_model: bool = False,
     stochastic: bool = False,
-    grid: grids.Grid = GRID,
+    grid: grids.Grid = grids.Grid(
+        (256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi))
+    ),
+    viscosity: float = 1e-3,
+    drag: float = 0.1,
+    smooth: bool = True,
+    hf_dt: float = 1e-4,
+    inner_steps: int = 100,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
@@ -317,26 +297,26 @@ def set_up_forward_model(
     if use_true_model:
         step_fn = spectral.time_stepping.crank_nicolson_rk4(
             spectral.equations.NavierStokes2D(
-                VISCOSITY, grid, smooth=SMOOTH, forcing_fn=forcing, drag=0.1
+                viscosity, grid, smooth=smooth, forcing_fn=forcing, drag=drag
             ),
-            HF_DT,
+            hf_dt,
         )
-        step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
+        step_repeated = cfd.funcutils.repeated(step_fn, inner_steps)
     else:
         stepper = forward_euler_maruyama if stochastic else forward_euler
 
         step_fn = stepper(
             NavierStokes2D(
-                VISCOSITY,
+                viscosity,
                 grid,
-                smooth=SMOOTH,
+                smooth=smooth,
                 forcing_fn=forcing,
-                drag=DRAG,
+                drag=drag,
             ),
-            HF_DT,
+            hf_dt,
         )
         # step_repeated = cfd.funcutils.repeated(step_fn, INNER_STEPS)
-        step_repeated = repeated(step_fn, INNER_STEPS)
+        step_repeated = repeated(step_fn, inner_steps)
 
     if compile:
         step_repeated = jax.jit(step_repeated)
@@ -344,82 +324,16 @@ def set_up_forward_model(
     return step_repeated  # type: ignore[no-any-return]
 
 
-if COMPILE:
-    ifft_fn = partial(jnp.fft.irfftn, axes=(-2, -1))
-    ifft_fn = jax.jit(ifft_fn)
-else:
-    ifft_fn = partial(jnp.fft.irfftn, axes=(-2, -1))
-
-
-def get_initial_vorticity(rng_key: jax.random.PRNGKey) -> jnp.ndarray:
+def get_initial_vorticity(
+    rng_key: jax.random.PRNGKey,
+    grid: grids.Grid = grids.Grid(
+        (256, 256), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi))
+    ),
+    max_velocity: float = 7,
+    k: int = 4,
+) -> jnp.ndarray:
     """Get the initial vorticity field."""
-    v0 = cfd.initial_conditions.filtered_velocity_field(rng_key, GRID, MAX_VELOCITY, 4)
+    v0 = cfd.initial_conditions.filtered_velocity_field(rng_key, grid, max_velocity, k)
     vorticity0 = cfd.finite_differences.curl_2d(v0).data
     vorticity_hat0 = jnp.fft.rfftn(vorticity0)
     return vorticity_hat0
-
-
-def main() -> None:
-    """Main function."""
-    # Check if CUDA is available
-    # Hide GPU from JAX
-    # jax.config.update('jax_platforms', 'cpu')
-    print("JAX devices:", jax.devices())
-
-    # setup step function using crank-nicolson runge-kutta order 4
-    step_repeated = set_up_forward_model(
-        compile=COMPILE,
-        use_true_model=False,
-        stochastic=True,
-    )
-
-    t1 = time.time()
-    # create an initial velocity field and compute the fft of the vorticity.
-    vorticity_hat0 = jax.vmap(get_initial_vorticity)(
-        jax.random.split(jax.random.PRNGKey(0), 200)
-    )
-    rng_key = jax.random.PRNGKey(10)
-    rng_keys = jax.random.split(rng_key, vorticity_hat0.shape[0])
-
-    # Temporarily disable JIT compilation for this section
-    # with jax.disable_jit():
-    trajectory = []
-    for _ in range(OUTER_STEPS):
-        rng_keys = jax.random.split(rng_keys[0], vorticity_hat0.shape[0])
-        vorticity_hat0, rng_keys = jax.vmap(step_repeated)(vorticity_hat0, rng_keys)
-        trajectory.append(vorticity_hat0)
-    trajectory = jnp.stack(trajectory)
-    trajectory = jnp.swapaxes(trajectory, 0, 1)
-    trajectory = ifft_fn(trajectory)
-
-    np.savez(
-        "data/stochastic_navier_stokes/data_jax.npz",
-        state=np.array(trajectory[:, 100:, ::2, ::2]),  # type: ignore[call-overload]
-    )
-    pdb.set_trace()
-    t2 = time.time()
-    print(f"Time taken: {t2 - t1} seconds")
-
-    trajectory_to_save = trajectory[0]
-    np.savez("trajectory.npz", trajectory=np.array(trajectory_to_save))
-
-    # transform the trajectory into real-space and wrap in xarray for plotting
-    spatial_coord = (
-        jnp.arange(GRID.shape[0]) * 2 * jnp.pi / GRID.shape[0]
-    )  # same for x and y
-    coords = {
-        "time": REDUCED_DT * jnp.arange(OUTER_STEPS),
-        "x": spatial_coord,
-        "y": spatial_coord,
-    }
-    xarray.DataArray(trajectory[0], dims=["time", "x", "y"], coords=coords).plot.imshow(
-        col="time", col_wrap=5, cmap=sns.cm.icefire, robust=True
-    )
-    xarray.DataArray(trajectory[1], dims=["time", "x", "y"], coords=coords).plot.imshow(
-        col="time", col_wrap=5, cmap=sns.cm.icefire, robust=True
-    )
-    plt.show()
-
-
-if __name__ == "__main__":
-    main()
