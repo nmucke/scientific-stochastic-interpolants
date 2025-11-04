@@ -33,7 +33,6 @@ NUM_TRAJECTORIES = 1
 def main() -> None:
     """Main function."""
     # Check if CUDA is available
-    # Hide GPU from JAX
     # jax.config.update('jax_platforms', 'cpu')
     print("JAX devices:", jax.devices())
 
