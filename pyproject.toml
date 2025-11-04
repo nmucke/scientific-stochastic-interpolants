@@ -30,6 +30,7 @@ python = {version="~=3.12.10", channel="conda-forge"}
 # Pixi dependencies
 [tool.pixi.dependencies]
 python = ">=3.11"
+pillow = "<12.0.0"
 huggingface_hub = "<1.0.0"
 numpy = "<2.0.0"
 h5py = ">=3.14.0,<4"
@@ -40,17 +41,15 @@ pytorch = "*"
 torchvision = "*"
 xarray = ">=2025.10.1,<2026"
 pydantic = ">=2.10, <2.12"
-microsoft-aurora = "<=1.8.0"
 
 [tool.pixi.feature.gpu.dependencies]
 cuda-version = "12.6.*"
-
+microsoft-aurora = "<=1.8.0"
 
 [tool.pixi.pypi-dependencies]
 scientific-stochastic-interpolants = { path = ".", editable = true }
 hydra-core = ">=1.3.2,<2"
 trackio = "<=0.6.0"
-pillow = "<12.0.0"
 pdetransformer = ">=0.1.0"
 jax = "*"
 jaxlib = "*"
