@@ -101,8 +101,21 @@ def tensor_to_mp4(
 
         print(f"Video saved successfully: {file_name}")
 
+    except FileNotFoundError as e:
+        if "ffmpeg" in str(e).lower():
+            error_msg = (
+                f"FFmpeg not found. Please install ffmpeg:\n"
+                f"  - Using pixi: run 'pixi install' to update dependencies\n"
+                f"  - Using conda: conda install -c conda-forge ffmpeg\n"
+                f"  - Using homebrew (macOS): brew install ffmpeg\n"
+                f"  - Using apt (Linux): sudo apt-get install ffmpeg\n"
+                f"\nOriginal error: {str(e)}"
+            )
+            raise RuntimeError(error_msg) from e
+        else:
+            raise RuntimeError(f"Failed to create video: {str(e)}") from e
     except Exception as e:
-        raise RuntimeError(f"Failed to create video: {str(e)}")
+        raise RuntimeError(f"Failed to create video: {str(e)}") from e
 
     finally:
         plt.close(fig)
@@ -300,8 +313,21 @@ def tensors_to_mp4(
 
         print(f"Multi-tensor video saved successfully: {file_name}")
 
+    except FileNotFoundError as e:
+        if "ffmpeg" in str(e).lower():
+            error_msg = (
+                f"FFmpeg not found. Please install ffmpeg:\n"
+                f"  - Using pixi: ffmpeg should be automatically installed\n"
+                f"  - Using conda: conda install -c conda-forge ffmpeg\n"
+                f"  - Using homebrew (macOS): brew install ffmpeg\n"
+                f"  - Using apt (Linux): sudo apt-get install ffmpeg\n"
+                f"\nOriginal error: {str(e)}"
+            )
+            raise RuntimeError(error_msg) from e
+        else:
+            raise RuntimeError(f"Failed to create video: {str(e)}") from e
     except Exception as e:
-        raise RuntimeError(f"Failed to create video: {str(e)}")
+        raise RuntimeError(f"Failed to create video: {str(e)}") from e
 
     finally:
         plt.close(fig)

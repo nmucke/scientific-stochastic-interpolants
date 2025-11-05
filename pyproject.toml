@@ -32,7 +32,7 @@ python = {version="~=3.12.10", channel="conda-forge"}
 python = ">=3.11"
 pillow = "<12.0.0"
 huggingface_hub = "<1.0.0"
-numpy = "<2.0.0"
+numpy = ">=2.2.0"
 h5py = ">=3.14.0,<4"
 pdbpp = ">=0.11.6,<0.12"
 tqdm = "*"
@@ -41,6 +41,7 @@ pytorch = "*"
 torchvision = "*"
 xarray = ">=2025.10.1,<2026"
 pydantic = ">=2.10, <2.12"
+ffmpeg = "*"
 
 [tool.pixi.feature.gpu.dependencies]
 cuda-version = "12.6.*"
@@ -54,6 +55,7 @@ pdetransformer = ">=0.1.0"
 jax = "*"
 jaxlib = "*"
 jax-cfd = "*"
+torch-cfd = ">=0.2.6"
 
 # Pixi tasks
 [tool.pixi.tasks]
