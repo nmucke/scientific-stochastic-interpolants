@@ -1,12 +1,14 @@
 """
-Ensemble Kalman Filter for PDEs in Physical Space
+Ensemble Kalman Filter for PDEs in Physical Space with State and Parameter Estimation
 
 Handles systems where:
 - State x is represented in physical space (no Fourier transforms)
 - Dynamics F operates in physical space
+- Parameters θ can be estimated along with states
 - Observations y are in physical space
 
-State equation: x_{t+1} = F(x_t) + model_noise  (Physical space)
+State equation: x_{t+1} = F(x_t, θ_t) + model_noise  (Physical space)
+Parameter equation: θ_{t+1} = θ_t + parameter_noise
 Observation equation: y_{t+1} = H(x_{t+1}) + obs_noise  (Physical space)
 
 where H is the observation operator mapping physical space to observation points.
@@ -17,7 +19,9 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 import numpy as np
 import torch
 from torch_cfd import grids
-from torch_cfd.grids import GridArray, GridVariable
+from torch_cfd.grids import GridVariable
+
+from scisi.external_libs.torch_cfd.forward_model import DynamicsModel
 
 
 class ObservationOperator:
@@ -25,6 +29,7 @@ class ObservationOperator:
     Observation operator for physical space velocity fields.
 
     Maps velocity fields (tuple of GridVariables) to observations at specific grid points.
+    Can also handle tensor format [batch, channels, nx, ny, time].
     """
 
     def __init__(
@@ -47,23 +52,29 @@ class ObservationOperator:
             obs_components if obs_components is not None else ["u", "v"]
         )
 
-    def __call__(self, velocity: Tuple[Any, Any]) -> torch.Tensor:
+    def __call__(self, velocity: Union[Tuple[Any, Any], torch.Tensor]) -> torch.Tensor:
         """
         Observation operator H: maps velocity fields to physical space observations.
 
         Parameters
         ----------
-        velocity : Tuple[GridVariable, GridVariable]
-            Velocity field as tuple of (u, v) GridVariables
+        velocity : Union[Tuple[GridVariable, GridVariable], torch.Tensor]
+            Velocity field as tuple of (u, v) GridVariables or tensor [channels, nx, ny]
 
         Returns
         -------
         torch.Tensor
-            Observations at observation points, shape (n_obs,) or (n_obs, 2) if both components
+            Observations at observation points, shape (n_obs * n_components,)
         """
-        u, v = velocity
-        u_data = u.data.squeeze()  # Remove batch dimension if present
-        v_data = v.data.squeeze()
+        if isinstance(velocity, tuple):
+            # GridVariable format
+            u, v = velocity
+            u_data = u.data.squeeze()  # Remove batch dimension if present
+            v_data = v.data.squeeze()
+        else:
+            # Tensor format [channels, nx, ny]
+            u_data = velocity[0]
+            v_data = velocity[1]
 
         # Extract observations at specified indices
         obs_list = []
@@ -77,9 +88,8 @@ class ObservationOperator:
         if len(obs_list) == 1:
             return obs_list[0]
         else:
-            return torch.stack(
-                obs_list, dim=1
-            ).flatten()  # Flatten to (n_obs * n_components,)
+            # Flatten to (n_obs * n_components,)
+            return torch.cat(obs_list, dim=0)
 
 
 class PhysicalEnKF:
@@ -130,7 +140,6 @@ class PhysicalEnKF:
         self,
         ensemble_velocity: List[Tuple[Any, Any]],
         dynamics: Callable,
-        dt: float,
     ) -> List[Tuple[Any, Any]]:
         """
         Forecast step in physical space.
@@ -140,9 +149,7 @@ class PhysicalEnKF:
         ensemble_velocity : List[Tuple[GridVariable, GridVariable]]
             Ensemble of velocity fields, each as tuple (u, v)
         dynamics : Callable
-            Dynamics function operating on velocity fields: (v, dt) -> (v_new, p)
-        dt : float
-            Time step
+            Dynamics function operating on velocity fields: (v) -> (v_new, p)
 
         Returns
         -------
@@ -151,8 +158,8 @@ class PhysicalEnKF:
         """
         forecast_ensemble = []
         for velocity in ensemble_velocity:
-            # Dynamics function takes velocity and dt, returns (v_new, p)
-            v_forecast, _ = dynamics(velocity, dt)
+            # Dynamics function takes velocity, returns (v_new, p)
+            v_forecast, _ = dynamics(velocity)
             forecast_ensemble.append(v_forecast)
 
         return forecast_ensemble
@@ -260,17 +267,19 @@ class PhysicalEnKF:
                 u_data_new = u_data_new.unsqueeze(0)
                 v_data_new = v_data_new.unsqueeze(0)
 
-            # Create new GridArray with updated data
-            u_array_new = GridArray(
-                u_data_new, u_forecast.array.offset, u_forecast.array.grid
+            # Create new GridVariable with updated data
+            u_new = GridVariable(
+                data=u_data_new,
+                offset=u_forecast.offset,
+                grid=u_forecast.grid,
+                bc=u_forecast.bc,
             )
-            v_array_new = GridArray(
-                v_data_new, v_forecast.array.offset, v_forecast.array.grid
+            v_new = GridVariable(
+                data=v_data_new,
+                offset=v_forecast.offset,
+                grid=v_forecast.grid,
+                bc=v_forecast.bc,
             )
-
-            # Create new GridVariable
-            u_new = GridVariable(u_array_new, u_forecast.bc)
-            v_new = GridVariable(v_array_new, v_forecast.bc)
 
             analysis_ensemble.append((u_new, v_new))
 
@@ -281,7 +290,6 @@ class PhysicalEnKF:
         ensemble_velocity: List[Tuple[Any, Any]],
         observations: torch.Tensor,
         dynamics: Callable,
-        dt: float,
         inflation: float = 1.0,
         localization_radius: Optional[float] = None,
     ) -> Tuple[List[Tuple[Any, Any]], List[Tuple[Any, Any]]]:
@@ -295,9 +303,7 @@ class PhysicalEnKF:
         observations : torch.Tensor
             Observations in physical space
         dynamics : Callable
-            Dynamics function: (v, dt) -> (v_new, p)
-        dt : float
-            Time step
+            Dynamics function: (v) -> (v_new, p)
         inflation : float
             Covariance inflation factor
         localization_radius : float, optional
@@ -308,7 +314,7 @@ class PhysicalEnKF:
         Tuple[List[Tuple[GridVariable, GridVariable]], List[Tuple[GridVariable, GridVariable]]]
             (analysis_ensemble, forecast_ensemble)
         """
-        forecast_ensemble = self.forecast_step(ensemble_velocity, dynamics, dt)
+        forecast_ensemble = self.forecast_step(ensemble_velocity, dynamics)
         analysis_ensemble = self.analysis_step(
             forecast_ensemble,
             observations,
@@ -319,42 +325,33 @@ class PhysicalEnKF:
         return analysis_ensemble, forecast_ensemble
 
 
-class LocalizedPhysicalEnKF(PhysicalEnKF):
+class StateParameterEnKF(PhysicalEnKF):
     """
-    Localized Ensemble Kalman Filter for PDEs in physical space.
+    Ensemble Kalman Filter for joint state and parameter estimation.
 
-    Implements covariance localization using the Gaspari-Cohn (GC) function
-    to reduce spurious correlations from limited ensemble sizes.
+    This class extends PhysicalEnKF to simultaneously estimate both the velocity
+    field (state) and model parameters (e.g., inlet_velocity_angle).
+
+    The augmented state vector is: [x, θ] where x is the velocity field and θ are parameters.
 
     Parameters
     ----------
     grid_shape : tuple
-        Shape of the physical space grid
+        Shape of the physical space grid (nx, ny) for 2D
     ensemble_size : int
         Number of ensemble members
     model_noise_std : float
-        Standard deviation of model noise
+        Standard deviation of model noise in physical space
     obs_noise_std : float
-        Standard deviation of observation noise
-    localization_radius : float
-        Initial radius of influence for localization (in grid points)
-        If adaptive_localization=True, this will be adjusted during assimilation
+        Standard deviation of observation noise in physical space
+    parameter_noise_std : float
+        Standard deviation of parameter noise (for parameter random walk)
     observation_operator : ObservationOperator
         Operator that maps velocity fields to observations
     device : torch.device
         Device to run computations on
     dtype : torch.dtype
         Data type for computations
-    adaptive_localization : bool
-        If True, automatically adjust localization radius based on ensemble statistics
-    adaptation_method : str
-        Method for adaptive localization ("correlation", "innovation", "hybrid")
-    min_radius : float, optional
-        Minimum allowed localization radius (default: localization_radius / 4)
-    max_radius : float, optional
-        Maximum allowed localization radius (default: min(domain_size/2, 4*localization_radius))
-    periodic : bool
-        Whether to use periodic boundary conditions for distance calculations
     """
 
     def __init__(
@@ -363,15 +360,10 @@ class LocalizedPhysicalEnKF(PhysicalEnKF):
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
-        localization_radius: float,
+        parameter_noise_std: float,
         observation_operator: ObservationOperator,
         device: torch.device,
         dtype: torch.dtype = torch.float32,
-        adaptive_localization: bool = False,
-        min_radius: Optional[float] = None,
-        max_radius: Optional[float] = None,
-        adaptation_method: str = "hybrid",
-        periodic: bool = False,
     ):
         super().__init__(
             grid_shape=grid_shape,
@@ -382,230 +374,110 @@ class LocalizedPhysicalEnKF(PhysicalEnKF):
             device=device,
             dtype=dtype,
         )
-        self.localization_radius = localization_radius
-        self.adaptive_localization = adaptive_localization
-        self.adaptation_method = adaptation_method
-        self.periodic = periodic
+        self.parameter_noise_std = parameter_noise_std
 
-        # Set default min/max radius for adaptive localization
-        if min_radius is None:
-            self.min_radius = max(2.0, localization_radius / 4.0)
-        else:
-            self.min_radius = min_radius
-
-        if max_radius is None:
-            self.max_radius = min(max(grid_shape) / 2.0, localization_radius * 4.0)
-        else:
-            self.max_radius = max_radius
-
-        # History for adaptive adjustment
-        self.radius_history: List[float] = []
-        self.innovation_stats: List[float] = []
-
-        # Precompute grid coordinates for distance calculations
-        x = torch.arange(grid_shape[0], device=device, dtype=dtype)
-        y = torch.arange(grid_shape[1], device=device, dtype=dtype)
-        xx, yy = torch.meshgrid(x, y, indexing="ij")
-        self.grid_coords = torch.stack(
-            [xx.flatten(), yy.flatten()], dim=1
-        )  # (n_state, 2)
-
-    def gaspari_cohn(self, distance: torch.Tensor, radius: float) -> torch.Tensor:
+    def forecast_step_with_parameters(
+        self,
+        ensemble_velocity: List[Tuple[Any, Any]],
+        ensemble_parameters: torch.Tensor,
+        dynamics_with_params: DynamicsModel,
+    ) -> Tuple[List[Tuple[Any, Any]], torch.Tensor]:
         """
-        Gaspari-Cohn correlation function for localization.
-
-        This is a fifth-order piecewise rational function with compact support.
-        It smoothly tapers correlations to zero beyond 2*radius.
+        Forecast step with parameter estimation.
 
         Parameters
         ----------
-        distance : torch.Tensor
-            Distances between points
-        radius : float
-            Localization radius (half-width of compact support)
+        ensemble_velocity : List[Tuple[GridVariable, GridVariable]]
+            Ensemble of velocity fields
+        ensemble_parameters : torch.Tensor
+            Ensemble of parameters, shape (ensemble_size, n_params)
+        dynamics_with_params : DynamicsModel
+            Dynamics function: (v, params) -> (v_new, p)
 
         Returns
         -------
-        torch.Tensor
-            Localization weights in [0, 1]
+        Tuple[List[Tuple[GridVariable, GridVariable]], torch.Tensor]
+            (forecasted_ensemble_velocity, forecasted_ensemble_parameters)
         """
-        # Normalize by radius
-        r = torch.abs(distance) / radius
-
-        # GC function has support on [0, 2]
-        # For r in [0, 1]
-        term1 = torch.where(
-            r <= 1,
-            1 - 5 / 3 * r**2 + 5 / 8 * r**3 + 1 / 2 * r**4 - 1 / 4 * r**5,
-            torch.tensor(0.0, device=distance.device, dtype=distance.dtype),
+        forecast_ensemble = torch.zeros(
+            self.ensemble_size,
+            2,
+            self.grid_shape[0],
+            self.grid_shape[1],
+            device=self.device,
+            dtype=self.dtype,
+        )
+        forecast_parameters = torch.zeros(
+            self.ensemble_size, 1, device=self.device, dtype=self.dtype
         )
 
-        # For r in [1, 2]
-        term2 = torch.where(
-            (r > 1) & (r <= 2),
-            4
-            - 5 * r
-            + 5 / 3 * r**2
-            + 5 / 8 * r**3
-            - 1 / 2 * r**4
-            + 1 / 12 * r**5
-            - 2 / (3 * r),
-            torch.tensor(0.0, device=distance.device, dtype=distance.dtype),
-        )
+        for i, velocity in enumerate(ensemble_velocity):
+            params = ensemble_parameters[i]
 
-        return term1 + term2
+            # Dynamics function takes velocity and parameters, returns (v_new, p)
+            v_forecast, _ = dynamics_with_params.forward_with_parameters(
+                velocity, params[0].item()
+            )
 
-    def compute_distance_matrix(
+            u, v = v_forecast
+            u_data = u.data.squeeze()
+            v_data = v.data.squeeze()
+            forecast_ensemble[i, 0] = u_data
+            forecast_ensemble[i, 1] = v_data
+
+            # Parameters follow random walk: θ_{t+1} = θ_t + noise
+            param_noise = torch.randn_like(params) * self.parameter_noise_std
+            params_forecast = params + param_noise
+            forecast_parameters[i] = params_forecast
+
+        return forecast_ensemble, forecast_parameters
+
+    def analysis_step_with_parameters(
         self,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute distance matrices for localization.
-
-        Returns
-        -------
-        tuple
-            (distances_state_to_obs, distances_obs_to_obs)
-            Both with localization applied via Gaspari-Cohn function
-        """
-        n_obs = len(self.observation_operator.obs_coords)
-
-        # 2D case
-        obs_coords = self.observation_operator.obs_coords.to(
-            self.device
-        )  # shape (n_obs, 2)
-        state_coords = self.grid_coords  # shape (n_state, 2)
-
-        if self.periodic:
-            # Periodic distance in 2D
-            Lx, Ly = self.grid_shape[0], self.grid_shape[1]
-
-            diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
-            diff_state_obs_x = torch.abs(diff_state_obs[:, :, 0])
-            diff_state_obs_y = torch.abs(diff_state_obs[:, :, 1])
-            diff_state_obs_x = torch.minimum(diff_state_obs_x, Lx - diff_state_obs_x)
-            diff_state_obs_y = torch.minimum(diff_state_obs_y, Ly - diff_state_obs_y)
-            dist_state_obs = torch.sqrt(diff_state_obs_x**2 + diff_state_obs_y**2)
-
-            diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
-            diff_obs_obs_x = torch.abs(diff_obs_obs[:, :, 0])
-            diff_obs_obs_y = torch.abs(diff_obs_obs[:, :, 1])
-            diff_obs_obs_x = torch.minimum(diff_obs_obs_x, Lx - diff_obs_obs_x)
-            diff_obs_obs_y = torch.minimum(diff_obs_obs_y, Ly - diff_obs_obs_y)
-            dist_obs_obs = torch.sqrt(diff_obs_obs_x**2 + diff_obs_obs_y**2)
-        else:
-            # Euclidean distance
-            diff_state_obs = state_coords[:, None, :] - obs_coords[None, :, :]
-            dist_state_obs = torch.norm(diff_state_obs, dim=2)
-
-            diff_obs_obs = obs_coords[:, None, :] - obs_coords[None, :, :]
-            dist_obs_obs = torch.norm(diff_obs_obs, dim=2)
-
-        # Apply Gaspari-Cohn localization
-        rho_state_obs = self.gaspari_cohn(dist_state_obs, self.localization_radius)
-        rho_obs_obs = self.gaspari_cohn(dist_obs_obs, self.localization_radius)
-
-        return rho_state_obs, rho_obs_obs
-
-    def analysis_step(
-        self,
-        forecast_ensemble_velocity: List[Tuple[Any, Any]],
+        forecast_ensemble_velocity: torch.Tensor,
+        forecast_ensemble_parameters: torch.Tensor,
         observations: torch.Tensor,
         inflation: float = 1.0,
-        localization_radius: Optional[float] = None,
         *args: Any,
         **kwargs: Any,
-    ) -> List[Tuple[Any, Any]]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Localized analysis step with covariance localization.
+        Analysis step with joint state and parameter estimation.
 
-        The localization is applied in physical space using the Schur product
-        (element-wise multiplication) of the sample covariance with a
-        correlation matrix based on physical distance.
+        The augmented state vector [x, θ] is used for the Kalman update.
 
         Parameters
         ----------
         forecast_ensemble_velocity : List[Tuple[GridVariable, GridVariable]]
             Forecasted ensemble of velocity fields
+        forecast_ensemble_parameters : torch.Tensor
+            Forecasted ensemble of parameters, shape (ensemble_size, n_params)
         observations : torch.Tensor
             Observations in physical space
         inflation : float
             Covariance inflation factor
-        localization_radius : float, optional
-            Override the instance localization radius
 
         Returns
         -------
-        List[Tuple[GridVariable, GridVariable]]
-            Analysis ensemble of velocity fields
+        Tuple[List[Tuple[GridVariable, GridVariable]], torch.Tensor]
+            (analysis_ensemble_velocity, analysis_ensemble_parameters)
         """
         n_obs = len(observations)
 
-        # Extract physical space data from velocity fields
-        ensemble_physical = []
-        for velocity in forecast_ensemble_velocity:
-            u, v = velocity
-            u_data = u.data.squeeze()
-            v_data = v.data.squeeze()
-            ensemble_physical.append(torch.stack([u_data, v_data], dim=0))
+        original_shape = forecast_ensemble_velocity.shape
 
-        ensemble_physical = torch.stack(
-            ensemble_physical, dim=0
-        )  # (ensemble_size, 2, nx, ny)
+        # Flatten spatial dimensions: (ensemble_size, 2 * nx * ny)
+        ensemble_augmented = forecast_ensemble_velocity.reshape(self.ensemble_size, -1)
+        n_state = ensemble_augmented.shape[1]
 
-        # Adaptive localization if enabled
-        if (
-            self.adaptive_localization
-            and self.localization_radius < self.max_radius
-            and self.localization_radius > self.min_radius
-        ):
-            # Compute innovations for adaptation
-            HX = []
-            for velocity in forecast_ensemble_velocity:
-                obs = self.observation_operator(velocity)
-                HX.append(obs)
-            HX = torch.stack(HX, dim=0)
-            HX_mean = torch.mean(HX, dim=0)
-            innovations = observations - HX_mean
+        # Augment state with parameters: (ensemble_size, 2*nx*ny + n_params)
+        ensemble_augmented = torch.cat(
+            [ensemble_augmented, forecast_ensemble_parameters], dim=1
+        )
 
-            # Adapt the radius (simplified version - can be enhanced)
-            # For now, use a simple heuristic
-            innovation_norm = torch.norm(innovations).item()
-            expected_norm = np.sqrt(len(innovations)) * self.obs_noise_std
-            normalized_innov = innovation_norm / (expected_norm + 1e-10)
-
-            if normalized_innov > 1.5:
-                new_radius = self.localization_radius * 1.1
-            elif normalized_innov < 0.7:
-                new_radius = self.localization_radius * 0.95
-            else:
-                new_radius = self.localization_radius
-
-            new_radius = max(self.min_radius, min(self.max_radius, new_radius))
-
-            print(f"Adapted localization radius: {new_radius:.2f}")
-
-            # Store history
-            self.radius_history.append(new_radius)
-            self.innovation_stats.append(innovation_norm)
-
-            # Update the radius
-            self.localization_radius = new_radius
-            loc_radius = new_radius
-        else:
-            loc_radius = (
-                localization_radius
-                if localization_radius is not None
-                else self.localization_radius
-            )
-
-        # Flatten spatial dimensions
-        original_shape = ensemble_physical.shape  # type: ignore[attr-defined]
-        ensemble_flat = ensemble_physical.reshape(self.ensemble_size, -1)  # type: ignore[attr-defined]
-        n_state = ensemble_flat.shape[1]
-
-        # Compute ensemble mean and perturbations
-        x_mean = torch.mean(ensemble_flat, dim=0)
-        X_pert = inflation * (ensemble_flat - x_mean)
+        # Compute ensemble mean and perturbations for augmented state
+        x_aug_mean = torch.mean(ensemble_augmented, dim=0)
+        X_aug_pert = inflation * (ensemble_augmented - x_aug_mean)
 
         # Map ensemble to observation space
         HX = []
@@ -617,94 +489,117 @@ class LocalizedPhysicalEnKF(PhysicalEnKF):
         HX_mean = torch.mean(HX, dim=0)
         HX_pert = HX - HX_mean
 
-        # Compute localization matrices
-        rho_state_obs, rho_obs_obs = self.compute_distance_matrix()
+        # Compute covariances for augmented state
+        # P_xy = X_aug_pert^T @ HX_pert / (N - 1)
+        Pxy = (X_aug_pert.T @ HX_pert) / (self.ensemble_size - 1)
 
-        # Compute localized covariances
-        # P_xy = (X_pert^T @ HX_pert / (N-1)) ⊙ ρ_state_obs
-        Pxy = (X_pert.T @ HX_pert) / (self.ensemble_size - 1)
-        Pxy_localized = Pxy * rho_state_obs  # Schur product
-
-        # P_yy = (HX_pert^T @ HX_pert / (N-1)) ⊙ ρ_obs_obs + R
-        Pyy = (HX_pert.T @ HX_pert) / (self.ensemble_size - 1)
-        Pyy_localized = Pyy * rho_obs_obs + (self.obs_noise_std**2) * torch.eye(
+        # P_yy = HX_pert^T @ HX_pert / (N - 1) + R
+        R = (self.obs_noise_std**2) * torch.eye(
             n_obs, device=self.device, dtype=self.dtype
         )
+        Pyy = (HX_pert.T @ HX_pert) / (self.ensemble_size - 1) + R
 
-        # Kalman gain with localization
-        Pyy_inv = torch.linalg.inv(Pyy_localized)
-        K = Pxy_localized @ Pyy_inv
+        # Kalman gain: K = P_xy @ (P_yy)^{-1}
+        Pyy_inv = torch.linalg.inv(Pyy)
+        K = Pxy @ Pyy_inv
 
-        # Generate perturbed observations (stochastic EnKF)
+        # Generate perturbed observations
         obs_noise = (
             torch.randn(self.ensemble_size, n_obs, device=self.device, dtype=self.dtype)
             * self.obs_noise_std
         )
         perturbed_obs = observations + obs_noise
 
-        # Update ensemble in physical space
+        # Update augmented ensemble
         innovations = perturbed_obs - HX
-        analysis_flat = ensemble_flat + innovations @ K.T
+        analysis_physical = ensemble_augmented + innovations @ K.T
 
-        # Reshape back to original shape
-        analysis_physical = analysis_flat.reshape(
-            original_shape
-        )  # (ensemble_size, 2, nx, ny)
+        # Split back into state and parameters
+        analysis_parameters = analysis_physical[:, n_state:]
+        analysis_physical = analysis_physical[:, :n_state]
+
+        # Reshape state back to physical space
+        analysis_physical = analysis_physical.reshape(original_shape)
 
         # Convert back to GridVariable format
-        # Update the data attribute of existing GridVariables
         analysis_ensemble = []
         for i, forecast_velocity in enumerate(forecast_ensemble_velocity):
-            u_forecast, v_forecast = forecast_velocity
-            # Update the data attribute directly
-            # Ensure the shape matches (add batch dimension if needed)
+            # u_forecast, v_forecast = forecast_velocity
+
             u_data_new = analysis_physical[i, 0]
             v_data_new = analysis_physical[i, 1]
 
-            # Match the original shape (might have batch dimension)
-            if u_forecast.data.ndim == 3:  # Has batch dimension
-                u_data_new = u_data_new.unsqueeze(0)
-                v_data_new = v_data_new.unsqueeze(0)
-
-            # Create new GridArray with updated data
-            u_array_new = GridArray(
-                u_data_new, u_forecast.array.offset, u_forecast.array.grid
+            # Create new GridVariable with updated data
+            u_new = GridVariable(
+                data=u_data_new,
+                offset=self.grid_info["u_offset"],
+                grid=self.grid_info["u_grid"],
+                bc=self.grid_info["u_bc"][i],
             )
-            v_array_new = GridArray(
-                v_data_new, v_forecast.array.offset, v_forecast.array.grid
+            v_new = GridVariable(
+                data=v_data_new,
+                offset=self.grid_info["v_offset"],
+                grid=self.grid_info["v_grid"],
+                bc=self.grid_info["v_bc"][i],
             )
-
-            # Create new GridVariable
-            u_new = GridVariable(u_array_new, u_forecast.bc)
-            v_new = GridVariable(v_array_new, v_forecast.bc)
 
             analysis_ensemble.append((u_new, v_new))
 
-        return analysis_ensemble
+        return analysis_ensemble, analysis_parameters
 
-    def get_adaptation_diagnostics(self) -> dict:
+    def assimilate_with_parameters(
+        self,
+        ensemble_velocity: List[Tuple[Any, Any]],
+        ensemble_parameters: torch.Tensor,
+        observations: torch.Tensor,
+        dynamics_model: DynamicsModel,
+        inflation: float = 1.0,
+    ) -> Tuple[List[Tuple[Any, Any]], torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Get diagnostic information about adaptive localization.
+        Complete assimilation cycle with parameter estimation.
+
+        Parameters
+        ----------
+        ensemble_velocity : List[Tuple[GridVariable, GridVariable]]
+            Current ensemble of velocity fields
+        ensemble_parameters : torch.Tensor
+            Current ensemble of parameters, shape (ensemble_size, n_params)
+        observations : torch.Tensor
+            Observations in physical space
+        dynamics_model : DynamicsModel
+            Dynamics function: (v, params) -> (v_new, p)
+        inflation : float
+            Covariance inflation factor
 
         Returns
         -------
-        dict
-            Dictionary containing:
-            - 'radius_history': List of localization radii over time
-            - 'innovation_stats': List of innovation norms over time
-            - 'current_radius': Current localization radius
-            - 'min_radius': Minimum allowed radius
-            - 'max_radius': Maximum allowed radius
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+            (analysis_ensemble_velocity, analysis_parameters,
+             forecast_ensemble_velocity, forecast_parameters)
         """
-        return {
-            "radius_history": self.radius_history,
-            "innovation_stats": self.innovation_stats,
-            "current_radius": self.localization_radius,
-            "min_radius": self.min_radius,
-            "max_radius": self.max_radius,
-        }
 
-    def reset_adaptation_history(self) -> None:
-        """Reset the adaptation history."""
-        self.radius_history = []
-        self.innovation_stats = []
+        self.grid_info = {}
+        self.grid_info["u_offset"] = ensemble_velocity[0][0].offset
+        self.grid_info["v_offset"] = ensemble_velocity[0][1].offset
+
+        self.grid_info["u_grid"] = ensemble_velocity[0][0].grid
+        self.grid_info["v_grid"] = ensemble_velocity[0][1].grid
+        self.grid_info["u_bc"] = [velocity[0].bc for velocity in ensemble_velocity]
+        self.grid_info["v_bc"] = [velocity[1].bc for velocity in ensemble_velocity]
+
+        # Forecast step
+        forecast_ensemble, forecast_parameters = self.forecast_step_with_parameters(
+            ensemble_velocity, ensemble_parameters, dynamics_model
+        )
+
+        # Analysis step
+        analysis_ensemble, analysis_parameters = self.analysis_step_with_parameters(
+            forecast_ensemble, forecast_parameters, observations, inflation
+        )
+
+        return (
+            analysis_ensemble,
+            analysis_parameters,
+            forecast_ensemble,
+            forecast_parameters,
+        )

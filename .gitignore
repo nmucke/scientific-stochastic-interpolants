@@ -31,3 +31,9 @@ archive/
 
 # Animations
 *.mp4
+
+# DS_Store
+.DS_Store
+
+# Trajectories
+trajectory.pt
