@@ -1,6 +1,6 @@
-from torch_cfd.grids import GridVariable
 import torch
 from torch_cfd import grids
+from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
 
@@ -13,11 +13,11 @@ NX = 512
 NY = 256
 DENSITY = 1.0
 HF_DT = 2e-4
-REDUCED_DT = 1e-1
+REDUCED_DT = 1e-2
 BATCH_SIZE = 1
 # VISCOSITY = 1 / 500
 VISCOSITY = 1 / 1000
-FINAL_TIME = 7.5
+FINAL_TIME = 1.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))

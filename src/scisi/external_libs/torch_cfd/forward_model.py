@@ -1,6 +1,6 @@
-from typing import Any, List, Tuple
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import partial
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -241,7 +241,9 @@ class DynamicsModel:
         return self.__call__(v)
 
 
-def _run_single_model(args):
+def _run_single_model(
+    args: Tuple[DynamicsModel, Tuple[GridVariable, GridVariable]]
+) -> Tuple[Tuple[GridVariable, GridVariable], GridVariable]:
     """Helper function to run a single model (for multiprocessing)."""
     model, v = args
     return model(v)
@@ -258,12 +260,13 @@ class EnsembleDynamicsModel:
         density: float = 1.0,
         viscosity: float = 1 / 500,
         domain: tuple = ((0, 2), (0, 1)),
-        obstacle_centers: List[List[Tuple[float, float]]] = None,
-        obstacle_halfwidths: List[List[float]] = None,
+        obstacle_centers: Optional[List[List[Tuple[float, float]]]] = None,
+        obstacle_halfwidths: Optional[List[List[float]]] = None,
         dt: float = 1e-3,
         batch_size: int = 1,
         num_inner_steps: int = 100,
-        num_processes: int = None,
+        num_processes: Optional[int] = None,
+        use_threading: bool = True,
         device: torch.device = DEVICE,
         dtype: torch.dtype = dtype,
     ):
@@ -299,8 +302,12 @@ class EnsembleDynamicsModel:
         num_inner_steps : int
             Number of inner steps for the dynamics function
         num_processes : int, optional
-            Number of processes to use for parallel execution.
-            If None, runs sequentially. If > 1, uses ProcessPoolExecutor.
+            Number of workers to use for parallel execution.
+            If None, runs sequentially. If > 1, uses parallel execution.
+        use_threading : bool, optional
+            If True, uses ThreadPoolExecutor (better for PyTorch/GPU).
+            If False, uses ProcessPoolExecutor (better for CPU-only).
+            Default is True.
         device : torch.device
             Device to run computations on
         dtype : torch.dtype
@@ -314,6 +321,7 @@ class EnsembleDynamicsModel:
         self.device = device
         self.dtype = dtype
         self.num_processes = num_processes
+        self.use_threading = use_threading
 
         # Default obstacle configuration
         default_centers = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25)]
@@ -323,9 +331,9 @@ class EnsembleDynamicsModel:
         if obstacle_centers is None:
             # Use default for all ensemble members
             self.obstacle_centers = [default_centers] * self.num_ensemble
-        elif len(obstacle_centers) > 0 and isinstance(obstacle_centers[0], tuple):
+        elif len(obstacle_centers) > 0 and isinstance(obstacle_centers[0], tuple):  # type: ignore[unreachable]
             # Single list of centers provided - use for all members
-            self.obstacle_centers = [obstacle_centers] * self.num_ensemble
+            self.obstacle_centers = [obstacle_centers] * self.num_ensemble  # type: ignore[unreachable]
         else:
             # List of lists provided - one per ensemble member
             if len(obstacle_centers) != self.num_ensemble:
@@ -338,9 +346,11 @@ class EnsembleDynamicsModel:
         if obstacle_halfwidths is None:
             # Use default for all ensemble members
             self.obstacle_halfwidths = [default_halfwidths] * self.num_ensemble
-        elif len(obstacle_halfwidths) > 0 and isinstance(obstacle_halfwidths[0], (int, float)):
+        elif len(obstacle_halfwidths) > 0 and isinstance(
+            obstacle_halfwidths[0], (int, float)  # type: ignore[unreachable]
+        ):
             # Single list of halfwidths provided - use for all members
-            self.obstacle_halfwidths = [obstacle_halfwidths] * self.num_ensemble
+            self.obstacle_halfwidths = [obstacle_halfwidths] * self.num_ensemble  # type: ignore[unreachable]
         else:
             # List of lists provided - one per ensemble member
             if len(obstacle_halfwidths) != self.num_ensemble:
@@ -374,7 +384,7 @@ class EnsembleDynamicsModel:
     def __call__(
         self,
         v_list: List[Tuple[GridVariable, GridVariable]],
-        parallel: bool = None,
+        parallel: Optional[bool] = None,
     ) -> List[Tuple[GridVariable, GridVariable]]:
         """
         Apply dynamics to ensemble of velocity fields.
@@ -384,7 +394,7 @@ class EnsembleDynamicsModel:
         v_list : List[Tuple[GridVariable, GridVariable]]
             List of velocity fields, one for each ensemble member
         parallel : bool, optional
-            If True, uses parallel execution with ProcessPoolExecutor.
+            If True, uses parallel execution.
             If False, runs sequentially. If None, uses num_processes setting.
 
         Returns
@@ -398,13 +408,29 @@ class EnsembleDynamicsModel:
             )
 
         # Determine whether to run in parallel
-        use_parallel = parallel if parallel is not None else (self.num_processes is not None and self.num_processes > 1)
+        use_parallel = (
+            parallel
+            if parallel is not None
+            else (self.num_processes is not None and self.num_processes > 1)
+        )
 
         if use_parallel:
-            # Run in parallel using ProcessPoolExecutor
-            num_workers = self.num_processes if self.num_processes is not None else self.num_ensemble
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                results = list(executor.map(_run_single_model, zip(self.models, v_list)))
+            # Run in parallel
+            num_workers = (
+                self.num_processes
+                if self.num_processes is not None
+                else self.num_ensemble
+            )
+
+            # Choose executor based on use_threading setting
+            ExecutorClass = (
+                ThreadPoolExecutor if self.use_threading else ProcessPoolExecutor
+            )
+
+            with ExecutorClass(max_workers=num_workers) as executor:
+                results = list(
+                    executor.map(_run_single_model, zip(self.models, v_list))
+                )
         else:
             # Run sequentially
             results = []
@@ -436,7 +462,7 @@ class EnsembleDynamicsModel:
         self,
         v_list: List[Tuple[GridVariable, GridVariable]],
         inlet_velocity_angles: List[float],
-        parallel: bool = None,
+        parallel: Optional[bool] = None,
     ) -> List[Tuple[GridVariable, GridVariable]]:
         """
         Apply dynamics with updated parameters.
