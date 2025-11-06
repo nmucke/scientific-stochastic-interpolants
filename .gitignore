@@ -36,4 +36,4 @@ archive/
 .DS_Store
 
 # Trajectories
-trajectory.pt
+cfd_results/

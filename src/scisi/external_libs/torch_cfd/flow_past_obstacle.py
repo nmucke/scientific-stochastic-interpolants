@@ -1,3 +1,4 @@
+from torch_cfd.grids import GridVariable
 import torch
 from torch_cfd import grids
 from torch_cfd.initial_conditions import velocity_field
@@ -11,12 +12,12 @@ dtype = torch.float32
 NX = 512
 NY = 256
 DENSITY = 1.0
-HF_DT = 1e-4
-REDUCED_DT = 1e-2
+HF_DT = 2e-4
+REDUCED_DT = 1e-1
 BATCH_SIZE = 1
 # VISCOSITY = 1 / 500
 VISCOSITY = 1 / 1000
-FINAL_TIME = 25.0
+FINAL_TIME = 7.5
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
@@ -26,8 +27,11 @@ OBSTACLE_CENTERS = []
 OBSTACLE_HALFWIDTHS = []
 
 x_positions = [0.5, 1.0, 1.5]
-y_positions = [0.25, 0.5, 0.75]
-halfwidth = 0.05
+y_positions = [0.2, 0.5, 0.8]
+halfwidth = 0.1
+# x_positions = [0.5]
+# y_positions = [0.5]
+# halfwidth = 0.1
 
 for x in x_positions:
     for y in y_positions:
@@ -65,10 +69,10 @@ def main() -> None:
         num_inner_steps=INNER_STEPS,
     )
 
-    x_velocity_fn = lambda x, y: model.x_inlet_velocity * torch.ones_like(x)
-    y_velocity_fn = lambda x, y: model.y_inlet_velocity * torch.ones_like(x)
-    # x_velocity_fn = lambda x, y: torch.ones_like(x)
-    # y_velocity_fn = lambda x, y: torch.zeros_like(x)
+    # x_velocity_fn = lambda x, y: model.x_inlet_velocity * torch.ones_like(x)
+    # y_velocity_fn = lambda x, y: model.y_inlet_velocity * torch.ones_like(x)
+    x_velocity_fn = lambda x, y: torch.ones_like(x)
+    y_velocity_fn = lambda x, y: torch.zeros_like(x)
 
     v = velocity_field(
         (x_velocity_fn, y_velocity_fn),
@@ -85,7 +89,8 @@ def main() -> None:
     vorticity_plot = torch.zeros(BATCH_SIZE, NX, NY, OUTER_STEPS)
     with torch.no_grad():
         for i in tqdm(range(OUTER_STEPS)):
-            v, _ = model.forward_with_parameters(v, inflow_angle_vec[i])
+            # v, _ = model.forward_with_parameters(v, inflow_angle_vec[i])
+            v, _ = model(v)
 
             trajectory.append(v)
 
@@ -116,8 +121,8 @@ def main() -> None:
         file_name=f"figures/vorticity_trajectory.mp4",
         colormaps="viridis",
         titles=["Vorticity"],
-        vmin=-20,
-        vmax=20,
+        vmin=-30,
+        vmax=30,
         normalize=False,
     )
 

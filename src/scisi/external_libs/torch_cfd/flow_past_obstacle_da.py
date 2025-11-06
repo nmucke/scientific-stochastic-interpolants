@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch_cfd import grids
-from torch_cfd.boundaries import ConstantBoundaryConditions, ImmersedBoundaryConditions
 from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
@@ -23,7 +22,6 @@ from scisi.external_libs.torch_cfd.boundary_conditions import (
 )
 from scisi.external_libs.torch_cfd.ENKF import (
     ObservationOperator,
-    PhysicalEnKF,
     StateParameterEnKF,
 )
 
