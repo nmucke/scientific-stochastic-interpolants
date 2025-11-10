@@ -17,8 +17,8 @@ from scisi.plotting.animation import create_animation_from_tensors
 
 dtype = torch.float32
 
-NX = 400
-NY = 200
+NX = 512
+NY = 256
 DENSITY = 1.0
 HF_DT = 1e-4
 REDUCED_DT = 1e-1
@@ -31,8 +31,8 @@ INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
 
 # Ensemble configuration
-NUM_ENSEMBLE = 2
-INLET_ANGLES = [-30, 0]  # Different inlet angles for each ensemble member
+NUM_ENSEMBLE = 1
+INLET_ANGLES = [0]  # Different inlet angles for each ensemble member
 NUM_PROCESSES = 2  # Number of parallel processes
 
 # Define obstacle as a grid of 3 by 3
@@ -55,8 +55,8 @@ for x in x_positions:
 # OBSTACLE_CENTERS = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25), (0.7, 0.75), (0.7, 0.25), (0.3, 0.75), (0.3, 0.25)]
 # OBSTACLE_HALFWIDTHS = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# DEVICE = torch.device("mps")
+# DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("mps")
 
 
 def main() -> None:

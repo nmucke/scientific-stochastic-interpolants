@@ -1,10 +1,18 @@
+import sys
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
 import torch
 from torch_cfd import grids
 from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
 
-from scisi.external_libs.torch_cfd.forward_model import DynamicsModel, vorticity
+from external_libs.torch_cfd.forward_model import DynamicsModel, vorticity
 from scisi.plotting.animation import create_animation_from_tensors
 
 dtype = torch.float32
@@ -12,12 +20,12 @@ dtype = torch.float32
 NX = 512
 NY = 256
 DENSITY = 1.0
-HF_DT = 2e-4
-REDUCED_DT = 1e-2
+HF_DT = 1e-4
+REDUCED_DT = 1e-1
 BATCH_SIZE = 1
 # VISCOSITY = 1 / 500
 VISCOSITY = 1 / 1000
-FINAL_TIME = 1.0
+FINAL_TIME = 10.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
@@ -56,7 +64,7 @@ def main() -> None:
     inflow_angle_vec = [-20 for _ in range(OUTER_STEPS + 1)]
 
     model = DynamicsModel(
-        inlet_velocity_angle=-20,
+        inlet_velocity_angle=0.0,
         nx=NX,
         ny=NY,
         density=DENSITY,
@@ -99,14 +107,14 @@ def main() -> None:
             vorticity_plot[:, :, :, i] = vorticity(v.clone())
 
     trajectory_plot = trajectory_plot[:, :, ::2, ::2, :]
-    torch.save(trajectory_plot, "trajectory.pt")
+    # torch.save(trajectory_plot, "trajectory.pt")
 
     vel_mag = torch.sqrt(
         trajectory_plot[0, 0, :, :, :] ** 2 + trajectory_plot[0, 1, :, :, :] ** 2
     )
 
     create_animation_from_tensors(
-        [10 * vel_mag],
+        [vel_mag],
         fps=10,
         file_name=f"figures/velocity_magnitude.mp4",
         colormaps="viridis",
