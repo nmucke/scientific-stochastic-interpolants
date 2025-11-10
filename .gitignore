@@ -32,10 +32,8 @@ archive/
 # Animations
 *.mp4
 
-# DS_Store
-.DS_Store
-
 # Trajectories
 cfd_results/
+
 # .DS_Store
 .DS_Store
