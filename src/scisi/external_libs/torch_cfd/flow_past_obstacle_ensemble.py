@@ -12,19 +12,19 @@ dtype = torch.float32
 NX = 400
 NY = 200
 DENSITY = 1.0
-HF_DT = 5e-4
-REDUCED_DT = 1e-2
+HF_DT = 1e-4
+REDUCED_DT = 1e-1
 BATCH_SIZE = 1
 # VISCOSITY = 1 / 500
 VISCOSITY = 1 / 1000
-FINAL_TIME = 5.0
+FINAL_TIME = 10.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
 
 # Ensemble configuration
 NUM_ENSEMBLE = 2
-INLET_ANGLES = [-60, 0]  # Different inlet angles for each ensemble member
+INLET_ANGLES = [-30, 0]  # Different inlet angles for each ensemble member
 NUM_PROCESSES = 2  # Number of parallel processes
 
 # Define obstacle as a grid of 3 by 3
