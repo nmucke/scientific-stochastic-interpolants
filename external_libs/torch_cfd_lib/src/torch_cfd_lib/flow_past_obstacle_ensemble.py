@@ -1,18 +1,12 @@
 import sys
 from pathlib import Path
-
-if __package__ in {None, ""}:
-    project_root = Path(__file__).resolve().parents[2]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
 import torch
 from torch_cfd import grids
 from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
 
-from external_libs.torch_cfd.forward_model import EnsembleDynamicsModel, vorticity
+from torch_cfd_lib.forward_model import EnsembleDynamicsModel, vorticity
 from scisi.plotting.animation import create_animation_from_tensors
 
 dtype = torch.float32

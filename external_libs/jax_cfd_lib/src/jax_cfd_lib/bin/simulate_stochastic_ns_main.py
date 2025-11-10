@@ -11,7 +11,7 @@ import numpy as np
 import seaborn as sns
 import xarray
 
-from scisi.external_libs.jax_cfd.navier_stokes_forward_model import (
+from jax_cfd_lib.navier_stokes_forward_model import (
     get_initial_vorticity,
     set_up_forward_model,
 )

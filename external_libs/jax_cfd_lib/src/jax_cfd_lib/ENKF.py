@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random
 
-from scisi.jax_cfd.ns_kalman import ObservationOperator
+from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
 class SpectralEnKF:
