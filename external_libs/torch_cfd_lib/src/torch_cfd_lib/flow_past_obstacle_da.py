@@ -16,14 +16,14 @@ from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
 
-from scisi.external_libs.torch_cfd.boundary_conditions import (
+from torch_cfd_lib.boundary_conditions import (
     get_inlet_velocities_from_angle,
     karman_vortex_multiple_squares_boundary_conditions,
 )
-from scisi.external_libs.torch_cfd.ENKF import ObservationOperator, StateParameterEnKF
+from torch_cfd_lib.ENKF import ObservationOperator, StateParameterEnKF
 
 # Import parameters from flow_past_obstacle
-from scisi.external_libs.torch_cfd.flow_past_obstacle import (
+from torch_cfd_lib.flow_past_obstacle import (
     BATCH_SIZE,
     DENSITY,
     DEVICE,
@@ -33,7 +33,7 @@ from scisi.external_libs.torch_cfd.flow_past_obstacle import (
     NY,
     VISCOSITY,
 )
-from scisi.external_libs.torch_cfd.forward_model import DynamicsModel
+from torch_cfd_lib.forward_model import DynamicsModel
 
 
 def get_grid_observation_indices(

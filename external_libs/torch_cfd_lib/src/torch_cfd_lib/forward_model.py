@@ -12,7 +12,7 @@ from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
 from tqdm import tqdm
 
-from external_libs.torch_cfd.boundary_conditions import (
+from torch_cfd_lib.boundary_conditions import (
     get_inlet_velocities_from_angle,
     karman_vortex_multiple_squares_boundary_conditions,
 )

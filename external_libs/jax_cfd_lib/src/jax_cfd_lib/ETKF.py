@@ -5,8 +5,8 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from scisi.jax_cfd.ENKF import SpectralEnKF
-from scisi.jax_cfd.ns_kalman import ObservationOperator
+from jax_cfd_lib.ENKF import SpectralEnKF
+from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
 # If you have a SpectralEnKF base, subclass it; otherwise adapt imports/attributes accordingly.

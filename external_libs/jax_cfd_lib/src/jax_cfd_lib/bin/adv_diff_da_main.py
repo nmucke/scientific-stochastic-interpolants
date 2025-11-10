@@ -19,9 +19,9 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random
 
-from scisi.jax_cfd.ENKF import LocalizedSpectralEnKF, SpectralEnKF
-from scisi.jax_cfd.ETKF import LocalizedSpectralETKF, SpectralETKF
-from scisi.jax_cfd.ns_kalman import ObservationOperator
+from jax_cfd_lib.ENKF import LocalizedSpectralEnKF, SpectralEnKF
+from jax_cfd_lib.ETKF import LocalizedSpectralETKF, SpectralETKF
+from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
 class AdvectionDiffusion2D:

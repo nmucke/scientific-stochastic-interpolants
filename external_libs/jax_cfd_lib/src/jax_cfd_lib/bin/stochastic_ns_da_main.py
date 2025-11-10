@@ -8,9 +8,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from jax import random
 
-from scisi.jax_cfd.ENKF import LocalizedSpectralEnKF, SpectralEnKF
-from scisi.jax_cfd.ETKF import LocalizedSpectralETKF, SpectralETKF
-from scisi.jax_cfd.navier_stokes_forward_model import set_up_forward_model
+from jax_cfd_lib.ENKF import LocalizedSpectralEnKF, SpectralEnKF
+from jax_cfd_lib.ETKF import LocalizedSpectralETKF, SpectralETKF
+from jax_cfd_lib.navier_stokes_forward_model import set_up_forward_model
 
 
 class ObservationOperator:

@@ -21,7 +21,7 @@ import torch
 from torch_cfd import grids
 from torch_cfd.grids import GridVariable
 
-from scisi.external_libs.torch_cfd.forward_model import DynamicsModel
+from torch_cfd_lib.forward_model import DynamicsModel
 
 
 class ObservationOperator:

@@ -23,10 +23,6 @@ dependencies = [
     "hydra-core>=1.3.2,<2",
     "trackio<=0.6.0",
     "pdetransformer>=0.1.0",
-    "jax",
-    "jaxlib",
-    "jax-cfd",
-    "torch-cfd>=0.2.6",
 ]
 
 [dependency-groups]
@@ -52,7 +48,6 @@ dev-gpu = [
     "black>=24.1.0,<24.2.0",
     "isort>=6.0.0,<6.1.0",
     "mypy>=1.15.0,<1.16.0",
-    "jax[cuda12_local]",
 ]
 
 [tool.uv]
@@ -61,6 +56,13 @@ conflicts = [
         { group = "dev-cpu" },
         { group = "dev-gpu" },
     ],
+]
+
+[tool.uv.workspace]
+members = [
+    "external_libs/torch_cfd_lib",
+    "external_libs/jax_cfd_lib",
+    "external_libs/aurora",
 ]
 
 [tool.uv.build-backend]
