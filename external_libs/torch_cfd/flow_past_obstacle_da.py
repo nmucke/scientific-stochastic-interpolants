@@ -20,10 +20,7 @@ from scisi.external_libs.torch_cfd.boundary_conditions import (
     get_inlet_velocities_from_angle,
     karman_vortex_multiple_squares_boundary_conditions,
 )
-from scisi.external_libs.torch_cfd.ENKF import (
-    ObservationOperator,
-    StateParameterEnKF,
-)
+from scisi.external_libs.torch_cfd.ENKF import ObservationOperator, StateParameterEnKF
 
 # Import parameters from flow_past_obstacle
 from scisi.external_libs.torch_cfd.flow_past_obstacle import (
