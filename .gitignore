@@ -37,3 +37,9 @@ cfd_results/
 
 # .DS_Store
 .DS_Store
+
+# Environments
+env/
+venv/
+.env
+.venv/
