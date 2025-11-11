@@ -1,17 +1,12 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from functools import partial
+from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-import numpy as np
+import ray
 import torch
-import torch_cfd.finite_differences as fdm
-import xarray
-from torch_cfd import advection, boundaries, grids
+from torch_cfd import advection, grids
 from torch_cfd.fvm import NavierStokes2DFVMProjection, PressureProjection, RKStepper
 from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
-from tqdm import tqdm
-
 from torch_cfd_lib.boundary_conditions import (
     get_inlet_velocities_from_angle,
     karman_vortex_multiple_squares_boundary_conditions,
@@ -19,41 +14,25 @@ from torch_cfd_lib.boundary_conditions import (
 
 dtype = torch.float32
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-# DEVICE = torch.device("mps")
+
+@dataclass
+class DynamicsModelConfig:
+    inlet_velocity_angle: float
+    nx: int
+    ny: int
+    density: float
+    viscosity: float
+    domain: tuple
+    dt: float
+    num_inner_steps: int
+    dtype: torch.dtype
+    obstacle_centers: List[Tuple[float, float]]
+    obstacle_halfwidths: List[float]
 
 
-def vorticity(v: Tuple[GridVariable, GridVariable]) -> torch.Tensor:
-    """Compute vorticity from velocity field."""
-
-    nx = v[0].data.shape[1]
-    ny = v[0].data.shape[2]
-    batch_size = v[0].data.shape[0]
-
-    def vorticity_fn(ds: xarray.Dataset) -> xarray.DataArray:
-        """Compute vorticity from velocity field."""
-        return (ds.v.differentiate("x") - ds.u.differentiate("y")).rename("vorticity")
-
-    coords = {
-        "batch": np.linspace(0, batch_size - 1, batch_size, dtype=np.int64),
-        "x": np.linspace(0, 2, nx, dtype=np.float64),
-        "y": np.linspace(0, 1, ny, dtype=np.float64),
-    }
-
-    u_data = xarray.DataArray(
-        v[0].data.detach().cpu(), dims=["batch", "x", "y"], coords=coords
-    ).to_dataset(name="u")
-
-    v_data = xarray.DataArray(
-        v[1].data.detach().cpu(), dims=["batch", "x", "y"], coords=coords
-    ).to_dataset(name="v")
-
-    data = xarray.merge([u_data, v_data]).assign(vorticity=vorticity_fn)
-
-    vorticity_data = data["vorticity"].data
-    vorticity_data = torch.from_numpy(vorticity_data)
-
-    return vorticity_data
+# Default obstacle configuration
+DEFAULT_CENTERS = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25)]
+DEFAULT_HALFWIDTHS = [0.05, 0.08, 0.05]
 
 
 class DynamicsModel:
@@ -61,72 +40,36 @@ class DynamicsModel:
 
     def __init__(
         self,
-        inlet_velocity_angle: float,
-        nx: int = 400,
-        ny: int = 200,
-        density: float = 1.0,
-        viscosity: float = 1 / 500,
-        domain: tuple = ((0, 2), (0, 1)),
-        obstacle_centers: List[Tuple[float, float]] = [
-            (1.2, 0.75),
-            (0.3, 0.5),
-            (1.2, 0.25),
-        ],
-        obstacle_halfwidths: List[float] = [0.05, 0.08, 0.05],
-        dt: float = 1e-3,
-        batch_size: int = 1,
-        num_inner_steps: int = 100,
-        device: torch.device = DEVICE,
-        dtype: torch.dtype = dtype,
+        config: DynamicsModelConfig,
+        device: torch.device = "cpu",
     ):
         """
         Initialize the dynamics model.
 
         Parameters
         ----------
-        inlet_velocity_angle : float
-            Inlet velocity angle in degrees (0° = right, 90° = up, -90° = down, 180° = left)
-        nx : int
-            Number of grid points in x direction
-        ny : int
-            Number of grid points in y direction
-        density : float
-            Fluid density
-        viscosity : float
-            Fluid viscosity
-        domain : tuple
-            Domain boundaries ((x_min, x_max), (y_min, y_max))
-        num_inner_steps : int, optional
-            Number of inner steps for the dynamics function. If None, computed from defaults.
+        config : DynamicsModelConfig
+            Configuration for the dynamics model
         device : torch.device, optional
             Device to run computations on. If None, uses CUDA if available.
-        dtype : torch.dtype
-            Data type for computations
         """
-        self.inlet_velocity_angle = inlet_velocity_angle
-        self.nx = nx
-        self.ny = ny
-        self.density = density
-        self.viscosity = viscosity
-        self.domain = domain
-        self.obstacle_centers = obstacle_centers
-        self.obstacle_halfwidths = obstacle_halfwidths
-        self.dtype = dtype
-        self.num_inner_steps = num_inner_steps
-        self.dt = dt
-        self.batch_size = batch_size
         self.device = device
+        self.config = config
 
         # Set up grid
-        self.grid = grids.Grid((nx, ny), domain=domain, device=self.device)
+        self.grid = grids.Grid(
+            (config.nx, config.ny),
+            domain=config.domain,
+            device=self.device,
+        )
 
         # Set up time stepper
         self.step_fn = RKStepper.from_method(
-            method="classic_rk4", requires_grad=False, dtype=self.dtype
+            method="classic_rk4", requires_grad=False, dtype=self.config.dtype
         )
 
         # Set up boundary conditions
-        self.velocity_bc, self.pressure_bc = self.get_bcs(inlet_velocity_angle)
+        self.velocity_bc, self.pressure_bc = self.get_bcs(config.inlet_velocity_angle)
 
         # Get velocity field offsets (need a sample to get offsets)
         x_velocity_fn = lambda x, y: torch.zeros_like(x)
@@ -136,7 +79,7 @@ class DynamicsModel:
             (x_velocity_fn, y_velocity_fn),
             self.grid,
             velocity_bc=self.velocity_bc,
-            batch_size=self.batch_size,
+            batch_size=1,
             random_state=0,
             noise=0.0,
             device=self.device,
@@ -153,9 +96,24 @@ class DynamicsModel:
         return karman_vortex_multiple_squares_boundary_conditions(
             self.grid,
             inlet_velocity=(self.x_inlet_velocity, self.y_inlet_velocity),
-            square_centers=self.obstacle_centers,
-            square_halfwidths=self.obstacle_halfwidths,
+            square_centers=self.config.obstacle_centers,
+            square_halfwidths=self.config.obstacle_halfwidths,
             periodic_y=True,
+        )
+
+    def get_initial_condition(self) -> Any:
+        """Get the initial condition for the dynamics model."""
+        x_velocity_fn = lambda x, y: self.x_inlet_velocity * torch.ones_like(x)
+        y_velocity_fn = lambda x, y: self.y_inlet_velocity * torch.ones_like(x)
+
+        return velocity_field(
+            (x_velocity_fn, y_velocity_fn),
+            self.grid,
+            velocity_bc=self.velocity_bc,
+            batch_size=1,
+            random_state=0,
+            noise=0.1,
+            device=self.device,
         )
 
     def get_model(self) -> NavierStokes2DFVMProjection:
@@ -164,7 +122,7 @@ class DynamicsModel:
         pressure_proj = PressureProjection(
             grid=self.grid,
             bc=self.pressure_bc,
-            dtype=self.dtype,
+            dtype=self.config.dtype,
             implementation="matmul",
         )
 
@@ -178,10 +136,10 @@ class DynamicsModel:
 
         # Set up Navier-Stokes model
         model = NavierStokes2DFVMProjection(
-            viscosity=self.viscosity,
+            viscosity=self.config.viscosity,
             grid=self.grid,
             bcs=self.velocity_bc,
-            density=self.density,
+            density=self.config.density,
             step_fn=self.step_fn,
             pressure_proj=pressure_proj,
             convection=convection,
@@ -190,11 +148,21 @@ class DynamicsModel:
         return model
 
     def update_parameters(self, inlet_velocity_angle: float) -> None:
+        """Update the parameters of the dynamics model."""
+
+        self.config.inlet_velocity_angle = inlet_velocity_angle
 
         # Set up boundary conditions
-        self.velocity_bc, self.pressure_bc = self.get_bcs(inlet_velocity_angle)
+        self.velocity_bc, self.pressure_bc = self.get_bcs(
+            self.config.inlet_velocity_angle
+        )
 
         self.model = self.get_model()
+
+    def update_config(self, config: DynamicsModelConfig) -> None:
+        """Update the configuration of the dynamics model."""
+        self.config = config
+        self.update_parameters(self.config.inlet_velocity_angle)
 
     def __call__(
         self,
@@ -213,8 +181,8 @@ class DynamicsModel:
         tuple
             Updated velocity field (v_new, p)
         """
-        for _ in range(self.num_inner_steps - 1):
-            v, p = self.model(v, self.dt)
+        for _ in range(self.config.num_inner_steps - 1):
+            v, p = self.model(v, self.config.dt)
         return v, p
 
     def forward_with_parameters(
@@ -241,11 +209,15 @@ class DynamicsModel:
         return self.__call__(v)
 
 
-def _run_single_model(
-    args: Tuple[DynamicsModel, Tuple[GridVariable, GridVariable]]
-) -> Tuple[Tuple[GridVariable, GridVariable], GridVariable]:
-    """Helper function to run a single model (for multiprocessing)."""
-    model, v = args
+@ray.remote  # type: ignore[misc]
+def run_model(
+    v: Tuple[GridVariable, GridVariable],
+    config: DynamicsModelConfig,
+    device: torch.device,
+) -> Tuple[GridVariable, GridVariable]:
+    """Run the dynamics model."""
+
+    model = DynamicsModel(config=config, device=device)
     return model(v)
 
 
@@ -254,138 +226,81 @@ class EnsembleDynamicsModel:
 
     def __init__(
         self,
-        inlet_velocity_angles: List[float],
-        nx: int = 400,
-        ny: int = 200,
-        density: float = 1.0,
-        viscosity: float = 1 / 500,
-        domain: tuple = ((0, 2), (0, 1)),
-        obstacle_centers: Optional[List[List[Tuple[float, float]]]] = None,
-        obstacle_halfwidths: Optional[List[List[float]]] = None,
-        dt: float = 1e-3,
-        batch_size: int = 1,
-        num_inner_steps: int = 100,
-        num_processes: Optional[int] = None,
-        use_threading: bool = True,
-        device: torch.device = DEVICE,
-        dtype: torch.dtype = dtype,
+        configs: List[DynamicsModelConfig],
+        num_workers: int = 1,
+        device: torch.device = "cpu",
     ):
         """
         Initialize ensemble of dynamics models.
 
         Parameters
         ----------
-        inlet_velocity_angles : List[float]
-            List of inlet velocity angles for each ensemble member
-        nx : int
-            Number of grid points in x direction
-        ny : int
-            Number of grid points in y direction
-        density : float
-            Fluid density
-        viscosity : float
-            Fluid viscosity
-        domain : tuple
-            Domain boundaries ((x_min, x_max), (y_min, y_max))
-        obstacle_centers : List[List[Tuple[float, float]]], optional
-            List of obstacle center lists, one for each ensemble member.
-            If None, uses default [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25)] for all members.
-            Can also be a single list to use same obstacles for all members.
-        obstacle_halfwidths : List[List[float]], optional
-            List of obstacle halfwidth lists, one for each ensemble member.
-            If None, uses default [0.05, 0.08, 0.05] for all members.
-            Can also be a single list to use same halfwidths for all members.
-        dt : float
-            Time step size
-        batch_size : int
-            Batch size for each model
-        num_inner_steps : int
-            Number of inner steps for the dynamics function
-        num_processes : int, optional
+        config : DynamicsModelConfig
+        num_workers : int, optional
             Number of workers to use for parallel execution.
             If None, runs sequentially. If > 1, uses parallel execution.
-        use_threading : bool, optional
-            If True, uses ThreadPoolExecutor (better for PyTorch/GPU).
-            If False, uses ProcessPoolExecutor (better for CPU-only).
-            Default is True.
         device : torch.device
             Device to run computations on
-        dtype : torch.dtype
-            Data type for computations
         """
-        self.inlet_velocity_angles = inlet_velocity_angles
-        self.num_ensemble = len(inlet_velocity_angles)
-        self.nx = nx
-        self.ny = ny
-        self.batch_size = batch_size
+        self.configs = configs
+        self.num_ensemble = len(configs)
         self.device = device
-        self.dtype = dtype
-        self.num_processes = num_processes
-        self.use_threading = use_threading
+        self.num_workers = num_workers
 
-        # Default obstacle configuration
-        default_centers = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25)]
-        default_halfwidths = [0.05, 0.08, 0.05]
+        if self.num_workers > 1:
 
-        # Handle obstacle_centers input
-        if obstacle_centers is None:
-            # Use default for all ensemble members
-            self.obstacle_centers = [default_centers] * self.num_ensemble
-        elif len(obstacle_centers) > 0 and isinstance(obstacle_centers[0], tuple):  # type: ignore[unreachable]
-            # Single list of centers provided - use for all members
-            self.obstacle_centers = [obstacle_centers] * self.num_ensemble  # type: ignore[unreachable]
-        else:
-            # List of lists provided - one per ensemble member
-            if len(obstacle_centers) != self.num_ensemble:
-                raise ValueError(
-                    f"Expected {self.num_ensemble} obstacle_centers lists, got {len(obstacle_centers)}"
-                )
-            self.obstacle_centers = obstacle_centers
+            ray.shutdown()
 
-        # Handle obstacle_halfwidths input
-        if obstacle_halfwidths is None:
-            # Use default for all ensemble members
-            self.obstacle_halfwidths = [default_halfwidths] * self.num_ensemble
-        elif len(obstacle_halfwidths) > 0 and isinstance(
-            obstacle_halfwidths[0], (int, float)  # type: ignore[unreachable]
-        ):
-            # Single list of halfwidths provided - use for all members
-            self.obstacle_halfwidths = [obstacle_halfwidths] * self.num_ensemble  # type: ignore[unreachable]
-        else:
-            # List of lists provided - one per ensemble member
-            if len(obstacle_halfwidths) != self.num_ensemble:
-                raise ValueError(
-                    f"Expected {self.num_ensemble} obstacle_halfwidths lists, got {len(obstacle_halfwidths)}"
-                )
-            self.obstacle_halfwidths = obstacle_halfwidths
-
-        # Create a model for each ensemble member
-        self.models = [
-            DynamicsModel(
-                inlet_velocity_angle=angle,
-                nx=nx,
-                ny=ny,
-                density=density,
-                viscosity=viscosity,
-                domain=domain,
-                obstacle_centers=centers,
-                obstacle_halfwidths=halfwidths,
-                dt=dt,
-                batch_size=batch_size,
-                num_inner_steps=num_inner_steps,
-                device=device,
-                dtype=dtype,
+            self.use_ray = True
+            ray.init(
+                num_cpus=self.num_workers,
+                runtime_env={
+                    "excludes": ["*"],  # Exclude all files from being packaged
+                },
             )
-            for angle, centers, halfwidths in zip(
-                inlet_velocity_angles, self.obstacle_centers, self.obstacle_halfwidths
-            )
+
+        else:
+            self.use_ray = False
+
+    def get_initial_conditions(self) -> List[Tuple[GridVariable, GridVariable]]:
+        """Get the initial condition for the ensemble of dynamics models."""
+        return [
+            DynamicsModel(config=config, device=self.device).get_initial_condition()
+            for config in self.configs
         ]
+
+    def _run_parallel(
+        self,
+        v_list: List[Tuple[GridVariable, GridVariable]],
+    ) -> Tuple[List[GridVariable], List[GridVariable]]:
+        """Run the dynamics model in parallel using Ray."""
+        futures = [
+            run_model.remote(v, config, self.device)
+            for config, v in zip(self.configs, v_list)
+        ]
+        futures = ray.get(futures)
+        v_results = [future[0] for future in futures]
+        p_results = [future[1] for future in futures]
+        return v_results, p_results
+
+    def _run_sequential(
+        self,
+        v_list: List[Tuple[GridVariable, GridVariable]],
+    ) -> Tuple[List[GridVariable], List[GridVariable]]:
+        """Run the dynamics model sequentially."""
+        v_results = []
+        p_results = []
+        for config, v in zip(self.configs, v_list):
+            model = DynamicsModel(config=config, device=self.device)
+            v_new, p = model(v)
+            v_results.append(v_new)
+            p_results.append(p)
+        return v_results, p_results
 
     def __call__(
         self,
         v_list: List[Tuple[GridVariable, GridVariable]],
-        parallel: Optional[bool] = None,
-    ) -> List[Tuple[GridVariable, GridVariable]]:
+    ) -> Tuple[List[GridVariable], List[GridVariable]]:
         """
         Apply dynamics to ensemble of velocity fields.
 
@@ -393,9 +308,6 @@ class EnsembleDynamicsModel:
         ----------
         v_list : List[Tuple[GridVariable, GridVariable]]
             List of velocity fields, one for each ensemble member
-        parallel : bool, optional
-            If True, uses parallel execution.
-            If False, runs sequentially. If None, uses num_processes setting.
 
         Returns
         -------
@@ -407,80 +319,20 @@ class EnsembleDynamicsModel:
                 f"Expected {self.num_ensemble} velocity fields, got {len(v_list)}"
             )
 
-        # Determine whether to run in parallel
-        use_parallel = (
-            parallel
-            if parallel is not None
-            else (self.num_processes is not None and self.num_processes > 1)
-        )
-
-        if use_parallel:
-            # Run in parallel
-            num_workers = (
-                self.num_processes
-                if self.num_processes is not None
-                else self.num_ensemble
-            )
-
-            # Choose executor based on use_threading setting
-            ExecutorClass = (
-                ThreadPoolExecutor if self.use_threading else ProcessPoolExecutor
-            )
-
-            with ExecutorClass(max_workers=num_workers) as executor:
-                results = list(
-                    executor.map(_run_single_model, zip(self.models, v_list))
-                )
+        if self.use_ray:
+            # Run in parallel using Ray
+            results = self._run_parallel(v_list)
         else:
             # Run sequentially
-            results = []
-            for model, v in zip(self.models, v_list):
-                v_new, p = model(v)
-                results.append((v_new, p))
+            results = self._run_sequential(v_list)
 
         return results
 
-    def update_parameters(self, inlet_velocity_angles: List[float]) -> None:
-        """
-        Update inlet velocity angles for all ensemble members.
+    def shutdown(self) -> None:
+        """Shutdown Ray resources if they were initialized."""
+        if self.use_ray:
+            ray.shutdown()
 
-        Parameters
-        ----------
-        inlet_velocity_angles : List[float]
-            New inlet velocity angles for each ensemble member
-        """
-        if len(inlet_velocity_angles) != self.num_ensemble:
-            raise ValueError(
-                f"Expected {self.num_ensemble} angles, got {len(inlet_velocity_angles)}"
-            )
-
-        self.inlet_velocity_angles = inlet_velocity_angles
-        for model, angle in zip(self.models, inlet_velocity_angles):
-            model.update_parameters(angle)
-
-    def forward_with_parameters(
-        self,
-        v_list: List[Tuple[GridVariable, GridVariable]],
-        inlet_velocity_angles: List[float],
-        parallel: Optional[bool] = None,
-    ) -> List[Tuple[GridVariable, GridVariable]]:
-        """
-        Apply dynamics with updated parameters.
-
-        Parameters
-        ----------
-        v_list : List[Tuple[GridVariable, GridVariable]]
-            List of velocity fields, one for each ensemble member
-        inlet_velocity_angles : List[float]
-            Inlet velocity angles for each ensemble member
-        parallel : bool, optional
-            If True, uses parallel execution. If False, runs sequentially.
-            If None, uses num_processes setting.
-
-        Returns
-        -------
-        List[Tuple[GridVariable, GridVariable]]
-            List of updated velocity fields
-        """
-        self.update_parameters(inlet_velocity_angles)
-        return self.__call__(v_list, parallel=parallel)
+    def __del__(self) -> None:
+        """Cleanup Ray resources on deletion."""
+        self.shutdown()
