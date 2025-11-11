@@ -14,8 +14,6 @@ import torch
 from torch_cfd import grids
 from torch_cfd.grids import GridVariable
 from torch_cfd.initial_conditions import velocity_field
-from tqdm import tqdm
-
 from torch_cfd_lib.boundary_conditions import (
     get_inlet_velocities_from_angle,
     karman_vortex_multiple_squares_boundary_conditions,
@@ -33,7 +31,8 @@ from torch_cfd_lib.flow_past_obstacle import (
     NY,
     VISCOSITY,
 )
-from torch_cfd_lib.forward_model import DynamicsModel
+from torch_cfd_lib.forward_model import DynamicsModel, DynamicsModelConfig
+from tqdm import tqdm
 
 
 def get_grid_observation_indices(
@@ -141,9 +140,7 @@ def main() -> None:
     # True inflow angle (what we're trying to estimate)
     true_inflow_angle = -20.0  # degrees
 
-    # Initialize dynamics model with true parameters
-    print("Initializing true dynamics model...")
-    true_dynamics_model = DynamicsModel(
+    true_dynamics_model_config = DynamicsModelConfig(
         inlet_velocity_angle=true_inflow_angle,
         nx=NX,
         ny=NY,
@@ -151,9 +148,17 @@ def main() -> None:
         viscosity=VISCOSITY,
         domain=DOMAIN,
         dt=HF_DT,
-        batch_size=BATCH_SIZE,
-        device=DEVICE,
+        num_inner_steps=10,
         dtype=dtype,
+        obstacle_centers=[(1.2, 0.75), (0.3, 0.5), (1.2, 0.25)],
+        obstacle_halfwidths=[0.05, 0.08, 0.05],
+    )
+
+    # Initialize dynamics model with true parameters
+    print("Initializing true dynamics model...")
+    true_dynamics_model = DynamicsModel(
+        config=true_dynamics_model_config,
+        device=DEVICE,
     )
 
     # Set up grid
@@ -227,8 +232,8 @@ def main() -> None:
                 true_dynamics_model.x_inlet_velocity,
                 true_dynamics_model.y_inlet_velocity,
             ),
-            square_centers=true_dynamics_model.obstacle_centers,
-            square_halfwidths=true_dynamics_model.obstacle_halfwidths,
+            square_centers=true_dynamics_model_config.obstacle_centers,
+            square_halfwidths=true_dynamics_model_config.obstacle_halfwidths,
             periodic_y=True,
         )
         x_velocity_fn = lambda x, y: x_inlet_velocity * torch.ones_like(x)
@@ -292,21 +297,15 @@ def main() -> None:
             ensemble_velocity=ensemble_velocity,
             ensemble_parameters=ensemble_parameters,
             observations=obs,
-            dynamics_model=true_dynamics_model,
+            dynamics_model=DynamicsModel(
+                config=true_dynamics_model_config, device=DEVICE
+            ),
             inflation=inflation,
         )
 
         true_dynamics_model = DynamicsModel(
-            inlet_velocity_angle=true_inflow_angle,
-            nx=NX,
-            ny=NY,
-            density=DENSITY,
-            viscosity=VISCOSITY,
-            domain=DOMAIN,
-            dt=HF_DT,
-            batch_size=BATCH_SIZE,
+            config=true_dynamics_model_config,
             device=DEVICE,
-            dtype=dtype,
         )
 
         # Compute ensemble mean
