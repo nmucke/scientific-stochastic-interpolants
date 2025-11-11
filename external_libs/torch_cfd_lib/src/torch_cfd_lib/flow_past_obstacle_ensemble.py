@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 import torch
 from torch_cfd import grids
@@ -25,8 +26,8 @@ INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
 
 # Ensemble configuration
-NUM_ENSEMBLE = 1
-INLET_ANGLES = [0]  # Different inlet angles for each ensemble member
+NUM_ENSEMBLE = 2
+INLET_ANGLES = [-20, -10]  # Different inlet angles for each ensemble member
 NUM_PROCESSES = 2  # Number of parallel processes
 
 # Define obstacle as a grid of 3 by 3
@@ -49,9 +50,9 @@ for x in x_positions:
 # OBSTACLE_CENTERS = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25), (0.7, 0.75), (0.7, 0.25), (0.3, 0.75), (0.3, 0.25)]
 # OBSTACLE_HALFWIDTHS = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
 
-# DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-DEVICE = torch.device("mps")
-
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# DEVICE = torch.device("mps")
+print(DEVICE)
 
 def main() -> None:
     """Main function."""
@@ -104,7 +105,7 @@ def main() -> None:
     with torch.no_grad():
         for i in tqdm(range(OUTER_STEPS), desc="Simulating ensemble"):
             # Run all ensemble members sequentially
-            results = ensemble_model(v_list, parallel=False)
+            results = ensemble_model(v_list, parallel=True)
 
             # Update velocity fields and store results
             for j, (v_new, _) in enumerate(results):
@@ -127,10 +128,13 @@ def main() -> None:
         for j in range(NUM_ENSEMBLE)
     ]
 
+    figure_dir = "figures/torch_cfd"
+    os.makedirs(figure_dir, exist_ok=True)
+
     create_animation_from_tensors(
         vel_mag,
         fps=10,
-        file_name=f"figures/velocity_magnitude_ensemble.mp4",
+        file_name=f"{figure_dir}/velocity_magnitude_ensemble.mp4",
         colormaps="viridis",
         titles=[f"Angle: {INLET_ANGLES[j]}°" for j in range(NUM_ENSEMBLE)],
         normalize=False,
@@ -138,7 +142,7 @@ def main() -> None:
     create_animation_from_tensors(
         [vorticity_plots[j, 0, :, :, :] for j in range(NUM_ENSEMBLE)],
         fps=10,
-        file_name=f"figures/vorticity_trajectory_ensemble.mp4",
+        file_name=f"{figure_dir}/vorticity_trajectory_ensemble.mp4",
         colormaps="viridis",
         titles=[f"Angle: {INLET_ANGLES[j]}°" for j in range(NUM_ENSEMBLE)],
         vmin=-30,
