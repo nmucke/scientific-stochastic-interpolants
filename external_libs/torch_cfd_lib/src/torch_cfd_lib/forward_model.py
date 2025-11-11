@@ -123,7 +123,8 @@ class DynamicsModel:
             grid=self.grid,
             bc=self.pressure_bc,
             dtype=self.config.dtype,
-            implementation="matmul",
+            implementation="rfft",
+            solver="pseudoinverse",
         )
 
         # Set up convection
@@ -134,8 +135,7 @@ class DynamicsModel:
             advect=advection.AdvectionVanLeer,
         )
 
-        # Set up Navier-Stokes model
-        model = NavierStokes2DFVMProjection(
+        return NavierStokes2DFVMProjection(
             viscosity=self.config.viscosity,
             grid=self.grid,
             bcs=self.velocity_bc,
@@ -144,8 +144,6 @@ class DynamicsModel:
             pressure_proj=pressure_proj,
             convection=convection,
         ).to(self.device)
-
-        return model
 
     def update_parameters(self, inlet_velocity_angle: float) -> None:
         """Update the parameters of the dynamics model."""
@@ -209,16 +207,14 @@ class DynamicsModel:
         return self.__call__(v)
 
 
-@ray.remote  # type: ignore[misc]
+@ray.remote(num_gpus=0, num_cpus=1)  # type: ignore[misc]
 def run_model(
     v: Tuple[GridVariable, GridVariable],
     config: DynamicsModelConfig,
     device: torch.device,
 ) -> Tuple[GridVariable, GridVariable]:
     """Run the dynamics model."""
-
-    model = DynamicsModel(config=config, device=device)
-    return model(v)
+    return DynamicsModel(config=config, device=device)(v)
 
 
 class EnsembleDynamicsModel:
@@ -254,6 +250,7 @@ class EnsembleDynamicsModel:
             self.use_ray = True
             ray.init(
                 num_cpus=self.num_workers,
+                num_gpus=0,
                 runtime_env={
                     "excludes": ["*"],  # Exclude all files from being packaged
                 },
