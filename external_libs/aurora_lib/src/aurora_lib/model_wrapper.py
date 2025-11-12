@@ -2,6 +2,7 @@ import contextlib
 import dataclasses
 import pdb
 from datetime import timedelta
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -93,8 +94,8 @@ class Swin3DTransformerBackboneWrapper(nn.Module):
 
 
 class AuroraModelWrapper(AuroraSmallPretrained):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
 
         self.load_checkpoint()
 

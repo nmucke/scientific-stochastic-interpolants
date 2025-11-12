@@ -24,6 +24,7 @@ dependencies = [
     "trackio",
     "pdetransformer>=0.1.0",
     "ray>=2.51.1",
+    "aurora_lib",
 ]
 
 [dependency-groups]
@@ -59,11 +60,14 @@ conflicts = [
     ],
 ]
 
+[tool.uv.sources]
+aurora_lib = { workspace = true }
+
 [tool.uv.workspace]
 members = [
     "external_libs/torch_cfd_lib",
     "external_libs/jax_cfd_lib",
-    "external_libs/aurora",
+    "external_libs/aurora_lib",
 ]
 
 [tool.uv.build-backend]
@@ -77,7 +81,7 @@ find-links = [
 
 [tool.black]
 line-length = 88
-target-version = ["py313"]
+target-version = ["py312"]
 include = "\\.pyi?$"
 extend-exclude = '''
 /(

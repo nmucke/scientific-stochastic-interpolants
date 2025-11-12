@@ -91,21 +91,17 @@ class BatchAdapter:
 
         return field_history[..., -1], field_history
 
-    def scisi_to_aurora(
-        self, x: torch.Tensor, field_history: torch.Tensor, *args: Any, **kwargs: Any
-    ) -> Batch:
+    def scisi_to_aurora(self, field_history: torch.Tensor) -> Batch:
         """
         Convert the scisi format to the aurora format.
 
         Args:
-            x: The scisi format data.
             field_history: The field history.
 
         Returns:
             The aurora batch format data.
         """
-        b, _, h, w = x.shape
-        t = field_history.shape[-1]
+        b, _, h, w, t = field_history.shape
 
         surf_vars = {key: torch.zeros(b, t, h, w) for key in SURF_VAR_NAMES}
         atmos_vars = {
