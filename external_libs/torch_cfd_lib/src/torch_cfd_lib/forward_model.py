@@ -123,7 +123,7 @@ class DynamicsModel:
             grid=self.grid,
             bc=self.pressure_bc,
             dtype=self.config.dtype,
-            implementation="rfft",
+            implementation="matmul",
             solver="pseudoinverse",
         )
 

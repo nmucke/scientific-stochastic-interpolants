@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import ray
 import torch
 from torch_cfd_lib.forward_model import DynamicsModelConfig, EnsembleDynamicsModel
 from torch_cfd_lib.utils import (
@@ -16,21 +17,22 @@ dtype = torch.float32
 NX = 400
 NY = 200
 DENSITY = 1.0
-HF_DT = 1e-3
+HF_DT = 1e-4
 REDUCED_DT = 1e-1
 BATCH_SIZE = 1
-VISCOSITY = 1 / 500
-FINAL_TIME = 1.0
+RE = 500
+VISCOSITY = 1 / RE
+FINAL_TIME = 10.0
 OUTER_STEPS = int(FINAL_TIME // REDUCED_DT)
 INNER_STEPS = int(FINAL_TIME // HF_DT) // OUTER_STEPS
 DOMAIN = ((0, 2), (0, 1))
 
 # Ensemble configuration
-NUM_ENSEMBLE = 4
+NUM_ENSEMBLE = 2
 INLET_ANGLES = [
     i for i in range(0, NUM_ENSEMBLE)
 ]  # Different inlet angles for each ensemble member
-NUM_WORKERS = 2  # Number of parallel processes
+NUM_WORKERS = 1  # Number of parallel processes
 
 # Define obstacle as a grid of 3 by 3
 OBSTACLE_CENTERS = []
@@ -52,13 +54,16 @@ for x in x_positions:
 # OBSTACLE_CENTERS = [(1.2, 0.75), (0.3, 0.5), (1.2, 0.25), (0.7, 0.75), (0.7, 0.25), (0.3, 0.75), (0.3, 0.25)]
 # OBSTACLE_HALFWIDTHS = [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # DEVICE = torch.device("mps")
+DEVICE = torch.device("cpu")
 print(DEVICE)
 
 
 def main() -> None:
     """Main function."""
+
+    ray.shutdown()
 
     configs = [
         DynamicsModelConfig(
@@ -99,20 +104,10 @@ def main() -> None:
             v_list, p_list = ensemble_model(v_list)
             print(f"Completed step {i} of {OUTER_STEPS}")
 
+
             for j, v in enumerate(v_list):
                 trajectory_plots[j, :, :, :, i] = get_tensor_from_grid_variables(v)
                 vorticity_plots[j, :, :, i] = get_vorticity_from_grid_variables(v)
-
-            # # Update velocity fields and store results
-            # for j, (v_new, _) in enumerate(results):
-            #     v_list[j] = v_new
-            #     trajectory_plots[j, :, 0, :, :, i] = (
-            #         v_new[0].data.detach().cpu().clone()
-            #     )
-            #     trajectory_plots[j, :, 1, :, :, i] = (
-            #         v_new[1].data.detach().cpu().clone()
-            #     )
-            #     vorticity_plots[j, :, :, :, i] = vorticity(v_new)
 
     # torch.save(trajectory_plot, f"trajectory_ensemble_{j}_angle_{INLET_ANGLES[j]}.pt")
 
@@ -125,13 +120,15 @@ def main() -> None:
         for j in range(NUM_ENSEMBLE)
     ]
 
-    figure_dir = "figures/torch_cfd"
+    figure_dir = "figures"
     os.makedirs(figure_dir, exist_ok=True)
+
+    anim_name = f"re{RE}_nx{NX}_dt{HF_DT}.mp4"
 
     create_animation_from_tensors(
         vel_mag,
         fps=10,
-        file_name=f"{figure_dir}/velocity_magnitude_ensemble.mp4",
+        file_name=f"{figure_dir}/vel_{anim_name}",
         colormaps="viridis",
         titles=[f"Angle: {INLET_ANGLES[j]}°" for j in range(NUM_ENSEMBLE)],
         normalize=False,
@@ -139,7 +136,7 @@ def main() -> None:
     create_animation_from_tensors(
         [vorticity_plots[j, :, :, :] for j in range(NUM_ENSEMBLE)],
         fps=10,
-        file_name=f"{figure_dir}/vorticity_trajectory_ensemble.mp4",
+        file_name=f"{figure_dir}/vort_{anim_name}",
         colormaps="viridis",
         titles=[f"Angle: {INLET_ANGLES[j]}°" for j in range(NUM_ENSEMBLE)],
         vmin=-30,
