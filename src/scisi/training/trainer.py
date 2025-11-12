@@ -89,18 +89,13 @@ class Trainer:
 
         # Initialize mixed precision
         self.mixed_precision_warmup = mixed_precision_warmup
-        if (self.mixed_precision_warmup > 0) and (self.device == "cuda"):
+        if (self.mixed_precision_warmup > 0) and (self.device != "cpu"):
             logger.info(f"Mixed precision warmup: {self.mixed_precision_warmup}")
             self.full_precision = False
-            self.scaler = torch.amp.GradScaler()
+            self.scaler = torch.amp.GradScaler(self.device)
             self._train_step = self._train_step_mixed_precision
         else:
-            if (self.mixed_precision_warmup > 0) and (self.device != "cuda"):
-                logger.info(
-                    f"Mixed precision not compatible with device {self.device}, using full precision"
-                )
-            else:
-                logger.info(f"Mixed precision warmup not set, using full precision")
+            logger.info(f"Mixed precision warmup not set, using full precision")
             self.full_precision = True
             self._train_step = self._train_step_full_precision
 
@@ -156,7 +151,7 @@ class Trainer:
         """Train the model for one step using mixed precision."""
         self.optimizer.zero_grad()
 
-        with torch.autocast(device_type=self.device, dtype=torch.bfloat16):
+        with torch.amp.autocast(device_type=self.device, dtype=torch.bfloat16):
             loss = self._compute_loss(batch)
 
         self.scaler.scale(loss).backward()

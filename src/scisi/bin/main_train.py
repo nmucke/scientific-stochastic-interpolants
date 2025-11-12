@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = True
+CONTINUE_FROM_CHECKPOINT = False
 CHECKPOINT_PROJECT = "stochastic_navier_stokes"
 CHECKPOINT_NAME = "vivid-otter-65"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
@@ -36,7 +36,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
-    config_name="stochastic_navier_stokes.yaml",
+    config_name="stochastic_navier_stokes_pde_transformer.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
@@ -60,7 +60,7 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")
-    logger.info(f"URL: {tracker.url}")
+    # logger.info(f"URL: {tracker.url}")
     logger.info(f"Name: {tracker.name}")
 
     logger.info(f"Instantiating preprocesser...")

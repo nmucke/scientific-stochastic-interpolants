@@ -20,6 +20,9 @@ def set_device(cfg: DictConfig) -> None:
         torch.backends.cuda.enable_math_sdp(True)
         
         cfg.trainer.device = "cuda"
+    elif torch.backends.mps.is_available():
+        logger.info(f"MPS is available. Using MPS.")
+        cfg.trainer.device = "mps"
     else:
-        logger.info(f"CUDA is not available. Using CPU.")
+        logger.info(f"CUDA and MPS are not available. Using CPU.")
         cfg.trainer.device = "cpu"
