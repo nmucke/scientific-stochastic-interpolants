@@ -1,9 +1,14 @@
 import logging
 import os
 import pdb
+from datetime import datetime
+from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
+from aurora_lib.batch_adapter import BatchAdapter
+from aurora_lib.load_data import load_batch
 
 from scisi.data.load_data import load_stochastic_navier_stokes
 from scisi.preprocessing.preprocessor import Preprocesser
@@ -186,8 +191,7 @@ class KNMIDataset(torch.utils.data.Dataset):
 
             for trajectory in range(self.num_trajectories):
                 tas, ym, time, self.lat, self.lon = self._load_file(
-                    self.paths[trajectory], 
-                    self.files[trajectory]
+                    self.paths[trajectory], self.files[trajectory]
                 )
 
                 self.data.append(tas)
@@ -268,8 +272,7 @@ class KNMIDataset(torch.utils.data.Dataset):
             logger.info(f"Using existing cache directory {self.cache_dir}...")
 
             tas, ym, time, self.lat, self.lon = self._load_file(
-                self.paths[0], 
-                self.files[0]
+                self.paths[0], self.files[0]
             )
 
             self.num_channels = tas.shape[1]
@@ -291,8 +294,7 @@ class KNMIDataset(torch.utils.data.Dataset):
             for trajectory in range(self.num_trajectories):
 
                 tas, ym, time, self.lat, self.lon = self._load_file(
-                    self.paths[0], 
-                    self.files[trajectory]
+                    self.paths[0], self.files[trajectory]
                 )
 
                 self.num_channels = tas.shape[1]
@@ -570,3 +572,50 @@ class WeatherDataset(torch.utils.data.Dataset):
             return {
                 "x": sample,
             }
+
+
+class AuroraDataset(torch.utils.data.Dataset):
+    """Dataset for the Aurora data."""
+
+    def __init__(
+        self,
+        datetimes: list[str],
+        cache_dir: str,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Initialize the dataset.
+
+        Args:
+            paths: List of paths to the data.
+        """
+        self.datetimes = [datetime.strptime(dt, "%Y-%m-%d") for dt in datetimes]
+
+        self.cache_dir = cache_dir
+
+        logger.info(f"Loading initial aurora batch...")
+        aurora_batch = load_batch(day=self.datetimes[0], cache_path=self.cache_dir)
+        self.batch_adapter = BatchAdapter(
+            aurora_batch.metadata, aurora_batch.static_vars
+        )
+
+        self.lat = aurora_batch.metadata.lat
+
+        del aurora_batch
+
+    def __len__(self) -> int:
+        """Get the length of the dataset."""
+        return len(self.datetimes)
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get the item at the given index."""
+
+        aurora_batch = load_batch(day=self.datetimes[idx], cache_path=self.cache_dir)
+
+        x, field_history = self.batch_adapter.aurora_to_scisi(aurora_batch)
+
+        return {
+            "base": x.squeeze(0),
+            "field_history": field_history.squeeze(0),
+            "target": x.squeeze(0),
+        }

@@ -1,5 +1,5 @@
 import pdb
-from typing import List
+from typing import Any, List
 
 import hydra
 import torch
@@ -83,6 +83,7 @@ class UNet(nn.Module):
         padding: str = "torch.nn.ZeroPad2d",
         attention_in_layers: List[bool] = [False, False, False, False],
         attention: dict = {"_target_": "torch.nn.Identity"},
+        **kwargs: Any,
     ) -> None:
         """
         Initialize UNet.
@@ -189,7 +190,7 @@ class UNet(nn.Module):
         self.output_conv = get_init_conv(
             in_channels=hidden_channels[0],
             out_channels=out_channels,
-            **init_conv_args,
+            **init_conv_args,  # type: ignore[arg-type]
         )
 
     def forward(

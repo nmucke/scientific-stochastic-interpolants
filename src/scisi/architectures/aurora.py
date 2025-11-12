@@ -1,4 +1,5 @@
-from typing import Any
+import pdb
+from typing import Any, Optional
 
 import torch
 import torch.nn as nn
@@ -13,11 +14,10 @@ class AuroraWrapper(nn.Module):
 
     def __init__(
         self,
-        batch_adapter: BatchAdapter,
         in_channels: int,
         out_channels: int,
         len_field_history: int,
-        use_lora: bool = False,
+        batch_adapter: Optional[BatchAdapter] = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -70,14 +70,14 @@ class AuroraWrapper(nn.Module):
             torch.Tensor: Output tensor [B, C_out, H, W].
         """
 
-        field_history = torch.cat(
+        field_history = torch.stack(
             [conv(x, field_history[..., i]) for i, conv in enumerate(self.init_convs)],
             dim=-1,
         )
-        aurora_batch = self.batch_adapter.scisi_to_aurora(field_history)
+        aurora_batch = self.batch_adapter.scisi_to_aurora(field_history)  # type: ignore[union-attr]
 
         pred = self.model.forward(aurora_batch, pseudo_time=cond)
 
-        x_pred, _ = self.batch_adapter.aurora_to_scisi(pred)
+        x_pred, _ = self.batch_adapter.aurora_to_scisi(pred)  # type: ignore[union-attr]
 
         return x_pred
