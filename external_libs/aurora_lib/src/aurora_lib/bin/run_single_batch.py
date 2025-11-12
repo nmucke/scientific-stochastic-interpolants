@@ -13,7 +13,7 @@ def main() -> None:
     batch = load_batch()
     print("Batch loaded")
 
-    model = AuroraModelWrapper()
+    model = AuroraModelWrapper(autocast=False)
     print("Model loaded")
 
     with torch.no_grad():
@@ -24,8 +24,8 @@ def main() -> None:
 
     batch_adapter = BatchAdapter(batch.metadata, batch.static_vars)
 
-    x, field_history = batch_adapter.aurora_to_scisi(batch)
-    batch1 = batch_adapter.scisi_to_aurora(x, field_history)
+    _, field_history = batch_adapter.aurora_to_scisi(batch)
+    batch1 = batch_adapter.scisi_to_aurora(field_history)
 
     for key in batch1.surf_vars.keys():
         print(

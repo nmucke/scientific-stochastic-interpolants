@@ -17,6 +17,7 @@ class AuroraWrapper(nn.Module):
         in_channels: int,
         out_channels: int,
         len_field_history: int,
+        use_lora: bool = False,
         *args: Any,
         **kwargs: Any,
     ) -> None:
