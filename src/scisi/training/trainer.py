@@ -130,7 +130,7 @@ class Trainer:
 
         # Sample pseudo-time
         batch["t"] = torch.abs(
-            torch.randn(batch["base"].shape[0], 1, device=self.device)
+            torch.rand(batch["base"].shape[0], 1, device=self.device)
         )
 
         # Sample noise

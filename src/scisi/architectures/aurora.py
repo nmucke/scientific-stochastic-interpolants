@@ -74,10 +74,14 @@ class AuroraWrapper(nn.Module):
             [conv(x, field_history[..., i]) for i, conv in enumerate(self.init_convs)],
             dim=-1,
         )
+
         aurora_batch = self.batch_adapter.scisi_to_aurora(field_history)  # type: ignore[union-attr]
 
-        pred = self.model.forward(aurora_batch, pseudo_time=cond)
+        pred = self.model.forward(aurora_batch, pseudo_time=cond[0])
 
         x_pred, _ = self.batch_adapter.aurora_to_scisi(pred)  # type: ignore[union-attr]
+
+        zeros_pad = torch.zeros(x_pred.shape[0], x_pred.shape[1], 1, x_pred.shape[3])
+        x_pred = torch.cat([x_pred, zeros_pad], dim=2)
 
         return x_pred

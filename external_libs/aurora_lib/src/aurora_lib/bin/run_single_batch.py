@@ -18,6 +18,21 @@ def main() -> None:
     model = AuroraModelWrapper(autocast=False)
     print("Model loaded")
 
+    batch_adapter = BatchAdapter(batch.metadata, batch.static_vars)
+
+    _, field_history = batch_adapter.aurora_to_scisi(batch)
+    batch1 = batch_adapter.scisi_to_aurora(field_history)
+
+    zeros_pad = torch.zeros(
+        field_history.shape[0],
+        field_history.shape[1],
+        1,
+        field_history.shape[3],
+        field_history.shape[4],
+    )
+    field_history = torch.cat([field_history, zeros_pad], dim=2)
+    pdb.set_trace()
+
     with torch.no_grad():
         pred1 = model.forward(batch, pseudo_time=torch.tensor([1.0]))
     print("Prediction made")
@@ -28,6 +43,8 @@ def main() -> None:
 
     _, field_history = batch_adapter.aurora_to_scisi(batch)
     batch1 = batch_adapter.scisi_to_aurora(field_history)
+
+    pdb.set_trace()
 
     for key in batch1.surf_vars.keys():
         print(

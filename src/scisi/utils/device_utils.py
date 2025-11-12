@@ -5,6 +5,7 @@ from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
 
+
 def get_device() -> str:
     """Get the device of the model."""
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -18,11 +19,11 @@ def set_device(cfg: DictConfig) -> None:
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
         torch.backends.cuda.enable_math_sdp(True)
-        
+
         cfg.trainer.device = "cuda"
-    elif torch.backends.mps.is_available():
-        logger.info(f"MPS is available. Using MPS.")
-        cfg.trainer.device = "mps"
+    # elif torch.backends.mps.is_available():
+    #     logger.info(f"MPS is available. Using MPS.")
+    #     cfg.trainer.device = "mps"
     else:
         logger.info(f"CUDA and MPS are not available. Using CPU.")
         cfg.trainer.device = "cpu"

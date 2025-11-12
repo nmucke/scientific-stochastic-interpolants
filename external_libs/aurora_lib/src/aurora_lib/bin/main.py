@@ -24,5 +24,6 @@ batch = Batch(
 )
 
 prediction = model.forward(batch)
+pdb.set_trace()
 
 print(prediction.surf_vars["2t"].shape)
