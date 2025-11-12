@@ -4,10 +4,17 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13, <3.14"
-dependencies = []
+dependencies = [
+    "gcsfs>=2025.10.0",
+    "huggingface-hub>=1.1.2",
+    "matplotlib>=3.10.7",
+    "microsoft-aurora>=1.8.0",
+    "weatherbench2",
+]
 
 [tool.uv.sources]
 scientific-stochastic-interpolants = { workspace = true }
+weatherbench2 = { git = "https://github.com/google-research/weatherbench2.git" }
 
 [tool.uv.build-backend]
 module-name = "aurora_lib"
