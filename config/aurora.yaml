@@ -1,0 +1,92 @@
+experiment_tracking:
+  project: aurora
+
+len_field_history: 2
+
+preprocesser: null
+# Data
+train_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 1
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.AuroraDataset
+    datetimes:
+      - "2022-05-11"
+      - "2022-06-11"
+      - "2022-07-11"
+      - "2022-08-11"
+    cache_dir: data/aurora
+
+val_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 1
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.AuroraDataset
+    datetimes:
+      - "2022-05-11"
+      - "2022-06-11"
+    cache_dir: data/aurora
+
+test_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 1
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.AuroraDataset
+    datetimes:
+      - "2022-05-11"
+      - "2022-06-11"
+    cache_dir: data/aurora
+
+model:
+  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
+  interpolation:
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: 1.0
+    wiener_process: true
+  drift_model:
+    _target_: scisi.architectures.aurora.AuroraWrapper
+    in_channels: 69
+    out_channels: 69
+    len_field_history: ${len_field_history}
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 1000
+  eta_min: 0.00001
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  # T_0: 25
+  # T_mult: 1
+  # eta_min: 0.00001
+
+loss_fn:
+  _target_: scisi.training.loss_functions.LatitudeWeightedMSELoss
+
+
+trainer:
+  _target_: scisi.training.trainer.Trainer
+  num_epochs: 1000
+  device: cuda
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 50
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 200

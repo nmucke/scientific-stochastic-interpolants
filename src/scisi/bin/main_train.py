@@ -64,7 +64,10 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Name: {tracker.name}")
 
     logger.info(f"Instantiating preprocesser...")
-    preprocesser = hydra.utils.instantiate(cfg.preprocesser)
+    if cfg.preprocesser is not None:
+        preprocesser = hydra.utils.instantiate(cfg.preprocesser)
+    else:
+        preprocesser = None
 
     logger.info(f"Preparing train dataloader...")
     train_dataloader = hydra.utils.instantiate(
@@ -86,6 +89,9 @@ def main(cfg: DictConfig) -> None:
         model.load_state_dict(torch.load(CHECKPOINT_PATH))
 
     logger.info(f"Model parameters: {count_model_parameters(model)/1e6:.2f}M")
+
+    if "AuroraWrapper" in cfg.model.drift_model._target_:
+        model.drift_model.batch_adapter = train_dataloader.dataset.batch_adapter
 
     logger.info(f"Instantiating optimizer: {cfg.optimizer._target_}")
     optimizer = hydra.utils.instantiate(

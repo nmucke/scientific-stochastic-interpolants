@@ -2,7 +2,8 @@
 *.lock
 
 # Data
-data/stochastic_navier_stokes/
+data/
+external_libs/aurora_lib/data/
 *.npz
 
 # Logs
