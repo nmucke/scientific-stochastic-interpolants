@@ -4,16 +4,52 @@ Copyright (c) Microsoft Corporation. Licensed under the MIT license.
 Based on https://github.com/microsoft/aurora/blob/7fa85ffd97eb5bef15136711a796de4e8b919794/aurora/foundry/demo/hres_t0_data.py
 """
 
+import os
 import pickle
+import ssl
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+import certifi
 import fsspec
 import numpy as np
 import torch
 import xarray as xr
 from aurora import Batch, Metadata
 from huggingface_hub import hf_hub_download
+
+# Configure SSL certificates for gcsfs (used by fsspec for gs:// URLs)
+# This is necessary on remote machines where system certificates may not be available
+cert_path = certifi.where()
+os.environ["SSL_CERT_FILE"] = cert_path
+os.environ["REQUESTS_CA_BUNDLE"] = cert_path
+
+# Create SSL context with certifi certificates for aiohttp (used by gcsfs)
+ssl_context = ssl.create_default_context(cafile=cert_path)
+
+# Configure aiohttp to use certifi's certificates
+# This is needed because aiohttp doesn't automatically use SSL_CERT_FILE
+try:
+    import aiohttp
+
+    # Configure aiohttp's default connector to use certifi's SSL context
+    # This will be used by gcsfs when it creates aiohttp sessions
+    original_connector = aiohttp.TCPConnector
+
+    class CertifiTCPConnector(aiohttp.TCPConnector):
+        def __init__(self, *args: Any, **kwargs: Any):
+            # Set SSL context if not explicitly provided
+            if "ssl" not in kwargs:
+                kwargs["ssl"] = ssl_context
+            super().__init__(*args, **kwargs)
+
+    # Monkey-patch aiohttp.TCPConnector to use certifi by default
+    aiohttp.TCPConnector = CertifiTCPConnector
+except ImportError:
+    pass  # aiohttp will be imported when gcsfs is used
+except Exception:
+    pass  # If this fails, environment variables should still work
 
 
 def load_batch(
@@ -38,6 +74,24 @@ def load_batch(
     return _load_batch(day.strftime("%Y-%m-%d"), Path(cache_path))
 
 
+def _get_gcs_mapper(url: str) -> fsspec.AbstractFileSystem:
+    """Get an fsspec mapper for a GCS URL with proper SSL configuration."""
+    # Ensure SSL context is configured before creating the mapper
+    # This function ensures gcsfs uses certifi's certificates
+    try:
+        import gcsfs
+
+        # Create a GCS filesystem with explicit SSL context
+        fs = gcsfs.GCSFileSystem()
+        # The SSL context should already be configured via aiohttp monkey-patch
+        # but we can also pass it explicitly if needed
+        return fsspec.get_mapper(url, client=fs)
+    except Exception:
+        # Fallback to default fsspec.get_mapper
+        # Environment variables should still work
+        return fsspec.get_mapper(url)
+
+
 def _load_batch(day: str, cache_path: Path) -> Batch:
 
     cache_path = cache_path.expanduser()
@@ -49,7 +103,7 @@ def _load_batch(day: str, cache_path: Path) -> Batch:
 
     # Download the surface-level variables.
     if not (cache_path / f"{day}-surface-level.nc").exists():
-        ds = ds or xr.open_zarr(fsspec.get_mapper(url), chunks=None)
+        ds = ds or xr.open_zarr(_get_gcs_mapper(url), chunks=None)
         surface_vars = [
             "10m_u_component_of_wind",
             "10m_v_component_of_wind",
@@ -83,7 +137,7 @@ def _load_batch(day: str, cache_path: Path) -> Batch:
 
     # Download the atmospheric variables.
     if not (cache_path / f"{day}-atmospheric.nc").exists():
-        ds = ds or xr.open_zarr(fsspec.get_mapper(url), chunks=None)
+        ds = ds or xr.open_zarr(_get_gcs_mapper(url), chunks=None)
         atmos_vars = [
             "temperature",
             "u_component_of_wind",

@@ -12,6 +12,16 @@ from aurora_lib.model_wrapper import AuroraModelWrapper
 
 
 def main() -> None:
+
+    model = AuroraModelWrapper(load_checkpoint=True)
+
+    weights_path = "/home/ntmucke/scientific-stochastic-interpolants/aurora_model_weights/aurora_model.pth"
+
+    # Use model.state_dict() for saving weights only (not optimizer etc.)
+    torch.save(model.state_dict(), weights_path)
+    print(f"Model weights saved to {weights_path}")
+
+    pdb.set_trace()
     batch = load_batch()
     print("Batch loaded")
 

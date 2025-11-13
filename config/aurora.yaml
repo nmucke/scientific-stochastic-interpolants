@@ -18,7 +18,7 @@ train_data:
       - "2022-06-11"
       - "2022-07-11"
       - "2022-08-11"
-    cache_dir: data/aurora
+    cache_dir: /scratch/ntmucke/data/aurora
 
 val_data:
   # Dataloader
@@ -31,7 +31,7 @@ val_data:
     datetimes:
       - "2022-05-11"
       - "2022-06-11"
-    cache_dir: data/aurora
+    cache_dir: /scratch/ntmucke/data/aurora
 
 test_data:
   # Dataloader
@@ -44,7 +44,7 @@ test_data:
     datetimes:
       - "2022-05-11"
       - "2022-06-11"
-    cache_dir: data/aurora
+    cache_dir: /scratch/ntmucke/data/aurora
 
 model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant

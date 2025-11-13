@@ -34,7 +34,13 @@ class AuroraWrapper(nn.Module):
 
         self.batch_adapter = batch_adapter
 
-        self.model = AuroraModelWrapper(*args, **kwargs)
+        self.model = AuroraModelWrapper(load_checkpoint=False, autocast=True, **kwargs)
+        self.model.load_state_dict(
+            torch.load(
+                "/home/ntmucke/scientific-stochastic-interpolants/aurora_model_weights/aurora_model.pth"
+            ),
+            strict=False,
+        )
 
         self.init_convs = nn.ModuleList(
             [
@@ -81,7 +87,14 @@ class AuroraWrapper(nn.Module):
 
         x_pred, _ = self.batch_adapter.aurora_to_scisi(pred)  # type: ignore[union-attr]
 
-        zeros_pad = torch.zeros(x_pred.shape[0], x_pred.shape[1], 1, x_pred.shape[3])
+        zeros_pad = torch.zeros(
+            x_pred.shape[0],
+            x_pred.shape[1],
+            1,
+            x_pred.shape[3],
+            dtype=x_pred.dtype,
+            device=x_pred.device,
+        )
         x_pred = torch.cat([x_pred, zeros_pad], dim=2)
 
         return x_pred

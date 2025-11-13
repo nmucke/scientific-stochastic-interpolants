@@ -44,3 +44,6 @@ env/
 venv/
 .env
 .venv/
+
+# Aurora model weights
+aurora_model_weights/*

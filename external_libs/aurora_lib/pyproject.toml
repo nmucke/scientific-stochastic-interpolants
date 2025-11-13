@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13, <3.14"
 dependencies = [
+    "certifi",
     "gcsfs>=2025.10.0",
     "matplotlib>=3.10.7",
     "microsoft-aurora>=1.8.0",

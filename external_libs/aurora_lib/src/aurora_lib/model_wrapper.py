@@ -94,10 +94,11 @@ class Swin3DTransformerBackboneWrapper(nn.Module):
 
 
 class AuroraModelWrapper(AuroraSmallPretrained):
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, load_checkpoint: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        self.load_checkpoint()
+        if load_checkpoint:
+            self.load_checkpoint()
 
         self.backbone: Swin3DTransformerBackboneWrapper = (
             Swin3DTransformerBackboneWrapper(self.backbone)

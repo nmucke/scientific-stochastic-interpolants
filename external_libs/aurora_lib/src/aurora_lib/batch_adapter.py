@@ -71,19 +71,23 @@ class BatchAdapter:
         b, t, h, w = surf_vars["2t"].shape
 
         field_history = torch.zeros(
-            b, self.num_surf_vars + self.num_atmos_vars * self.num_atmos_levels, h, w, t
+            b,
+            self.num_surf_vars + self.num_atmos_vars * self.num_atmos_levels,
+            h,
+            w,
+            t,
+            dtype=surf_vars["2t"].dtype,
+            device=surf_vars["2t"].device,
         )
 
         for t_idx in range(t):
             for key in surf_vars.keys():
-                field_history[:, self.surf_var_to_c_idx[key], :, :, t_idx] = surf_vars[
-                    key
-                ][:, t_idx]
+                idx = self.surf_var_to_c_idx[key]
+                field_history[:, idx, :, :, t_idx] = surf_vars[key][:, t_idx]
 
             for key in atmos_vars.keys():
-                field_history[:, self.atmos_var_to_c_idx[key], :, :, t_idx] = (
-                    atmos_vars[key][:, t_idx]
-                )
+                idx = torch.tensor(self.atmos_var_to_c_idx[key], dtype=torch.int32)
+                field_history[:, idx, :, :, t_idx] = atmos_vars[key][:, t_idx]
 
         # field_cond = torch.zeros(b, self.num_static_vars, h, w)
         # for key in static_vars.keys():
