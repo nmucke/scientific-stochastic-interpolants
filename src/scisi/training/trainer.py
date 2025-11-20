@@ -129,9 +129,7 @@ class Trainer:
             batch[key] = value.to(self.device)
 
         # Sample pseudo-time
-        batch["t"] = torch.abs(
-            torch.rand(batch["base"].shape[0], 1, device=self.device)
-        )
+        batch["t"] = torch.rand(batch["base"].shape[0], 1, device=self.device)
 
         # Sample noise
         batch["noise"] = torch.randn(batch["base"].shape, device=self.device)
