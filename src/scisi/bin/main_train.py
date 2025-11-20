@@ -60,7 +60,7 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")
-    # logger.info(f"URL: {tracker.url}")
+    logger.info(f"URL: {tracker.url}")
     logger.info(f"Name: {tracker.name}")
 
     logger.info(f"Instantiating preprocesser...")
