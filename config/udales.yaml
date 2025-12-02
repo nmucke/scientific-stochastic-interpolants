@@ -1,0 +1,131 @@
+experiment_tracking:
+  project: udales
+
+len_field_history: 5
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  target:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+
+# Data
+train_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.UDalesDataset
+    paths:
+      - data/udales
+    files: (1, 4)
+    len_field_history: ${len_field_history}
+    starting_time: 0
+    ending_time: 200
+    skip_steps: 1
+    save_in_memory: False
+    cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/udales/train
+    use_exisiting_cache: False
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: False
+  dataset:
+    _target_: scisi.data.datasets.UDalesDataset
+    paths:
+      - data/udales
+    files: (1, 2)
+    len_field_history: ${len_field_history}
+    starting_time: 0
+    ending_time: 200
+    skip_steps: 1
+    save_in_memory: False
+    cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/udales/val
+    use_exisiting_cache: False
+
+
+test_data:
+  _target_: scisi.data.datasets.UDalesDataset
+  paths:
+    - data/stochastic_navier_stokes
+  files: (2, 4)
+  len_field_history: ${len_field_history}
+  starting_time: 0
+  ending_time: 200
+  skip_steps: 1
+  save_in_memory: False
+  use_exisiting_cache: False
+  train_or_test: test
+
+model:
+  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
+  interpolation:
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: 1.0
+    wiener_process: true
+  drift_model:
+    _target_: scisi.architectures.u_net.UNet
+    in_channels: 5 # number of channels in the input
+    out_channels: 5 # number of channels in the output
+    hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
+    cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
+    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
+    len_field_history: ${len_field_history} # number of field history steps
+    field_cond_channels: null # number of channels in the field conditional input
+    pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
+    pars_cond_embedding_dim: null # dimension of the pars conditional embedding
+    multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
+    num_blocks: 2 # number of convnext blocks per layer
+    dropout_rate: 0.1 # dropout rate
+    padding: torch.nn.CircularPad2d # padding module
+    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention: # attention module and its arguments
+      target: scisi.architectures.attention.SpatialAttention # attention module
+      pos_embedding_type: rotary # positional embedding type
+      heads: 4 # number of heads
+      patch_size: 2 # patch size
+      dropout_rate: 0.1 # dropout rate
+      embedding_dim: 512 # embedding dimension
+      # mlp_dim: 1024 # mlp dimension
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 1000
+  eta_min: 0.00001
+  # _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  # T_0: 25
+  # T_mult: 1
+  # eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.trainer.Trainer
+  num_epochs: 1000
+  device: cuda
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 50
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 200

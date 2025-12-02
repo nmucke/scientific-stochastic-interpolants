@@ -1,3 +1,5 @@
+# scp -r delftblue:/scratch/ntmucke/processed_data/* /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
+
 import logging
 import pdb
 
@@ -11,7 +13,6 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
-from scisi.training.gradient_clipping import EmaGradientClipper
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
@@ -36,12 +37,33 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
-    config_name="stochastic_navier_stokes_pde_transformer.yaml",
+    config_name="udales.yaml",
+    # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
 
+    # import xarray as xr
+    # for i in range(4):
+
+    #     new_ds = xr.Dataset(
+    #         data_vars={
+    #             "w": (("time", "x", "y"), torch.randn(250, 128, 128)),
+    #             "thl": (("time", "x", "y"), torch.randn(250, 128, 128)),
+    #             "qt": (("time", "x", "y"), torch.randn(250, 128, 128)),
+    #             "u": (("time", "x", "y"), torch.randn(250, 128, 128)),
+    #             "v": (("time", "x", "y"), torch.randn(250, 128, 128)),
+    #         },
+    #         coords={
+    #             "time": torch.arange(250),
+    #             "x": torch.arange(128),
+    #             "y": torch.arange(128),
+    #         },
+    #     )
+    #     new_ds.to_netcdf(f"data/udales/sim_{i+1}.nc")
+
+    # pdb.set_trace()
     set_device(cfg)
 
     if CONTINUE_FROM_CHECKPOINT:

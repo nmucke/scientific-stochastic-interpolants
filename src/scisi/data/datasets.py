@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import torch
+import xarray as xr
 from aurora_lib.batch_adapter import BatchAdapter
 from aurora_lib.load_data import load_batch
 
@@ -619,3 +620,177 @@ class AuroraDataset(torch.utils.data.Dataset):
             "field_history": field_history.squeeze(0),
             "target": x.squeeze(0),
         }
+
+
+class UDalesDataset(torch.utils.data.Dataset):
+    """Dataset for the stochastic Navier-Stokes data."""
+
+    def __init__(
+        self,
+        paths: str,
+        files: str,
+        len_field_history: int,
+        preprocesser: Preprocesser | None = None,
+        train_or_test: str = "train",
+        starting_time: int = 0,
+        ending_time: int = 200,
+        skip_steps: int = 1,
+        save_in_memory: bool = True,
+        cache_dir: str | None = None,
+        use_exisiting_cache: bool = False,
+    ) -> None:
+        """
+        Initialize the dataset.
+
+        Args:
+            paths: List of paths to the data.
+            files: String of files to load. (e.g. "(1,10)" to load files 1 to 10)
+            len_field_history: Length of the history.
+            preprocesser: Preprocesser to use.
+            train_or_test: Train or test.
+            starting_time: Starting time.
+            ending_time: Ending time.
+            skip_steps: Skip steps.
+            save_in_memory: Save in memory.
+            cache_dir: Cache directory.
+            use_exisiting_cache: Use existing cache.
+        """
+        self.paths = paths
+
+        # Convert string tuple '(a,b)' to tuple of ints
+        ids = tuple(int(x) for x in files.strip("()").split(","))
+        self.files = [f"sim_{i}.nc" for i in range(ids[0], ids[1] + 1)]
+        self.files = [f"{paths[0]}/{file}" for file in self.files]
+        self.starting_time = starting_time
+        self.ending_time = ending_time
+        self.skip_steps = skip_steps
+        self.num_steps = (ending_time - starting_time) // skip_steps + 1
+        self.len_field_history = len_field_history
+        self.preprocesser = preprocesser
+        self.train_or_test = train_or_test
+        self.save_in_memory = save_in_memory
+        self.cache_dir = cache_dir
+        self.use_exisiting_cache = use_exisiting_cache
+
+        self.num_trajectories = len(self.files)
+
+        self.height = 128
+        self.width = 128
+        self.num_channels = 5
+
+        if self.train_or_test == "train":
+            if not self.use_exisiting_cache and not self.save_in_memory:
+                self._prepare_data_windows()
+        else:
+            self.data = torch.stack(
+                [self._load_file(file) for file in self.files], dim=0
+            )
+
+    def _load_file(self, file: str) -> torch.Tensor:
+        """Load the file."""
+        data = xr.open_dataset(file)
+
+        w = torch.from_numpy(data.w.values)
+        thl = torch.from_numpy(data.thl.values)
+        qt = torch.from_numpy(data.qt.values)
+        u = torch.from_numpy(data.u.values)
+        v = torch.from_numpy(data.v.values)
+
+        torch_data = torch.stack(
+            [w, thl, qt, u, v], dim=0
+        )  # [num_channels, num_steps, height, width]
+        return torch_data.permute(
+            0, 2, 3, 1
+        )  # [num_channels, height, width, num_steps]
+
+    def _prepare_data_windows(self) -> None:
+        """Prepare the data windows."""
+
+        logger.info(
+            f"Preparing data windows for {self.num_trajectories} "
+            f"trajectories with {self.num_steps} steps and "
+            f"{self.len_field_history} history."
+        )
+
+        if self.save_in_memory:
+            logger.info(f"Saving data windows to memory...")
+            self.data = torch.zeros(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1),
+                self.num_channels,
+                self.height,
+                self.width,
+                self.len_field_history + 1,
+            )
+        else:
+            logger.info(f"Saving data windows to cache directory {self.cache_dir}...")
+            # Create cache folder for storing data windows
+            os.makedirs(self.cache_dir, exist_ok=True)  # type: ignore[arg-type]
+
+        counter = 0
+        for file in self.files:
+            sample = self._load_file(file)
+
+            for step in range(self.num_steps - self.len_field_history - 1):
+                window = sample[:, :, :, step : step + self.len_field_history + 1]
+                if self.save_in_memory:
+                    self.data[counter] = window
+                else:
+                    np.savez(
+                        os.path.join(self.cache_dir, f"sample_{counter}.npz"),  # type: ignore[arg-type]
+                        data=window.numpy(),
+                    )
+                counter += 1
+
+    def __len__(self) -> int:
+        """Get the length of the dataset."""
+        if self.train_or_test == "train":
+            return int(
+                self.num_trajectories * (self.num_steps - self.len_field_history - 1)
+            )
+        else:
+            return int(self.num_trajectories)
+
+    def _prepare_train_sample(self, sample: torch.Tensor) -> dict:
+        """
+        Prepare the train sample.
+
+        Returns:
+            dict: Sample.
+                'field_history': Field history. [B, C, H, W, L]
+                'base': Base. [B, C, H, W]
+                'target': Target. [B, C, H, W]
+        """
+
+        field_history = sample[:, :, :, :-1]
+        base = sample[:, :, :, -2]
+        target = sample[:, :, :, -1]
+
+        if self.preprocesser is not None:
+            sample = self.preprocesser.transform(
+                base=base,
+                target=target,
+                field_history=field_history,
+            )
+
+        return {
+            "field_history": sample["field_history"],
+            "base": sample["base"],
+            "target": sample["target"],
+        }
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get the item at the given index."""
+
+        if self.save_in_memory:
+            sample = self.data[idx]
+        else:
+            sample = np.load(os.path.join(self.cache_dir, f"sample_{idx}.npz"))["data"]  # type: ignore[arg-type]
+
+            sample = torch.from_numpy(sample)
+
+        if self.train_or_test == "train":
+            return self._prepare_train_sample(sample)
+        else:
+            return {
+                "x": sample,
+            }
