@@ -27,7 +27,7 @@ train_data:
     _target_: scisi.data.datasets.UDalesDataset
     paths:
       - data/udales
-    files: (1, 4)
+    files: (0, 3)
     len_field_history: ${len_field_history}
     starting_time: 0
     ending_time: 200
@@ -58,7 +58,7 @@ test_data:
   _target_: scisi.data.datasets.UDalesDataset
   paths:
     - data/stochastic_navier_stokes
-  files: (2, 4)
+  files: (2, 3)
   len_field_history: ${len_field_history}
   starting_time: 0
   ending_time: 200

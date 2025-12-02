@@ -1,4 +1,4 @@
-# scp -r delftblue:/scratch/ntmucke/processed_data/* /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
+# scp delftblue:/scratch/ntmucke/processed_data/* /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
 
 import logging
 import pdb
@@ -44,26 +44,6 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 )
 def main(cfg: DictConfig) -> None:
 
-    # import xarray as xr
-    # for i in range(4):
-
-    #     new_ds = xr.Dataset(
-    #         data_vars={
-    #             "w": (("time", "x", "y"), torch.randn(250, 128, 128)),
-    #             "thl": (("time", "x", "y"), torch.randn(250, 128, 128)),
-    #             "qt": (("time", "x", "y"), torch.randn(250, 128, 128)),
-    #             "u": (("time", "x", "y"), torch.randn(250, 128, 128)),
-    #             "v": (("time", "x", "y"), torch.randn(250, 128, 128)),
-    #         },
-    #         coords={
-    #             "time": torch.arange(250),
-    #             "x": torch.arange(128),
-    #             "y": torch.arange(128),
-    #         },
-    #     )
-    #     new_ds.to_netcdf(f"data/udales/sim_{i+1}.nc")
-
-    # pdb.set_trace()
     set_device(cfg)
 
     if CONTINUE_FROM_CHECKPOINT:
