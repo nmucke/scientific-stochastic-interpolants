@@ -1,7 +1,10 @@
 """Load data from the data directory."""
 
-import numpy as np
 import logging
+import os
+
+import numpy as np
+import xarray as xr
 
 logger = logging.getLogger(__name__)
 
@@ -19,4 +22,4 @@ def load_stochastic_navier_stokes(paths: str, files: str) -> np.ndarray:
     """
     logger.info(f"Loading data from {paths[0]}/{files[0]}")
     data = np.load(f"{paths[0]}/{files[0]}")
-    return data['state']
+    return data["state"]

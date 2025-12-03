@@ -2,7 +2,10 @@
 *.lock
 
 # Data
-data/
+data/aurora/
+data/knmi/
+data/weather/
+data/udales/
 external_libs/aurora_lib/data/
 *.npz
 

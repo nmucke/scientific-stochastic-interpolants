@@ -1,3 +1,5 @@
+# scp delftblue:/scratch/ntmucke/processed_data/* /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
+
 import logging
 import pdb
 
@@ -11,7 +13,6 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
-from scisi.training.gradient_clipping import EmaGradientClipper
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
@@ -36,7 +37,8 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
-    config_name="stochastic_navier_stokes_pde_transformer.yaml",
+    config_name="udales.yaml",
+    # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
