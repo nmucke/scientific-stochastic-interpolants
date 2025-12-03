@@ -6,6 +6,7 @@ data/aurora/
 data/knmi/
 data/weather/
 data/udales/
+data/stochastic_navier_stokes/
 external_libs/aurora_lib/data/
 *.npz
 
