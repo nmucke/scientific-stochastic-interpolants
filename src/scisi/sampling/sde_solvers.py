@@ -14,9 +14,10 @@ def euler_maruyama_step(
     field_history: torch.Tensor | None = None,
     field_cond: torch.Tensor | None = None,
     pars_cond: torch.Tensor | None = None,
+    mask: torch.Tensor = torch.tensor(1.0),
 ) -> torch.Tensor:
     """Euler-Maruyama step."""
-    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)
+    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)  # * mask
     drift = drift_model(x, t, field_history, field_cond, pars_cond)
     diffusion = diffusion_term(t)
     return x + drift * dt + diffusion * wiener_process
@@ -31,9 +32,10 @@ def heun_step(
     field_history: torch.Tensor | None = None,
     field_cond: torch.Tensor | None = None,
     pars_cond: torch.Tensor | None = None,
+    mask: torch.Tensor = torch.tensor(1.0),
 ) -> torch.Tensor:
     """Heun step."""
-    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)
+    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)  # * mask
 
     predictor_diffusion = diffusion_term(t)
     predictor_drift = drift_model(x, t, field_history, field_cond, pars_cond)

@@ -62,7 +62,8 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    config_name=f"stochastic_navier_stokes_posterior.yaml",
+    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    config_name=f"udales_posterior.yaml",
     # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
@@ -304,9 +305,12 @@ def main(posterior_cfg: DictConfig) -> None:
     plt.title("True (Observed)")
 
     plt.subplot(2, 4, 5)
+    metrics_str_list = ["RMSE", "LSiM"]
+    if project == "stochastic_navier_stokes":
+        metrics_str_list.append("Enstrophy error")
     plot_settings = {"linewidth": 3, "markersize": 10}
     for i, title in enumerate(["Posterior", "Prior"]):
-        for j, metric in enumerate(["RMSE", "LSiM", "Enstrophy error"]):
+        for j, metric in enumerate(metrics_str_list):
             plot_settings["color"] = COLORS[i]  # type: ignore[assignment]
             plot_settings["linestyle"] = LINESTYLES[j]  # type: ignore[assignment]
             plt.plot(

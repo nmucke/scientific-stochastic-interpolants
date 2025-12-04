@@ -674,6 +674,10 @@ class UDalesDataset(torch.utils.data.Dataset):
 
         self.num_trajectories = len(self.files)
 
+        self.mask = np.load(f"{paths[0]}/mask.npz")["mask"]
+        self.mask = torch.from_numpy(self.mask).unsqueeze(0)
+        self.mask = self.mask.to(dtype=torch.float32)
+
         self.height = 128
         self.width = 128
         self.num_channels = 5
@@ -690,18 +694,20 @@ class UDalesDataset(torch.utils.data.Dataset):
         """Load the file."""
         data = xr.open_dataset(file)
 
-        w = torch.from_numpy(data.w.values)
-        thl = torch.from_numpy(data.thl.values)
-        qt = torch.from_numpy(data.qt.values)
         u = torch.from_numpy(data.u.values)
         v = torch.from_numpy(data.v.values)
+        w = torch.from_numpy(data.w.values)
+        thl = torch.from_numpy(data.thl.values)
+        # qt = torch.from_numpy(data.qt.values)
 
         torch_data = torch.stack(
-            [w, thl, qt, u, v], dim=0
+            [u, v, w, thl], dim=0
         )  # [num_channels, num_steps, height, width]
-        return torch_data.permute(
+
+        torch_data = torch_data.permute(
             0, 2, 3, 1
         )  # [num_channels, height, width, num_steps]
+        return torch_data[..., self.starting_time : self.ending_time : self.skip_steps]
 
     def _prepare_data_windows(self) -> None:
         """Prepare the data windows."""
@@ -776,6 +782,7 @@ class UDalesDataset(torch.utils.data.Dataset):
             "field_history": sample["field_history"],
             "base": sample["base"],
             "target": sample["target"],
+            "field_cond": self.mask,
         }
 
     def __getitem__(self, idx: int) -> dict:
@@ -793,4 +800,5 @@ class UDalesDataset(torch.utils.data.Dataset):
         else:
             return {
                 "x": sample,
+                "field_cond": self.mask.unsqueeze(-1).repeat(1, 1, 1, sample.shape[-1]),
             }

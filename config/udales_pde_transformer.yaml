@@ -37,7 +37,7 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 16
   shuffle: True
   # Dataset
   dataset:
@@ -56,7 +56,7 @@ train_data:
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 32
+  batch_size: 16
   shuffle: False
   dataset:
     _target_: scisi.data.datasets.UDalesDataset
@@ -90,33 +90,19 @@ model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 1.0
+    gamma_multiplier: 0.1
     wiener_process: true
-  mask_path: data/udales/mask.npz
   drift_model:
-    _target_: scisi.architectures.u_net.UNet
+    _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
     in_channels: 4 # number of channels in the input
     out_channels: 4 # number of channels in the output
-    hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
-    cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
-    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
     len_field_history: ${len_field_history} # number of field history steps
+    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
+    patch_size: 4 # patch size
+    periodic: true # whether to use periodic padding
+    carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: 1 # number of channels in the field conditional input
-    pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
-    pars_cond_embedding_dim: null # dimension of the pars conditional embedding
-    multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
-    num_blocks: 2 # number of convnext blocks per layer
-    dropout_rate: 0.1 # dropout rate
-    padding: torch.nn.CircularPad2d # padding module
-    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
-    attention: # attention module and its arguments
-      target: scisi.architectures.attention.SpatialAttention # attention module
-      pos_embedding_type: rotary # positional embedding type
-      heads: 4 # number of heads
-      patch_size: 2 # patch size
-      dropout_rate: 0.1 # dropout rate
-      embedding_dim: 512 # embedding dimension
-      # mlp_dim: 1024 # mlp dimension
+
 
 optimizer:
   _target_: torch.optim.AdamW

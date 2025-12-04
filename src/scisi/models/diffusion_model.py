@@ -24,9 +24,10 @@ class DenoiseDiffusionModel(BaseModel):
         interpolation: nn.Module,
         denoise_model: nn.Module,
         diffusion_term: Optional[nn.Module] = None,
+        mask_path: Optional[str] = None,
     ) -> None:
         """Initialize Diffusion model."""
-        super(DenoiseDiffusionModel, self).__init__()
+        super(DenoiseDiffusionModel, self).__init__(mask_path=mask_path)
 
         self.interpolation = interpolation
         self.denoise_model = denoise_model
@@ -171,7 +172,7 @@ class DenoiseDiffusionModel(BaseModel):
         )
         diffusion = self.diffusion_term(t) * torch.randn_like(base)  # type: ignore[misc]
 
-        return base + drift * dt + diffusion * torch.sqrt(dt)
+        return base + drift * dt + diffusion * torch.sqrt(dt)  # * self.mask
 
     def sample(
         self,

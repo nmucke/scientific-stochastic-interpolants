@@ -23,9 +23,10 @@ class FlowMatchingModel(BaseModel):
         self,
         interpolation: nn.Module,
         drift_model: nn.Module,
+        mask_path: Optional[str] = None,
     ) -> None:
         """Initialize Flow Matching model."""
-        super(FlowMatchingModel, self).__init__()
+        super(FlowMatchingModel, self).__init__(mask_path=mask_path)
 
         self.interpolation = interpolation
         self.drift_model = drift_model

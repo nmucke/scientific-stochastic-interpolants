@@ -94,7 +94,7 @@ def get_all_trackio_runs(project: str) -> List[str]:
 
 # Example usage:
 if __name__ == "__main__":
-    PROJECT = "stochastic_navier_stokes"
+    PROJECT = "udales"
 
     # Get the best (most recent) run
     best_run = get_best_trackio_run(PROJECT, metric_name="val_loss", maximize=False)
