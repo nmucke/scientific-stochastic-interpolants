@@ -1,4 +1,16 @@
-# scp delftblue:/scratch/ntmucke/processed_data/* /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
+# rsync -avz --ignore-existing "delftblue:/home/ntmucke/processed_data/" /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/
+# scp /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/* "squamish:/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/data/udales/"
+
+# scp "squamish:/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/figures/udales/*" /Users/ntmucke/
+# rsync -avz --ignore-existing /Users/ntmucke/Code/scientific-stochastic-interpolants/data/udales/ "squamish:/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/data/udales/"
+
+
+# scp "squamish:/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/knmi/proud-rain-12/*" /Users/ntmucke/proud-rain-12
+# scp
+# scp "squamish:/export/scratch1/ntm/postdoc/SciGenML/data/knmi/*" "/Users/ntmucke/code/scientific-stochastic-interpolants/data/knmi"
+
+# rsync -avz --ignore-existing squamish:/export/scratch1/ntm/postdoc/SciGenML/data/knmi/*" "/Users/ntmucke/code/scientific-stochastic-interpolants/data/knmi"
+
 
 import logging
 import pdb
@@ -37,9 +49,10 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
-    config_name="udales.yaml",
+    # config_name="udales.yaml",
     # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     # config_name="knmi_pde_transformer.yaml",
+    config_name="knmi.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:

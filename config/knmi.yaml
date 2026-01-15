@@ -1,23 +1,29 @@
 experiment_tracking:
   project: knmi
 
+# preprocesser:
+#   _target_: scisi.preprocessing.preprocessor.Preprocesser
+#   base:
+#     mean:
+#       - 282.1561
+#     std:
+#       - 19.090252
+#   target:
+#     mean:
+#       - 282.1561
+#     std:
+#       - 19.090252
+#   field_cond:
+#     mean:
+#       - 282.15598
+#     std:
+#       - 17.836073
+
 preprocesser:
-  _target_: scisi.preprocessing.preprocessor.Preprocesser
-  base:
-    mean:
-      - 282.1561
-    std:
-      - 19.090252
-  target:
-    mean:
-      - 282.1561
-    std:
-      - 19.090252
-  field_cond:
-    mean:
-      - 282.15598
-    std:
-      - 17.836073
+  _target_: scisi.preprocessing.preprocessor.PixelWisePreprocesser
+  base: data/knmi/mean_field.npz
+  target: data/knmi/mean_field.npz
+  field_cond: data/knmi/mean_field.npz
 
 # Data
 train_data:
@@ -25,21 +31,23 @@ train_data:
   _target_: torch.utils.data.DataLoader
   batch_size: 32
   shuffle: True
-  num_workers: 4
+  num_workers: 2
   # Dataset
   dataset:
     _target_: scisi.data.datasets.KNMIDataset
     paths:
-      - /export/scratch2/ntm/SciGenML/data/knmi/
+      # - /export/scratch2/ntm/SciGenML/data/knmi/
+      - data/knmi/
     files:
       - sim_1.npz
       - sim_2.npz
-      - sim_3.npz
-      - sim_4.npz
-      - sim_5.npz
+      # - sim_3.npz
+      # - sim_4.npz
+      # - sim_5.npz
     len_field_history: 5
     save_in_memory: False
-    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
+    # cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
+    cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/knmi/train
     use_exisiting_cache: True
     starting_time: null
     ending_time: null
@@ -48,17 +56,19 @@ val_data:
   _target_: torch.utils.data.DataLoader
   batch_size: 32
   shuffle: False
-  num_workers: 4
+  num_workers: 2
   dataset:
     _target_: scisi.data.datasets.KNMIDataset
     paths:
-      - /export/scratch2/ntm/SciGenML/data/knmi/
+      # - /export/scratch2/ntm/SciGenML/data/knmi/
+      - data/knmi/
     files:
-      - sim_8.npz
-      - sim_9.npz
+      - sim_2.npz
+      # - sim_9.npz
     len_field_history: 5
     save_in_memory: False
-    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
+    # cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
+    cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/knmi/val
     use_exisiting_cache: True
     starting_time: null
     ending_time: null
@@ -66,11 +76,12 @@ val_data:
 test_data:
   _target_: scisi.data.datasets.KNMIDataset
   paths:
-    - /export/scratch2/ntm/SciGenML/data/knmi/
+    # - /export/scratch2/ntm/SciGenML/data/knmi/
+    - data/knmi/
   files:
-    - sim_10.npz
-    - sim_11.npz
-    - sim_12.npz
+    - sim_2.npz
+    # - sim_11.npz
+    # - sim_12.npz
   len_field_history: 5
   train_or_test: test
   save_in_memory: True
