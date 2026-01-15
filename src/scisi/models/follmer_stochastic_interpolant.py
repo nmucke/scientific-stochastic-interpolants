@@ -24,9 +24,10 @@ class FollmerStochasticInterpolant(BaseModel):
         interpolation: nn.Module,
         drift_model: nn.Module,
         diffusion_term: Optional[nn.Module] = None,
+        mask_path: Optional[str] = None,
     ) -> None:
         """Initialize Follmer stochastic interpolant."""
-        super(FollmerStochasticInterpolant, self).__init__()
+        super(FollmerStochasticInterpolant, self).__init__(mask_path=mask_path)
 
         self.interpolation = interpolation
         self.drift_model = drift_model
@@ -121,9 +122,10 @@ class FollmerStochasticInterpolant(BaseModel):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
         stepper: Callable = euler_maruyama_step,
+        mask: torch.Tensor = torch.tensor(1.0),
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
-        return stepper(
+        base = stepper(
             drift_model=self.drift,
             diffusion_term=self.interpolation.gamma,
             x=base,
@@ -132,7 +134,9 @@ class FollmerStochasticInterpolant(BaseModel):
             field_history=field_history,
             field_cond=field_cond,
             pars_cond=pars_cond,
+            mask=mask,
         )
+        return base  # * self.mask
 
     def sample(
         self,

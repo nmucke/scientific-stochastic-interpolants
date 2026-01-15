@@ -2,6 +2,7 @@ import pdb
 from abc import abstractmethod
 from typing import Any, Callable, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import tqdm
@@ -17,15 +18,27 @@ DEFAULT_NUM_PHYSICAL_STEPS = 10
 class BaseModel(nn.Module):
     """Base model."""
 
-    def __init__(self) -> None:
+    def __init__(self, mask_path: Optional[str] = None) -> None:
         """Initialize the base model."""
         super(BaseModel, self).__init__()
         self.diffusion_term = None
+        if mask_path is not None:
+            self.mask = np.load(mask_path)["mask"]
+            self.mask = torch.tensor(self.mask).unsqueeze(0).unsqueeze(0)
+            self.mask = self.mask.to(dtype=torch.float32)
+        else:
+            self.mask = torch.tensor(1.0)
 
     @property
     def device(self) -> str:
         """Get the device of the model."""
         return next(self.parameters()).device  # type: ignore[no-any-return]
+
+    def to(self, device: str) -> "BaseModel":
+        """Move the model to the device."""
+        super(BaseModel, self).to(device)
+        self.mask = self.mask.to(device)
+        return self
 
     @abstractmethod
     def drift(
@@ -75,7 +88,7 @@ class BaseModel(nn.Module):
         for i in range(0, t_vec.shape[1] - 1):
             base = stepper(x=base, t=t_vec[:, i : i + 1], **fixed_input).detach()
 
-        return base
+        return base  # * fixed_input["mask"]
 
     def _sample(
         self,
@@ -119,6 +132,7 @@ class BaseModel(nn.Module):
             ),
             "pars_cond": pars_cond.to(self.device) if pars_cond is not None else None,
             "dt": dt,
+            "mask": self.mask,
         }
 
         if with_first_step:

@@ -41,8 +41,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
 CONTINUE_FROM_CHECKPOINT = False
-CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "vivid-otter-65"
+CHECKPOINT_PROJECT = "udales"
+CHECKPOINT_NAME = "gentle-meadow-5"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
@@ -50,6 +50,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
     # config_name="udales.yaml",
+    config_name="udales_pde_transformer.yaml",
     # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     # config_name="knmi_pde_transformer.yaml",
     config_name="knmi.yaml",

@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
+from sympy.integrals.laplace import I
 
 from scisi.metrics.lsim import LSiM_distance
 from scisi.metrics.spectral import compute_enstrophy_error, get_enstrophy_spectrum
@@ -18,6 +19,7 @@ from scisi.models.flow_matching_model import FlowMatchingModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
 from scisi.plotting.plot_fields import plot_fields
+from scisi.plotting.plot_point_distributions import plot_point_distributions
 from scisi.plotting.spectrum import plot_enstrophy_spectrum
 from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
@@ -44,11 +46,11 @@ DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 # DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 20
-NUM_STEPS = 500
-BATCH_SIZE = 2
+NUM_PHYSICAL_STEPS = 200
+NUM_STEPS = 200
+BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
-TEST_SAMPLE_INDEX = 3
+TEST_SAMPLE_INDEX = 0
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 
@@ -62,8 +64,6 @@ mixed_precision_context = (
 def main(cfg: DictConfig, project: str, name: str) -> None:
     """Main function."""
     logger.info(f"Model is {cfg.model._target_}...")
-
-    set_device(cfg)
 
     len_field_history = cfg.len_field_history
 
@@ -84,10 +84,21 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     logger.info(f"Preparing and preprocessing trajectory...")
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
+    try:
+        field_cond = test_dataset[TEST_SAMPLE_INDEX]["field_cond"].unsqueeze(0)
+    except:
+        field_cond = None
+    try:
+        pars_cond = test_dataset[TEST_SAMPLE_INDEX]["pars_cond"].unsqueeze(0)
+    except:
+        pars_cond = None
     init_data = preprocesser.transform(
-        base=trajectory[:, :, :, :, len_field_history - 1],
-        field_history=trajectory[:, :, :, :, 0:len_field_history],
+        base=trajectory[..., len_field_history - 1],
+        field_history=trajectory[..., 0:len_field_history],
+        field_cond=field_cond[..., len_field_history - 1],
+        pars_cond=pars_cond[..., len_field_history - 1],
         is_batch=True,
+        is_trajectory=True,
     )
 
     if not isinstance(model, FollmerStochasticInterpolant):
@@ -110,6 +121,8 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             batch_size=BATCH_SIZE,
             num_steps=NUM_STEPS,
             field_history=init_data["field_history"].to(cfg.trainer.device),
+            field_cond=field_cond.to(cfg.trainer.device),
+            pars_cond=pars_cond.to(cfg.trainer.device),
             num_physical_steps=NUM_PHYSICAL_STEPS,
             stepper=(
                 ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER
@@ -117,46 +130,113 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             # diffusion_term=lambda t: 2 * model.interpolation.gamma(t),
         )
 
-    true_trajectory = trajectory[0, 0].cpu()
+    true_trajectory = trajectory.cpu()
     predicted_trajectory = predicted_trajectory.cpu()
 
     logger.info(f"Inverse transforming predicted trajectory...")
     predicted_trajectory = preprocesser.inverse_transform(
-        base=predicted_trajectory, is_batch=True, is_trajectory=True
+        base=predicted_trajectory,
+        field_cond=field_cond,
+        is_batch=True,
+        is_trajectory=True,
     )["base"]
-    predicted_trajectory = predicted_trajectory[0, 0]
 
     figure_path = f"figures/{project}"
     os.makedirs(figure_path, exist_ok=True)
 
-    logger.info(f"Creating animation...")
-    create_animation_from_tensors(
-        [true_trajectory[:, :, 0:NUM_PHYSICAL_STEPS], predicted_trajectory],
-        fps=10,
-        file_name=f"{figure_path}/predicted_trajectory.mp4",
-        colormaps="viridis",
-        titles=["True", "Predicted"],
-        vmin=np.min(true_trajectory.numpy()),
-        vmax=np.max(true_trajectory.numpy()),
-        normalize=False,
-    )
+    if project == "udales":
+        true_vel_magnitude = torch.sqrt(
+            true_trajectory[0, 0] ** 2
+            + true_trajectory[0, 1] ** 2
+            + true_trajectory[0, 2] ** 2
+        )
+        predicted_vel_magnitude = torch.sqrt(
+            predicted_trajectory[:, 0] ** 2
+            + predicted_trajectory[:, 1] ** 2
+            + predicted_trajectory[:, 2] ** 2
+        )
+    else:
+        true_vel_magnitude = torch.sqrt(
+            true_trajectory[0, 0] ** 2 + true_trajectory[0, 1] ** 2
+        )
+        predicted_vel_magnitude = torch.sqrt(
+            predicted_trajectory[:, 0] ** 2 + predicted_trajectory[:, 1] ** 2
+        )
 
+    logger.info(f"Creating animation...")
+    if project == "udales":
+        for i, file_name in enumerate(
+            [
+                "velocity_x",
+                "velocity_y",
+                "velocity_z",
+                "temperature",
+                "velocity_magnitude",
+            ]
+        ):
+            if file_name != "velocity_magnitude":
+                plot_list = [true_trajectory[0, i, :, :, 0:NUM_PHYSICAL_STEPS]] + [
+                    predicted_trajectory[k, i] for k in range(BATCH_SIZE)
+                ]
+            else:
+                plot_list = [true_vel_magnitude[:, :, 0:NUM_PHYSICAL_STEPS]] + [
+                    predicted_vel_magnitude[k, :, :, 0:NUM_PHYSICAL_STEPS]
+                    for k in range(BATCH_SIZE)
+                ]
+            create_animation_from_tensors(
+                plot_list,
+                fps=10,
+                file_name=f"{figure_path}/{file_name}.mp4",
+                colormaps="viridis",
+                titles=["True"] + [f"Ensemble member {i}" for i in range(BATCH_SIZE)],
+                vmin=np.min(plot_list[0].numpy()),
+                vmax=np.max(plot_list[0].numpy()),
+                normalize=False,
+            )
+
+    else:
+        create_animation_from_tensors(
+            [true_trajectory[0, 0, :, :, 0:NUM_PHYSICAL_STEPS]]
+            + [predicted_trajectory[i, 0] for i in range(BATCH_SIZE)],
+            fps=10,
+            file_name=f"{figure_path}/predicted_trajectory.mp4",
+            colormaps="viridis",
+            titles=["True"] + [f"Ensemble member {i}" for i in range(BATCH_SIZE)],
+            vmin=np.min(true_trajectory.numpy()),
+            vmax=np.max(true_trajectory.numpy()),
+            normalize=False,
+        )
+
+    #### Plot velocity magnitude ####
     logger.info(f"Plotting trajectory...")
     plot_fields(
         fields=[
-            [true_trajectory[:, :, t] for t in PLOTTING_TIMES],
-            [predicted_trajectory[:, :, t] for t in PLOTTING_TIMES],
+            [true_vel_magnitude[:, :, t] for t in PLOTTING_TIMES],
+            [predicted_vel_magnitude[0, :, :, t] for t in PLOTTING_TIMES],
         ],
         titles=[
-            [f"True Trajectory at t={t}" for t in PLOTTING_TIMES],
-            [f"Predicted Trajectory at t={t}" for t in PLOTTING_TIMES],
+            [f"True Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
+            [f"Predicted Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
         ],
-        vmin=np.min(true_trajectory.numpy()),
-        vmax=np.max(true_trajectory.numpy()),
+        vmin=np.min(true_vel_magnitude.numpy()),
+        vmax=np.max(true_vel_magnitude.numpy()),
         figsize=(15, 10),
         figure_path=f"{figure_path}/predicted_trajectory.png",
     )
 
+    #### Plot distribution at points ####
+    logger.info(f"Plotting velocity magnitude distribution at points...")
+    points = [(32, 32), (64, 64), (96, 96)]
+    plot_point_distributions(
+        true_field=true_vel_magnitude,
+        predicted_fields=predicted_vel_magnitude,
+        points=points,
+        figure_path=f"{figure_path}/distribution_at_points.png",
+    )
+
+    #### Compute metrics ####
+    predicted_trajectory = predicted_trajectory[0, 0]
+    true_trajectory = trajectory[0, 0].cpu()
     logger.info(f"Computing metrics...")
     lsim = [
         LSiM_distance(true_trajectory[:, :, i], predicted_trajectory[:, :, i])
