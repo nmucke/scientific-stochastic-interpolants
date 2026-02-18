@@ -43,8 +43,8 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 10
-NUM_STEPS = 200
+NUM_PHYSICAL_STEPS = 25
+NUM_STEPS = 150
 MIXED_PRECISION = False
 ENSEMBLE_SIZE = 2
 SDE_STEPPER = euler_maruyama_step
@@ -63,7 +63,8 @@ mixed_precision_context = (
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
     # config_name=f"stochastic_navier_stokes_posterior.yaml",
-    config_name=f"udales_posterior.yaml",
+    # config_name=f"udales_posterior.yaml",
+    config_name=f"udales_flow_matching_posterior.yaml",
     # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
@@ -89,21 +90,53 @@ def main(posterior_cfg: DictConfig) -> None:
     test_dataset = hydra.utils.instantiate(cfg.test_data)
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
-    trajectory = np.load("trajectory.npz")["trajectory"][100:, ::2, ::2]
-    trajectory = trajectory.transpose(1, 2, 0)
-    trajectory = trajectory.reshape(1, 1, 128, 128, 100)
-    trajectory = torch.from_numpy(trajectory).float()
+    # trajectory = np.load("trajectory.npz")["trajectory"][100:, ::2, ::2]
+    # trajectory = trajectory.transpose(1, 2, 0)
+    # trajectory = trajectory.reshape(1, 1, 128, 128, 100)
+    # trajectory = torch.from_numpy(trajectory).float()
 
-    logger.info(f"Preprocessing trajectory...")
+    # logger.info(f"Preprocessing trajectory...")
+    # init_data = preprocesser.transform(
+    #     base=trajectory,
+    #     field_history=trajectory[:, :, :, :, 0:len_field_history],
+    #     is_batch=True,
+    #     is_trajectory=True,
+    # )
+    # trajectory = init_data["base"]
+    # base = init_data["base"][:, :, :, :, len_field_history - 1]
+    # field_history = init_data["field_history"]
+
+    trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
+
+    try:
+        field_cond = test_dataset[TEST_SAMPLE_INDEX]["field_cond"].unsqueeze(0)
+    except:
+        field_cond = None
+    try:
+        pars_cond = test_dataset[TEST_SAMPLE_INDEX]["pars_cond"].unsqueeze(0)
+    except:
+        pars_cond = None
     init_data = preprocesser.transform(
-        base=trajectory,
-        field_history=trajectory[:, :, :, :, 0:len_field_history],
+        base=trajectory[..., len_field_history - 1],
+        field_history=trajectory[..., 0:len_field_history],
+        is_batch=True,
+    )
+    init_data["field_cond"] = preprocesser.transform(
+        field_cond=field_cond if field_cond is not None else None,
         is_batch=True,
         is_trajectory=True,
-    )
-    trajectory = init_data["base"]
-    base = init_data["base"][:, :, :, :, len_field_history - 1]
-    field_history = init_data["field_history"]
+    )["field_cond"]
+    init_data["pars_cond"] = preprocesser.transform(
+        pars_cond=pars_cond if pars_cond is not None else None,
+        is_batch=True,
+        is_trajectory=True,
+    )["pars_cond"]
+
+    trajectory = preprocesser.transform(
+        base=trajectory,
+        is_batch=True,
+        is_trajectory=True,
+    )["base"]
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
@@ -117,7 +150,7 @@ def main(posterior_cfg: DictConfig) -> None:
     logger.info(f"Type: {posterior_cfg.obs_operator.type}")
     obs_operator = hydra.utils.instantiate(
         posterior_cfg.obs_operator,
-        data_size=base[0].shape,
+        data_size=init_data["base"][0].shape,
     )
     logger.info(f"Number of observations: {obs_operator.num_obs}")
     logger.info(
@@ -158,10 +191,16 @@ def main(posterior_cfg: DictConfig) -> None:
         )
 
     input_dict = {
-        "base": base if isinstance(model, FollmerStochasticInterpolant) else None,
+        "base": (
+            init_data["base"]
+            if isinstance(model, FollmerStochasticInterpolant)
+            else None
+        ),
         "ensemble_size": ENSEMBLE_SIZE,
         "num_steps": NUM_STEPS,
-        "field_history": field_history,
+        "field_history": init_data["field_history"],
+        "field_cond": init_data["field_cond"],
+        "pars_cond": init_data["pars_cond"],
         "stepper": (
             ODE_STEPPER
             if isinstance(posterior_model, FlowMatchingPosterior)

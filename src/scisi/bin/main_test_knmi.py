@@ -23,11 +23,11 @@ torch.set_default_dtype(torch.float32)
 logger = logging.getLogger(__name__)
 
 PROJECT = "knmi"
-DEFAULT_NAME = "jolly-valley-7"
+DEFAULT_NAME = "proud-rain-12"
 
 MIXED_PRECISION = False
 BATCH_SIZE = 3
-NUM_PHYSICAL_STEPS = 365
+NUM_PHYSICAL_STEPS = 60
 NUM_STEPS = 100
 STARTING_TIME = 20000
 PLOTTING_TIMES = [10, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]

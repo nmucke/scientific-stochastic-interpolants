@@ -28,18 +28,22 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = False
-CHECKPOINT_PROJECT = "udales"
-CHECKPOINT_NAME = "gentle-meadow-5"
+CONTINUE_FROM_CHECKPOINT = True
+CHECKPOINT_PROJECT = "stochastic_navier_stokes"
+CHECKPOINT_NAME = "artful-hare-68"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name="diffusion_stochastic_navier_stokes.yaml",
+    # config_name="flow_matching_udales.yaml",
     # config_name="udales.yaml",
-    config_name="udales_pde_transformer.yaml",
+    # config_name="xie_and_castro.yaml",
+    # config_name="udales_pde_transformer.yaml",
+    # config_name="knmi_pde_transformer_flow_matching.yaml",
     # config_name="stochastic_navier_stokes_pde_transformer.yaml",
+    config_name="stochastic_navier_stokes.yaml",
     # config_name="knmi_pde_transformer.yaml",
     version_base=None,
 )
@@ -56,8 +60,11 @@ def main(cfg: DictConfig) -> None:
         )
         cfg.pop("_Username"), cfg.pop("_Created"), cfg.pop("_Group")
 
+        cfg.train_data.batch_size = 16
+
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
+        name="artful-hare-68_continued",
         project=cfg.experiment_tracking.project,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
@@ -87,6 +94,7 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Instantiating model: {cfg.model._target_}")
     model = hydra.utils.instantiate(cfg.model)
     if CONTINUE_FROM_CHECKPOINT:
+
         logger.info(f"Loading model from checkpoint:")
         logger.info(f"{CHECKPOINT_PATH}")
         model.load_state_dict(torch.load(CHECKPOINT_PATH))

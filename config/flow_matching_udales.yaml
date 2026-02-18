@@ -7,26 +7,26 @@ preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
     mean:
-      - 0.17398492991924286
-      - 0.032458484172821045
-      - 0.0
-      - 295.1488037109375
+      - 0.19050094485282898
+      - 0.0495307594537735
+      - -0.002269984222948551
+      - 295.24749755859375
     std:
-      - 0.38430872559547424
-      - 0.2689456343650818
-      - 0.14527758955955505
-      - 0.15393003821372986
+      - 0.4428868293762207
+      - 0.35734325647354126
+      - 0.1339215785264969
+      - 0.18053284287452698
   target:
     mean:
-      - 0.17398492991924286
-      - 0.032458484172821045
-      - 0.0
-      - 295.1488037109375
+      - 0.19050094485282898
+      - 0.0495307594537735
+      - -0.002269984222948551
+      - 295.24749755859375
     std:
-      - 0.38446664810180664
-      - 0.2689456343650818
-      - 0.14527758955955505
-      - 0.15393003821372986
+      - 0.4428868293762207
+      - 0.35734325647354126
+      - 0.1339215785264969
+      - 0.18053284287452698
   field_cond:
     mean:
       - 0.0
@@ -37,14 +37,14 @@ preprocesser:
 train_data:
   # Dataloader
   _target_: torch.utils.data.DataLoader
-  batch_size: 8
+  batch_size: 32
   shuffle: True
   # Dataset
   dataset:
     _target_: scisi.data.datasets.UDalesDataset
     paths:
       - data/udales
-    files: (0, 85)
+    files: (0, 150)
     len_field_history: ${len_field_history}
     starting_time: 50
     ending_time: 250
@@ -52,17 +52,17 @@ train_data:
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/udales/train
     # cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/udales/train
-    use_exisiting_cache: False
+    use_exisiting_cache: True
 
 val_data:
   _target_: torch.utils.data.DataLoader
-  batch_size: 8
+  batch_size: 32
   shuffle: False
   dataset:
     _target_: scisi.data.datasets.UDalesDataset
     paths:
       - data/udales
-    files: (85, 95)
+    files: (151, 170)
     len_field_history: ${len_field_history}
     starting_time: 50
     ending_time: 250
@@ -70,14 +70,14 @@ val_data:
     save_in_memory: False
     cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/udales/val
     # cache_dir: /Users/ntmucke/Code/scientific-stochastic-interpolants/cache/udales/val
-    use_exisiting_cache: False
+    use_exisiting_cache: True
 
 
 test_data:
   _target_: scisi.data.datasets.UDalesDataset
   paths:
     - data/udales
-  files: (95, 100)
+  files: (170, 178)
   len_field_history: ${len_field_history}
   starting_time: 50
   ending_time: 250
@@ -87,22 +87,34 @@ test_data:
   train_or_test: test
 
 model:
-  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
+  _target_: scisi.models.flow_matching_model.FlowMatchingModel
   interpolation:
-    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 0.1
-    wiener_process: true
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  mask_path: data/udales/mask.npz
   drift_model:
-    _target_: scisi.architectures.pde_transformer.PDETransformerWrapper
+    _target_: scisi.architectures.u_net.UNet
     in_channels: 4 # number of channels in the input
     out_channels: 4 # number of channels in the output
+    hidden_channels: [32, 64, 128, 256] # number of channels in the hidden layers
+    cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
+    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
     len_field_history: ${len_field_history} # number of field history steps
-    type: PDE-B # type of the PDE transformer. S for small, B for medium, L for large
-    patch_size: 4 # patch size
-    periodic: true # whether to use periodic padding
-    carrier_token_active: false # whether to use carrier tokens
     field_cond_channels: 1 # number of channels in the field conditional input
-
+    pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
+    pars_cond_embedding_dim: null # dimension of the pars conditional embedding
+    multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
+    num_blocks: 2 # number of convnext blocks per layer
+    dropout_rate: 0.1 # dropout rate
+    padding: torch.nn.CircularPad2d # padding module
+    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention: # attention module and its arguments
+      target: scisi.architectures.attention.SpatialAttention # attention module
+      pos_embedding_type: rotary # positional embedding type
+      heads: 4 # number of heads
+      patch_size: 1 # patch size
+      dropout_rate: 0.1 # dropout rate
+      embedding_dim: 1024 # embedding dimension
+      # mlp_dim: 1024 # mlp dimension
 
 optimizer:
   _target_: torch.optim.AdamW

@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 VERBOSE = True
 MIXED_PRECISION = True
 
-DEFAULT_PROJECT = "stochastic_navier_stokes"
-# DEFAULT_NAME = "bubbly-badger-69""vivid-otter-65"  # Linear SI UNet Navier-Stokes
-DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
+# DEFAULT_PROJECT = "stochastic_navier_stokes"
+# # DEFAULT_NAME = "bubbly-badger-69""vivid-otter-65"  # Linear SI UNet Navier-Stokes
+# DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
 # DEFAULT_NAME = "adventurous-acorn-45"
 # DEFAULT_NAME = "brave-forest-1"  # SI PDE-Transformer Navier-Stokes
 # DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes
@@ -46,12 +46,25 @@ DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
 # DEFAULT_PROJECT = "weather"
 # DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
 # DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
-NUM_PHYSICAL_STEPS = 200
-NUM_STEPS = 200
+
+DEFAULT_PROJECT = "udales"
+# DEFAULT_NAME = "kind-sky-8" # Udales
+# DEFAULT_NAME = "flow_matching_new" # Udales
+# DEFAULT_NAME = "stochastic_interpolant" # Udales
+DEFAULT_NAME = "stochastic_interpolant_continued"  # Udales
+
+
+# Xie and Castro
+# DEFAULT_PROJECT = "xie_and_castro"
+# DEFAULT_NAME = "dainty-sunset-0" # Xie and Castro
+
+NUM_PHYSICAL_STEPS = 25
+NUM_STEPS = 150
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 0
-SDE_STEPPER = euler_maruyama_step
+SDE_STEPPER = heun_step
+# SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 
 mixed_precision_context = (
@@ -95,11 +108,23 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
     init_data = preprocesser.transform(
         base=trajectory[..., len_field_history - 1],
         field_history=trajectory[..., 0:len_field_history],
-        field_cond=field_cond[..., len_field_history - 1],
-        pars_cond=pars_cond[..., len_field_history - 1],
+        is_batch=True,
+    )
+    init_data["field_cond"] = preprocesser.transform(
+        field_cond=field_cond if field_cond is not None else None,
         is_batch=True,
         is_trajectory=True,
-    )
+    )["field_cond"]
+    init_data["pars_cond"] = preprocesser.transform(
+        pars_cond=pars_cond if pars_cond is not None else None,
+        is_batch=True,
+        is_trajectory=True,
+    )["pars_cond"]
+
+    logger.info(f"Moving data to the correct device...")
+    init_data = {
+        k: v.to(cfg.trainer.device) for k, v in init_data.items() if v is not None
+    }
 
     if not isinstance(model, FollmerStochasticInterpolant):
         logger.info(f"Model is a {type(model)}. Setting base to None...")
@@ -113,16 +138,9 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
     )
     with mixed_precision_context:
         predicted_trajectory = model.sample_trajectory(
-            base=(
-                init_data["base"].to(cfg.trainer.device)
-                if init_data["base"] is not None
-                else None
-            ),
+            **init_data,
             batch_size=BATCH_SIZE,
             num_steps=NUM_STEPS,
-            field_history=init_data["field_history"].to(cfg.trainer.device),
-            field_cond=field_cond.to(cfg.trainer.device),
-            pars_cond=pars_cond.to(cfg.trainer.device),
             num_physical_steps=NUM_PHYSICAL_STEPS,
             stepper=(
                 ODE_STEPPER if isinstance(model, FlowMatchingModel) else SDE_STEPPER
@@ -155,13 +173,13 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             + predicted_trajectory[:, 1] ** 2
             + predicted_trajectory[:, 2] ** 2
         )
-    else:
-        true_vel_magnitude = torch.sqrt(
-            true_trajectory[0, 0] ** 2 + true_trajectory[0, 1] ** 2
-        )
-        predicted_vel_magnitude = torch.sqrt(
-            predicted_trajectory[:, 0] ** 2 + predicted_trajectory[:, 1] ** 2
-        )
+    # else:
+    #     true_vel_magnitude = torch.sqrt(
+    #         true_trajectory[0, 0] ** 2 + true_trajectory[0, 1] ** 2
+    #     )
+    #     predicted_vel_magnitude = torch.sqrt(
+    #         predicted_trajectory[:, 0] ** 2 + predicted_trajectory[:, 1] ** 2
+    #     )
 
     logger.info(f"Creating animation...")
     if project == "udales":
@@ -209,30 +227,31 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     #### Plot velocity magnitude ####
     logger.info(f"Plotting trajectory...")
-    plot_fields(
-        fields=[
-            [true_vel_magnitude[:, :, t] for t in PLOTTING_TIMES],
-            [predicted_vel_magnitude[0, :, :, t] for t in PLOTTING_TIMES],
-        ],
-        titles=[
-            [f"True Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
-            [f"Predicted Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
-        ],
-        vmin=np.min(true_vel_magnitude.numpy()),
-        vmax=np.max(true_vel_magnitude.numpy()),
-        figsize=(15, 10),
-        figure_path=f"{figure_path}/predicted_trajectory.png",
-    )
+    if project == "udales":
+        plot_fields(
+            fields=[
+                [true_vel_magnitude[:, :, t] for t in PLOTTING_TIMES],
+                [predicted_vel_magnitude[0, :, :, t] for t in PLOTTING_TIMES],
+            ],
+            titles=[
+                [f"True Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
+                [f"Predicted Velocity Magnitude at t={t}" for t in PLOTTING_TIMES],
+            ],
+            vmin=np.min(true_vel_magnitude.numpy()),
+            vmax=np.max(true_vel_magnitude.numpy()),
+            figsize=(15, 10),
+            figure_path=f"{figure_path}/predicted_trajectory.png",
+        )
 
-    #### Plot distribution at points ####
-    logger.info(f"Plotting velocity magnitude distribution at points...")
-    points = [(32, 32), (64, 64), (96, 96)]
-    plot_point_distributions(
-        true_field=true_vel_magnitude,
-        predicted_fields=predicted_vel_magnitude,
-        points=points,
-        figure_path=f"{figure_path}/distribution_at_points.png",
-    )
+        #### Plot distribution at points ####
+        logger.info(f"Plotting velocity magnitude distribution at points...")
+        points = [(32, 32), (64, 64), (96, 96)]
+        plot_point_distributions(
+            true_field=true_vel_magnitude,
+            predicted_fields=predicted_vel_magnitude,
+            points=points,
+            figure_path=f"{figure_path}/distribution_at_points.png",
+        )
 
     #### Compute metrics ####
     predicted_trajectory = predicted_trajectory[0, 0]
