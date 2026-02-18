@@ -19,7 +19,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import random
 
-from jax_cfd_lib.ns_kalman import ObservationOperator
+# from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
 class SpectralEnKF:
@@ -41,13 +41,13 @@ class SpectralEnKF:
         If False, state is complex-valued (e.g., using fft)
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         grid_shape: Tuple[int, ...],
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
-        observation_operator: ObservationOperator,
+        observation_operator,
         real_space: bool = True,
     ):
         self.grid_shape = grid_shape
@@ -241,14 +241,14 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         Maximum allowed localization radius (default: min(domain_size/2, 4*localization_radius))
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         grid_shape: Tuple[int, ...],
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
         localization_radius: float,
-        observation_operator: ObservationOperator,
+        observation_operator,
         real_space: bool = True,
         adaptive_localization: bool = False,
         min_radius: Optional[float] = None,

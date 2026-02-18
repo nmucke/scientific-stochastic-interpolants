@@ -4,9 +4,9 @@ from typing import Any, List, Optional, Tuple
 import jax
 import jax.numpy as jnp
 from jax import random
-
 from jax_cfd_lib.ENKF import SpectralEnKF
-from jax_cfd_lib.ns_kalman import ObservationOperator
+
+# from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
 # If you have a SpectralEnKF base, subclass it; otherwise adapt imports/attributes accordingly.
@@ -17,13 +17,13 @@ class SpectralETKF(SpectralEnKF):
     in spectral space matching your existing code structure.
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         grid_shape: Tuple[int, ...],
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
-        observation_operator: ObservationOperator,
+        observation_operator,
         real_space: bool = True,
         regularize_eps: float = 1e-6,
         rho: float = 0.5,
@@ -229,14 +229,14 @@ class LocalizedSpectralETKF(SpectralETKF):
         Method for adaptive localization ("correlation", "innovation", "hybrid")
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         grid_shape: Tuple[int, ...],
         ensemble_size: int,
         model_noise_std: float,
         obs_noise_std: float,
         localization_radius: float,
-        observation_operator: ObservationOperator,
+        observation_operator,
         real_space: bool = True,
         regularize_eps: float = 1e-6,
         rho: float = 0.5,

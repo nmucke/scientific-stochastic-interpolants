@@ -1,13 +1,14 @@
 pre_trained_model:
   project: udales
-  name: calm-river-2
+  # name: kind-sky-8
+  name: flow_matching_new
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
-  # type: random
-  # percent_obs: 0.05
-  type: grid
-  skip_grid: 4
+  type: random
+  percent_obs: 0.10
+  # type: grid
+  # skip_grid: 8
 
 likelihood_model:
   # _target_: scisi.likelihood_models.gaussian_likelihood.KalmanInterpolantGaussianLikelihood
