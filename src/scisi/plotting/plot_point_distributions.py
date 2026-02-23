@@ -8,6 +8,7 @@ def plot_point_distributions(
     predicted_fields: torch.Tensor,
     points: list[tuple[int, int]] = [(32, 32), (64, 64), (96, 96)],
     figure_path: str = "figures/point_distributions.png",
+    show: bool = False,
 ) -> None:
     plt.figure(figsize=(5 * len(points), 5))
     plt.subplot(1, len(points) + 1, 1)
@@ -30,3 +31,7 @@ def plot_point_distributions(
         plt.title(f"Point ({point[0]}, {point[1]})")
         plt.legend()
     plt.savefig(f"{figure_path}")
+    if show:
+        plt.show()
+    else:
+        plt.close()

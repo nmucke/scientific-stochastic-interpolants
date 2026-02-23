@@ -66,9 +66,9 @@ model:
     _target_: scisi.architectures.u_net.UNet
     in_channels: 1 # number of channels in the input
     out_channels: 1 # number of channels in the output
-    hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
+    hidden_channels: [8, 16, 32, 64] # number of channels in the hidden layers
     cond_dim: 1 # dimension of the scalar conditional input, this is typically pseudo time
-    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
+    cond_embedding_dim: 128 # dimension of the scalar conditional embedding
     len_field_history: ${len_field_history} # number of field history steps
     field_cond_channels: null # number of channels in the field conditional input
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
@@ -82,9 +82,9 @@ model:
       target: scisi.architectures.attention.SpatialAttention # attention module
       pos_embedding_type: rotary # positional embedding type
       heads: 4 # number of heads
-      patch_size: 2 # patch size
+      patch_size: 1 # patch size
       dropout_rate: 0.1 # dropout rate
-      embedding_dim: 512 # embedding dimension
+      embedding_dim: 256 # embedding dimension
       # mlp_dim: 1024 # mlp dimension
 
 optimizer:
