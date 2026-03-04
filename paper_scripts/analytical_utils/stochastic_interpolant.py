@@ -64,7 +64,7 @@ class AnalyticalDriftModel(nn.Module):
         )
         cov_bar_inv = torch.linalg.inv(cov_bar)
 
-        out_2 = beta.unsqueeze(1) * beta_diff * self.target_cov(x0)
+        out_2 = beta.unsqueeze(1) * beta_diff[0, 0] * self.target_cov(x0)
         out_2 = out_2 + (t * gamma * gamma_diff).unsqueeze(1) * I
         out_2 = torch.bmm(out_2, cov_bar_inv)
         out_2 = torch.bmm(out_2, (x - mean_bar).unsqueeze(-1)).squeeze(-1)
@@ -98,13 +98,13 @@ class AnalyticalDriftModel(nn.Module):
         """Forward pass."""
 
         drift = self._compute_drift(x, t, x0)
-        score = self._compute_score_from_drift(x, t, x0, drift)
+        # score = self._compute_score_from_drift(x, t, x0, drift)
 
         return (
             drift
-            + 0.5
-            * (self.diffusion_term(t) ** 2 - self.interpolation.gamma(t) ** 2)
-            * score
+            # + 0.5
+            # * (self.diffusion_term(t) ** 2 - self.interpolation.gamma(t) ** 2)
+            # * score
         )
 
 

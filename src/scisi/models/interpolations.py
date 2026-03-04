@@ -121,7 +121,7 @@ class LinearStochasticInterpolation(nn.Module):
 
     def alpha_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha derivative."""
-        return -1
+        return -1 * torch.ones_like(t)
 
     def beta(self, t: torch.Tensor) -> torch.Tensor:
         """Beta function."""
@@ -129,7 +129,7 @@ class LinearStochasticInterpolation(nn.Module):
 
     def beta_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Beta derivative."""
-        return 1
+        return torch.ones_like(t)
 
     def gamma(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma function."""
@@ -137,7 +137,7 @@ class LinearStochasticInterpolation(nn.Module):
 
     def gamma_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma derivative."""
-        return -self.gamma_multiplier
+        return -self.gamma_multiplier * torch.ones_like(t)
 
     def forward(
         self,
@@ -191,7 +191,7 @@ class QuadraticStochasticInterpolation(nn.Module):
 
     def alpha_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha derivative coefficient."""
-        return -1
+        return -1 * torch.ones_like(t)
 
     def beta(self, t: torch.Tensor) -> torch.Tensor:
         """Beta function."""

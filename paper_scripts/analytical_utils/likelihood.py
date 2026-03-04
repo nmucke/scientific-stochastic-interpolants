@@ -28,33 +28,6 @@ class InterpolantLikelihood(nn.Module):
         """Forward pass."""
         pass
 
-    def _compute_one_step_prediction(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        dt: torch.Tensor,
-        x0: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute the one step prediction."""
-
-        drift_milstein = self.drift_model(x, t, x0)
-        pred = x + drift_milstein * (1.0 - t)
-        # Add noise = integral of the diffusion term from t to 1
-        pred = pred + torch.randn_like(x) * (
-            2 / 3 - t.sqrt() + (1 / 3) * (t.sqrt()) ** 3
-        )
-        # RK step
-        drift_rk = self.drift_model(pred, torch.ones_like(t), x0)
-        pred = x + 0.5 * (drift_milstein + drift_rk) * (1 - t)
-
-        # Expand the prediction to the ensemble size
-        pred = pred.repeat(self.ensemble_size, 1, 1)
-
-        # Add noise = integral of the diffusion term from t to 1
-        return pred + torch.randn_like(pred) * (
-            2 / 3 - t.sqrt() + (1 / 3) * (t.sqrt()) ** 3
-        )
-
     def _interpolate_observations(
         self,
         x: torch.Tensor,
@@ -64,21 +37,24 @@ class InterpolantLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Interpolate the observations."""
 
+        gamma = self.drift_model.interpolation.gamma(t)
+        beta = self.drift_model.interpolation.beta(t)
+
         x0_obs = torch.matmul(x0, self.obs_matrix.T)
 
         interpolant_obs = self.drift_model.interpolation.forward(
             x0_obs,
             observations,
             t,
-            torch.randn_like(x0_obs),  # torch.zeros_like(x0_obs) #
+            0.0 * torch.randn_like(x0_obs),  # torch.zeros_like(x0_obs) #
         )
 
         # Compute the scale of the interpolant of the observation
-        interpolant_variance = (
-            self.drift_model.interpolation.beta(t) ** 2 * self.original_variance
-        )
-        # interpolant_variance = (
-        #     interpolant_variance + self.drift_model.interpolation.gamma(t) ** 2 * (t)
+        interpolant_variance = beta ** 2 * self.original_variance
+        interpolant_variance += gamma ** 2 * t
+        
+        # interpolant_variance -= (
+        #     (gamma ** 4 * t ** 2) / (beta ** 2 * self.original_variance + gamma ** 2 * t)
         # )
 
         return interpolant_obs, interpolant_variance
@@ -94,41 +70,26 @@ class InterpolantLikelihood(nn.Module):
     ) -> torch.Tensor:
         """Score function."""
 
-        # end_pred = self._compute_one_step_prediction(x, t, dt, x0)
-        # diff = observations - torch.matmul(end_pred, self.obs_matrix.T)
-        # diff_norm = (diff * diff).sum(dim=-1)
-        # diff_norm = -0.5 * diff_norm / self.original_variance
-        # weights = torch.softmax(diff_norm.detach(), dim=0)
-        # end_score = torch.autograd.grad((diff_norm * weights).sum(), x)[0].detach()
+        gamma = self.drift_model.interpolation.gamma(t)
+        beta = self.drift_model.interpolation.beta(t)
+        alpha = self.drift_model.interpolation.alpha(t)
 
-        # x.requires_grad = True
+        sigma = beta ** 2 * self.original_variance + gamma ** 2 * t
+        
+        i_obs = alpha * torch.matmul(x0, self.obs_matrix.T) + beta * observations
 
-        # preds = x + self.drift_model(x, t, x0) * dt
-        # preds = preds.repeat(self.ensemble_size, 1, 1)
-        # preds = preds + diffusion_term(t) * torch.randn_like(preds) * torch.sqrt(dt)
+        model_score = self.drift_model._compute_score_from_drift(
+            x, t, x0, self.drift_model._compute_drift(x, t, x0)
+        ).detach()
+        conditional_noise_mean = -model_score * t * gamma
 
-        interpolant_obs, interpolant_variance = self._interpolate_observations(
-            x, t, x0, observations
-        )
+        x_obs = torch.matmul(x, self.obs_matrix.T)
 
-        diff = interpolant_obs - torch.matmul(x, self.obs_matrix.T)
-        diff_norm = (diff * diff).sum(dim=-1)
-        diff_norm = -0.5 * diff_norm / interpolant_variance[0, 0]
-        score = torch.autograd.grad(diff_norm.sum(), x)[0].detach()
-        # weights = torch.softmax(diff_norm.detach(), dim=0)
-        # score = torch.autograd.grad((diff_norm * weights).sum(), x)[0]
+        diff = i_obs - x_obs + gamma**2 * torch.matmul(conditional_noise_mean, self.obs_matrix.T)
 
-        # inner_score = (end_score * score).sum(dim=-1)
-        # inner_score = inner_score.mean(dim=0)
+        score = torch.matmul(diff, self.obs_matrix) / sigma
 
-        # norm_score = (torch.abs(score * score)).sum(dim=-1)
-        # norm_score = norm_score.mean(dim=0)
-
-        # multiplier = inner_score / norm_score
-
-        # print(multiplier)
-
-        multiplier = 0.5  # / torch.sqrt(self.drift_model.interpolation.gamma(t))
+        multiplier = 2.0
 
         return multiplier * score
 
