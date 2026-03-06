@@ -1,7 +1,7 @@
 pre_trained_model:
   project: udales
   # name: kind-sky-8
-  name: flow_matching_new
+  name: flow_matching_small
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator

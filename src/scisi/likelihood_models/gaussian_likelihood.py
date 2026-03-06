@@ -218,7 +218,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         interpolant_variance = (
             self.interpolant.beta(t) ** 2 * self.original_variance
             # + self.diffusion_term(t) ** 2 * t
-            + self.model.interpolation.gamma(t) ** 2  # * t
+            + self.model.interpolation.gamma(t) ** 2 * t
         )
 
         return interpolant_obs, interpolant_variance
@@ -304,30 +304,72 @@ class InterpolantGaussianLikelihood(nn.Module):
         else:
             self.diffusion_term = diffusion_term
 
-        pred = self._compute_one_step_prediction(
-            x=x,
-            drift=drift,
-            diffusion_term=self.diffusion_term,
-            t=t,
-            dt=dt,
-        )
+        # pred = self._compute_one_step_prediction(
+        #     x=x,
+        #     drift=drift,
+        #     diffusion_term=self.diffusion_term,
+        #     t=t,
+        #     dt=dt,
+        # )
+
+        # interpolant_obs, interpolant_variance = self._interpolate_observations(
+        #     observations, pred, t + dt, self.obs_operator(field_history[..., -1])
+        # )
+        # interpolant_obs = interpolant_obs.repeat(self.ensemble_size, 1)
+
+        # diff = interpolant_obs - self.obs_operator(pred)
+
+
+        # diff_norm = torch.linalg.norm(diff, dim=1)
+        # diff_norm = -diff_norm / (2 * interpolant_variance)
+
+        # # Compute weights
+        # weights = torch.softmax(diff_norm.detach(), dim=0)
+
+        # # Compute weighted gradient
+        # likelihood_score = torch.autograd.grad(
+        #     outputs=(diff_norm * weights).sum(),
+        #     inputs=x,
+        # )[0]
+
 
         interpolant_obs, interpolant_variance = self._interpolate_observations(
-            observations, pred, t + dt, self.obs_operator(field_history[..., -1])
+            observations, x, t, self.obs_operator(field_history[..., -1])
         )
-        interpolant_obs = interpolant_obs.repeat(self.ensemble_size, 1)
+        # interpolant_obs = interpolant_obs.repeat(self.ensemble_size, 1)
 
-        diff_norm = torch.linalg.norm(interpolant_obs - self.obs_operator(pred), dim=1)
-        diff_norm = -diff_norm / (2 * interpolant_variance)
+        model_score = self.model._prior_score(
+            x, field_history[..., -1], drift, t
+        )#.detach()
+        conditional_noise_mean = -model_score * t * self.model.interpolation.gamma(t)
 
-        # Compute weights
-        weights = torch.softmax(diff_norm.detach(), dim=0)
+        d = - self.diffusion_term(t) * self.obs_operator(conditional_noise_mean)
 
-        # Compute weighted gradient
+        diff = interpolant_obs - self.obs_operator(x) - d
+
+        diff_norm = torch.linalg.norm(diff, dim=1)
+        diff_norm = - 0.5 * diff_norm / interpolant_variance
+
         likelihood_score = torch.autograd.grad(
-            outputs=(diff_norm * weights).sum(),
+            outputs=diff_norm.sum(),
             inputs=x,
         )[0]
+
+        return likelihood_score
+
+
+        # diff_norm = torch.linalg.norm(diff, dim=1)
+        # diff_norm = -diff_norm / (2 * interpolant_variance)
+
+        # # Compute weights
+        # weights = torch.softmax(diff_norm.detach(), dim=0)
+
+        # # Compute weighted gradient
+        # likelihood_score = torch.autograd.grad(
+        #     outputs=(diff_norm * weights).sum(),
+        #     inputs=x,
+        # )[0]
+
 
         # x_obs = self.obs_operator(pred)
 
@@ -348,7 +390,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         # )
         # likelihood_score = likelihood_score.reshape(b, c, h, w)
 
-        return likelihood_score * diffusion_term(t) ** 2  # type: ignore[misc]
+        # return likelihood_score * diffusion_term(t) ** 2  # type: ignore[misc]
+
 
 
 class SpatialInterpolantGaussianLikelihood(InterpolantGaussianLikelihood):

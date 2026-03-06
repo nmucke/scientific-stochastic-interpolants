@@ -57,12 +57,13 @@ class StochasticInterpolantPosterior(BasePosterior):
         base.requires_grad = True
 
         # Compute the drift
-        if self.default_diffusion_term:
-            drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
-        else:
-            drift = self.model._drift_with_prior_score(
-                base, t, field_history, field_cond, pars_cond, self.diffusion_term
-            )
+        # if self.default_diffusion_term:
+        #     drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
+        # else:
+        #     drift = self.model._drift_with_prior_score(
+        #         base, t, field_history, field_cond, pars_cond, self.diffusion_term
+        #     )
+        drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
 
         # Compute the likelihood score
         likelihood_score = self.likelihood_model.score(
@@ -82,7 +83,7 @@ class StochasticInterpolantPosterior(BasePosterior):
         base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
         # Likelihood score step
-        base = base + likelihood_score
+        base = base + likelihood_score * self.diffusion_term(t) ** 2 * dt
 
         # # Compute the drift
         # if self.default_diffusion_term:

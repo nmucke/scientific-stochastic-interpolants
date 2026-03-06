@@ -43,7 +43,7 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 25
+NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 150
 MIXED_PRECISION = False
 ENSEMBLE_SIZE = 2
@@ -62,9 +62,9 @@ mixed_precision_context = (
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
     # config_name=f"weather_posterior.yaml",
-    # config_name=f"stochastic_navier_stokes_posterior.yaml",
+    config_name=f"stochastic_navier_stokes_posterior.yaml",
     # config_name=f"udales_posterior.yaml",
-    config_name=f"udales_flow_matching_posterior.yaml",
+    # config_name=f"udales_flow_matching_posterior.yaml",
     # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
     # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
     version_base=None,
@@ -171,7 +171,7 @@ def main(posterior_cfg: DictConfig) -> None:
     ):
         # diffusion_term = lambda t: DIFFUSION_MULTIPLIER * model.interpolation.gamma(t)
         # diffusion_term = lambda t: 2.0 * torch.sqrt(model.interpolation.gamma(t))
-        diffusion_term = lambda t: 2.0 * model.interpolation.gamma(t)
+        diffusion_term = lambda t: 1.0 * model.interpolation.gamma(t)
     else:
         diffusion_term = None
 
@@ -359,7 +359,7 @@ def main(posterior_cfg: DictConfig) -> None:
                 **plot_settings,
             )
 
-    plt.ylim(0, 2)
+    plt.ylim(0, 1.0)
     plt.grid(True)
     plt.legend()
     plt.title("Metrics")

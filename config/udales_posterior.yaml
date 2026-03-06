@@ -1,7 +1,8 @@
 pre_trained_model:
   project: udales
   # name: kind-sky-8
-  name: flow_matching_new
+  name: stochastic_interpolant_small_gamma1
+  # name: stochastic_interpolant_big_gamma1
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
