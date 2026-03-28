@@ -1,5 +1,7 @@
 # Scientific Stochastic Interpolants
 
+> **Warning**: This repository is under active development. APIs, configurations, and features may change without notice.
+
 A PyTorch-based framework for training and sampling from stochastic interpolants for scientific computing applications. The framework implements **Follmer Stochastic Interpolants**, **Flow Matching**, and **Diffusion Models** for modeling spatiotemporal dynamics in fluid mechanics, weather prediction, and atmospheric simulations.
 
 ## Overview
