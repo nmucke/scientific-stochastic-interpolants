@@ -12,6 +12,7 @@ def plot_fields(
     figsize: Optional[tuple],
     figure_path: str,
     imshow_kwargs: dict = {},
+    show: bool = False,
 ) -> None:
 
     num_rows = len(fields)
@@ -26,4 +27,7 @@ def plot_fields(
             )
             plt.title(titles[i][j])
     plt.savefig(f"{figure_path}")
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.close()

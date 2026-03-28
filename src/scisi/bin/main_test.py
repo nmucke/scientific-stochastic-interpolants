@@ -29,37 +29,27 @@ torch.set_default_dtype(torch.float32)
 
 logger = logging.getLogger(__name__)
 
+SHOW_PLOTS = False
 VERBOSE = True
 MIXED_PRECISION = True
 
 # DEFAULT_PROJECT = "stochastic_navier_stokes"
-# # DEFAULT_NAME = "bubbly-badger-69""vivid-otter-65"  # Linear SI UNet Navier-Stokes
-# DEFAULT_NAME = "artful-hare-68"  # Quadratic SI UNet Navier-Stokes
-# DEFAULT_NAME = "adventurous-acorn-45"
-# DEFAULT_NAME = "brave-forest-1"  # SI PDE-Transformer Navier-Stokes
-# DEFAULT_NAME = "warm-root-42"  # SI PDE-Transformer Navier-Stokes
-# DEFAULT_NAME = "breezy-pine-46" # Flow Matching PDE-transformer Navier-Stokes
-# DEFAULT_NAME = "cheerful-willow-47"  # Diffusion model PDE-transformer Navier-Stokes
-# DEFAULT_NAME = "zany-lynx-67"  # Diffusion model UNet Navier-Stokes
-# DEFAULT_NAME = "playful-fox-60"  # Flow Matching model UNet Navier-Stokes
-
-# DEFAULT_PROJECT = "weather"
-# DEFAULT_NAME = "dainty-sunset-0"  # PDE-Transformer Weather
-# DEFAULT_NAME = "eager-mountain-3"  # PDE-Transformer Weather
+# DEFAULT_NAME = "diffusion_model"  # Diffusion model UNet Navier-Stokes
+# DEFAULT_NAME = "flow_matching"  # Flow Matching model UNet Navier-Stokes
+# DEFAULT_NAME = "stochastic_interpolant_small"  # Quadratic SI UNet Navier-Stokes
+# DEFAULT_NAME = "stochastic_interpolant"  # Quadratic SI UNet Navier-Stokes
 
 DEFAULT_PROJECT = "udales"
 # DEFAULT_NAME = "kind-sky-8" # Udales
-# DEFAULT_NAME = "flow_matching_new" # Udales
-# DEFAULT_NAME = "stochastic_interpolant" # Udales
-DEFAULT_NAME = "stochastic_interpolant_continued"  # Udales
+# DEFAULT_NAME = "flow_matching_big" # Udales
+# DEFAULT_NAME = "flow_matching_small" # Udales
+# DEFAULT_NAME = "flow_matching_big" # Udales
+DEFAULT_NAME = "stochastic_interpolant_small_gamma1"  # Udales
+# DEFAULT_NAME = "stochastic_interpolant_big_gamma1"  # Udales
 
 
-# Xie and Castro
-# DEFAULT_PROJECT = "xie_and_castro"
-# DEFAULT_NAME = "dainty-sunset-0" # Xie and Castro
-
-NUM_PHYSICAL_STEPS = 25
-NUM_STEPS = 150
+NUM_PHYSICAL_STEPS = 75
+NUM_STEPS = 50
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
 TEST_SAMPLE_INDEX = 0
@@ -241,6 +231,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             vmax=np.max(true_vel_magnitude.numpy()),
             figsize=(15, 10),
             figure_path=f"{figure_path}/predicted_trajectory.png",
+            show=SHOW_PLOTS,
         )
 
         #### Plot distribution at points ####
@@ -251,6 +242,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             predicted_fields=predicted_vel_magnitude,
             points=points,
             figure_path=f"{figure_path}/distribution_at_points.png",
+            show=SHOW_PLOTS,
         )
 
     #### Compute metrics ####
@@ -276,6 +268,7 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
             trajectories=[true_trajectory, predicted_trajectory],
             titles=["True", "Predicted"],
             figure_path=figure_path,
+            show=SHOW_PLOTS,
         )
         ens_error, ens_error_array = compute_enstrophy_error(
             true_trajectory, predicted_trajectory, 2 * torch.pi / 128

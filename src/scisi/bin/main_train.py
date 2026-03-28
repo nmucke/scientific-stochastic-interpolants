@@ -40,9 +40,9 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 VERBOSE = True
-CONTINUE_FROM_CHECKPOINT = True
-CHECKPOINT_PROJECT = "stochastic_navier_stokes"
-CHECKPOINT_NAME = "artful-hare-68"
+CONTINUE_FROM_CHECKPOINT = False
+CHECKPOINT_PROJECT = "udales"
+CHECKPOINT_NAME = "kind-sky-9"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
 
 
@@ -57,7 +57,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
     # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     config_name="stochastic_navier_stokes.yaml",
     # config_name="knmi_pde_transformer.yaml",
-    config_name="knmi.yaml",
+    # config_name="knmi.yaml",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
@@ -73,11 +73,11 @@ def main(cfg: DictConfig) -> None:
         )
         cfg.pop("_Username"), cfg.pop("_Created"), cfg.pop("_Group")
 
-        cfg.train_data.batch_size = 16
+        # cfg.train_data.batch_size = 16
 
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
-        name="artful-hare-68_continued",
+        name="stochastic_interpolant_big_gamma1",
         project=cfg.experiment_tracking.project,
         config=OmegaConf.to_container(cfg, resolve=True),
     )

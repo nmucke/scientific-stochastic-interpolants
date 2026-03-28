@@ -90,7 +90,7 @@ model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 0.1
+    gamma_multiplier: 1.0
     wiener_process: true
   mask_path: data/udales/mask.npz
   drift_model:

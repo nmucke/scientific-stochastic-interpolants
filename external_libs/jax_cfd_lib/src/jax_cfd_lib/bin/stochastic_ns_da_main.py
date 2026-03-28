@@ -1,3 +1,4 @@
+import os
 import pdb
 from typing import Callable, Optional, Tuple
 
@@ -62,20 +63,20 @@ def main() -> None:
     """Main function."""
     key = random.PRNGKey(123)
 
-    skip_or_random = "skip"
+    skip_or_random = "random"
 
     nx, ny = 256, 256
     grid = grids.Grid((nx, nx), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
 
     ensemble_size = 2500
-    skip_grid = 8
-    num_random_obs = 50
+    skip_grid = 4
+    num_random_obs = 200
 
-    obs_noise_std = 0.005
+    obs_noise_std = 0.000005
 
     start_time = 5
 
-    n_timesteps = 95
+    n_timesteps = 10
 
     Lx, Ly = 2 * jnp.pi, 2 * jnp.pi
     x = jnp.linspace(0, Lx, nx, endpoint=False)
@@ -113,6 +114,9 @@ def main() -> None:
     n_obs = obs_indices.shape[0]
     observation_operator = ObservationOperator(nx, ny, obs_indices)
 
+    if not os.path.exists(save_str):
+        os.makedirs(os.path.dirname(save_str), exist_ok=True)
+
     jnp.savez(save_str, obs_indices // 2)
 
     # Initialize EnKF
@@ -125,16 +129,12 @@ def main() -> None:
         obs_noise_std=obs_noise_std,
         real_space=True,
         adaptive_localization=True,
-        localization_radius=20,
+        localization_radius=25,
         observation_operator=observation_operator,
     )
 
     # Load the trajectory
     true_trajectory_physical = np.load("trajectory.npz")["trajectory"]
-    # init_condition = jax.vmap(get_initial_vorticity)(
-    #     jax.random.split(jax.random.PRNGKey(0), ensemble_size)
-    # )
-    # true_trajectory_physical = true_trajectory_physical[:, ::2, ::2]
     true_trajectory_physical = true_trajectory_physical[
         100 : 100 + start_time + n_timesteps
     ]
@@ -179,7 +179,7 @@ def main() -> None:
         # Store mean in physical space
         mean_hat = jnp.mean(ensemble_spectral, axis=0)
         mean_phys = jnp.fft.irfft2(mean_hat, s=(nx, ny))
-        # ensemble_means_physical.append(mean_phys)
+        ensemble_means_physical.append(mean_phys)
 
         if (t + 1) % 2 == 0:
             rmse = jnp.sqrt(

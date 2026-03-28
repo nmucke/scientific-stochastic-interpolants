@@ -156,6 +156,7 @@ class DenoiseDiffusionModel(BaseModel):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
         stepper: Optional[Callable] = euler_maruyama_step,
+        mask: torch.Tensor = torch.tensor(1.0),
     ) -> torch.Tensor:
         """Compute the first step of the Follmer stochastic interpolant."""
 

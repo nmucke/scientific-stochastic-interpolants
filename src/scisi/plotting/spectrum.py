@@ -24,6 +24,7 @@ def plot_enstrophy_spectrum(
     titles: list[str],
     dx: float = 2 * torch.pi / 128,
     figure_path: Optional[str] = None,
+    show: bool = False,
 ) -> None:
     """Plot the enstrophy spectrum of the trajectories."""
 
@@ -67,5 +68,7 @@ def plot_enstrophy_spectrum(
     plt.grid(True)
     if figure_path is not None:
         plt.savefig(f"{figure_path}/enstrophy_spectrum.png")
-    plt.show()
-    plt.close()
+    if show:
+        plt.show()
+    else:
+        plt.close()

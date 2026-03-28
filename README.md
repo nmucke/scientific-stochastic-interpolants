@@ -1,383 +1,331 @@
 # Scientific Stochastic Interpolants
 
-A PyTorch-based framework for training and sampling from stochastic interpolants for scientific computing applications, with a focus on partial differential equations (PDEs) and weather modeling.
+A PyTorch-based framework for training and sampling from stochastic interpolants for scientific computing applications. The framework implements **Follmer Stochastic Interpolants**, **Flow Matching**, and **Diffusion Models** for modeling spatiotemporal dynamics in fluid mechanics, weather prediction, and atmospheric simulations.
 
 ## Overview
 
-This project implements **Follmer Stochastic Interpolants** for modeling and generating scientific data, particularly for:
-- **Stochastic Navier-Stokes equations** - Fluid dynamics simulations
-- **Weather modeling** - KNMI (Royal Netherlands Meteorological Institute) data
-- **General PDE modeling** - Using transformer-based architectures
+Stochastic interpolants provide a principled approach to learning generative models by constructing a continuous-time stochastic process that interpolates between a base (noise) distribution and a target (data) distribution. This framework applies that idea to scientific computing, where the goal is to generate physically realistic trajectories of PDE solutions.
 
-The framework provides tools for:
-- Training stochastic interpolant models
-- Sampling trajectories from trained models
-- Posterior sampling with observational constraints
-- Visualization and animation of results
+The project supports:
+- **Training** generative models on scientific simulation data
+- **Sampling** trajectories from trained models via SDE/ODE integration
+- **Posterior sampling** with observational constraints (Bayesian data assimilation)
+- **Visualization** and spectral evaluation of generated fields
+
+## Mathematical Background
+
+### Follmer Stochastic Interpolants
+
+Given a base distribution $\rho_0$ and a target distribution $\rho_1$, a stochastic interpolant defines an intermediate state:
+
+$$X_t = \alpha(t) X_0 + \beta(t) X_1 + \gamma(t) W_t$$
+
+where $\alpha(t), \beta(t)$ are deterministic interpolation coefficients, $\gamma(t)$ controls stochastic noise, and $W_t$ is a Wiener process. The framework learns a drift function $b(x, t)$ such that the SDE:
+
+$$dX_t = b(X_t, t) \, dt + \sigma(t) \, dW_t$$
+
+transports samples from $\rho_0$ to $\rho_1$.
+
+### Interpolation Schemes
+
+| Scheme | $\alpha(t)$ | $\beta(t)$ | Stochastic |
+|--------|-------------|------------|------------|
+| Linear Deterministic | $1 - t$ | $t$ | No |
+| Quadratic Deterministic | $1 - t$ | $t^2$ | No |
+| Linear Stochastic | $1 - t$ | $t$ | $\gamma(t) = c(1-t)\sqrt{t}$ |
+| Quadratic Stochastic | $1 - t$ | $t^2$ | $\gamma(t) = c(1-t)\sqrt{t}$ |
+
+### Posterior Sampling
+
+For Bayesian inverse problems with observations $y = \mathcal{H}(x) + \eta$, the posterior drift incorporates a likelihood correction:
+
+$$b_{\text{posterior}}(x, t) = b_{\text{prior}}(x, t) + \sigma^2(t) \nabla_x \log p(y \mid x)$$
+
+This enables data assimilation by guiding the generative process toward states consistent with observations.
 
 ## Key Features
 
-- **Multiple Architecture Support**: U-Net and PDE Transformer architectures
-- **Flexible Interpolation Schemes**: Linear, quadratic, and custom stochastic interpolations
-- **Posterior Sampling**: Bayesian inference with observational constraints
-- **Experiment Tracking**: Integration with TrackIO for experiment management
-- **Mixed Precision Training**: Support for efficient GPU training
-- **Comprehensive Visualization**: Animation and plotting utilities
+- **Three generative model paradigms**: Stochastic Interpolants, Flow Matching, and Diffusion Models
+- **Multiple architectures**: U-Net (with ConvNext blocks and spatial attention), PDE Transformer, and Aurora weather model wrapper
+- **Flexible interpolation**: Linear and quadratic schemes, deterministic and stochastic variants
+- **Posterior sampling**: Gaussian likelihood models, observation operators, ensemble-based uncertainty quantification
+- **Hydra configuration**: Fully configurable experiments via YAML files
+- **Experiment tracking**: TrackIO integration for logging metrics and managing checkpoints
+- **Mixed precision training**: AMP support with configurable warmup
+- **Evaluation metrics**: LSiM (learned perceptual similarity), enstrophy spectrum, RMSE
+- **Visualization**: MP4 animations, field plots, spectral analysis, point distributions
 
 ## Installation
 
 ### Prerequisites
 
-- **Python**: 3.12 (required)
+- **Python**: 3.13 (required)
 - **CUDA**: 12.6 (for GPU acceleration)
-- **Pixi**: Package manager for dependency management
+- **uv**: Package manager ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
 
-### Setup
+### Setup with uv
 
-1. **Install Pixi** (if not already installed):
-   ```bash
-   curl -fsSL https://pixi.sh/install.sh | bash
-   ```
+```bash
+git clone <repository-url>
+cd scientific-stochastic-interpolants
+uv sync
+```
 
-2. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd scientific-stochastic-interpolants
-   ```
+For GPU support:
 
-3. **Install dependencies using Pixi**:
-   ```bash
-   pixi install
-   ```
+```bash
+uv sync --extra dev-gpu
+```
 
-4. **Activate the environment**:
-   ```bash
-   pixi shell
-   ```
+For CPU-only:
 
-### Alternative Installation (without Pixi)
+```bash
+uv sync --extra dev-cpu
+```
 
-If you prefer not to use Pixi, you can install dependencies manually:
+### Alternative Installation (pip)
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install hydra-core>=1.3.2
-pip install trackio>=0.3.3
-pip install pdetransformer>=0.1.0
-pip install h5py>=3.14.0
-pip install matplotlib>=3.10.5
-pip install tqdm
-pip install einops
+pip install -e .
 ```
 
 ## Project Structure
 
 ```
 scientific-stochastic-interpolants/
-├── src/scisi/                    # Main package
-│   ├── architectures/           # Model architectures
-│   │   ├── u_net.py            # U-Net implementation
-│   │   ├── pde_transformer.py  # PDE Transformer wrapper
-│   │   └── attention.py        # Attention mechanisms
-│   ├── bin/                     # Main scripts
-│   │   ├── main_train.py       # Training script
-│   │   ├── main_test.py        # Testing script
-│   │   ├── main_test_knmi.py   # KNMI-specific testing
-│   │   └── main_posterior.py   # Posterior sampling
-│   ├── models/                  # Core models
+├── src/scisi/                       # Main package
+│   ├── architectures/               # Neural network architectures
+│   │   ├── u_net.py                 #   U-Net with ConvNext blocks
+│   │   ├── pde_transformer.py       #   PDE Transformer wrapper
+│   │   ├── aurora.py                #   Aurora weather model wrapper
+│   │   ├── attention.py             #   Spatial & rotary attention
+│   │   ├── conv_next.py             #   ConvNext blocks
+│   │   ├── embeddings.py            #   Fourier & conditional embeddings
+│   │   └── rotary_positional_embedding.py
+│   ├── models/                      # Core generative models
 │   │   ├── follmer_stochastic_interpolant.py
-│   │   └── interpolations.py   # Interpolation schemes
-│   ├── data/                    # Data handling
-│   │   ├── datasets.py         # Dataset classes
-│   │   └── load_data.py        # Data loading utilities
-│   ├── training/               # Training utilities
-│   │   ├── trainer.py          # Training loop
-│   │   └── loss_functions.py   # Loss functions
-│   ├── sampling/               # SDE solvers
-│   │   └── sde_solvers.py      # Euler-Maruyama, Heun methods
-│   ├── posterior_models/       # Posterior sampling
-│   ├── likelihood_models/      # Likelihood models
-│   ├── preprocessing/         # Data preprocessing
-│   └── plotting/              # Visualization
-├── config/                     # Configuration files
-│   ├── stochastic_navier_stokes.yaml
-│   ├── knmi.yaml
-│   └── knmi_pde_transformer.yaml
-├── checkpoints/               # Model checkpoints
-├── data/                      # Data directory
-├── figures/                   # Output figures
-└── outputs/                   # Training outputs
+│   │   ├── flow_matching_model.py
+│   │   ├── diffusion_model.py
+│   │   ├── interpolations.py        #   Interpolation schemes
+│   │   └── base_model.py            #   Abstract base class
+│   ├── data/                        # Dataset classes & loaders
+│   │   ├── datasets.py              #   All dataset implementations
+│   │   └── load_data.py
+│   ├── training/                    # Training loop & utilities
+│   │   ├── trainer.py               #   Trainer with early stopping
+│   │   ├── loss_functions.py        #   Latitude-weighted MSE, etc.
+│   │   └── gradient_clipping.py     #   EMA-based gradient clipping
+│   ├── sampling/                    # SDE/ODE solvers
+│   │   ├── sde_solvers.py           #   Euler-Maruyama, Heun
+│   │   └── ode_solvers.py           #   Euler step (flow matching)
+│   ├── posterior_models/            # Bayesian posterior sampling
+│   │   ├── base_posterior.py
+│   │   ├── stochastic_interpolant_posterior.py
+│   │   ├── flow_matching_posterior.py
+│   │   └── diffusion_posterior.py
+│   ├── likelihood_models/           # Likelihood & observation operators
+│   │   ├── gaussian_likelihood.py   #   Multiple Gaussian variants
+│   │   ├── observation_operators.py #   Grid & random observations
+│   │   └── guidance.py              #   Classifier-free guidance
+│   ├── preprocessing/               # Data normalization
+│   ├── metrics/                     # LSiM, enstrophy spectrum
+│   ├── plotting/                    # Animation & field visualization
+│   ├── particle_filter/             # Particle filtering methods
+│   ├── utils/                       # Device utilities
+│   └── bin/                         # Entry point scripts
+│       ├── main_train.py
+│       ├── main_test.py
+│       ├── main_test_knmi.py
+│       ├── main_posterior.py
+│       └── ...
+├── config/                          # Hydra YAML configs (24 files)
+├── external_libs/                   # Workspace member packages
+│   ├── torch_cfd_lib/              #   PyTorch CFD utilities
+│   ├── jax_cfd_lib/                #   JAX CFD utilities
+│   └── aurora_lib/                  #   Aurora weather model integration
+├── paper_scripts/                   # Scripts for reproducing paper results
+├── checkpoints/                     # Saved model weights
+├── data/                            # Dataset storage
+├── figures/                         # Output visualizations
+└── outputs/                         # Training outputs
 ```
 
 ## Quick Start
 
-### 1. Training a Model
-
-Train a stochastic interpolant model on stochastic Navier-Stokes data:
+### Training
 
 ```bash
 cd src/scisi/bin
 python main_train.py
 ```
 
-The training script uses Hydra configuration management. You can override settings:
+Override configuration via Hydra:
 
 ```bash
 python main_train.py model.drift_model.hidden_channels=[64,128,256] trainer.num_epochs=500
 ```
 
-### 2. Testing a Trained Model
+Use a different config file:
 
-Generate samples from a trained model:
+```bash
+python main_train.py --config-name knmi_pde_transformer.yaml
+```
+
+### Sampling from a Trained Model
 
 ```bash
 python main_test.py
 ```
 
-This will:
-- Load a pre-trained model from checkpoints
-- Generate trajectory samples
-- Create animations and plots
-- Save results to the `figures/` directory
+This loads a checkpoint, generates ensemble trajectory predictions, computes evaluation metrics, and saves animations and plots to `figures/`.
 
-### 3. Posterior Sampling
-
-Perform Bayesian inference with observational constraints:
+### Posterior Sampling
 
 ```bash
 python main_posterior.py
 ```
 
-This demonstrates how to:
-- Incorporate observational data
-- Sample from the posterior distribution
-- Compare prior vs posterior predictions
+Performs Bayesian inference by incorporating sparse observations into the generative sampling process, comparing prior and posterior predictions.
+
+## Supported Datasets
+
+| Dataset | Description | Channels | Spatial Size | Config |
+|---------|-------------|----------|-------------|--------|
+| **Stochastic Navier-Stokes** | Turbulent vorticity fields | 1 | 128 x 128 | `stochastic_navier_stokes*.yaml` |
+| **KNMI Weather** | KNMI meteorological data | 1 | Variable | `knmi*.yaml` |
+| **UDALES** | Large eddy simulation (u, v, w, T) | 4 | 256 x 256 | `udales*.yaml` |
+| **Aurora** | Global weather forecasting | Multiple | Global grid | `aurora.yaml` |
+| **Xie & Castro** | Atmospheric boundary layer | 1 | 128 x 128 | `xie_and_castro.yaml` |
+| **Weather (Global)** | Global weather reanalysis | 1 | 721 x 1440 | `weather*.yaml` |
+
+Data is expected in `.npz` format under the `data/` directory.
+
+## Generative Model Variants
+
+### Follmer Stochastic Interpolant
+
+The primary model. Learns a drift function for an SDE that transports noise to data. Supports stochastic interpolation with configurable noise levels via `gamma_multiplier`.
+
+### Flow Matching
+
+Deterministic transport via an ODE. Uses `LinearDeterministicInterpolation` and the Euler solver. No stochastic noise during sampling.
+
+### Diffusion Model
+
+Standard score-based diffusion. Learns the score function and converts it to a velocity for sampling.
+
+All three share the same architecture backends (U-Net, PDE Transformer) and can be swapped via configuration.
+
+## Model Architectures
+
+### U-Net
+
+Multi-scale encoder-decoder with skip connections. Features include:
+- ConvNext blocks for feature processing
+- Spatial attention with rotary positional embeddings (configurable per layer)
+- Time embedding via sinusoidal positional encoding
+- Field history concatenation for temporal conditioning
+- Circular padding for periodic boundary conditions
+
+### PDE Transformer
+
+Patch-based transformer architecture designed for structured grid data with periodic boundaries. Available in three sizes (PDE-S, PDE-B, PDE-L) via the external `pdetransformer` package.
+
+### Aurora Wrapper
+
+Integration with Microsoft's pre-trained Aurora weather forecasting model for global weather prediction tasks.
 
 ## Configuration
 
-The project uses Hydra for configuration management. Key configuration files:
-
-### Model Configuration
+The project uses [Hydra](https://hydra.cc/) for hierarchical configuration management. All configs live in `config/` and follow this structure:
 
 ```yaml
+experiment_tracking:
+  project: "stochastic_navier_stokes"
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  mean: [0.0]
+  std: [1.0]
+
 model:
   _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
   interpolation:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 0.1
+    gamma_multiplier: 1.0
     wiener_process: true
   drift_model:
     _target_: scisi.architectures.u_net.UNet
     in_channels: 1
     out_channels: 1
-    hidden_channels: [32, 64, 128, 256]
-    cond_dim: 1
+    hidden_channels: [8, 16, 32, 64]
     len_field_history: 5
-```
 
-### Training Configuration
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 1.0e-4
 
-```yaml
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 1000
+
 trainer:
-  _target_: scisi.training.trainer.Trainer
   num_epochs: 1000
-  device: cuda
   early_stopping:
-    _target_: scisi.training.trainer.EarlyStopping
     patience: 25
-  max_grad_norm: 5.0
   mixed_precision_warmup: 50
 ```
 
-## Available Datasets
+24 configuration files cover all combinations of datasets, architectures, and model types.
 
-### 1. Stochastic Navier-Stokes
+## Posterior Sampling & Data Assimilation
 
-- **Purpose**: Fluid dynamics simulations
-- **Data Format**: `.npz` files with trajectory data
-- **Configuration**: `stochastic_navier_stokes.yaml`
+The framework supports Bayesian inverse problems where partial observations constrain the generative process.
 
-### 2. KNMI Weather Data
+**Likelihood models:**
+- `InterpolantGaussianLikelihood` — point-wise Gaussian noise
+- `FlowdasGaussianLikelihood` — flow-based data assimilation
+- `KalmanInterpolantGaussianLikelihood` — Kalman-style ensemble covariance
+- `SpatialInterpolantGaussianLikelihood` — spatially-correlated likelihood
 
-- **Purpose**: Weather modeling and prediction
-- **Data Format**: `.npz` files with meteorological data
-- **Configuration**: `knmi.yaml`, `knmi_pde_transformer.yaml`
+**Observation operators:**
+- `LinearObservationOperator` — supports grid-based (regular skip) and random observation patterns
 
-## Model Architectures
+Posterior sampling produces an ensemble of trajectories, enabling uncertainty quantification via ensemble spread.
 
-### 1. U-Net Architecture
+## Evaluation Metrics
 
-- **Use Case**: General-purpose spatial modeling
-- **Features**: Skip connections, attention mechanisms
-- **Configuration**: Available in all config files
-
-### 2. PDE Transformer
-
-- **Use Case**: PDE-specific modeling with transformer attention
-- **Features**: Patch-based processing, periodic boundaries
-- **Configuration**: `*_pde_transformer.yaml` files
-
-## Interpolation Schemes
-
-### 1. Linear Deterministic Interpolation
-```python
-interpolation:
-  _target_: scisi.models.interpolations.LinearDeterministicInterpolation
-```
-
-### 2. Quadratic Stochastic Interpolation
-```python
-interpolation:
-  _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-  gamma_multiplier: 0.1
-  wiener_process: true
-```
-
-## Training Features
-
-### Mixed Precision Training
-- Automatic mixed precision (AMP) support
-- Configurable warmup period
-- Memory-efficient training
-
-### Early Stopping
-- Configurable patience
-- Best model checkpointing
-- Validation loss monitoring
-
-### Experiment Tracking
-- TrackIO integration
-- Automatic logging of metrics
-- Model checkpoint management
-
-## Sampling Methods
-
-### SDE Solvers
-
-1. **Euler-Maruyama**: Basic stochastic differential equation solver
-2. **Heun Method**: Higher-order accuracy solver
-
-### Sampling Parameters
-
-```python
-NUM_STEPS = 100              # Number of SDE integration steps
-NUM_PHYSICAL_STEPS = 50       # Physical time steps to predict
-BATCH_SIZE = 1               # Batch size for sampling
-MIXED_PRECISION = False      # Use mixed precision for sampling
-```
-
-## Visualization
-
-### Animation Generation
-```python
-create_animation_from_tensors(
-    [true_trajectory, predicted_trajectory],
-    fps=10,
-    file_name="prediction.mp4",
-    colormaps="viridis",
-    titles=["True", "Predicted"]
-)
-```
-
-### Plotting Utilities
-- Trajectory comparison plots
-- Error analysis visualizations
-- RMSE over time plots
+- **LSiM** — Learned perceptual similarity metric for scientific fields
+- **Enstrophy spectrum** — FFT-based energy spectrum of vorticity fields
+- **Enstrophy error** — RMS difference in spectral space between predicted and true fields
+- **RMSE** — Per-timestep root mean squared error
 
 ## Development
 
 ### Code Quality
 
-The project includes several development tools:
-
 ```bash
 # Format code
-pixi run format
-
-# Type checking
-pixi run type-check
+black src/
 
 # Sort imports
-pixi run sort-imports
+isort src/
+
+# Type checking
+mypy src/
 
 # Run tests
-pixi run py.test
+pytest
 ```
 
 ### Pre-commit Hooks
 
-Install pre-commit hooks for automatic code formatting:
-
 ```bash
-pixi run pre-commit install
+pre-commit install
 ```
 
-## Examples
-
-### Example 1: Training on Custom Data
-
-1. **Prepare your data** in `.npz` format
-2. **Create a dataset class** inheriting from `torch.utils.data.Dataset`
-3. **Update configuration** to point to your data
-4. **Run training**:
-
-```bash
-python main_train.py train_data.dataset.paths=[/path/to/your/data]
-```
-
-### Example 2: Custom Architecture
-
-Create a custom drift model by implementing the required interface:
-
-```python
-class CustomDriftModel(nn.Module):
-    def forward(self, x, t, field_history=None, field_cond=None):
-        # Your implementation
-        return drift_output
-```
-
-### Example 3: Posterior Sampling with Custom Observations
-
-```python
-# Define observation operator
-obs_operator = CustomObservationOperator()
-
-# Create likelihood model
-likelihood_model = GaussianLikelihood(obs_operator)
-
-# Sample from posterior
-posterior_samples = posterior_model.sample_trajectory(
-    base=initial_state,
-    observations=obs_data,
-    num_steps=100
-)
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **CUDA Out of Memory**:
-   - Reduce batch size
-   - Use mixed precision training
-   - Reduce model size
-
-2. **Slow Training**:
-   - Enable flash attention
-   - Use multiple workers for data loading
-   - Check GPU utilization
-
-3. **Configuration Errors**:
-   - Verify Hydra configuration syntax
-   - Check file paths in config files
-   - Ensure all required parameters are specified
-
-### Performance Tips
-
-- Use `save_in_memory=True` for small datasets
-- Enable `use_existing_cache=True` for repeated experiments
-- Adjust `num_workers` based on your system
-- Use mixed precision for large models
+Hooks run Black, isort, MyPy, and standard checks (trailing whitespace, YAML validation, large file detection) on every commit.
 
 ## Citation
 
@@ -386,32 +334,24 @@ If you use this code in your research, please cite:
 ```bibtex
 @software{scientific_stochastic_interpolants,
   title={Scientific Stochastic Interpolants},
-  author={Nikolaj T. Mücke},
-  year={2024},
-  url={https://github.com/your-repo/scientific-stochastic-interpolants}
+  author={Nikolaj T. M\"{u}cke},
+  year={2025},
+  url={https://github.com/nmucke/scientific-stochastic-interpolants}
 }
 ```
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+4. Submit a pull request
 
 ## Support
 
-For questions and support:
 - Create an issue on GitHub
 - Contact: nmucke@gmail.com
-
-## Acknowledgments
-
-- Based on the Follmer Stochastic Interpolants framework
-- Uses the PDE Transformer architecture from the research community
-- Integrates with TrackIO for experiment tracking
