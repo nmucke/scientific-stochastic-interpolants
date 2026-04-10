@@ -46,7 +46,7 @@ torch.manual_seed(42)
 NUM_PHYSICAL_STEPS = 10
 NUM_STEPS = 150
 MIXED_PRECISION = False
-ENSEMBLE_SIZE = 2
+ENSEMBLE_SIZE = 5
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 0
@@ -90,22 +90,6 @@ def main(posterior_cfg: DictConfig) -> None:
     test_dataset = hydra.utils.instantiate(cfg.test_data)
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
-    # trajectory = np.load("trajectory.npz")["trajectory"][100:, ::2, ::2]
-    # trajectory = trajectory.transpose(1, 2, 0)
-    # trajectory = trajectory.reshape(1, 1, 128, 128, 100)
-    # trajectory = torch.from_numpy(trajectory).float()
-
-    # logger.info(f"Preprocessing trajectory...")
-    # init_data = preprocesser.transform(
-    #     base=trajectory,
-    #     field_history=trajectory[:, :, :, :, 0:len_field_history],
-    #     is_batch=True,
-    #     is_trajectory=True,
-    # )
-    # trajectory = init_data["base"]
-    # base = init_data["base"][:, :, :, :, len_field_history - 1]
-    # field_history = init_data["field_history"]
-
     trajectory = test_dataset[TEST_SAMPLE_INDEX]["x"].unsqueeze(0)
 
     try:
@@ -116,6 +100,7 @@ def main(posterior_cfg: DictConfig) -> None:
         pars_cond = test_dataset[TEST_SAMPLE_INDEX]["pars_cond"].unsqueeze(0)
     except:
         pars_cond = None
+
     init_data = preprocesser.transform(
         base=trajectory[..., len_field_history - 1],
         field_history=trajectory[..., 0:len_field_history],

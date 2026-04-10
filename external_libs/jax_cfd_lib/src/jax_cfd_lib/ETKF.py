@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 from jax_cfd_lib.ENKF import SpectralEnKF
+from jax.experimental.sparse.linalg import lobpcg_standard
 
 # from jax_cfd_lib.ns_kalman import ObservationOperator
 
@@ -430,6 +431,7 @@ class LocalizedSpectralETKF(SpectralETKF):
 
         # Eigendecomposition for numerical stability
         eigenvalues, eigenvectors = jnp.linalg.eigh(C)
+        # eigenvalues, eigenvectors = lobpcg_standard(C)
         eigenvalues = jnp.maximum(eigenvalues, self.regularize_eps)
 
         # Transform matrix T = U @ Lambda^{-1/2} @ U^T * sqrt((N-1)*rho)

@@ -121,4 +121,4 @@ class GuidanceGaussianLikelihood(nn.Module):
         #     schedule = 0.0
 
         # return -schedule * score * 0.1
-        return -score * 0.01
+        return -score #* 0.01

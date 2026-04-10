@@ -63,16 +63,16 @@ def main() -> None:
     """Main function."""
     key = random.PRNGKey(123)
 
-    skip_or_random = "random"
+    skip_or_random = "skip"
 
     nx, ny = 256, 256
     grid = grids.Grid((nx, nx), domain=((0, 2 * jnp.pi), (0, 2 * jnp.pi)))
 
-    ensemble_size = 2500
-    skip_grid = 4
+    ensemble_size = 3000
+    skip_grid = 16
     num_random_obs = 200
 
-    obs_noise_std = 0.000005
+    obs_noise_std = 0.00005
 
     start_time = 5
 
@@ -129,7 +129,7 @@ def main() -> None:
         obs_noise_std=obs_noise_std,
         real_space=True,
         adaptive_localization=True,
-        localization_radius=25,
+        localization_radius=27,
         observation_operator=observation_operator,
     )
 
@@ -167,7 +167,7 @@ def main() -> None:
             observations=observations[t + 1],
             dynamics=pde,
             key=subkey,
-            inflation=1.02,
+            inflation=1.0,
             # localization_radius=15
         )
 
@@ -303,9 +303,9 @@ def main() -> None:
         plt.colorbar(im, ax=ax)
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"../../paper_results/enkf_ns/enkf_ns_results.png")
+    plt.close()
     print("Plot saved!")
-
 
 if __name__ == "__main__":
     main()

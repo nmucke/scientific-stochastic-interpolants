@@ -40,6 +40,7 @@ class StochasticInterpolantPosterior(BasePosterior):
         self.resample = resample
         self.counter = 0
         self.weights = None
+        self.log_likelihood = None
         self.integral_variance = lambda t: 2 / 3 - t.sqrt() + (1 / 3) * (t.sqrt()) ** 3
 
     def _one_step(
@@ -56,17 +57,13 @@ class StochasticInterpolantPosterior(BasePosterior):
 
         base.requires_grad = True
 
-        # Compute the drift
-        # if self.default_diffusion_term:
-        #     drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
-        # else:
-        #     drift = self.model._drift_with_prior_score(
-        #         base, t, field_history, field_cond, pars_cond, self.diffusion_term
-        #     )
+        if self.log_likelihood is None:
+            self.log_likelihood = []
+
         drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
 
         # Compute the likelihood score
-        likelihood_score = self.likelihood_model.score(
+        likelihood_score, log_likelihood = self.likelihood_model.score(
             observations=observations,
             x=base,
             t=t,
@@ -76,37 +73,22 @@ class StochasticInterpolantPosterior(BasePosterior):
             field_cond=field_cond,
             pars_cond=pars_cond,
             dt=dt,
-        ).detach()
+        )
+
+        likelihood_score = likelihood_score.detach()
+
+        self.log_likelihood.append(log_likelihood.detach())
+
         # Euler-Maruyama drift step
         base = base + drift * dt
+
         # Euler-Maruyama diffusion step
         base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
         # Likelihood score step
-        base = base + likelihood_score * self.diffusion_term(t) ** 2 * dt
-
-        # # Compute the drift
-        # if self.default_diffusion_term:
-        #     drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
-        # else:
-        #     drift = self.model._drift_with_prior_score(
-        #         base, t, field_history, field_cond, pars_cond, self.diffusion_term
-        #     )
-        # self.drift_term.append(drift.detach().to("cpu"))
+        base = base + likelihood_score * dt
 
         return base.detach()
-
-    def _pre_step(
-        self,
-        base: torch.Tensor,
-        observations: torch.Tensor,
-        t: torch.Tensor,
-    ) -> torch.Tensor:
-        """Pre-step of the posterior."""
-
-        self.drift_term: List[torch.Tensor] = []
-
-        return base
 
     def _post_step(
         self,
@@ -114,46 +96,28 @@ class StochasticInterpolantPosterior(BasePosterior):
         observations: torch.Tensor,
         t: torch.Tensor,
         field_history: torch.Tensor,
+        dt: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Post-step of the posterior."""
 
         return base, field_history
 
-        # t = t.cpu()
+        # log_likelihood = torch.cat(self.log_likelihood, dim=-1)
 
-        # self.counter += 1
         # if self.weights is None:
         #     self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
 
-        # drift_term = torch.cat(self.drift_term, dim=0)
-
-        # pred = base + drift_term * (1.0 - t)
-
-        # # Add noise = integral of the diffusion term from t to 1
-        # pred = pred + torch.randn_like(base) * self.integral_variance(t)
-
-        # pred_obs = self.likelihood_model.obs_operator(pred.to(self.device))
-
-        # obs_diff = observations - pred_obs
-
-        # prob = torch.distributions.Normal(
-        #     0, self.likelihood_model.original_variance + 1e-3
-        # ).log_prob(obs_diff)
-        # self.weights = prob.mean(dim=1) * self.weights
+        # self.weights = torch.exp(log_likelihood[0]) * self.weights
         # self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
 
-        # log_likelihood = self.likelihood_model._compute_log_likelihood(
-        #     x_obs=self.likelihood_model.obs_operator(pred.to(self.device)),
-        #     observations=observations,
-        #     variance=self.likelihood_model.original_variance + 1e-3,
-        # )
-        # log_likelihood = log_likelihood.to('cpu')
+        # self.log_likelihood = None
 
-        # temp_weights = torch.softmax(log_likelihood, dim=0).to(self.device)
-        # self.weights = self.weights * temp_weights
-        # self.weights = self.weights / self.weights.sum()
+        # N_eff = 1 / (self.weights ** 2).sum()
+        # N_eff = N_eff.to("cpu").item()
 
-        # if self.counter % 25 == 0:
+        # N_threshold = base.shape[0] / 2
+
+        # if N_eff < N_threshold:
         #     resample_indices = torch.multinomial(
         #         self.weights, num_samples=base.shape[0], replacement=True
         #     )
@@ -161,6 +125,8 @@ class StochasticInterpolantPosterior(BasePosterior):
 
         #     self.weights = 1 / base.shape[0] * torch.ones_like(self.weights)
 
+        #     print(f"Resampling {resample_indices.shape[0]} particles")
+
         #     return base[resample_indices], field_history[resample_indices]
-        # else:
-        #     return base, field_history
+
+        # return base, field_history
