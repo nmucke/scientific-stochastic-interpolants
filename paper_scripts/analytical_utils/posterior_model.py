@@ -141,8 +141,9 @@ class PosteriorModel(nn.Module):
             )
 
             if isinstance(self.likelihood_model, InterpolantLikelihood):
-                x = new + score * gamma_t ** 2 * dt
+                x = new + score * gamma_t**2 * dt
             else:
                 x = new + score
             x = x.detach()
+        
         return x
