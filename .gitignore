@@ -53,3 +53,6 @@ venv/
 
 # Aurora model weights
 aurora_model_weights/*
+
+# latex
+latex/

@@ -6,18 +6,23 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-import pdb
 import matplotlib.pyplot as plt
 import torch
 
-from torch.distributions import MultivariateNormal 
+from torch.distributions import MultivariateNormal
 
 from paper_scripts.analytical_utils.kde_utils import prepare_samples
 
-from paper_scripts.analytical_utils.kl_divergence import kl_divergence, wasserstein_distance
+from paper_scripts.analytical_utils.kl_divergence import (
+    kl_divergence,
+    wasserstein_distance,
+)
 from paper_scripts.analytical_utils.likelihood import (
     FlowdasLikelihood,
     InterpolantLikelihood,
+    SDEConditionalLikelihood,
+    LinearizedDriftLikelihood,
+    MultiStepLinearizedDriftLikelihood,
 )
 from paper_scripts.analytical_utils.stochastic_interpolant import (
     AnalyticalDriftModel,
@@ -64,164 +69,270 @@ INTERPOLATION = LinearStochasticInterpolation(wiener_process=True)
 TRUE_DRIFT_MODEL = AnalyticalDriftModel(
     INTERPOLATION, TARGET_MEAN, TARGET_COV, DIFFUSION_TERM
 )
-
 TRUE_DRIFT_MODEL_1 = AnalyticalDriftModel(
     INTERPOLATION, TARGET_MEAN, TARGET_COV, lambda t: 1.0 * (1 - t)
 )
 
-# ORIGINAL_VARIANCE_LIST = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
 ORIGINAL_VARIANCE_LIST = [0.5, 1.0, 2.0]
+
+METRICS = [
+    ("Wasserstein", wasserstein_distance),
+    ("KL-div", kl_divergence),
+]
+
+
+def build_models(obs_matrix: torch.Tensor, original_variance: float):
+    """Return ``(name, posterior_model)`` pairs for every baseline."""
+    shared = dict(
+        obs_matrix=obs_matrix,
+        drift_model=TRUE_DRIFT_MODEL,
+        original_variance=original_variance,
+    )
+    return [
+        (
+            "FlowDAS",
+            PosteriorModel(TRUE_DRIFT_MODEL, FlowdasLikelihood(**shared)),
+        ),
+        (
+            "Interpolant",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(**shared, perturbation=None),
+            ),
+        ),
+        (
+            "Interpolant (true pert.)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(
+                    **shared,
+                    perturbation="true",
+                    num_quad=1000,
+                    target_variance=1.0,
+                ),
+            ),
+        ),
+        (
+            "Interpolant (tangent pert.)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(
+                    **shared, perturbation="tangent", target_variance=1.0
+                ),
+            ),
+        ),
+        (
+            "Interpolant (ensemble pert.)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(
+                    **shared, perturbation="ensemble", target_variance=1.0
+                ),
+            ),
+        ),
+        (
+            "Interpolant (residual pert.)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(
+                    **shared, perturbation="residual", target_variance=1.0
+                ),
+            ),
+        ),
+        (
+            "Interpolant (deint pert.)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(
+                    **shared, perturbation="deint", target_variance=1.0
+                ),
+            ),
+        ),
+        # (
+        #     "SDE-conditional",
+        #     PosteriorModel(
+        #         TRUE_DRIFT_MODEL_1,
+        #         SDEConditionalLikelihood(**shared, target_variance=1.0),
+        #     ),
+        # ),
+        # (
+        #     "Linearized drift",
+        #     PosteriorModel(
+        #         TRUE_DRIFT_MODEL_1,
+        #         LinearizedDriftLikelihood(**shared, num_quad=50),
+        #     ),
+        # ),
+        # (
+        #     "Multi-step lin. drift",
+        #     PosteriorModel(
+        #         TRUE_DRIFT_MODEL_1,
+        #         MultiStepLinearizedDriftLikelihood(
+        #             **shared, num_substeps=5, num_euler_per_substep=10
+        #         ),
+        #     ),
+        # ),
+    ]
+
+
+def format_results_table(
+    results: dict,
+    noise_values: list,
+    model_names: list,
+    metric_names: list,
+) -> str:
+    """Render ``results[model][sigma][metric]`` as an aligned text table.
+
+    One row per model, one column per (sigma, metric), with an empty
+    spacer column between consecutive sigma blocks.
+    """
+    col_w = 12
+    name_w = max(len(n) for n in model_names) + 2
+    spacer = "  "  # empty column between sigma blocks
+
+    # --- Header line 1: sigma groups, centered over their metric columns ---
+    group_w = col_w * len(metric_names)
+    line1 = " " * name_w
+    for j, sigma in enumerate(noise_values):
+        if j > 0:
+            line1 += spacer
+        line1 += f"sigma^2 = {sigma:g}".center(group_w)
+
+    # --- Header line 2: metric names ---
+    line2 = " " * name_w
+    for j in range(len(noise_values)):
+        if j > 0:
+            line2 += spacer
+        for m in metric_names:
+            line2 += m.rjust(col_w)
+
+    # --- Separator ---
+    sep = "-" * len(line2)
+
+    # --- Body rows ---
+    rows = []
+    for name in model_names:
+        row = name.ljust(name_w)
+        for j, sigma in enumerate(noise_values):
+            if j > 0:
+                row += spacer
+            for m in metric_names:
+                v = results[name][sigma][m]
+                row += f"{v:+{col_w}.4f}"
+        rows.append(row)
+
+    return "\n".join([line1, line2, sep, *rows])
+
 
 def main() -> None:
     """Main function."""
 
+    OBS = torch.tensor([[1.0, 1.0]])
+    OBS_MATRIX = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
 
-    flow_das_si_posterior_wasserstein_list = []
-    interpolant_si_posterior_wasserstein_list = []
-    flow_das_si_posterior_div_list = []
-    interpolant_si_posterior_div_list = []
+    x0 = torch.ones(1, DIM) * X0_MEAN
+    x = x0.repeat(BATCH_SIZE, 1)
 
-    for ORIGINAL_VARIANCE in ORIGINAL_VARIANCE_LIST:
-        # Likelihood
-        OBS = torch.tensor([[1.0, 1.0]])
-        OBS_COV = torch.eye(DIM) * ORIGINAL_VARIANCE
-        # OBS_MATRIX = torch.eye(DIM)
-        OBS_MATRIX = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    model_names = [
+        "FlowDAS",
+        "Interpolant",
+        "Interpolant (true pert.)",
+        "Interpolant (tangent pert.)",
+        "Interpolant (ensemble pert.)",
+        "Interpolant (residual pert.)",
+        "Interpolant (deint pert.)",
+    ]
+    metric_names = [m[0] for m in METRICS]
 
-        # Likelihood model
-        flowdas_args = {
-            "obs_matrix": OBS_MATRIX,
-            "drift_model": TRUE_DRIFT_MODEL,
-            "original_variance": ORIGINAL_VARIANCE,
-        }
-        interpolant_args = {
-            "obs_matrix": OBS_MATRIX,
-            "drift_model": TRUE_DRIFT_MODEL,
-            "original_variance": ORIGINAL_VARIANCE,
-        }
+    results = {
+        name: {s: {} for s in ORIGINAL_VARIANCE_LIST} for name in model_names
+    }
+    kde_samples: dict = {name: {} for name in model_names}
+    true_posterior_kde: dict = {}
 
-        likelihood_dist = MultivariateNormal(OBS[0], OBS_COV)
+    for sigma in ORIGINAL_VARIANCE_LIST:
+        print(f"\n=== sigma^2 = {sigma:g} ===")
 
-        x0 = torch.ones(1, DIM) * X0_MEAN
-        true_prior_samples = MultivariateNormal(TARGET_MEAN(x0)[0], TARGET_COV(x0)[0, :, :]).sample((BATCH_SIZE,))
-
+        OBS_COV = torch.eye(DIM) * sigma
         _, _, true_posterior_dist = get_true_posterior(
             x0, TARGET_MEAN, TARGET_COV, OBS_MATRIX, OBS_COV, OBS
         )
-
-        true_stochastic_interpolant = AnalyticalStochasticInterpolant(
-            INTERPOLATION, TRUE_DRIFT_MODEL, DIFFUSION_TERM
-        )
-
-        flow_das_likelihood_model = FlowdasLikelihood( **flowdas_args)
-        flow_das_posterior_model = PosteriorModel(
-            TRUE_DRIFT_MODEL, flow_das_likelihood_model
-        )
-
-        interpolant_likelihood_model = InterpolantLikelihood(**interpolant_args)
-        interpolant_posterior_model = PosteriorModel(
-            TRUE_DRIFT_MODEL_1, interpolant_likelihood_model
-        )
-
-        x = x0.repeat(BATCH_SIZE, 1)
-
-        si_prior = prepare_samples(
-            true_stochastic_interpolant.sample(x, num_steps=NUM_STEPS),
-            **SAMPLE_ARGS,
-        )
-        true_posterior = prepare_samples(
+        true_posterior_kde[sigma] = prepare_samples(
             true_posterior_dist.sample((BATCH_SIZE,)), **SAMPLE_ARGS
         )
-        flow_das_si_posterior = prepare_samples(
-            flow_das_posterior_model.sample(
-                x, num_steps=NUM_STEPS, observations=OBS
-            ), **SAMPLE_ARGS,
+        true_posterior_samples = true_posterior_kde[sigma].samples
+
+        for name, posterior_model in build_models(OBS_MATRIX, sigma):
+            print(f"  sampling: {name}")
+            kde = prepare_samples(
+                posterior_model.sample(
+                    x, num_steps=NUM_STEPS, observations=OBS
+                ),
+                **SAMPLE_ARGS,
+            )
+            kde_samples[name][sigma] = kde
+            for metric_name, metric_fn in METRICS:
+                results[name][sigma][metric_name] = float(
+                    metric_fn(true_posterior_samples, kde.samples)
+                )
+
+    print()
+    print(
+        format_results_table(
+            results, ORIGINAL_VARIANCE_LIST, model_names, metric_names
         )
-        interpolant_si_posterior = prepare_samples(
-            interpolant_posterior_model.sample(
-                x, num_steps=NUM_STEPS, observations=OBS
-            ), **SAMPLE_ARGS,
-        )
-        true_prior = prepare_samples(true_prior_samples, **SAMPLE_ARGS)
-        likelihood = prepare_samples(
-            likelihood_dist.sample((BATCH_SIZE,)), **SAMPLE_ARGS
-        )
+    )
+    print()
 
-        flow_das_si_posterior_div_list.append(kl_divergence(
-            true_posterior.samples, flow_das_si_posterior.samples
-        ))
-        interpolant_si_posterior_div_list.append(kl_divergence(
-            true_posterior.samples, interpolant_si_posterior.samples
-        ))
-
-        flow_das_si_posterior_wasserstein_list.append(wasserstein_distance(
-            true_posterior.samples, flow_das_si_posterior.samples
-        ))
-        interpolant_si_posterior_wasserstein_list.append(wasserstein_distance(
-            true_posterior.samples, interpolant_si_posterior.samples
-        ))
-
-        print(f"flow_das_si_posterior_wasserstein: {flow_das_si_posterior_wasserstein_list[-1]:0.4f}")
-        print(f"interpolant_si_posterior_wasserstein: {interpolant_si_posterior_wasserstein_list[-1]:0.4f}")
-        print(f"flow_das_si_posterior_div: {flow_das_si_posterior_div_list[-1]:0.4f}")
-        print(f"interpolant_si_posterior_div: {interpolant_si_posterior_div_list[-1]:0.4f}")
-
-        # plt.figure(figsize=(20, 10))
-        # plt.subplot(3, 3, 1)
-        # plt.pcolormesh(si_prior.xi, si_prior.yi, si_prior.zi, shading="gouraud")
-        # plt.title("SI Prior")
-        # plt.subplot(3, 3, 2)
-        # plt.pcolormesh(true_prior.xi, true_prior.yi, true_prior.zi, shading="gouraud")
-        # plt.title("True prior")
-        # plt.subplot(3, 3, 3)
-        # plt.pcolormesh(
-        #     flow_das_si_posterior.xi,
-        #     flow_das_si_posterior.yi,
-        #     flow_das_si_posterior.zi,
-        #     shading="gouraud",
-        # )
-        # plt.title("FlowDAS SI Posterior")
-        # plt.subplot(3, 3, 4)
-        # plt.pcolormesh(
-        #     interpolant_si_posterior.xi,
-        #     interpolant_si_posterior.yi,
-        #     interpolant_si_posterior.zi,
-        #     shading="gouraud",
-        # )
-        # plt.title("Interpolant SI Posterior")
-        # plt.subplot(3, 3, 5)
-        # plt.pcolormesh(likelihood.xi, likelihood.yi, likelihood.zi, shading="gouraud")
-        # plt.title("Likelihood")
-        # plt.subplot(3, 3, 6)
-        # plt.pcolormesh(
-        #     true_posterior.xi, true_posterior.yi, true_posterior.zi, shading="gouraud"
-        # )
-        # plt.title("True Posterior")
-        # plt.subplot(3, 3, 7)
-        # plt.plot(flow_das_si_posterior.diag, label="FlowDAS SI Posterior")
-        # plt.plot(interpolant_si_posterior.diag, label="Interpolant SI Posterior")
-        # plt.plot(true_prior.diag, label="True prior")
-        # plt.plot(true_posterior.diag, label="True Posterior")
-        # plt.plot(likelihood.diag, label="Likelihood")
-        # plt.legend()
-        # plt.title("Diagonal values")
-
-        # plt.show()
-
-    plt.figure(figsize=(20, 10))
-    plt.subplot(1, 2, 1)
-    plt.loglog(ORIGINAL_VARIANCE_LIST, flow_das_si_posterior_wasserstein_list, label="FlowDAS SI Posterior Wasserstein", **PLOT_ARGS)
-    plt.loglog(ORIGINAL_VARIANCE_LIST, interpolant_si_posterior_wasserstein_list, label="Interpolant SI Posterior Wasserstein", **PLOT_ARGS)
-    plt.legend()
-    plt.title("Wasserstein Distance")
-
-    plt.subplot(1, 2, 2)
-    plt.loglog(ORIGINAL_VARIANCE_LIST, flow_das_si_posterior_div_list, label="FlowDAS SI Posterior KL-Divergence", **PLOT_ARGS)
-    plt.loglog(ORIGINAL_VARIANCE_LIST, interpolant_si_posterior_div_list, label="Interpolant SI Posterior KL-Divergence", **PLOT_ARGS)
-    plt.legend()
-    plt.title("KL-Divergence")
+    # --- Convergence plots: one panel per metric, one curve per model ---
+    fig, axes = plt.subplots(1, len(METRICS), figsize=(8 * len(METRICS), 6))
+    if len(METRICS) == 1:
+        axes = [axes]
+    for ax, (metric_name, _) in zip(axes, METRICS):
+        for name in model_names:
+            ys = [results[name][s][metric_name] for s in ORIGINAL_VARIANCE_LIST]
+            ax.loglog(ORIGINAL_VARIANCE_LIST, ys, label=name, **PLOT_ARGS)
+        ax.set_xlabel("observation noise variance")
+        ax.set_ylabel(metric_name)
+        ax.set_title(metric_name)
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend()
+    plt.tight_layout()
     plt.show()
 
-if __name__ == "__main__":
 
+    # --- KDE heatmaps: rows = sigma, cols = [true posterior, each model] ---
+    n_rows = len(ORIGINAL_VARIANCE_LIST)
+    n_cols = 1 + len(model_names)
+    _, axes = plt.subplots(
+        n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False
+    )
+    for i, sigma in enumerate(ORIGINAL_VARIANCE_LIST):
+        tp = true_posterior_kde[sigma]
+        axes[i, 0].pcolormesh(tp.xi, tp.yi, tp.zi, shading="gouraud")
+        axes[i, 0].set_title(f"True posterior (sigma^2={sigma:g})")
+        axes[i, 0].set_aspect("equal")
+        for j, name in enumerate(model_names, start=1):
+            kde = kde_samples[name][sigma]
+            axes[i, j].pcolormesh(kde.xi, kde.yi, kde.zi, shading="gouraud")
+            axes[i, j].set_title(f"{name} (sigma^2={sigma:g})")
+            axes[i, j].set_aspect("equal")
+    plt.tight_layout()
+    plt.show()
+
+    # --- Diagonal slice comparison, one subplot per sigma ---
+    _, axes = plt.subplots(
+        1, n_rows, figsize=(6 * n_rows, 5), squeeze=False
+    )
+    for i, sigma in enumerate(ORIGINAL_VARIANCE_LIST):
+        ax = axes[0, i]
+        ax.plot(true_posterior_kde[sigma].diag, label="True posterior", linewidth=2)
+        for name in model_names:
+            ax.plot(kde_samples[name][sigma].diag, label=name, **PLOT_ARGS)
+        ax.set_title(f"Diagonal (sigma^2={sigma:g})")
+        ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
     main()

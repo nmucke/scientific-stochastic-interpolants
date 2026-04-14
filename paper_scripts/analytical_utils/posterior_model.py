@@ -65,7 +65,12 @@ import torch
 import torch.nn as nn
 import tqdm
 from typing import Optional
-from paper_scripts.analytical_utils.likelihood import InterpolantLikelihood
+from paper_scripts.analytical_utils.likelihood import (
+    InterpolantLikelihood,
+    SDEConditionalLikelihood,
+    LinearizedDriftLikelihood,
+    MultiStepLinearizedDriftLikelihood,
+)
 
 
 class PosteriorModel(nn.Module):
@@ -140,7 +145,15 @@ class PosteriorModel(nn.Module):
                 x, t, x0, observations, dt, gamma_fn
             )
 
-            if isinstance(self.likelihood_model, InterpolantLikelihood):
+            if isinstance(
+                self.likelihood_model,
+                (
+                    InterpolantLikelihood,
+                    SDEConditionalLikelihood,
+                    LinearizedDriftLikelihood,
+                    MultiStepLinearizedDriftLikelihood,
+                ),
+            ):
                 x = new + score * gamma_t**2 * dt
             else:
                 x = new + score
