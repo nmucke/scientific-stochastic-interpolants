@@ -8,11 +8,9 @@ if str(_root) not in sys.path:
 
 import matplotlib.pyplot as plt
 import torch
-
 from torch.distributions import MultivariateNormal
 
 from paper_scripts.analytical_utils.kde_utils import prepare_samples
-
 from paper_scripts.analytical_utils.kl_divergence import (
     kl_divergence,
     wasserstein_distance,
@@ -20,10 +18,8 @@ from paper_scripts.analytical_utils.kl_divergence import (
 from paper_scripts.analytical_utils.likelihood import (
     FlowdasLikelihood,
     InterpolantLikelihood,
-    SDEConditionalLikelihood,
-    LinearizedDriftLikelihood,
-    MultiStepLinearizedDriftLikelihood,
 )
+from paper_scripts.analytical_utils.posterior_model import PosteriorModel
 from paper_scripts.analytical_utils.stochastic_interpolant import (
     AnalyticalDriftModel,
     AnalyticalStochasticInterpolant,
@@ -33,7 +29,6 @@ from scisi.models.interpolations import (
     LinearStochasticInterpolation,
     QuadraticStochasticInterpolation,
 )
-from paper_scripts.analytical_utils.posterior_model import PosteriorModel
 
 PLOT_ARGS = {
     "linewidth": 3,
@@ -57,12 +52,10 @@ SAMPLE_ARGS = {
 
 # Prior target
 TARGET_MEAN = lambda x: x
-TARGET_COV = lambda x: torch.eye(x.shape[1]).expand(
-    x.shape[0], x.shape[1], x.shape[1]
-)
+TARGET_COV = lambda x: torch.eye(x.shape[1]).expand(x.shape[0], x.shape[1], x.shape[1])
 
 # Stochastic Interpolant
-NUM_STEPS = 1000
+NUM_STEPS = 250
 X0_MEAN = 5
 DIFFUSION_TERM = lambda t: 1.0 * (1 - t)
 INTERPOLATION = LinearStochasticInterpolation(wiener_process=True)
@@ -90,6 +83,13 @@ def build_models(obs_matrix: torch.Tensor, original_variance: float):
     )
     return [
         (
+            "New correction",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(**shared, perturbation="new_correction"),
+            ),
+        ),
+        (
             "FlowDAS",
             PosteriorModel(TRUE_DRIFT_MODEL, FlowdasLikelihood(**shared)),
         ),
@@ -112,65 +112,6 @@ def build_models(obs_matrix: torch.Tensor, original_variance: float):
                 ),
             ),
         ),
-        (
-            "Interpolant (tangent pert.)",
-            PosteriorModel(
-                TRUE_DRIFT_MODEL_1,
-                InterpolantLikelihood(
-                    **shared, perturbation="tangent", target_variance=1.0
-                ),
-            ),
-        ),
-        (
-            "Interpolant (ensemble pert.)",
-            PosteriorModel(
-                TRUE_DRIFT_MODEL_1,
-                InterpolantLikelihood(
-                    **shared, perturbation="ensemble", target_variance=1.0
-                ),
-            ),
-        ),
-        (
-            "Interpolant (residual pert.)",
-            PosteriorModel(
-                TRUE_DRIFT_MODEL_1,
-                InterpolantLikelihood(
-                    **shared, perturbation="residual", target_variance=1.0
-                ),
-            ),
-        ),
-        (
-            "Interpolant (deint pert.)",
-            PosteriorModel(
-                TRUE_DRIFT_MODEL_1,
-                InterpolantLikelihood(
-                    **shared, perturbation="deint", target_variance=1.0
-                ),
-            ),
-        ),
-        # (
-        #     "SDE-conditional",
-        #     PosteriorModel(
-        #         TRUE_DRIFT_MODEL_1,
-        #         SDEConditionalLikelihood(**shared, target_variance=1.0),
-        #     ),
-        # ),
-        # (
-        #     "Linearized drift",
-        #     PosteriorModel(
-        #         TRUE_DRIFT_MODEL_1,
-        #         LinearizedDriftLikelihood(**shared, num_quad=50),
-        #     ),
-        # ),
-        # (
-        #     "Multi-step lin. drift",
-        #     PosteriorModel(
-        #         TRUE_DRIFT_MODEL_1,
-        #         MultiStepLinearizedDriftLikelihood(
-        #             **shared, num_substeps=5, num_euler_per_substep=10
-        #         ),
-        #     ),
-        # ),
     ]
 
 
@@ -233,19 +174,14 @@ def main() -> None:
     x = x0.repeat(BATCH_SIZE, 1)
 
     model_names = [
+        "New correction",
         "FlowDAS",
         "Interpolant",
         "Interpolant (true pert.)",
-        "Interpolant (tangent pert.)",
-        "Interpolant (ensemble pert.)",
-        "Interpolant (residual pert.)",
-        "Interpolant (deint pert.)",
     ]
     metric_names = [m[0] for m in METRICS]
 
-    results = {
-        name: {s: {} for s in ORIGINAL_VARIANCE_LIST} for name in model_names
-    }
+    results = {name: {s: {} for s in ORIGINAL_VARIANCE_LIST} for name in model_names}
     kde_samples: dict = {name: {} for name in model_names}
     true_posterior_kde: dict = {}
 
@@ -264,9 +200,7 @@ def main() -> None:
         for name, posterior_model in build_models(OBS_MATRIX, sigma):
             print(f"  sampling: {name}")
             kde = prepare_samples(
-                posterior_model.sample(
-                    x, num_steps=NUM_STEPS, observations=OBS
-                ),
+                posterior_model.sample(x, num_steps=NUM_STEPS, observations=OBS),
                 **SAMPLE_ARGS,
             )
             kde_samples[name][sigma] = kde
@@ -277,9 +211,7 @@ def main() -> None:
 
     print()
     print(
-        format_results_table(
-            results, ORIGINAL_VARIANCE_LIST, model_names, metric_names
-        )
+        format_results_table(results, ORIGINAL_VARIANCE_LIST, model_names, metric_names)
     )
     print()
 
@@ -298,7 +230,6 @@ def main() -> None:
         ax.legend()
     plt.tight_layout()
     plt.show()
-
 
     # --- KDE heatmaps: rows = sigma, cols = [true posterior, each model] ---
     n_rows = len(ORIGINAL_VARIANCE_LIST)
@@ -320,9 +251,7 @@ def main() -> None:
     plt.show()
 
     # --- Diagonal slice comparison, one subplot per sigma ---
-    _, axes = plt.subplots(
-        1, n_rows, figsize=(6 * n_rows, 5), squeeze=False
-    )
+    _, axes = plt.subplots(1, n_rows, figsize=(6 * n_rows, 5), squeeze=False)
     for i, sigma in enumerate(ORIGINAL_VARIANCE_LIST):
         ax = axes[0, i]
         ax.plot(true_posterior_kde[sigma].diag, label="True posterior", linewidth=2)
