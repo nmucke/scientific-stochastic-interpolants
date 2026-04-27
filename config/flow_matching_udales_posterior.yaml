@@ -1,5 +1,5 @@
 pre_trained_model:
-  project: stochastic_navier_stokes
+  project: udales
   # name: warm-root-42
   # name: valiant-petal-41
   # name: sincere-ridge-38
@@ -8,7 +8,7 @@ pre_trained_model:
   # name: optimistic-spring-34
   # name: mysterious-crane-57
   # name: playful-fox-60
-  name: flow_matching
+  name: flow_matching_small
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator

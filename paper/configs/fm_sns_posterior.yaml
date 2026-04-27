@@ -1,13 +1,5 @@
 pre_trained_model:
   project: stochastic_navier_stokes
-  # name: warm-root-42
-  # name: valiant-petal-41
-  # name: sincere-ridge-38
-  # name: resourceful-plain-37
-  # name: quirky-cave-36
-  # name: optimistic-spring-34
-  # name: mysterious-crane-57
-  # name: playful-fox-60
   name: flow_matching
 
 obs_operator:
@@ -19,7 +11,6 @@ obs_operator:
 
 likelihood_model:
   _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood
-  # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
   ensemble_size: 25
 

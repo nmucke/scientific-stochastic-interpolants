@@ -1,22 +1,22 @@
 pre_trained_model:
   project: udales
   # name: kind-sky-8
-  name: flow_matching_new
+  name: stochastic_interpolant_small_gamma1
+  # name: stochastic_interpolant_big_gamma1
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
-  type: random
-  percent_obs: 0.10
-  # type: grid
-  # skip_grid: 8
+  # type: random
+  # percent_obs: 0.10
+  type: grid
+  skip_grid: 8
 
 likelihood_model:
-  # _target_: scisi.likelihood_models.gaussian_likelihood.KalmanInterpolantGaussianLikelihood
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
-  # _target_: scisi.likelihood_models.gaussian_likelihood.SpatialInterpolantGaussianLikelihood
   # _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
   variance: 0.0025
   ensemble_size: 25
+  correct_likelihood_score: true
   # interpolant:
   #   # _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
   #   _target_: scisi.models.interpolations.LinearStochasticInterpolation
@@ -25,4 +25,5 @@ likelihood_model:
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
+  resample: false
   # _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantParticleFlowPosterior

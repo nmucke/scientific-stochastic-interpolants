@@ -2,7 +2,7 @@
 # import torch.nn as nn
 # import tqdm
 # from typing import Optional
-# from paper_scripts.analytical_utils.likelihood import InterpolantLikelihood
+# from paper.scripts.analytical_utils.likelihood import InterpolantLikelihood
 
 # class PosteriorModel(nn.Module):
 #     """Posterior model."""
@@ -65,7 +65,7 @@ import torch
 import torch.nn as nn
 import tqdm
 from typing import Optional
-from paper_scripts.analytical_utils.likelihood import InterpolantLikelihood
+from paper.scripts.analytical_utils.likelihood import InterpolantLikelihood
 
 
 class PosteriorModel(nn.Module):
