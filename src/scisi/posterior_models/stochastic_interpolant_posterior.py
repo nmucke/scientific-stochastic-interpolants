@@ -100,33 +100,34 @@ class StochasticInterpolantPosterior(BasePosterior):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Post-step of the posterior."""
 
+        if not self.resample:
+            return base, field_history
+
+        log_likelihood = torch.cat(self.log_likelihood, dim=-1)
+
+        if self.weights is None:
+            self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
+
+        self.weights = torch.exp(log_likelihood[0]) * self.weights
+        self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
+
+        self.log_likelihood = None
+
+        N_eff = 1 / (self.weights ** 2).sum()
+        N_eff = N_eff.to("cpu").item()
+
+        N_threshold = base.shape[0] / 2
+
+        if N_eff < N_threshold:
+            resample_indices = torch.multinomial(
+                self.weights, num_samples=base.shape[0], replacement=True
+            )
+            resample_indices = resample_indices.to("cpu")
+
+            self.weights = 1 / base.shape[0] * torch.ones_like(self.weights)
+
+            print(f"Resampling {resample_indices.shape[0]} particles")
+
+            return base[resample_indices], field_history[resample_indices]
+
         return base, field_history
-
-        # log_likelihood = torch.cat(self.log_likelihood, dim=-1)
-
-        # if self.weights is None:
-        #     self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
-
-        # self.weights = torch.exp(log_likelihood[0]) * self.weights
-        # self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
-
-        # self.log_likelihood = None
-
-        # N_eff = 1 / (self.weights ** 2).sum()
-        # N_eff = N_eff.to("cpu").item()
-
-        # N_threshold = base.shape[0] / 2
-
-        # if N_eff < N_threshold:
-        #     resample_indices = torch.multinomial(
-        #         self.weights, num_samples=base.shape[0], replacement=True
-        #     )
-        #     resample_indices = resample_indices.to("cpu")
-
-        #     self.weights = 1 / base.shape[0] * torch.ones_like(self.weights)
-
-        #     print(f"Resampling {resample_indices.shape[0]} particles")
-
-        #     return base[resample_indices], field_history[resample_indices]
-
-        # return base, field_history

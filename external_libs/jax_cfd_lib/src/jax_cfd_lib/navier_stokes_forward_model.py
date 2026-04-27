@@ -49,6 +49,7 @@ class NavierStokes2D:
         drag: float = 0.0,
         smooth: bool = True,
         forcing_fn: Optional[Callable[[grids.Grid], Any]] = None,
+        stochastic_forcing_scale: float = 1.0,
     ):
         """
         Initialize the Navier-Stokes equation.
@@ -68,6 +69,7 @@ class NavierStokes2D:
         self.smooth = smooth
         self.forcing_fn = forcing_fn
         self._forcing_fn_with_grid = None
+        self.stochastic_forcing_scale = stochastic_forcing_scale
 
         self.kx, self.ky = self.grid.rfft_mesh()
         self.laplace = (jnp.pi * 2j) ** 2 * (self.kx**2 + self.ky**2)
@@ -169,7 +171,7 @@ class NavierStokes2D:
         dB_fourier = set_mode(dB_fourier, 8, 8, 0.5 * (dW[3] - 1j * dW[7]))
         dB_fourier = set_mode(dB_fourier, -8, -8, 0.5 * (dW[3] + 1j * dW[7]))
 
-        return dB_fourier
+        return self.stochastic_forcing_scale * dB_fourier
 
 
 def repeated(f: Callable, steps: int) -> Callable:
@@ -288,11 +290,14 @@ def set_up_forward_model(
     smooth: bool = True,
     hf_dt: float = 1e-4,
     inner_steps: int = 100,
+    stochastic_forcing_scale: float = 1.0,
 ) -> Callable[[jnp.ndarray], jnp.ndarray]:
     """Set up the forward model."""
 
-    # forcing = lambda grid: kolmogorov_forcing(grid)
-    forcing = None
+    if stochastic:
+        forcing = None        
+    else:
+        forcing = lambda grid: kolmogorov_forcing(grid)
 
     if use_true_model:
         step_fn = spectral.time_stepping.crank_nicolson_rk4(
@@ -312,6 +317,7 @@ def set_up_forward_model(
                 smooth=smooth,
                 forcing_fn=forcing,
                 drag=drag,
+                stochastic_forcing_scale=stochastic_forcing_scale,
             ),
             hf_dt,
         )

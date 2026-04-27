@@ -23,6 +23,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         variance: float = 0.05,
         ensemble_size: int = 1,
         interpolant: Optional[nn.Module] = None,
+        correct_likelihood_score: bool = True
     ) -> None:
         """
         Initialize Interpolant Gaussian likelihood.
@@ -39,6 +40,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         self.model = model
         self.original_variance = variance
         self.ensemble_size = ensemble_size
+        self.correct_likelihood_score = correct_likelihood_score
 
         if interpolant is not None:
             self.interpolant = interpolant
@@ -79,14 +81,37 @@ class InterpolantGaussianLikelihood(nn.Module):
         # Compute the scale of the interpolant of the observation
         interpolant_variance = (
             self.interpolant.beta(t) ** 2 * self.original_variance
-            + self.model.interpolation.gamma(t) ** 2 * t
+            + self.interpolant.gamma(t) ** 2 * t + 1e-4
         )
-
-        # interpolant_variance -= self.model.interpolation.gamma(t) ** 2 * t
-
-        # interpolant_variance += 1e-6
         
         return interpolant_obs, interpolant_variance
+
+    def _compute_likelihood_score_correction(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        likelihood_score: torch.Tensor
+    ):
+        """Correct the likelihood score.
+
+        For point-observation operators (grid/random selection), H is a selection
+        matrix so H^T H is diagonal — 1 at observed locations, 0 elsewhere. The
+        rank-N_y correction from eq. (26) therefore reduces to an elementwise
+        multiply with the observation mask, avoiding the dense N_u x N_u product.
+        """
+
+        correction_factor = self.diffusion_term(t) ** 2 * t
+        correction_factor /= self.interpolant.beta(t) ** 2 + 1e-3
+        correction_factor /= self.original_variance
+
+        if getattr(self, "_obs_mask", None) is None \
+                or self._obs_mask.device != likelihood_score.device:
+            self._obs_mask = self.obs_operator.obs_indices_on_grid.to(
+                device=likelihood_score.device, dtype=likelihood_score.dtype
+            )
+
+        return likelihood_score + correction_factor * self._obs_mask * likelihood_score
+
 
     def score(
         self,
@@ -129,11 +154,15 @@ class InterpolantGaussianLikelihood(nn.Module):
             inputs=x,
         )[0]
 
-        drift_norm = torch.linalg.norm(model_score[0])
-        print(drift_norm)
+        if self.correct_likelihood_score:
+            likelihood_score = self._compute_likelihood_score_correction(
+                x=x,
+                t=t,
+                likelihood_score=likelihood_score
+            )
 
-
-        return drift_norm * likelihood_score * self.diffusion_term(t) ** 2, diff_norm
+        # return likelihood_score, diff_norm
+        return likelihood_score * self.diffusion_term(t) ** 2, diff_norm
 
 class FlowdasGaussianLikelihood(nn.Module):
     """Multivariate Gaussian likelihood."""
@@ -217,53 +246,6 @@ class FlowdasGaussianLikelihood(nn.Module):
         # Add noise = integral of the diffusion term from t to 1
         return pred + torch.randn_like(pred) * self.integral_variance(t)
 
-    # def score(
-    #     self,
-    #     observations: torch.Tensor,
-    #     x: torch.Tensor,
-    #     t: torch.Tensor,
-    #     field_history: torch.Tensor,
-    #     field_cond: Optional[torch.Tensor] = None,
-    #     pars_cond: Optional[torch.Tensor] = None,
-    #     dt: Optional[torch.Tensor] = None,
-    #     drift: Optional[torch.Tensor] = None,
-    #     **kwargs: Any,
-    # ) -> torch.Tensor:
-    #     """Compute the likelihood score."""
-
-    #     preds = self._compute_one_step_prediction(
-    #         x, t, dt, field_history, field_cond, pars_cond, drift
-    #     )
-
-    #     pdb.set_trace()
-
-    #     differences = torch.linalg.norm(observations - self.obs_operator(preds), dim=1)
-    #     weights = - 0.5 * differences / self.original_variance
-
-    #     # Detach the weights to avoid gradients
-    #     weights_detached = weights.detach()
-
-    #     # Compute weights
-    #     softmax_weights = torch.softmax(weights_detached, dim=0)
-
-    #     # Element-wise multiplication of the weights and the differences
-    #     result = softmax_weights * differences
-        
-    #     # Sum the result to get the final result
-    #     final_result = result.sum()
-
-    #     # Compute weighted gradient
-    #     score = torch.autograd.grad(
-    #         outputs=final_result,
-    #         inputs=x,
-    #     )[0]
-
-    #     # diffusion_term_squared = self.model.interpolation.gamma(t) ** 2 + 1e-6
-
-    #     return (
-    #         - score, #/ diffusion_term_squared, 
-    #         weights # Is not used but required for compatibility
-    #     )
 
     def score(
         self,

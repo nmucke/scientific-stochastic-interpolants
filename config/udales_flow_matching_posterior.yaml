@@ -5,10 +5,10 @@ pre_trained_model:
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
-  type: random
-  percent_obs: 0.10
   # type: grid
-  # skip_grid: 8
+  # percent_obs: 0.10
+  type: grid
+  skip_grid: 8
 
 likelihood_model:
   _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood
