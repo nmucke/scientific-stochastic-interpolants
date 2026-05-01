@@ -37,7 +37,7 @@ class AnalyticalDriftModel(nn.Module):
         beta_diff = self.interpolation.beta_diff(t)
         gamma = self.interpolation.gamma(t)
         gamma_diff = self.interpolation.gamma_diff(t)
-        return alpha, alpha_diff, beta, beta_diff, gamma, gamma_diff
+        return alpha.item(), alpha_diff.item(), beta.item(), beta_diff.item(), gamma.item(), gamma_diff.item()
 
     def _compute_drift(
         self,
@@ -47,9 +47,11 @@ class AnalyticalDriftModel(nn.Module):
     ) -> torch.Tensor:
         """Compute the drift."""
 
+
         I = torch.eye(x0.shape[1]).expand(x0.shape[0], x0.shape[1], x0.shape[1])
 
-        alpha, alpha_diff, beta, beta_diff, gamma, gamma_diff = self._get_coefs(t)
+        alpha, alpha_diff, beta, beta_diff, gamma, gamma_diff = self._get_coefs(t[0,0])
+        t = t[0,0]
 
         out = alpha_diff * x0 + beta_diff * self.target_mean(x0)
 
@@ -59,13 +61,13 @@ class AnalyticalDriftModel(nn.Module):
         mean_bar = alpha * x0 + beta * self.target_mean(x0)
 
         cov_bar = (
-            beta.unsqueeze(1) ** 2 * self.target_cov(x0)
-            + (t * gamma**2).unsqueeze(1) * I
+            beta ** 2 * self.target_cov(x0)
+            + t * gamma**2 * I
         )
         cov_bar_inv = torch.linalg.inv(cov_bar)
 
-        out_2 = beta.unsqueeze(1) * beta_diff[0, 0] * self.target_cov(x0)
-        out_2 = out_2 + (t * gamma * gamma_diff).unsqueeze(1) * I
+        out_2 = beta * beta_diff * self.target_cov(x0)
+        out_2 = out_2 + t * gamma * gamma_diff * I
         out_2 = torch.bmm(out_2, cov_bar_inv)
         out_2 = torch.bmm(out_2, (x - mean_bar).unsqueeze(-1)).squeeze(-1)
 
@@ -80,10 +82,10 @@ class AnalyticalDriftModel(nn.Module):
     ) -> torch.Tensor:
         """Compute the score from the drift."""
 
-        alpha, alpha_diff, beta, beta_diff, gamma, gamma_diff = self._get_coefs(t)
+        alpha, alpha_diff, beta, beta_diff, gamma, gamma_diff = self._get_coefs(t[0,0])
 
         A = t * gamma * (beta_diff * gamma - beta * gamma_diff)
-        A = 1 / (A + 1e-6)
+        A = 1 / A
 
         c = beta_diff * x + (beta * alpha_diff - beta_diff * alpha) * x0
 

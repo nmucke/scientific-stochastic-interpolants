@@ -2,7 +2,7 @@
 # import torch.nn as nn
 # import tqdm
 # from typing import Optional
-# from paper.scripts.analytical_utils.likelihood import InterpolantLikelihood
+# from paper_scripts.analytical_utils.likelihood import InterpolantLikelihood
 
 # class PosteriorModel(nn.Module):
 #     """Posterior model."""
@@ -55,17 +55,21 @@
 #             )
 
 #             if isinstance(self.likelihood_model, InterpolantLikelihood):
-#                 x = new + score * diffusion_term(t) ** 2 * dt 
+#                 x = new + score * diffusion_term(t) ** 2 * dt
 #             else:
 #                 x = new + score
 #             x = x.detach()
 #         return x
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import tqdm
-from typing import Optional
-from paper.scripts.analytical_utils.likelihood import InterpolantLikelihood
+
+from analytical_utils.likelihood import (
+    InterpolantLikelihood,
+)
 
 
 class PosteriorModel(nn.Module):
@@ -136,13 +140,15 @@ class PosteriorModel(nn.Module):
 
             x.requires_grad = True
 
-            score = self.likelihood_model.score(
-                x, t, x0, observations, dt, gamma_fn
-            )
+            score = self.likelihood_model.score(x, t, x0, observations, dt, gamma_fn)
 
-            if isinstance(self.likelihood_model, InterpolantLikelihood):
-                x = new + score * gamma_t ** 2 * dt
+            if isinstance(
+                self.likelihood_model,
+                InterpolantLikelihood,
+            ):
+                x = new + score * gamma_t**2 * dt
             else:
                 x = new + score
             x = x.detach()
+
         return x
