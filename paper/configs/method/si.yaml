@@ -1,0 +1,13 @@
+name: si
+checkpoint_name: stochastic_interpolant_small
+stepper: sde
+diffusion_term:
+  multiplier: 1.0
+
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  correct_likelihood_score: true
+
+posterior_model:
+  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
+  resample: false

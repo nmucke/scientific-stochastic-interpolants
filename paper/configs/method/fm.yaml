@@ -1,0 +1,10 @@
+name: fm
+checkpoint_name: flow_matching
+stepper: ode
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.guidance.GuidanceGaussianLikelihood
+
+posterior_model:
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior
