@@ -1,0 +1,23 @@
+name: stochastic_navier_stokes
+project: stochastic_navier_stokes
+
+# Which test trajectories to run. Single int or list. The model loads once and
+# loops over the list, so adding ids is cheap.
+test_sample_indices: [1, 2, 3, 4, 5]
+
+ensemble_size: 16
+num_physical_steps: 20
+num_steps: 200
+mixed_precision: false
+
+# Observation operator. Same for every method, so apples-to-apples.
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: grid
+  skip_grid: 8
+
+# Observation noise variance. Shared by all likelihood models.
+variance: 0.0025
+
+# Likelihood ensemble size (Monte Carlo samples inside the score estimator).
+likelihood_ensemble_size: 25

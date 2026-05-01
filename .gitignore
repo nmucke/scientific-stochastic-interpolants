@@ -53,3 +53,9 @@ venv/
 
 # Aurora model weights
 aurora_model_weights/*
+
+# Paper results
+paper/results/
+
+# Multirun
+multirun/
