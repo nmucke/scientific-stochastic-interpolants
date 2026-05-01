@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "scientific-stochastic-interpolants",
+			"path": "."
+		},
+		{
+			"name": "latex",
+			"path": "../../Downloads/latex"
+		}
+	],
+	"settings": {}
+}
