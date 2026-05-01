@@ -1,8 +1,8 @@
 import sys
 from pathlib import Path
 
-# Add project root so `paper_scripts` is importable when run as script
-_root = Path(__file__).resolve().parent.parent
+# Add this directory so `analytical_utils` is importable when run as script
+_root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
@@ -10,21 +10,21 @@ import matplotlib.pyplot as plt
 import torch
 from torch.distributions import MultivariateNormal
 
-from paper_scripts.analytical_utils.kde_utils import prepare_samples
-from paper_scripts.analytical_utils.kl_divergence import (
+from analytical_utils.kde_utils import prepare_samples
+from analytical_utils.kl_divergence import (
     kl_divergence,
     wasserstein_distance,
 )
-from paper_scripts.analytical_utils.likelihood import (
+from analytical_utils.likelihood import (
     FlowdasLikelihood,
     InterpolantLikelihood,
 )
-from paper_scripts.analytical_utils.posterior_model import PosteriorModel
-from paper_scripts.analytical_utils.stochastic_interpolant import (
+from analytical_utils.posterior_model import PosteriorModel
+from analytical_utils.stochastic_interpolant import (
     AnalyticalDriftModel,
     AnalyticalStochasticInterpolant,
 )
-from paper_scripts.analytical_utils.true_posterior import get_true_posterior
+from analytical_utils.true_posterior import get_true_posterior
 from scisi.models.interpolations import (
     LinearStochasticInterpolation,
     QuadraticStochasticInterpolation,

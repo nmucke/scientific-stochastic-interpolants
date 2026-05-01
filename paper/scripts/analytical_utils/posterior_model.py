@@ -67,7 +67,7 @@ import torch
 import torch.nn as nn
 import tqdm
 
-from paper_scripts.analytical_utils.likelihood import (
+from analytical_utils.likelihood import (
     InterpolantLikelihood,
 )
 
