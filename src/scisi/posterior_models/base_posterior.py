@@ -74,6 +74,7 @@ class BasePosterior(nn.Module):
         observations: torch.Tensor,
         t: torch.Tensor,
         field_history: torch.Tensor,
+        dt: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Actions to be taken after the step."""
         return base, field_history
@@ -170,7 +171,9 @@ class BasePosterior(nn.Module):
         # Sample remaining steps
         for i in range(start_time, num_steps - 1):
             t = t_vec[:, i : i + 1]
+
             base = self._pre_step(base=base, observations=observations, t=t)
+
             for batch_idx in range(0, ensemble_size, batch_size):
 
                 # Prepare the batch
@@ -185,8 +188,13 @@ class BasePosterior(nn.Module):
                     t=t,
                     **fixed_input(batch_ids),
                 ).cpu()
+
             base, field_history = self._post_step(
-                base=base, observations=observations, t=t, field_history=field_history
+                base=base, 
+                observations=observations, 
+                t=t, 
+                field_history=field_history, 
+                dt=dt
             )
 
         # Add the new base to the field history

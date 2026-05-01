@@ -56,3 +56,9 @@ aurora_model_weights/*
 
 # latex
 latex/
+
+# Paper results
+paper/results/
+
+# Multirun
+multirun/

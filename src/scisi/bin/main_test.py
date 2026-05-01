@@ -44,11 +44,12 @@ DEFAULT_PROJECT = "udales"
 # DEFAULT_NAME = "flow_matching_big" # Udales
 # DEFAULT_NAME = "flow_matching_small" # Udales
 # DEFAULT_NAME = "flow_matching_big" # Udales
-DEFAULT_NAME = "stochastic_interpolant_small_gamma1"  # Udales
-# DEFAULT_NAME = "stochastic_interpolant_big_gamma1"  # Udales
+# DEFAULT_NAME = "stochastic_interpolant_small_gamma1"  # Udales
+DEFAULT_NAME = "stochastic_interpolant_big_gamma1"  # Udales
+# DEFAULT_NAME = "stochastic_interpolant_small_original"  # Udales
 
 
-NUM_PHYSICAL_STEPS = 75
+NUM_PHYSICAL_STEPS = 25
 NUM_STEPS = 50
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]

@@ -162,7 +162,8 @@ class Attention(nn.Module):
         k = split_heads(self.W_k(x), self.heads, self.dim_head)  # (B, H, L, D)
         v = split_heads(self.W_v(x), self.heads, self.dim_head)  # (B, H, L, D)
 
-        out = scaled_dot_product_attention(q, k, v, dropout_p=self.dropout_rate)
+        dropout_p = self.dropout_rate if self.training else 0.0
+        out = scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
         out = combine_heads(out, self.heads, self.dim_head)
 
         return self.to_out(out)
