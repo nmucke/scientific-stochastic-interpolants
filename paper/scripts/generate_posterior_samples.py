@@ -4,15 +4,26 @@ Composes a Hydra config from `paper/configs/benchmark.yaml`. Run a single method
 
     python paper/scripts/generate_posterior_samples.py method=si
 
+Switch case (e.g. udales):
+
+    python paper/scripts/generate_posterior_samples.py case=udales method=si
+
 Sweep all methods (one process per method, separate Hydra run dirs):
 
     python paper/scripts/generate_posterior_samples.py --multirun method=si,fm,flowdas
+
+Sweep over solver step counts (cross-product with methods is supported too):
+
+    python paper/scripts/generate_posterior_samples.py --multirun \\
+        method=si,fm,flowdas case.num_steps=50,100,250
 
 To sweep test ids cheaply (model loads once), put a list in the case config:
 
     case.test_sample_indices=[0,1,2,3,4]
 
-Outputs land in `paper/results/<case>/<method>/sample_<test_id>.pt`.
+Outputs land in `paper/results/<case>/<method>/sample_<test_id>_steps_<num_steps>.pt`.
+The checkpoint loaded for each method is `case.checkpoints[method.name]` under
+`checkpoints/<case.project>/`.
 """
 
 from __future__ import annotations
@@ -35,13 +46,25 @@ if str(_root) not in sys.path:
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
 from scisi.sampling.ode_solvers import euler_step
-from scisi.sampling.sde_solvers import euler_maruyama_step
+from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
 logger = logging.getLogger(__name__)
 
 torch.set_default_dtype(torch.float32)
 
 _STEPPERS = {"sde": euler_maruyama_step, "ode": euler_step}
+
+
+def _resolve_checkpoint_name(cfg: DictConfig) -> str:
+    """Look up the checkpoint for the active method in the case's checkpoints map."""
+    method_name = cfg.method.name
+    try:
+        return cfg.case.checkpoints[method_name]
+    except Exception as exc:
+        raise KeyError(
+            f"Case '{cfg.case.name}' has no checkpoint configured for method "
+            f"'{method_name}'. Add it under case.checkpoints."
+        ) from exc
 
 
 def _load_pretrained(project: str, checkpoint_name: str) -> tuple[Any, DictConfig, int]:
@@ -164,7 +187,7 @@ def _run_one_test_id(
     cfg: DictConfig,
     test_sample_index: int,
     model: Any,
-    train_cfg: DictConfig,
+    checkpoint_name: str,
     preprocesser: Any,
     test_dataset: Any,
     len_field_history: int,
@@ -258,7 +281,7 @@ def _run_one_test_id(
         "meta": {
             "case": cfg.case.name,
             "method": cfg.method.name,
-            "checkpoint_name": cfg.method.checkpoint_name,
+            "checkpoint_name": checkpoint_name,
             "test_sample_index": int(test_sample_index),
             "num_physical_steps": int(cfg.case.num_physical_steps),
             "num_steps": int(cfg.case.num_steps),
@@ -270,7 +293,7 @@ def _run_one_test_id(
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"sample_{test_sample_index}.pt"
+    out_path = out_dir / f"sample_{test_sample_index}_steps_{int(cfg.case.num_steps)}.pt"
     torch.save(payload, out_path)
     logger.info(f"Saved {out_path}")
 
@@ -293,8 +316,11 @@ def main(cfg: DictConfig) -> None:
 
     torch.manual_seed(42)
 
+    checkpoint_name = _resolve_checkpoint_name(cfg)
+    logger.info(f"Checkpoint: {cfg.case.project}/{checkpoint_name}")
+
     model, train_cfg, len_field_history = _load_pretrained(
-        cfg.case.project, cfg.method.checkpoint_name
+        cfg.case.project, checkpoint_name
     )
     preprocesser = hydra.utils.instantiate(train_cfg.preprocesser)
     test_dataset = hydra.utils.instantiate(train_cfg.test_data)
@@ -302,14 +328,14 @@ def main(cfg: DictConfig) -> None:
     out_dir = Path(cfg.results_root) / cfg.case.name / cfg.method.name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    OmegaConf.save(cfg, out_dir / "config.yaml")
+    OmegaConf.save(cfg, out_dir / f"config_steps_{int(cfg.case.num_steps)}.yaml")
 
     for test_id in test_indices:
         _run_one_test_id(
             cfg=cfg,
             test_sample_index=int(test_id),
             model=model,
-            train_cfg=train_cfg,
+            checkpoint_name=checkpoint_name,
             preprocesser=preprocesser,
             test_dataset=test_dataset,
             len_field_history=len_field_history,

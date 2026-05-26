@@ -1,5 +1,4 @@
 name: si
-checkpoint_name: stochastic_interpolant_small
 stepper: sde
 diffusion_term:
   multiplier: 1.0

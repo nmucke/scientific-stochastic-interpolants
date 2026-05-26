@@ -77,7 +77,9 @@ class StochasticInterpolantPosterior(BasePosterior):
 
         likelihood_score = likelihood_score.detach()
 
-        self.log_likelihood.append(log_likelihood.detach())
+        self.log_likelihood.append(
+            torch.nan_to_num(log_likelihood.detach(), nan=float("-inf"))
+        )
 
         # Euler-Maruyama drift step
         base = base + drift * dt
@@ -90,25 +92,36 @@ class StochasticInterpolantPosterior(BasePosterior):
 
         return base.detach()
 
-    def _post_step(
+    # def _post_step(
+    #     self,
+    #     base: torch.Tensor,
+    #     observations: torch.Tensor,
+    #     t: torch.Tensor,
+    #     field_history: torch.Tensor,
+    #     dt: torch.Tensor,
+    # ) -> tuple[torch.Tensor, torch.Tensor]:
+    #     """Post-step of the posterior."""
+
+    def _post_sample(
         self,
         base: torch.Tensor,
         observations: torch.Tensor,
-        t: torch.Tensor,
         field_history: torch.Tensor,
-        dt: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Post-step of the posterior."""
 
         if not self.resample:
             return base, field_history
 
-        log_likelihood = torch.cat(self.log_likelihood, dim=-1)
+        diff = observations - self.likelihood_model.obs_operator(base.to('cuda'))
+
+        log_likelihood = torch.linalg.norm(diff, dim=1) ** 2
+        log_likelihood = - 0.5 * log_likelihood / self.likelihood_model.original_variance
 
         if self.weights is None:
             self.weights = torch.ones(base.shape[0], device=self.device) / base.shape[0]
 
-        self.weights = torch.exp(log_likelihood[0]) * self.weights
+        self.weights = torch.exp(log_likelihood) * self.weights
         self.weights = self.weights / self.weights.sum()  # type: ignore[attr-defined]
 
         self.log_likelihood = None

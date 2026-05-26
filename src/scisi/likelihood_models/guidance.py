@@ -116,9 +116,4 @@ class GuidanceGaussianLikelihood(nn.Module):
             inputs=x,
         )[0]
 
-        # schedule = self._schedule(t)
-        # if torch.isnan(schedule).any() or torch.isinf(schedule).any():
-        #     schedule = 0.0
-
-        # return -schedule * score * 0.1
         return -score #* 0.01

@@ -43,10 +43,10 @@ torch.set_default_dtype(torch.float32)
 
 torch.manual_seed(42)
 
-NUM_PHYSICAL_STEPS = 20
-NUM_STEPS = 150
+NUM_PHYSICAL_STEPS = 25
+NUM_STEPS = 500
 MIXED_PRECISION = False
-ENSEMBLE_SIZE = 4
+ENSEMBLE_SIZE = 16
 SDE_STEPPER = euler_maruyama_step
 ODE_STEPPER = euler_step
 TEST_SAMPLE_INDEX = 1
@@ -223,6 +223,56 @@ def main(posterior_cfg: DictConfig) -> None:
         base=true_trajectory, is_batch=True, is_trajectory=True
     )["base"]
 
+    logger.info(f"Computing metrics...")
+    metrics: dict[str, dict[str, list[float]]] = {
+        title: {
+            "LSiM": [],
+            "RMSE": [],
+            "Enstrophy error": [],
+        }
+        for title in ["Posterior", "Prior"]
+    }
+    time_range_ids = range(len_field_history, NUM_PHYSICAL_STEPS)
+    true_hwt = true_trajectory[0, 0]
+    for pred_traj_full, title in zip(
+        [posterior_trajectory, prior_trajectory], ["Posterior", "Prior"]
+    ):
+        logger.info(f"================================================")
+        logger.info(f"{title} metrics:")
+        ens = pred_traj_full.shape[0]
+        rmse_arr = np.zeros((ens, len(time_range_ids)))
+        lsim_arr = np.zeros((ens, len(time_range_ids)))
+        for m in range(ens):
+            pred_hwt = pred_traj_full[m, 0]
+            for j, i in enumerate(time_range_ids):
+                true_t = true_hwt[:, :, i]
+                pred_t = pred_hwt[:, :, i]
+                rmse_arr[m, j] = torch.sqrt(nn.MSELoss()(true_t, pred_t)).item()
+                lsim_arr[m, j] = LSiM_distance(true_t, pred_t).item()
+        metrics[title]["RMSE"] = rmse_arr.mean(axis=0).tolist()
+        metrics[title]["LSiM"] = lsim_arr.mean(axis=0).tolist()
+
+        print(rmse_arr)
+
+        logger.info(
+            f"LSiM: {np.mean(metrics[title]['LSiM']):.4f} ± {np.std(metrics[title]['LSiM']):.4f}"
+        )
+        logger.info(
+            f"RMSE: {np.mean(metrics[title]['RMSE']):.4f} ± {np.std(metrics[title]['RMSE']):.4f}"
+        )
+
+        if project == "stochastic_navier_stokes":
+            pred_mean_hwt = pred_traj_full[:, 0].mean(dim=0)
+            ens_error, ens_error_array = compute_enstrophy_error(
+                true_hwt[:, :, len_field_history:],
+                pred_mean_hwt[:, :, len_field_history:],
+                dx=2 * torch.pi / 128,
+            )
+            logger.info(
+                f"Enstrophy error: {ens_error:.4f} ± {ens_error_array.std():.4f}"
+            )
+            metrics[title]["Enstrophy error"] = ens_error_array
+
     posterior_trajectory = posterior_trajectory[0, 0]
     prior_trajectory = prior_trajectory[0, 0]
     true_trajectory = true_trajectory[0, 0]
@@ -255,51 +305,6 @@ def main(posterior_cfg: DictConfig) -> None:
 
     obs_indices = obs_operator.obs_indices_c_h_w
     obs_indices_on_grid = obs_operator.obs_indices_on_grid
-
-    logger.info(f"Computing metrics...")
-    metrics: dict[str, dict[str, list[float]]] = {
-        title: {
-            "LSiM": [],
-            "RMSE": [],
-            "Enstrophy error": [],
-        }
-        for title in ["Posterior", "Prior"]
-    }
-    time_range_ids = range(len_field_history, NUM_PHYSICAL_STEPS)
-    for pred_trajectory, title in zip(
-        [posterior_trajectory, prior_trajectory], ["Posterior", "Prior"]
-    ):
-        logger.info(f"================================================")
-        logger.info(f"{title} metrics:")
-        get_true_and_pred = lambda i: (
-            true_trajectory[:, :, i],
-            pred_trajectory[:, :, i],
-        )
-        metrics[title]["LSiM"] = [
-            LSiM_distance(*get_true_and_pred(i)).item() for i in time_range_ids
-        ]
-        metrics[title]["RMSE"] = [
-            torch.sqrt(nn.MSELoss()(*get_true_and_pred(i))).item()
-            for i in time_range_ids
-        ]
-
-        logger.info(
-            f"LSiM: {np.mean(metrics[title]['LSiM']):.4f} ± {np.std(metrics[title]['LSiM']):.4f}"
-        )
-        logger.info(
-            f"RMSE: {np.mean(metrics[title]['RMSE']):.4f} ± {np.std(metrics[title]['RMSE']):.4f}"
-        )
-
-        if project == "stochastic_navier_stokes":
-            ens_error, ens_error_array = compute_enstrophy_error(
-                true_trajectory[:, :, len_field_history:],
-                pred_trajectory[:, :, len_field_history:],
-                dx=2 * torch.pi / 128,
-            )
-            logger.info(
-                f"Enstrophy error: {ens_error:.4f} ± {ens_error_array.std():.4f}"
-            )
-            metrics[title]["Enstrophy error"] = ens_error_array
 
     if project == "stochastic_navier_stokes":
         plot_enstrophy_spectrum(

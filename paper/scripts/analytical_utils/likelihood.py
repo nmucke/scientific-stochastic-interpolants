@@ -24,7 +24,7 @@ class InterpolantLikelihood(nn.Module):
         use_covariance_correction: bool = True,
         perturbation: Optional[str] = None,
         target_variance: float = 1.0,
-        num_quad: int = 200,
+        num_quad: int = 256,
     ) -> None:
         """Initialize interpolant likelihood.
 
@@ -34,16 +34,29 @@ class InterpolantLikelihood(nn.Module):
             original_variance: Scalar observation noise variance (R = original_variance * I).
             ensemble_size: Not used currently, kept for interface compatibility.
             use_covariance_correction: If True, include the C_tau correction
-                from the conditional covariance of W_tau.  Requires computing
-                the Jacobian of the drift, which costs O(N_u) backward passes.
-            perturbation: Which LG likelihood correction to apply. One of
-                ``None`` (no correction), ``"true"`` (exact analytical LG
-                correction, requires forward integration of Phi and knowing
-                the prior variance), ``"tangent"`` (cheap tangent-linear
-                surrogate for Phi using ensemble variance -- Heuristic 1 of
-                ``appendix_cheap_corrections.tex``), or ``"ensemble"``
-                (ensemble-calibrated innovation variance, rescales the
-                interpolant score magnitude -- Heuristic 3).
+                from the conditional covariance of W_tau.
+            perturbation: Which likelihood-score variant to use. One of:
+                ``None``                -- raw interpolant score (no gain),
+                ``"new_correction"``    -- Corollary 4.5 (Sigma_W ~= tau I),
+                ``"expensive"``         -- Theorem 4.4 with Sigma_W computed
+                                           via autograd Jacobian J_b. For H = I
+                                           and R = sigma^2 I the gain cancels
+                                           Sigma_bar^{-1} algebraically and
+                                           "expensive" reduces to "new_correction"
+                                           in that setting -- a property of
+                                           Theorem 4.4, not a bug.
+                ``"true"``              -- *Exact* analytical posterior
+                                           likelihood score using the SDE's own
+                                           transition expectation
+                                                Phi^y_tau = E_SDE[p(y|X_1) | X_tau, X_0],
+                                           rather than the interpolant joint.
+                                           The SDE matches I_tau marginals but
+                                           not joints, so Theorem 4.1 requires
+                                           Phi to come from the SDE; closed
+                                           form via :meth:`_sde_phi_and_vcond`.
+            target_variance: Scalar prior variance c (used by ``"true"``).
+            num_quad: Trapezoidal grid points for ``int_tau^1 K(s) ds`` in
+                ``"true"``.
         """
         super(InterpolantLikelihood, self).__init__()
         self.drift_model = drift_model
@@ -55,23 +68,11 @@ class InterpolantLikelihood(nn.Module):
             None,
             "new_correction",
             "true",
-            "tangent",
-            "ensemble",
-            "residual",
-            "deint",
-            "endpoint",
-            "hybrid",
-            "adaptive",
-            "blend",
-            "M1",
-            "M2",
-            "M3",
-            "M2M3",
+            "expensive",
         ):
             raise ValueError(
-                f"perturbation must be None, 'true', 'tangent', 'ensemble', "
-                f"'residual', 'deint', 'endpoint', or 'hybrid', "
-                f"got {perturbation!r}"
+                f"perturbation must be None, 'new_correction', 'true', or "
+                f"'expensive', got {perturbation!r}"
             )
         self.perturbation = perturbation
         self.target_variance = target_variance
@@ -154,23 +155,107 @@ class InterpolantLikelihood(nn.Module):
 
         return sigma
 
-    def _phi_and_vcond(self, tau: float) -> tuple[float, float]:
-        """Compute Phi_{1,tau} and V_cond(tau) by quadrature (LG case)."""
+    def _W_cov_analytical_scalar(self, t: torch.Tensor) -> float:
+        """Closed-form scalar c such that Sigma_W(tau) = c * I.
+
+        Valid in the linear analytical Gaussian setting where the drift
+        Jacobian satisfies J_b = a(tau) I, with
+            a(tau) = (beta beta_diff c + tau gamma gamma_diff) / V_tau,
+            V_tau  = beta^2 c + tau gamma^2,
+        so that
+            Sigma_W = tau I + gamma^2 tau^2 A (beta a - beta_diff) I,
+            A       = 1 / (tau gamma (beta_diff gamma - beta gamma_diff)).
+        """
+        interp = self.drift_model.interpolation
+        beta = interp.beta(t)[0, 0].item()
+        beta_diff = interp.beta_diff(t)[0, 0].item()
+        gamma = interp.gamma(t)[0, 0].item()
+        gamma_diff = interp.gamma_diff(t)[0, 0].item()
+        tau = t[0, 0].item()
+        c = self.target_variance
+
+        V_tau = beta**2 * c + tau * gamma**2
+        a_tau = (beta * beta_diff * c + tau * gamma * gamma_diff) / V_tau
+        A_code = 1.0 / (tau * gamma * (beta_diff * gamma - beta * gamma_diff) + 1e-12)
+        return tau + gamma**2 * tau**2 * A_code * (beta * a_tau - beta_diff)
+
+    def sigma_fn_analytical(self, t: torch.Tensor) -> torch.Tensor:
+        """Closed-form Sigma_bar(tau) for the analytical Gaussian case.
+
+        Sigma_bar = beta^2 R + gamma^2 H Sigma_W H^T (Lemma 4.2), with
+        Sigma_W = scalar * I from ``_W_cov_analytical_scalar``.
+        """
+        beta = self.drift_model.interpolation.beta(t)[0, 0].item()
+        gamma = self.drift_model.interpolation.gamma(t)[0, 0].item()
+        H = self.obs_matrix
+        R = beta**2 * self.original_variance
+        sigma_W_scalar = self._W_cov_analytical_scalar(t)
+        cov_W = gamma**2 * sigma_W_scalar * (H @ H.T)
+        return R * torch.eye(H.shape[0], device=H.device, dtype=H.dtype) + cov_W
+
+    def gain_analytical(self, t: torch.Tensor) -> torch.Tensor:
+        """Closed-form gain G(tau) = I + (gamma^2/beta^2) Sigma_W H^T R^{-1} H.
+
+        Uses the scalar Sigma_W from the analytical Gaussian setting.
+        Returns an (N_u, N_u) tensor independent of the batch.
+        """
+        beta = self.drift_model.interpolation.beta(t)[0, 0].item()
+        gamma = self.drift_model.interpolation.gamma(t)[0, 0].item()
+        sigma_W_scalar = self._W_cov_analytical_scalar(t)
+        H = self.obs_matrix
+        n = H.shape[1]
+        I_n = torch.eye(n, device=H.device, dtype=H.dtype)
+        HtRinvH = (H.T @ H) / self.original_variance
+        return I_n + (gamma**2 / beta**2) * sigma_W_scalar * HtRinvH
+
+    def gain_from_W_cov(
+        self, sigma_W: torch.Tensor, t: torch.Tensor
+    ) -> torch.Tensor:
+        """Gain G(tau) = I + (gamma^2/beta^2) Sigma_W H^T R^{-1} H (Theorem 4.4).
+
+        Args:
+            sigma_W: Conditional Wiener covariance, either (N_u, N_u) or
+                (B, N_u, N_u).
+            t: Pseudo-time tensor.
+        """
+        beta = self.drift_model.interpolation.beta(t)[0, 0].item()
+        gamma = self.drift_model.interpolation.gamma(t)[0, 0].item()
+        H = self.obs_matrix
+        n = H.shape[1]
+        I_n = torch.eye(n, device=H.device, dtype=H.dtype)
+        HtRinvH = (H.T @ H) / self.original_variance
+        return I_n + (gamma**2 / beta**2) * (sigma_W @ HtRinvH)
+
+    def _sde_phi_and_vcond(self, tau: float) -> tuple[float, float]:
+        """SDE transition coefficients for the linear analytical setting.
+
+        Computes ``Phi(1, tau) = exp(int_tau^1 K(s) ds)`` and the conditional
+        variance ``V_cond^SDE(tau) = c - Phi^2 V_tau`` for the linear SDE
+        ``dX = b(X, x_0, tau) dtau + gamma_tau dW``, with drift Jacobian
+            K(s) = (beta beta_diff c + s gamma gamma_diff) / V_s,
+            V_s  = beta_s^2 c + s gamma_s^2.
+
+        These determine the SDE's own conditional moments
+            E_SDE[X_1 | X_tau, X_0] = m_0 + Phi(1, tau) (X_tau - alpha x_0 - beta m_0),
+            Var_SDE(X_1 | X_tau, X_0) = V_cond^SDE I,
+        which differ in general from the *interpolant* joint conditional
+        because the analytical SDE matches only the marginals of I_tau, not
+        the joint of (I_tau, I_1). Theorem 4.1 requires the SDE's own joint.
+        """
         interp = self.drift_model.interpolation
         c = self.target_variance
 
         s = torch.linspace(tau, 1.0, self.num_quad).view(-1, 1)
-        beta = interp.beta(s).view(-1)
+        beta_s = interp.beta(s).view(-1)
         beta_diff = interp.beta_diff(s).view(-1)
-        gamma = interp.gamma(s).view(-1)
+        gamma_s = interp.gamma(s).view(-1)
         gamma_diff = interp.gamma_diff(s).view(-1)
         s_flat = s.view(-1)
 
-        num = beta * beta_diff * c + s_flat * gamma * gamma_diff
-        den = beta**2 * c + s_flat * gamma**2 + 1e-12
-        a_vals = num / den
-
-        log_phi = torch.trapz(a_vals, s_flat)
+        K = (beta_s * beta_diff * c + s_flat * gamma_s * gamma_diff) / (
+            beta_s**2 * c + s_flat * gamma_s**2 + 1e-12
+        )
+        log_phi = torch.trapz(K, s_flat)
         phi = torch.exp(log_phi).item()
 
         t_tensor = torch.tensor([[tau]])
@@ -180,70 +265,65 @@ class InterpolantLikelihood(nn.Module):
         V_cond = max(c - phi**2 * V_tau, 0.0)
         return phi, V_cond
 
-    def likelihood_perturbation(self, x, x0, t, observations):
-        """Analytical LG correction to the interpolant likelihood score.
+    def true_likelihood_score(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        x0: torch.Tensor,
+        observations: torch.Tensor,
+    ) -> torch.Tensor:
+        """Exact analytical score of the SDE's Phi^y_tau (Theorem 4.1).
 
-        Adds the term that turns the interpolant likelihood score into the
-        exact posterior score for the linear-Gaussian test case of
-        ``appendix_simple_test_case.tex``:
+        Theorem 4.1 requires Phi to be the *SDE's* transition expectation,
+        ``Phi^y_tau(x_tau, x_0) = E_SDE[p(y | X_1) | X_tau = x_tau, X_0 = x_0]``,
+        not the interpolant joint conditional. For the linear analytical SDE
+        with isotropic Gaussian prior x_1 | x_0 ~ N(m_0, c I), this gives
 
-            perturbation = A_tau H^T (y - H x_0)  -  B_tau H^T H (x_tau - x_0)
+            X_1 | X_tau, x_0 ~ N(mu_x1, V_cond^SDE I),
+            mu_x1     = m_0 + Phi(1, tau) (x_tau - alpha x_0 - beta m_0),
+            V_cond^SDE = c - Phi(1, tau)^2 V_tau,
 
-        with
+        with ``Phi(1, tau) = exp(int_tau^1 K(s) ds)`` (computed by quadrature
+        in :meth:`_sde_phi_and_vcond`). Convolving with the observation
+        likelihood gives a Gaussian Phi:
 
-            A_tau = Phi / v_S  -  beta^3 c / (v_I V_tau)
-            B_tau = Phi^2 / v_S  -  beta^4 c^2 / (v_I V_tau^2)
+            Phi^y_tau = N(y; H mu_x1, R + V_cond^SDE H H^T),
 
-        and
+        and the closed-form score is
 
-            V_tau  = beta^2 c + tau gamma^2                       (SI marginal var)
-            v_S    = V_cond + sigma^2,   V_cond = c - Phi^2 V_tau (SDE conditional)
-            v_I    = beta^2 sigma^2 + gamma^2 tau
-                     + gamma^4 tau^2 A_code (beta a - beta_diff)  (matches sigma_fn)
+            S = Phi(1, tau) H^T (R + V_cond^SDE H H^T)^{-1} (y - H mu_x1).
 
-        The J_b-correction piece (last term in v_I) is essential: the score
-        function in this class uses the full ``sigma_fn`` covariance, not the
-        J_b-free surrogate -- so the analytical correction must be computed
-        against the same v_I that the Gaussian log-likelihood uses, otherwise
-        there is a residual bias and the perturbation fails to cancel.
-
-        Assumptions: isotropic Gaussian prior N(x_0, c I), linear analytical
-        drift (so J_b = a(tau) * I is a scalar), and observation operator H
-        such that H^T H is isotropic (the test case uses H = I). Outside this
-        setting the correction is only locally valid.
+        At tau = 1 we have Phi(1, 1) = 1 and V_cond^SDE = 0, recovering the
+        raw observation score H^T R^{-1} (y - H x_1). Note this differs from
+        the interpolant-joint score: the SDE has matching marginals but a
+        different joint (X_tau, X_1) -- the empirical SDE slope of E[X_1 |
+        X_tau] is Phi(1, tau), not the interpolant's beta c / V_tau.
         """
-        tau = t[0, 0].item()
-        phi, V_cond = self._phi_and_vcond(tau)
-
         interp = self.drift_model.interpolation
+        alpha = interp.alpha(t)[0, 0].item()
         beta = interp.beta(t)[0, 0].item()
-        beta_diff = interp.beta_diff(t)[0, 0].item()
-        gamma = interp.gamma(t)[0, 0].item()
-        gamma_diff = interp.gamma_diff(t)[0, 0].item()
+        tau = t[0, 0].item()
 
-        c = self.target_variance
-        sigma2 = self.original_variance
+        phi, V_cond = self._sde_phi_and_vcond(tau)
 
-        V_tau = beta**2 * c + tau * gamma**2
-        v_S = V_cond + sigma2
-
-        # Full scalar v_I matching sigma_fn: analytical drift Jacobian
-        # J_b = a(tau) I enters the covariance correction as
-        #   gamma^4 tau^2 A_code (beta a - beta_diff).
-        a_tau = (beta * beta_diff * c + tau * gamma * gamma_diff) / V_tau
-        A_code = 1.0 / (tau * gamma * (beta_diff * gamma - beta * gamma_diff) + 1e-12)
-        jac_correction = gamma**4 * tau**2 * A_code * (beta * a_tau - beta_diff)
-        v_I = beta**2 * sigma2 + gamma**2 * tau + jac_correction
-
-        A_tau = phi / v_S - (beta**3 * c) / (v_I * V_tau)
-        B_tau = phi**2 / v_S - (beta**4 * c**2) / (v_I * V_tau**2)
+        m0 = self.drift_model.target_mean(x0)  # (B, N_u)
+        mu_x1 = m0 + phi * (x - alpha * x0 - beta * m0)
 
         H = self.obs_matrix
-        y = observations[0]  # (N_y,)
-        innovation = y.unsqueeze(0) - x0 @ H.T  # (B, N_y)
-        displacement = (x - x0) @ (H.T @ H)  # (B, N_u)
+        R_eff = (
+            self.original_variance
+            * torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
+            + V_cond * (H @ H.T)
+        )
 
-        return A_tau * (innovation @ H) - B_tau * displacement
+        y = observations[0]  # (N_y,)
+        mu_y = mu_x1 @ H.T  # (B, N_y)
+        diff = y.unsqueeze(0) - mu_y  # (B, N_y)
+        R_eff_inv_diff = torch.linalg.solve(
+            R_eff, diff.unsqueeze(-1)
+        ).squeeze(-1)  # (B, N_y)
+
+        return phi * (R_eff_inv_diff @ H)  # (B, N_u)
 
     def new_correction(
         self,
@@ -254,42 +334,19 @@ class InterpolantLikelihood(nn.Module):
         dt: torch.Tensor,
         diffusion_term: Callable,
     ) -> torch.Tensor:
-        """Compute the new correction term for the likelihood score."""
+        """Corollary 4.5 (Jacobian-free) scalar gain.
 
+        Under Sigma_W ~= tau I and H = I, R = sigma^2 I, the gain reduces to
+            G(tau) = 1 + gamma^2 tau / (beta^2 sigma^2).
+        """
         tau = t[0, 0].item()
         interp = self.drift_model.interpolation
-        alpha = interp.alpha(t)[0, 0].item()
         beta = interp.beta(t)[0, 0].item()
         gamma = interp.gamma(t)[0, 0].item()
         beta_safe = beta if abs(beta) > 1e-3 else 1e-3
 
-        # def compute_mu_t(x):
-        #     drift = self.drift_model._compute_drift(x, t[0:1], x0)
-        #     model_score = self.drift_model._compute_score_from_drift(
-        #         x, t[0:1], x0, drift
-        #     )
-
-        #     E_W = -gamma * t[0, 0] * model_score  # E[W_tau | x_tau, x_0]
-
-        #     mu_t = x - alpha * x0 - gamma * E_W
-        #     mu_t = mu_t / beta_safe
-        #     return mu_t.sum(dim=0)
-
-        # # mu_t_jacobian = torch.autograd.functional.jacobian(compute_mu_t, x)
-        # # mu_t_jacobian = mu_t_jacobian.transpose(0, 1)
-        # H = self.obs_matrix
-
-        # mu_t = compute_mu_t(x)
-        # mu_t = mu_t @ H
-
-        # HTR = H.T @ torch.eye(2) / self.original_variance
-
-        # score = (observations - mu_t) @ HTR.T
-
-        G = gamma * gamma * t[0, 0] / beta_safe / beta_safe / self.original_variance
-        G = 1 + G
-
-        return G
+        G = gamma * gamma * tau / (beta_safe * beta_safe * self.original_variance)
+        return 1.0 + G
 
     def score(
         self,
@@ -300,21 +357,37 @@ class InterpolantLikelihood(nn.Module):
         dt: torch.Tensor,
         diffusion_term: Callable,
     ) -> torch.Tensor:
-        """Compute the likelihood score nabla_x log p(ybar_tau | x_tau, x_0).
+        """Compute the likelihood score used in the SDE drift correction.
 
-        The score is obtained by constructing the Gaussian log-likelihood
-        with the corrected mean (d_tau) and optionally the corrected
-        covariance (C_tau), then differentiating w.r.t. x via autograd.
+        For ``perturbation == "true"`` this returns the *exact* score of
+        Phi^y_tau computed under the SDE's own transition kernel (Theorem
+        4.1) -- bypassing the multiplicative-correction framework entirely.
+
+        Otherwise (``None``, ``"new_correction"``, ``"expensive"``) it builds
+        the Gaussian interpolant log-likelihood with mean mu_bar and
+        covariance Sigma_bar (Lemma 4.2), differentiates w.r.t. x to obtain
+        the interpolant score S_bar, and applies the requested multiplicative
+        gain G(tau).
+
+        Note: for H = I and R = sigma^2 I, G S_bar from Theorem 4.4 and
+        Corollary 4.5 algebraically coincide -- the gain cancels Sigma_bar^{-1}
+        independently of which Sigma_W approximation is used. ``"expensive"``
+        and ``"new_correction"`` therefore produce identical scores there.
+        Only ``"true"`` (which replaces the entire interpolant-likelihood
+        construction with the SDE's exact Phi) escapes this.
         """
+
+        if self.perturbation == "true":
+            return self.true_likelihood_score(x, t, x0, observations)
 
         diff_fun = lambda x, x0: self.mu_fn(x, x0, t, observations[0])
         diff_fun_vmap = lambda x, x0: torch.vmap(diff_fun, in_dims=0, out_dims=0)(x, x0)
         diff = diff_fun_vmap(x, x0)
 
-        if self.perturbation == "true":
+        if self.perturbation == "expensive":
+            # Full Sigma_bar via autograd Jacobian J_b inside _compute_W_covariance.
             sigma_fn = lambda x, x0: self.sigma_fn(x, x0, t)
-            Sigma = vmap(sigma_fn, in_dims=0, out_dims=0)(x, x0)  # (B, d_y, d_y)
-
+            Sigma = vmap(sigma_fn, in_dims=0, out_dims=0)(x, x0)  # (B, N_y, N_y)
             log_prb_fun = lambda diff, Sigma: (
                 -0.5 * torch.dot(diff, torch.linalg.solve(Sigma, diff))
             )
@@ -331,11 +404,14 @@ class InterpolantLikelihood(nn.Module):
 
         score = torch.autograd.grad(log_prb.sum(), x)[0]
 
-        if self.perturbation == "true":
-            score = score + self.likelihood_perturbation(x, x0, t, observations)
-        elif self.perturbation == "new_correction":
+        if self.perturbation == "new_correction":
             corr = self.new_correction(x, t, x0, observations, dt, diffusion_term)
             score = score * corr
+        elif self.perturbation == "expensive":
+            sigma_W_fn = lambda x_i, x0_i: self._compute_W_covariance(x_i, t, x0_i)
+            sigma_W = torch.vmap(sigma_W_fn, in_dims=0, out_dims=0)(x, x0)
+            G = self.gain_from_W_cov(sigma_W, t)  # (B, N_u, N_u)
+            score = torch.einsum("bij,bj->bi", G, score)
 
         return score
 

@@ -1,5 +1,4 @@
 name: fm
-checkpoint_name: flow_matching
 stepper: ode
 diffusion_term: null
 

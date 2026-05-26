@@ -7,13 +7,19 @@ method or several:
     python paper/scripts/evaluate_posterior_samples.py case=stochastic_navier_stokes \\
         +eval.methods='[si,fm]'
 
-Aggregates metrics across all `sample_*.pt` files it finds per method, so a
-multi-test-id run gives mean ± std across test ids.
+Aggregates metrics across all `sample_*_steps_*.pt` files it finds per method,
+so a multi-test-id run gives mean ± std across test ids. When the generation
+script was run with multiple `case.num_steps` values, results are split per
+(method, num_steps): each appears as its own line in the metric curves and its
+own row in the summary table. Filter to a subset of step counts via:
+
+    +eval.num_steps='[100,250]'
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import warnings
 from collections import defaultdict
@@ -41,6 +47,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_METHODS = ["si", "fm", "flowdas"]
 
+_SAMPLE_RE = re.compile(r"^sample_(\d+)_steps_(\d+)\.pt$")
+
 
 @contextmanager
 def _quiet_nan_warnings():
@@ -53,6 +61,8 @@ COLORS = {
     "flowdas": "tab:green",
     "prior": "tab:gray",
 }
+
+LINESTYLES = ["-", (0, (5, 1)), (0, (1, 1)), (0, (3, 1, 1, 1)), (0, (5, 1, 1, 1, 1, 1))]
 
 
 def _to_hwt(traj: torch.Tensor) -> torch.Tensor:
@@ -68,8 +78,16 @@ def _to_hwt(traj: torch.Tensor) -> torch.Tensor:
     return traj[:, 0].mean(dim=0)
 
 
-def _list_samples(method_dir: Path) -> list[Path]:
-    return sorted(method_dir.glob("sample_*.pt"))
+def _list_samples_by_num_steps(method_dir: Path) -> dict[int, list[Path]]:
+    """Group `sample_<id>_steps_<n>.pt` files by their `num_steps` suffix."""
+    by_steps: dict[int, list[Path]] = defaultdict(list)
+    for f in sorted(method_dir.glob("sample_*_steps_*.pt")):
+        m = _SAMPLE_RE.match(f.name)
+        if m is None:
+            continue
+        num_steps = int(m.group(2))
+        by_steps[num_steps].append(f)
+    return dict(by_steps)
 
 
 def _crps_grid(ensemble_field: torch.Tensor, truth: torch.Tensor) -> float:
@@ -160,11 +178,9 @@ def _aggregate_curves(
 
 
 def _load_method_results(
-    method_dir: Path, case_name: str
+    files: list[Path], case_name: str
 ) -> dict[str, Any] | None:
-    files = _list_samples(method_dir)
     if not files:
-        logger.warning(f"No samples found in {method_dir}, skipping.")
         return None
 
     posterior_curves: list[dict[str, np.ndarray]] = []
@@ -241,6 +257,12 @@ def _log_summary(
     logger.info(f"[{method}/{kind}] " + " | ".join(pieces))
 
 
+def _linestyle_for(num_steps: int, all_num_steps: list[int]):
+    """Stable linestyle per num_steps, indexed by sorted-unique position."""
+    idx = all_num_steps.index(num_steps) % len(LINESTYLES)
+    return LINESTYLES[idx]
+
+
 def _plot_metric_curves(
     results: dict[str, dict[str, Any] | None],
     time_range: range,
@@ -251,34 +273,36 @@ def _plot_metric_curves(
     if case_name == "stochastic_navier_stokes":
         metric_names.append("Enstrophy error")
 
+    valid = [(label, res) for label, res in results.items() if res is not None]
+    all_num_steps = sorted({res["num_steps"] for _, res in valid})
+
     fig, axes = plt.subplots(1, len(metric_names), figsize=(6 * len(metric_names), 4))
     if len(metric_names) == 1:
         axes = [axes]
     x = list(time_range)
 
     for ax, metric in zip(axes, metric_names):
-        for method, res in results.items():
-            if res is None:
-                continue
+        for label, res in valid:
             agg = res["posterior"].get(metric)
             if agg is None:
                 continue
-            color = COLORS.get(method)
+            color = COLORS.get(res["method"])
+            linestyle = _linestyle_for(res["num_steps"], all_num_steps)
             mean = agg["mean"]
             std = agg["std"]
-            ax.plot(x, mean, label=method, color=color, linewidth=2)
+            ax.plot(
+                x, mean, label=label, color=color, linewidth=2, linestyle=linestyle
+            )
             ax.fill_between(
                 x,
                 np.maximum(mean - std, 1e-12),
                 mean + std,
                 color=color,
-                alpha=0.2,
+                alpha=0.15,
                 linewidth=0,
             )
 
-        for res in results.values():
-            if res is None:
-                continue
+        for _, res in valid:
             prior_agg = res["prior"].get(metric)
             if prior_agg is None:
                 continue
@@ -296,7 +320,7 @@ def _plot_metric_curves(
         ax.set_xlabel("timestep")
         ax.set_yscale("log")
         ax.grid(True, which="both", linestyle=":", linewidth=0.6)
-        ax.legend()
+        ax.legend(fontsize="small")
     fig.tight_layout()
     fig.savefig(out_dir / "metrics_vs_time.png", dpi=150)
     plt.close(fig)
@@ -306,12 +330,13 @@ def _plot_final_state_grid(
     results: dict[str, dict[str, Any] | None],
     out_dir: Path,
 ) -> None:
-    """Final-state image grid using the first test id from each method."""
-    methods = [m for m, r in results.items() if r is not None]
-    if not methods:
+    """Final-state image grid using the first test id from each (method, num_steps)."""
+    valid = [(label, res) for label, res in results.items() if res is not None]
+    if not valid:
         return
 
-    first = results[methods[0]]["samples"][0]
+    first_label, first_res = valid[0]
+    first = first_res["samples"][0]
     true_hwt = first["true_trajectory"][0, 0]  # [H, W, T]
     obs_mask = first["obs_indices_on_grid"][0]
     final_idx = first["meta"]["num_physical_steps"] - 1
@@ -320,7 +345,7 @@ def _plot_final_state_grid(
     vmin = float(true_state.min())
     vmax = float(true_state.max())
 
-    n_cols = 2 + len(methods) + 1  # true, observed, methods, prior
+    n_cols = 2 + len(valid) + 1  # true, observed, (method, num_steps) entries, prior
     fig, axes = plt.subplots(2, n_cols, figsize=(4 * n_cols, 8))
 
     axes[0, 0].imshow(true_state, vmin=vmin, vmax=vmax)
@@ -331,14 +356,14 @@ def _plot_final_state_grid(
     axes[0, 1].set_title("Observed")
     axes[1, 1].axis("off")
 
-    for j, method in enumerate(methods, start=2):
-        sample = results[method]["samples"][0]
+    for j, (label, res) in enumerate(valid, start=2):
+        sample = res["samples"][0]
         post_hwt = sample["posterior_trajectory"][:, 0].mean(dim=0)  # [H, W, T]
         post_state = post_hwt[:, :, final_idx]
         axes[0, j].imshow(post_state, vmin=vmin, vmax=vmax)
-        axes[0, j].set_title(f"{method} (mean)")
+        axes[0, j].set_title(f"{label} (mean)")
         axes[1, j].imshow((post_state - true_state).abs())
-        axes[1, j].set_title(f"{method} |err|")
+        axes[1, j].set_title(f"{label} |err|")
 
     prior_hwt = first["prior_trajectory"][:, 0].mean(dim=0)
     prior_state = prior_hwt[:, :, final_idx]
@@ -360,11 +385,11 @@ def _save_animation(
     results: dict[str, dict[str, Any] | None],
     out_dir: Path,
 ) -> None:
-    methods = [m for m, r in results.items() if r is not None]
-    if not methods:
+    valid = [(label, res) for label, res in results.items() if res is not None]
+    if not valid:
         return
 
-    first = results[methods[0]]["samples"][0]
+    first = valid[0][1]["samples"][0]
     true_hwt = first["true_trajectory"][0, 0]
     num_physical = first["meta"]["num_physical_steps"]
 
@@ -374,11 +399,11 @@ def _save_animation(
     vmin = float(sliced_true.min())
     vmax = float(sliced_true.max())
 
-    for method in methods:
-        sample = results[method]["samples"][0]
+    for label, res in valid:
+        sample = res["samples"][0]
         post_hwt = sample["posterior_trajectory"][:, 0].mean(dim=0)
         tensors.append(post_hwt)
-        titles.append(method)
+        titles.append(label)
 
     prior_hwt = first["prior_trajectory"][:, 0].mean(dim=0)
     tensors.append(prior_hwt)
@@ -400,16 +425,17 @@ def _build_final_metrics_table(
     results: dict[str, dict[str, Any] | None],
     case_name: str,
 ) -> tuple[list[str], list[str], list[list[str]]]:
-    """Aggregate each method's posterior curves to a single mean ± std per metric.
+    """Aggregate each (method, num_steps) posterior curves to mean ± std per metric.
 
     `mean` averages each test id's metric over the predicted timesteps, then
     averages across test ids. `std` is the across-test-id spread of the same
     per-test time-averaged scalar (so it reflects test-case variability).
 
-    Returns (methods, metric_names, cells) where `cells[i][j]` is the formatted
-    "mean ± std" string for method i / metric j.
+    Returns (row_labels, metric_names, cells) where `cells[i][j]` is the
+    formatted "mean ± std" string for row i / metric j. One row per
+    (method, num_steps), plus a final row for the prior baseline.
     """
-    posterior_methods = [m for m, r in results.items() if r is not None]
+    valid_labels = [label for label, r in results.items() if r is not None]
     metric_names = ["RMSE", "LSiM", "CRPS"]
     if case_name == "stochastic_navier_stokes":
         metric_names.append("Enstrophy error")
@@ -431,13 +457,13 @@ def _build_final_metrics_table(
                 row.append(f"{m:.4f} ± {s:.4f}")
         return row
 
-    row_labels = list(posterior_methods)
-    cells = [_row(results[m]["posterior"]) for m in posterior_methods]
+    row_labels = list(valid_labels)
+    cells = [_row(results[label]["posterior"]) for label in valid_labels]
 
-    if posterior_methods:
-        baseline_method = posterior_methods[0]
-        row_labels.append(f"prior ({baseline_method})")
-        cells.append(_row(results[baseline_method]["prior"]))
+    if valid_labels:
+        baseline_label = valid_labels[0]
+        row_labels.append(f"prior ({baseline_label})")
+        cells.append(_row(results[baseline_label]["prior"]))
 
     return row_labels, metric_names, cells
 
@@ -521,18 +547,18 @@ def _plot_enstrophy_spectrum(
     results: dict[str, dict[str, Any] | None],
     out_dir: Path,
 ) -> None:
-    methods = [m for m, r in results.items() if r is not None]
-    if not methods:
+    valid = [(label, res) for label, res in results.items() if res is not None]
+    if not valid:
         return
 
-    first = results[methods[0]]["samples"][0]
+    first = valid[0][1]["samples"][0]
     trajectories = [first["true_trajectory"][0, 0]]
     titles = ["True"]
-    for method in methods:
-        sample = results[method]["samples"][0]
+    for label, res in valid:
+        sample = res["samples"][0]
         post_hwt = sample["posterior_trajectory"][:, 0].mean(dim=0)
         trajectories.append(post_hwt)
-        titles.append(method)
+        titles.append(label)
 
     plot_enstrophy_spectrum(
         trajectories=trajectories,
@@ -550,35 +576,51 @@ def main(cfg: DictConfig) -> None:
     methods = OmegaConf.select(cfg, "eval.methods", default=None) or DEFAULT_METHODS
     methods = list(methods)
 
+    num_steps_filter_cfg = OmegaConf.select(cfg, "eval.num_steps", default=None)
+    num_steps_filter = (
+        {int(n) for n in num_steps_filter_cfg} if num_steps_filter_cfg else None
+    )
+
     case_dir = Path(cfg.results_root) / cfg.case.name
     out_dir = case_dir / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Case  : {cfg.case.name}")
     logger.info(f"Methods evaluated: {methods}")
+    if num_steps_filter is not None:
+        logger.info(f"num_steps filter: {sorted(num_steps_filter)}")
     logger.info(f"Reading from: {case_dir}")
 
     results: dict[str, dict[str, Any] | None] = {}
     for method in methods:
         method_dir = case_dir / method
-        results[method] = _load_method_results(method_dir, cfg.case.name)
-        if results[method] is not None:
-            _log_summary(method, "posterior", results[method]["posterior"])
-            _log_summary(method, "prior", results[method]["prior"])
+        if not method_dir.exists():
+            logger.warning(f"No directory {method_dir}, skipping.")
+            continue
+        by_steps = _list_samples_by_num_steps(method_dir)
+        if not by_steps:
+            logger.warning(f"No samples found in {method_dir}, skipping.")
+            continue
+        for num_steps in sorted(by_steps):
+            if num_steps_filter is not None and num_steps not in num_steps_filter:
+                continue
+            label = f"{method} ({num_steps} steps)"
+            res = _load_method_results(by_steps[num_steps], cfg.case.name)
+            if res is not None:
+                res["method"] = method
+                res["num_steps"] = num_steps
+                _log_summary(label, "posterior", res["posterior"])
+                _log_summary(label, "prior", res["prior"])
+            results[label] = res
 
     if not any(r for r in results.values()):
-        logger.error("No method results loaded — nothing to plot.")
+        logger.error("No results loaded — nothing to plot.")
         return
 
     first_valid = next(r for r in results.values() if r is not None)
     meta = first_valid["samples"][0]["meta"]
     time_range = range(meta["len_field_history"], meta["num_physical_steps"])
 
-    _plot_metric_curves(results, time_range, out_dir, cfg.case.name)
-    _plot_final_state_grid(results, out_dir)
-    _save_animation(results, out_dir)
-    if cfg.case.name == "stochastic_navier_stokes":
-        _plot_enstrophy_spectrum(results, out_dir)
 
     table_methods, table_metric_names, table_cells = _build_final_metrics_table(
         results, cfg.case.name
@@ -592,10 +634,21 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info(f"Wrote {out_dir / 'metrics_table.md'} and metrics_table.png")
 
-    summary_lines = ["method,kind,metric,mean_over_time,std_over_time,std_across_test_ids"]
-    for method, res in results.items():
+
+    _plot_metric_curves(results, time_range, out_dir, cfg.case.name)
+    _plot_final_state_grid(results, out_dir)
+    _save_animation(results, out_dir)
+    if cfg.case.name == "stochastic_navier_stokes":
+        _plot_enstrophy_spectrum(results, out_dir)
+
+    summary_lines = [
+        "method,num_steps,kind,metric,mean_over_time,std_over_time,std_across_test_ids"
+    ]
+    for label, res in results.items():
         if res is None:
             continue
+        method = res["method"]
+        num_steps = res["num_steps"]
         for kind in ("posterior", "prior"):
             for metric, agg in res[kind].items():
                 with _quiet_nan_warnings():
@@ -603,7 +656,7 @@ def main(cfg: DictConfig) -> None:
                     std_over_time = float(np.nanstd(agg["mean"]))
                     std_across = float(np.nanmean(agg["std"]))
                 summary_lines.append(
-                    f"{method},{kind},{metric},"
+                    f"{method},{num_steps},{kind},{metric},"
                     f"{mean_over_time:.6f},"
                     f"{std_over_time:.6f},"
                     f"{std_across:.6f}"
@@ -618,19 +671,19 @@ def _report_skips(
     results: dict[str, dict[str, Any] | None],
     out_dir: Path,
 ) -> None:
-    """Log every (method, test_id, kind, metric) that contained NaNs.
+    """Log every (label, test_id, kind, metric) that contained NaNs.
 
     NaN cells were dropped from mean/std via nanmean/nanstd, so reported
     numbers are valid — this just tells you which inputs were partial.
     """
     rows: list[tuple[str, int, str, str, int, int]] = []
-    for method, res in results.items():
+    for label, res in results.items():
         if res is None:
             continue
         for s in res.get("skips", []):
             rows.append(
                 (
-                    method,
+                    label,
                     s["test_id"],
                     s["kind"],
                     s["metric"],
@@ -644,27 +697,27 @@ def _report_skips(
         return
 
     logger.warning(
-        f"NaN entries skipped in {len(rows)} (method, test_id, kind, metric) groups:"
+        f"NaN entries skipped in {len(rows)} (label, test_id, kind, metric) groups:"
     )
     rows.sort()
-    method_w = max(len("method"), max(len(r[0]) for r in rows))
+    label_w = max(len("label"), max(len(r[0]) for r in rows))
     metric_w = max(len("metric"), max(len(r[3]) for r in rows))
     header = (
-        f"{'method'.ljust(method_w)}  test_id  {'kind'.ljust(9)}  "
+        f"{'label'.ljust(label_w)}  test_id  {'kind'.ljust(9)}  "
         f"{'metric'.ljust(metric_w)}  nan/total"
     )
     logger.warning(header)
     logger.warning("-" * len(header))
-    for method, test_id, kind, metric, n_nan, n_total in rows:
+    for label, test_id, kind, metric, n_nan, n_total in rows:
         logger.warning(
-            f"{method.ljust(method_w)}  {test_id:>7d}  {kind.ljust(9)}  "
+            f"{label.ljust(label_w)}  {test_id:>7d}  {kind.ljust(9)}  "
             f"{metric.ljust(metric_w)}  {n_nan}/{n_total}"
         )
 
     skip_path = out_dir / "skipped_nan_entries.csv"
-    lines = ["method,test_id,kind,metric,n_nan_cells,n_total_cells"]
-    for method, test_id, kind, metric, n_nan, n_total in rows:
-        lines.append(f"{method},{test_id},{kind},{metric},{n_nan},{n_total}")
+    lines = ["label,test_id,kind,metric,n_nan_cells,n_total_cells"]
+    for label, test_id, kind, metric, n_nan, n_total in rows:
+        lines.append(f"{label},{test_id},{kind},{metric},{n_nan},{n_total}")
     skip_path.write_text("\n".join(lines) + "\n")
     logger.warning(f"Wrote {skip_path}")
 
