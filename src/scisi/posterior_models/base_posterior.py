@@ -134,7 +134,7 @@ class BasePosterior(nn.Module):
             )
 
         # Prepare the time
-        t_vec = torch.linspace(0, 1, num_steps, device=self.device).unsqueeze(0)
+        t_vec = torch.linspace(0, 1, num_steps+1, device=self.device).unsqueeze(0)
         dt = t_vec[0,  1] - t_vec[0,  0] 
 
         # Prepare the fixed input and make sure the tensors are on the correct device

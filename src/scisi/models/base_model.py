@@ -71,8 +71,8 @@ class BaseModel(nn.Module):
     def _prepare_time(self, num_steps: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Prepare the time vector for the sample method."""
 
-        dt = torch.tensor(1 / num_steps, device=self.device)
-        t_vec = torch.linspace(0, 1, num_steps, device=self.device).unsqueeze(0)
+        t_vec = torch.linspace(0, 1, num_steps+1, device=self.device).unsqueeze(0)
+        dt = (t_vec[0,  1] - t_vec[0,  0] ).to(self.device)
 
         return dt, t_vec
 
