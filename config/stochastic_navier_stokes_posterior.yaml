@@ -14,11 +14,11 @@ pre_trained_model:
 
 obs_operator:
   _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
-  type: random
+  # type: random
   # percent_obs: 0.05
-  percent_obs: 0.015625
-  # type: grid
-  # skip_grid: 4
+  # percent_obs: 0.015625
+  type: grid
+  skip_grid: 8
 
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
@@ -26,13 +26,7 @@ likelihood_model:
   variance: 0.0025
   ensemble_size: 25
   correct_likelihood_score: true
-  # interpolant:
-  #   # _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-  #   _target_: scisi.models.interpolations.LinearStochasticInterpolation
-  #   gamma_multiplier: 1.0
-  #   wiener_process: true
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
-  resample: false
-  # _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantParticleFlowPosterior
+  resample: true

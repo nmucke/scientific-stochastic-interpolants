@@ -12,6 +12,7 @@ from torch.distributions import MultivariateNormal
 
 from analytical_utils.kde_utils import prepare_samples
 from analytical_utils.kl_divergence import (
+    gaussian_kl_divergence,
     kl_divergence,
     wasserstein_distance,
 )
@@ -55,7 +56,7 @@ TARGET_MEAN = lambda x: x
 TARGET_COV = lambda x: torch.eye(x.shape[1]).expand(x.shape[0], x.shape[1], x.shape[1])
 
 # Stochastic Interpolant
-NUM_STEPS = 250
+NUM_STEPS = 500
 X0_MEAN = 5
 DIFFUSION_TERM = lambda t: 1.0 * (1 - t)
 INTERPOLATION = LinearStochasticInterpolation(wiener_process=True)
@@ -66,11 +67,12 @@ TRUE_DRIFT_MODEL_1 = AnalyticalDriftModel(
     INTERPOLATION, TARGET_MEAN, TARGET_COV, lambda t: 1.0 * (1 - t)
 )
 
-ORIGINAL_VARIANCE_LIST = [0.5, 1.0, 2.0]
+ORIGINAL_VARIANCE_LIST = [0.1, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
 
 METRICS = [
     ("Wasserstein", wasserstein_distance),
     ("KL-div", kl_divergence),
+    ("Gauss KL", gaussian_kl_divergence),
 ]
 
 
@@ -83,7 +85,7 @@ def build_models(obs_matrix: torch.Tensor, original_variance: float):
     )
     return [
         (
-            "New correction",
+            "Interpolant (cheap correction)",
             PosteriorModel(
                 TRUE_DRIFT_MODEL_1,
                 InterpolantLikelihood(**shared, perturbation="new_correction"),
@@ -94,22 +96,28 @@ def build_models(obs_matrix: torch.Tensor, original_variance: float):
             PosteriorModel(TRUE_DRIFT_MODEL, FlowdasLikelihood(**shared)),
         ),
         (
-            "Interpolant",
+            "Interpolant (no correction)",
             PosteriorModel(
                 TRUE_DRIFT_MODEL_1,
                 InterpolantLikelihood(**shared, perturbation=None),
             ),
         ),
         (
-            "Interpolant (true pert.)",
+            "True likelihood",
             PosteriorModel(
                 TRUE_DRIFT_MODEL_1,
                 InterpolantLikelihood(
                     **shared,
                     perturbation="true",
-                    num_quad=1000,
                     target_variance=1.0,
                 ),
+            ),
+        ),
+        (
+            "Interpolant (expensive correction)",
+            PosteriorModel(
+                TRUE_DRIFT_MODEL_1,
+                InterpolantLikelihood(**shared, perturbation="expensive"),
             ),
         ),
     ]
@@ -164,6 +172,16 @@ def format_results_table(
     return "\n".join([line1, line2, sep, *rows])
 
 
+FIG_DIR = _root.parent / "figures" / "analytical"
+
+
+def _save(fig, name: str) -> None:
+    """Save ``fig`` as ``<name>.png`` and ``<name>.pdf`` under ``FIG_DIR``."""
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(FIG_DIR / f"{name}.png", dpi=200, bbox_inches="tight")
+    fig.savefig(FIG_DIR / f"{name}.pdf", bbox_inches="tight")
+
+
 def main() -> None:
     """Main function."""
 
@@ -174,10 +192,11 @@ def main() -> None:
     x = x0.repeat(BATCH_SIZE, 1)
 
     model_names = [
-        "New correction",
+        "Interpolant (no correction)",
+        "Interpolant (cheap correction)",
+        "Interpolant (expensive correction)",
+        "True likelihood",
         "FlowDAS",
-        "Interpolant",
-        "Interpolant (true pert.)",
     ]
     metric_names = [m[0] for m in METRICS]
 
@@ -216,7 +235,7 @@ def main() -> None:
     print()
 
     # --- Convergence plots: one panel per metric, one curve per model ---
-    fig, axes = plt.subplots(1, len(METRICS), figsize=(8 * len(METRICS), 6))
+    fig_metrics, axes = plt.subplots(1, len(METRICS), figsize=(8 * len(METRICS), 6))
     if len(METRICS) == 1:
         axes = [axes]
     for ax, (metric_name, _) in zip(axes, METRICS):
@@ -228,13 +247,14 @@ def main() -> None:
         ax.set_title(metric_name)
         ax.grid(True, which="both", alpha=0.3)
         ax.legend()
-    plt.tight_layout()
+    fig_metrics.tight_layout()
+    _save(fig_metrics, "metrics")
     plt.show()
 
     # --- KDE heatmaps: rows = sigma, cols = [true posterior, each model] ---
     n_rows = len(ORIGINAL_VARIANCE_LIST)
     n_cols = 1 + len(model_names)
-    _, axes = plt.subplots(
+    fig_kde, axes = plt.subplots(
         n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False
     )
     for i, sigma in enumerate(ORIGINAL_VARIANCE_LIST):
@@ -247,11 +267,12 @@ def main() -> None:
             axes[i, j].pcolormesh(kde.xi, kde.yi, kde.zi, shading="gouraud")
             axes[i, j].set_title(f"{name} (sigma^2={sigma:g})")
             axes[i, j].set_aspect("equal")
-    plt.tight_layout()
+    fig_kde.tight_layout()
+    _save(fig_kde, "kde")
     plt.show()
 
     # --- Diagonal slice comparison, one subplot per sigma ---
-    _, axes = plt.subplots(1, n_rows, figsize=(6 * n_rows, 5), squeeze=False)
+    fig_diag, axes = plt.subplots(1, n_rows, figsize=(6 * n_rows, 5), squeeze=False)
     for i, sigma in enumerate(ORIGINAL_VARIANCE_LIST):
         ax = axes[0, i]
         ax.plot(true_posterior_kde[sigma].diag, label="True posterior", linewidth=2)
@@ -259,8 +280,11 @@ def main() -> None:
             ax.plot(kde_samples[name][sigma].diag, label=name, **PLOT_ARGS)
         ax.set_title(f"Diagonal (sigma^2={sigma:g})")
         ax.legend()
-    plt.tight_layout()
+    fig_diag.tight_layout()
+    _save(fig_diag, "diagonal")
     plt.show()
+
+    print(f"Saved figures to {FIG_DIR}")
 
 
 if __name__ == "__main__":

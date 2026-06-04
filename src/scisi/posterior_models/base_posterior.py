@@ -79,6 +79,15 @@ class BasePosterior(nn.Module):
         """Actions to be taken after the step."""
         return base, field_history
 
+    def _post_sample(
+        self,
+        base: torch.Tensor,
+        observations: torch.Tensor,
+        field_history: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Actions to be taken after the sampling."""
+        return base, field_history
+
     @abstractmethod
     def _one_step(
         self,
@@ -125,8 +134,8 @@ class BasePosterior(nn.Module):
             )
 
         # Prepare the time
-        dt = torch.tensor(1 / num_steps, device=self.device)
         t_vec = torch.linspace(0, 1, num_steps, device=self.device).unsqueeze(0)
+        dt = t_vec[0,  1] - t_vec[0,  0] 
 
         # Prepare the fixed input and make sure the tensors are on the correct device
         fixed_input = lambda batch_ids: {
@@ -143,7 +152,6 @@ class BasePosterior(nn.Module):
             "pars_cond": (
                 pars_cond[batch_ids].to(self.device) if pars_cond is not None else None
             ),
-            "dt": dt,
         }
 
         # Sample init state from Gaussian distribution
@@ -163,6 +171,7 @@ class BasePosterior(nn.Module):
                         base=base[batch_ids].to(self.device),
                         t=t_vec[:, 0],
                         stepper=stepper,
+                        dt=dt,
                         **fixed_input(batch_ids),
                     ).cpu()
 
@@ -171,6 +180,7 @@ class BasePosterior(nn.Module):
         # Sample remaining steps
         for i in range(start_time, num_steps - 1):
             t = t_vec[:, i : i + 1]
+            dt = t_vec[0, i + 1] - t_vec[0, i] 
 
             base = self._pre_step(base=base, observations=observations, t=t)
 
@@ -186,6 +196,7 @@ class BasePosterior(nn.Module):
                     base=base[batch_ids].to(self.device),
                     observations=observations,
                     t=t,
+                    dt=dt,
                     **fixed_input(batch_ids),
                 ).cpu()
 
@@ -196,6 +207,12 @@ class BasePosterior(nn.Module):
                 field_history=field_history, 
                 dt=dt
             )
+
+        base, field_history = self._post_sample(
+            base=base,
+            observations=observations,
+            field_history=field_history
+        )
 
         # Add the new base to the field history
         if return_field_history:

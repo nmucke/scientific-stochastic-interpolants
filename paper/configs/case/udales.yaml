@@ -1,17 +1,17 @@
-name: stochastic_navier_stokes
-project: stochastic_navier_stokes
+name: udales
+project: udales
 
 # Per-method checkpoint under checkpoints/<project>/<name>/
 checkpoints:
-  si: stochastic_interpolant_small
-  fm: flow_matching
-  flowdas: stochastic_interpolant_small
+  si: stochastic_interpolant_small_gamma1
+  fm: flow_matching_small
+  flowdas: stochastic_interpolant_small_gamma1
 
 # Which test trajectories to run. Single int or list. The model loads once and
 # loops over the list, so adding ids is cheap.
-test_sample_indices: [1, 2, 3, 4, 5]
+test_sample_indices: [1]
 
-ensemble_size: 4
+ensemble_size: 16
 num_physical_steps: 25
 num_steps: 200
 mixed_precision: false

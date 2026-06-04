@@ -23,7 +23,9 @@ class InterpolantGaussianLikelihood(nn.Module):
         variance: float = 0.05,
         ensemble_size: int = 1,
         interpolant: Optional[nn.Module] = None,
-        correct_likelihood_score: bool = True
+        correct_likelihood_score: bool = True,
+        correction_multiplier: float = 3.0,
+        apply_multiplier_to_full_expression: bool = True,
     ) -> None:
         """
         Initialize Interpolant Gaussian likelihood.
@@ -34,6 +36,15 @@ class InterpolantGaussianLikelihood(nn.Module):
             obs_operator: Observation operator.
             model: Model.
             variance: Variance.
+            correction_multiplier: Scalar tuning knob on the corrected
+                likelihood score. By default it scales only the (uncorrected)
+                score term — see `apply_multiplier_to_full_expression`.
+            apply_multiplier_to_full_expression: If True,
+                `correction_multiplier` multiplies the entire corrected
+                expression `likelihood_score + correction_factor * obs_mask *
+                likelihood_score`. If False (default, original behavior), the
+                multiplier scales only the leading score term and the rank-N_y
+                correction is added on top unscaled.
         """
         super(InterpolantGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -41,6 +52,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         self.original_variance = variance
         self.ensemble_size = ensemble_size
         self.correct_likelihood_score = correct_likelihood_score
+        self.correction_multiplier = correction_multiplier
+        self.apply_multiplier_to_full_expression = apply_multiplier_to_full_expression
 
         if interpolant is not None:
             self.interpolant = interpolant
@@ -110,7 +123,36 @@ class InterpolantGaussianLikelihood(nn.Module):
                 device=likelihood_score.device, dtype=likelihood_score.dtype
             )
 
-        return likelihood_score + correction_factor * self._obs_mask * likelihood_score
+        if self.apply_multiplier_to_full_expression:
+            return self.correction_multiplier * (
+                likelihood_score
+                + correction_factor * self._obs_mask * likelihood_score
+            )
+        return (
+            self.correction_multiplier * likelihood_score
+            + correction_factor * self._obs_mask * likelihood_score
+        )
+
+    def _conditional_mean_wiener_process(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: torch.Tensor,
+        drift: torch.Tensor,
+    ):
+        gamma = self.interpolant.gamma(t)
+        gamma_diff = self.interpolant.gamma_diff(t)
+        beta = self.interpolant.beta(t)
+        beta_diff = self.interpolant.beta_diff(t)
+        alpha = self.interpolant.alpha(t)
+        alpha_diff = self.interpolant.alpha_diff(t)
+
+        A = t * gamma * (beta_diff * gamma - beta * gamma_diff)
+        A = 1 / (A + 1e-6)
+
+        c = beta_diff * x + (beta * alpha_diff - beta_diff * alpha) * field_history[..., -1]
+
+        return -gamma * t * A * (beta * drift - c)
 
 
     def score(
@@ -136,16 +178,14 @@ class InterpolantGaussianLikelihood(nn.Module):
             observations, x, t, self.obs_operator(field_history[..., -1])
         )
 
-        model_score = self.model._prior_score(
-            x, field_history[..., -1], drift, t
-        )#.detach()
-        conditional_noise_mean = -model_score * t * self.model.interpolation.gamma(t)
+        bias = self._conditional_mean_wiener_process(
+            x=x, t=t,field_history=field_history, drift=drift,
+        )
+        bias = self.interpolant.gamma(t) * self.obs_operator(bias)
 
-        d = - self.diffusion_term(t) * self.obs_operator(conditional_noise_mean)
+        diff = interpolant_obs - (self.obs_operator(x) - bias)
 
-        diff = interpolant_obs - self.obs_operator(x) - d
-
-        diff_norm = torch.linalg.norm(diff, dim=1)
+        diff_norm = torch.linalg.norm(diff, dim=1) ** 2
 
         diff_norm = - 0.5 * diff_norm / interpolant_variance
 
@@ -161,8 +201,8 @@ class InterpolantGaussianLikelihood(nn.Module):
                 likelihood_score=likelihood_score
             )
 
-        # return likelihood_score, diff_norm
-        return likelihood_score * self.diffusion_term(t) ** 2, diff_norm
+        return likelihood_score, diff_norm
+        # return likelihood_score * self.diffusion_term(t) ** 2, diff_norm
 
 class FlowdasGaussianLikelihood(nn.Module):
     """Multivariate Gaussian likelihood."""
@@ -265,7 +305,7 @@ class FlowdasGaussianLikelihood(nn.Module):
             x, t, dt, field_history, field_cond, pars_cond, drift
         )
 
-        diff_norm = torch.linalg.norm(observations - self.obs_operator(preds), dim=1)
+        diff_norm = torch.linalg.norm(observations - self.obs_operator(preds), dim=1) ** 2
         diff_norm = -diff_norm / (2 * self.original_variance)
 
         # Compute weights
