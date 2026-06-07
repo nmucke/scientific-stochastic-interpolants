@@ -62,3 +62,6 @@ paper/results/
 
 # Multirun
 multirun/
+
+# pdf
+*.pdf
