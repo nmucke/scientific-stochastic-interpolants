@@ -1,0 +1,56 @@
+# Case 2 -- stochastic incompressible Navier-Stokes (spec Section 5). Main
+# benchmark. Mirrors paper/configs/case/stochastic_navier_stokes.yaml conventions.
+name: navier_stokes
+project: stochastic_navier_stokes
+
+# Checkpoint run names under checkpoints/<project>/<name>/. The SI prior is the
+# shared prior for SI-SDE / FlowDAS; the FM prior (FM-SDE / FM-ODE) reuses the SAME
+# UNet drift architecture (and, when present, the SI drift weights) paired with a
+# rectified-flow interpolation so FlowMatchingModel.score is defined (GAP L1).
+#
+# ON THE GPU BOX: set `si_run` (and `fm_run` once a dedicated FM checkpoint exists)
+# to the real run names that hold `model.pth`, and set `require_weights: true` so a
+# missing dir / model.pth is a HARD ERROR (never a silent random-weights fallback).
+#
+# IN THIS REPO: the run dirs carry only config.yaml (no model.pth). With
+# `require_weights: false` (default) the loader runs with RANDOM weights and emits a
+# loud warning -- results are smoke-scale only. There is currently NO trained FM
+# checkpoint, so leave `fm_run: null` to reuse the SI architecture/weights.
+checkpoints:
+  si_run: happy-bee-61    # real SI run on the GPU box (has model.pth there)
+  fm_run: null            # set to a real FM run once one exists; null reuses SI
+
+# Hard-fail if the configured checkpoint dir / model.pth is missing (GPU box: true).
+require_weights: false
+
+# Inference device. CPU is the safe default (MPS lacks some linalg_solve / JVP
+# kernels used by the full-Sigma_s likelihood); set to mps/cuda when supported.
+device: cpu
+
+# Which test trajectories to run.
+test_sample_indices: [1, 2, 3, 4, 5]
+
+ensemble_size: 64
+num_physical_steps: 25
+num_steps: 50          # M (spec default; swept in ablation)
+
+# Observation noise variance R = sigma^2 I, sigma = 0.05 (vorticity) -> 0.0025.
+variance: 0.0025
+
+# Monte-Carlo samples inside the likelihood score estimator (FlowDAS).
+likelihood_ensemble_size: 25
+
+# Reference posterior for KL-at-points: a large-E reference ensemble drawn by the
+# headline SI-SDE sampler on the same truth+obs+mask (spec Sec 9). Override smaller
+# in the smoke run (e.g. reference_ensemble_size=8) to keep it cheap.
+reference: large_ensemble
+reference_ensemble_size: 1024
+
+# PDE params -- TODO(spec Section 5): confirm with codebase/user (cosmetic null block).
+pde:
+  grid: 128
+  viscosity: null        # nu
+  drag: null             # alpha
+  forcing_amplitude: null # epsilon
+  dt: null
+  assimilation_interval: null  # Delta t between observations

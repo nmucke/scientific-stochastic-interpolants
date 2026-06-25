@@ -1,0 +1,10 @@
+# Bootstrap particle filter baseline (carrassi_data_2018): same E; report effective
+# sample size and resampling scheme. Uses the true solver for propagation (note in
+# paper). GAP E5: currently an empty stub.
+name: Particle filter
+stepper: classical
+
+filter:
+  _target_: scisi.particle_filter.bootstrap.BootstrapParticleFilter
+  resampling: systematic   # TODO(E5): report scheme + effective sample size.
+  use_true_solver: true

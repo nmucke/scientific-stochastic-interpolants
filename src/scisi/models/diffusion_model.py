@@ -68,16 +68,18 @@ class DenoiseDiffusionModel(BaseModel):
         t: torch.Tensor,
         score: torch.Tensor,
     ) -> torch.Tensor:
-        """Get the velocity of the Diffusion model."""
+        """Get the velocity of the Diffusion model.
 
-        alpha = self.interpolation.alpha(t)
-        beta = self.interpolation.beta(t)
-        alpha_diff = self.interpolation.alpha_diff(t)
-        beta_diff = self.interpolation.beta_diff(t)
-
-        score_coeff = alpha**2 * beta_diff / beta - alpha_diff * alpha
-        x_coeff = beta_diff / beta
-        return score_coeff * score + x_coeff * x
+        Routes through the shared velocity<->score identity on the
+        interpolation (paper Eq. general_velocity_of_score) with the diffusion
+        anchor a0 = 0 and source scale sigma = alpha.
+        """
+        return self.interpolation.velocity_from_score(
+            x=x,
+            s=score,
+            t=t,
+            a0=torch.zeros_like(x),
+        )
 
     def drift(
         self,

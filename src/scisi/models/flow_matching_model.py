@@ -61,6 +61,51 @@ class FlowMatchingModel(BaseModel):
 
         return self.drift_model(x, t, field_history, field_cond, pars_cond)
 
+    def score(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        field_history: Optional[torch.Tensor] = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Compute the score of the Flow Matching model (paper Eq. fm_score).
+
+        Recovers the score from the trained velocity via the shared
+        velocity->score identity on the interpolation, specialized to the FM
+        anchor a0 = 0:
+
+            s = (beta * v - beta_diff * x)
+                / (alpha * (beta_diff * alpha - alpha_diff * beta)),
+
+        which is general in the schedules alpha, beta and reduces to
+        (t * v - x) / (1 - t) for rectified flow. The denominator is guarded by
+        clamping t away from the singular endpoints {0, 1}.
+
+        Args:
+            x (torch.Tensor): Input tensor [B, C, H, W].
+            t (torch.Tensor): Time tensor [B, 1].
+            field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
+            field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
+            pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
+
+        Returns:
+            torch.Tensor: The score tensor [B, C, H, W].
+        """
+        velocity = self.drift_model(x, t, field_history, field_cond, pars_cond)
+        # ``score_from_velocity`` does element-wise arithmetic against the 4D
+        # state ``x``; the schedule time ``t`` arrives as ``[B, 1]`` (the same
+        # shape the drift net consumes) and must be broadcast to ``x``'s rank
+        # first, otherwise ``beta(t) * v`` mismatches on the spatial dims.
+        t_expanded = _expand_t(t, x) if t.dim() < x.dim() else t
+        return self.interpolation.score_from_velocity(
+            x=x,
+            v=velocity,
+            t=t_expanded,
+            a0=torch.zeros_like(x),
+        )
+
     def forward(
         self,
         base: torch.Tensor,

@@ -8,7 +8,18 @@ from scisi.likelihood_models.observation_operators import LinearObservationOpera
 
 
 class GuidanceGaussianLikelihood(nn.Module):
-    """Multivariate Gaussian likelihood."""
+    """Guided-flow (FIG / FlowDAS-style) likelihood — BASELINE, not the paper method.
+
+    This is the legacy one-step DPS/FIG guidance: it predicts ``x_1`` by a
+    single Euler extrapolation ``x + (1 - t) * v`` and differentiates the raw
+    observation log-likelihood ``-1/2 ||y - H x_1||^2 / sigma^2`` through it.
+    It does **not** use the observation interpolant, the inflated covariance
+    ``Sigma_bar``, the source moments, or the multiplicative gain ``G_tau`` of
+    the paper's unified method (see
+    ``InterpolantGaussianLikelihood``). It is retained only as a
+    FlowDAS/FIG baseline; the paper's FM method routes through
+    ``InterpolantGaussianLikelihood`` with the FM source moments instead.
+    """
 
     def __init__(
         self,

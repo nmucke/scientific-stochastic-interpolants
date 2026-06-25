@@ -1,0 +1,15 @@
+# FlowDAS baseline (chen_flowdas_2025): SI-SDE with a Monte-Carlo likelihood
+# estimate (J samples of x1 ~ p(x1|x_tau,x0), softmax weight by p(y|x1)).
+# Shares the trained prior with our samplers.
+name: FlowDAS
+stepper: sde
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
+  # J = number of Monte-Carlo x1 draws (report the value used).
+  num_mc_samples: 25
+
+posterior_model:
+  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
+  resample: false

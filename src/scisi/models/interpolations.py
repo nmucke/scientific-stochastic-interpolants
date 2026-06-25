@@ -10,6 +10,15 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+# Clamp pseudo-time away from the endpoints {0, 1} when evaluating
+# schedule-derived quantities whose denominators vanish there.
+MIN_TIME = 1e-4
+
+
+def _clamp_time(t: torch.Tensor) -> torch.Tensor:
+    """Clamp pseudo-time away from the singular endpoints 0 and 1."""
+    return torch.clamp(t, min=MIN_TIME, max=1.0 - MIN_TIME)
+
 
 def _expand_t(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
@@ -22,7 +31,118 @@ def _expand_t(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     )
 
 
-class LinearDeterministicInterpolation(nn.Module):
+class AffineGaussianPathMixin:
+    """Shared velocity<->score identity for affine Gaussian probability paths.
+
+    Implements the single source of truth for the velocity--score duality of
+    Eqs. (general_velocity_of_score)/(general_score_velocity) and the
+    velocity--score coefficient ``a_tau`` of Eq. (vscoef_def), general in the
+    schedules ``alpha_tau``, ``beta_tau`` and the source scale ``sigma_tau``.
+
+    Concrete interpolations expose ``alpha``/``alpha_diff``, ``beta``/
+    ``beta_diff`` and the source scale via ``sigma``/``sigma_diff``. For the
+    deterministic/flow-matching paths the source scale is ``sigma = alpha``;
+    for the stochastic-interpolant paths it is ``sigma = gamma * sqrt(t)``.
+    The deterministic anchor ``a0`` is ``x0`` for SI and ``0`` for FM.
+    """
+
+    def sigma(self, t: torch.Tensor) -> torch.Tensor:
+        """Source scale sigma_tau (defaults to alpha; SI overrides)."""
+        return self.alpha(t)
+
+    def sigma_diff(self, t: torch.Tensor) -> torch.Tensor:
+        """Derivative of the source scale (defaults to alpha_diff)."""
+        return self.alpha_diff(t)
+
+    def velocity_score_coeff(self, t: torch.Tensor) -> torch.Tensor:
+        """Velocity--score coefficient a_tau (paper Eq. vscoef_def).
+
+        a_tau = sigma * (beta_diff * sigma - sigma_diff * beta) / beta,
+        with sigma = alpha for FM/diffusion and sigma = gamma * sqrt(t) for SI.
+
+        Args:
+            t (torch.Tensor): Time tensor.
+
+        Returns:
+            torch.Tensor: The velocity--score coefficient a_tau.
+        """
+        t = _clamp_time(t)
+        sigma = self.sigma(t)
+        sigma_diff = self.sigma_diff(t)
+        beta = self.beta(t)
+        beta_diff = self.beta_diff(t)
+        return sigma * (beta_diff * sigma - sigma_diff * beta) / beta
+
+    def velocity_from_score(
+        self,
+        x: torch.Tensor,
+        s: torch.Tensor,
+        t: torch.Tensor,
+        a0: torch.Tensor,
+    ) -> torch.Tensor:
+        """Velocity from score (paper Eq. general_velocity_of_score).
+
+        v = (beta_diff / beta) * x
+            + (alpha_diff - beta_diff * alpha / beta) * a0
+            + a_tau * s.
+
+        Args:
+            x (torch.Tensor): State tensor at pseudo-time t.
+            s (torch.Tensor): Score tensor at (x, t).
+            t (torch.Tensor): Time tensor.
+            a0 (torch.Tensor): Deterministic anchor (x0 for SI, 0 for FM).
+
+        Returns:
+            torch.Tensor: The velocity field.
+        """
+        t = _clamp_time(t)
+        alpha = self.alpha(t)
+        alpha_diff = self.alpha_diff(t)
+        beta = self.beta(t)
+        beta_diff = self.beta_diff(t)
+        a_tau = self.velocity_score_coeff(t)
+        return (
+            (beta_diff / beta) * x
+            + (alpha_diff - beta_diff * alpha / beta) * a0
+            + a_tau * s
+        )
+
+    def score_from_velocity(
+        self,
+        x: torch.Tensor,
+        v: torch.Tensor,
+        t: torch.Tensor,
+        a0: torch.Tensor,
+    ) -> torch.Tensor:
+        """Score from velocity (paper Eq. general_score_velocity).
+
+        s = (beta * v - beta_diff * x - (alpha_diff * beta - beta_diff * alpha) * a0)
+            / (beta * a_tau).
+
+        Args:
+            x (torch.Tensor): State tensor at pseudo-time t.
+            v (torch.Tensor): Velocity tensor at (x, t).
+            t (torch.Tensor): Time tensor.
+            a0 (torch.Tensor): Deterministic anchor (x0 for SI, 0 for FM).
+
+        Returns:
+            torch.Tensor: The score field.
+        """
+        t = _clamp_time(t)
+        alpha = self.alpha(t)
+        alpha_diff = self.alpha_diff(t)
+        beta = self.beta(t)
+        beta_diff = self.beta_diff(t)
+        a_tau = self.velocity_score_coeff(t)
+        numerator = (
+            beta * v
+            - beta_diff * x
+            - (alpha_diff * beta - beta_diff * alpha) * a0
+        )
+        return numerator / (beta * a_tau)
+
+
+class LinearDeterministicInterpolation(AffineGaussianPathMixin, nn.Module):
     """Linear deterministic interpolant."""
 
     def __init__(self) -> None:
@@ -31,7 +151,7 @@ class LinearDeterministicInterpolation(nn.Module):
 
     def alpha_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha derivative coefficient."""
-        return -1
+        return -torch.ones_like(t)
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -43,7 +163,7 @@ class LinearDeterministicInterpolation(nn.Module):
 
     def beta_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Beta derivative."""
-        return 1
+        return torch.ones_like(t)
 
     def forward(
         self, base: torch.Tensor, target: torch.Tensor, t: torch.Tensor
@@ -60,7 +180,7 @@ class LinearDeterministicInterpolation(nn.Module):
         return self.alpha_diff(t) * base + self.beta_diff(t) * target
 
 
-class QuadraticDeterministicInterpolation(nn.Module):
+class QuadraticDeterministicInterpolation(AffineGaussianPathMixin, nn.Module):
     """Quadratic deterministic interpolant."""
 
     def __init__(self) -> None:
@@ -69,7 +189,7 @@ class QuadraticDeterministicInterpolation(nn.Module):
 
     def alpha_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha derivative coefficient."""
-        return -1
+        return -torch.ones_like(t)
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Alpha function."""
@@ -98,7 +218,7 @@ class QuadraticDeterministicInterpolation(nn.Module):
         return self.alpha_diff(t) * base + self.beta_diff(t) * target
 
 
-class LinearStochasticInterpolation(nn.Module):
+class LinearStochasticInterpolation(AffineGaussianPathMixin, nn.Module):
     """Linear stochastic interpolant."""
 
     def __init__(
@@ -139,6 +259,15 @@ class LinearStochasticInterpolation(nn.Module):
         """Gamma derivative."""
         return -self.gamma_multiplier * torch.ones_like(t)
 
+    def sigma(self, t: torch.Tensor) -> torch.Tensor:
+        """Source scale sigma_tau = gamma_tau * sqrt(t) for SI."""
+        return self.gamma(t) * torch.sqrt(t)
+
+    def sigma_diff(self, t: torch.Tensor) -> torch.Tensor:
+        """Derivative of the SI source scale sigma_tau = gamma_tau * sqrt(t)."""
+        sqrt_t = torch.sqrt(_clamp_time(t))
+        return self.gamma_diff(t) * sqrt_t + self.gamma(t) / (2 * sqrt_t)
+
     def forward(
         self,
         base: torch.Tensor,
@@ -170,7 +299,7 @@ class LinearStochasticInterpolation(nn.Module):
         )
 
 
-class QuadraticStochasticInterpolation(nn.Module):
+class QuadraticStochasticInterpolation(AffineGaussianPathMixin, nn.Module):
     """Quadratic stochastic interpolant."""
 
     def __init__(
@@ -208,6 +337,15 @@ class QuadraticStochasticInterpolation(nn.Module):
     def gamma_diff(self, t: torch.Tensor) -> torch.Tensor:
         """Gamma derivative."""
         return -self.gamma_multiplier
+
+    def sigma(self, t: torch.Tensor) -> torch.Tensor:
+        """Source scale sigma_tau = gamma_tau * sqrt(t) for SI."""
+        return self.gamma(t) * torch.sqrt(t)
+
+    def sigma_diff(self, t: torch.Tensor) -> torch.Tensor:
+        """Derivative of the SI source scale sigma_tau = gamma_tau * sqrt(t)."""
+        sqrt_t = torch.sqrt(_clamp_time(t))
+        return self.gamma_diff(t) * sqrt_t + self.gamma(t) / (2 * sqrt_t)
 
     def forward(
         self,

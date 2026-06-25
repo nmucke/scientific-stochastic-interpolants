@@ -156,7 +156,18 @@ class BasePosterior(nn.Module):
 
         # Sample init state from Gaussian distribution
         if self.gaussian_base:
+            # FM samplers initialise from N(0, I), which is exact for the
+            # marginal construction (Phi_0^obs is constant), so no reweighting.
             base = torch.randn_like(field_history[..., 0]) if base is None else base
+        else:
+            # SI sampler: the source is the point mass delta_{x0}, so the loop
+            # must initialise at x = x0 = field_history[..., -1].
+            assert base is not None, (
+                "SI posterior requires a point-mass init base = x0; got None."
+            )
+            assert torch.allclose(
+                base.to(field_history.device), field_history[..., -1], atol=1e-5
+            ), "SI posterior init must equal x0 (field_history[..., -1])."
 
         # Sample first step
         start_time = 0
@@ -177,8 +188,14 @@ class BasePosterior(nn.Module):
 
                 start_time = 1
 
-        # Sample remaining steps
-        for i in range(start_time, num_steps - 1):
+        # Sample remaining steps.
+        #
+        # ``t_vec`` has ``num_steps + 1`` nodes (indices 0..num_steps) and hence
+        # ``num_steps`` intervals; the loop must cover every interval up to the
+        # terminal node, so it runs ``i = start_time .. num_steps - 1`` (i.e.
+        # ``range(start_time, num_steps)``). The previous bound
+        # ``range(..., num_steps - 1)`` dropped the final integration step.
+        for i in range(start_time, num_steps):
             t = t_vec[:, i : i + 1]
             dt = t_vec[0, i + 1] - t_vec[0, i] 
 

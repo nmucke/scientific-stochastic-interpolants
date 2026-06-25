@@ -1,0 +1,11 @@
+# Super-resolution 16^2 -> 128^2 (spec Section 2). 8x8 block average. Appendix
+# column for NS.
+name: 16^2->128^2
+type: superres
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: super_res
+  low_res: 16
+  high_res: 128
+  # data_size defaults to (1, 128, 128); the case config overrides for multi-variable.

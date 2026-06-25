@@ -1,6 +1,5 @@
 import pdb
 from functools import partial
-from re import L
 from typing import Callable, List, Optional
 
 import torch
@@ -10,25 +9,53 @@ import tqdm
 from scisi.posterior_models.base_posterior import BasePosterior
 from scisi.sampling.sde_solvers import euler_maruyama_step, heun_step
 
+# Pseudo-time below which the guidance correction is switched off. The
+# observation interpolant is singular at tau = 0 (beta_0 = 0), so the
+# correction is applied only from tau = dtau onwards (paper, Section
+# "implementation": "the correction is applied from tau = dtau onwards").
 MIN_TIME = 1e-4
 
 
 class StochasticInterpolantPosterior(BasePosterior):
-    """Stochastic interpolant posterior."""
+    """Stochastic-interpolant SDE posterior sampler (paper Sampler 1).
+
+    Realises the SI-SDE member of the unified family
+
+        b_post = b_prior + w_tau * (G_tau @ Sbar),
+        w_tau  = a_tau + 1/2 gamma_tau**2,
+
+    with native diffusion ``g_tau = gamma_tau`` and source the point mass
+    ``delta_{x0}`` (so the SI loop is initialised at ``x = x0`` exactly). The
+    prior drift is the trained SI drift ``b_theta`` (the score is built in), the
+    weight ``w_tau`` is formed from the path's velocity--score coefficient
+    ``a_tau`` plus ``1/2 gamma_tau**2``, and the corrected likelihood score
+    ``G_tau @ Sbar`` is supplied by the interpolant likelihood. The whole
+    update is assembled as a single Euler--Maruyama step
+
+        x <- x + b_post * dtau + gamma_tau * sqrt(dtau) * z.
+
+    The optional SMC particle-filter resampling (``resample``) is **off by
+    default**; it is an add-on not part of the paper's methodology.
+    """
 
     def __init__(
         self,
         model: nn.Module,
         likelihood_model: nn.Module,
         diffusion_term: Optional[Callable] = None,
-        resample: bool = True,
+        resample: bool = False,
     ) -> None:
         """
         Initialize stochastic interpolant posterior.
 
         Args:
-            model: Model.
-            likelihood_model: Likelihood model.
+            model: Trained SI model (``FollmerStochasticInterpolant``).
+            likelihood_model: Interpolant Gaussian likelihood returning the
+                corrected score ``G_tau @ Sbar``.
+            diffusion_term: Diffusion schedule ``g_tau``; defaults to the
+                native ``gamma_tau``.
+            resample: Optional SMC resampling, off by default (not part of the
+                paper method).
         """
         super(StochasticInterpolantPosterior, self).__init__(
             model=model,
@@ -43,6 +70,15 @@ class StochasticInterpolantPosterior(BasePosterior):
         self.log_likelihood = None
         self.integral_variance = lambda t: 2 / 3 - t.sqrt() + (1 / 3) * (t.sqrt()) ** 3
 
+    def _guidance_weight(self, t: torch.Tensor) -> torch.Tensor:
+        """Guidance weight w_tau = a_tau + 1/2 g_tau**2 (paper Eq. guidance_weight).
+
+        ``a_tau`` is the path's velocity--score coefficient; ``g_tau`` is the
+        diffusion schedule (native ``gamma_tau`` by default).
+        """
+        a_tau = self.model.interpolation.velocity_score_coeff(t)
+        return a_tau + 0.5 * self.diffusion_term(t) ** 2
+
     def _one_step(
         self,
         base: torch.Tensor,
@@ -53,54 +89,49 @@ class StochasticInterpolantPosterior(BasePosterior):
         observations: torch.Tensor,
         dt: torch.Tensor,
     ) -> torch.Tensor:
-        """One step of the posterior."""
+        """One Euler--Maruyama step of the SI-SDE posterior."""
 
         base.requires_grad = True
 
         if self.log_likelihood is None:
             self.log_likelihood = []
 
+        # Prior drift b_prior = b_theta (score already built into the SI drift).
         drift = self.model.drift(base, t, field_history, field_cond, pars_cond)
 
-        # Compute the likelihood score
-        likelihood_score, log_likelihood = self.likelihood_model.score(
-            observations=observations,
-            x=base,
-            t=t,
-            drift=drift,
-            diffusion_term=self.diffusion_term,
-            field_history=field_history,
-            field_cond=field_cond,
-            pars_cond=pars_cond,
-            dt=dt,
-        )
+        # Brownian increment z * sqrt(dtau).
+        noise = self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
-        likelihood_score = likelihood_score.detach()
+        # Guidance correction, applied only from tau = dtau onwards.
+        if float(t.reshape(-1)[0]) >= MIN_TIME:
+            corrected_score, log_likelihood = self.likelihood_model.score(
+                observations=observations,
+                x=base,
+                t=t,
+                drift=drift,
+                diffusion_term=self.diffusion_term,
+                field_history=field_history,
+                field_cond=field_cond,
+                pars_cond=pars_cond,
+                dt=dt,
+            )
+            corrected_score = corrected_score.detach()
+            w_tau = self._guidance_weight(t)
 
-        self.log_likelihood.append(
-            torch.nan_to_num(log_likelihood.detach(), nan=float("-inf"))
-        )
+            self.log_likelihood.append(
+                torch.nan_to_num(log_likelihood.detach(), nan=float("-inf"))
+            )
+        else:
+            corrected_score = torch.zeros_like(base)
+            w_tau = torch.zeros_like(t)
 
-        # Euler-Maruyama drift step
-        base = base + drift * dt
+        # Combined posterior drift b_post = b_prior + w_tau * G_tau * Sbar.
+        posterior_drift = drift + w_tau * corrected_score
 
-        # Euler-Maruyama diffusion step
-        base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
-
-        # Likelihood score step
-        base = base + likelihood_score * dt
+        # Single Euler--Maruyama update: x += b_post * dtau + g * sqrt(dtau) * z.
+        base = base + posterior_drift * dt + noise
 
         return base.detach()
-
-    # def _post_step(
-    #     self,
-    #     base: torch.Tensor,
-    #     observations: torch.Tensor,
-    #     t: torch.Tensor,
-    #     field_history: torch.Tensor,
-    #     dt: torch.Tensor,
-    # ) -> tuple[torch.Tensor, torch.Tensor]:
-    #     """Post-step of the posterior."""
 
     def _post_sample(
         self,
@@ -108,12 +139,12 @@ class StochasticInterpolantPosterior(BasePosterior):
         observations: torch.Tensor,
         field_history: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Post-step of the posterior."""
+        """Optional SMC resampling (off by default)."""
 
         if not self.resample:
             return base, field_history
 
-        diff = observations - self.likelihood_model.obs_operator(base.to('cuda'))
+        diff = observations - self.likelihood_model.obs_operator(base.to(self.device))
 
         log_likelihood = torch.linalg.norm(diff, dim=1) ** 2
         log_likelihood = - 0.5 * log_likelihood / self.likelihood_model.original_variance

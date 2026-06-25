@@ -1,0 +1,8 @@
+# Ensemble score filter baseline (bao_ensemble_2024). Second-wave baseline
+# (GAP E5; decided after Phase 1).
+name: Ensemble score filter
+stepper: classical
+
+filter:
+  # TODO(E5): ensemble score filter. Not implemented yet.
+  _target_: scisi.particle_filter.ensemble_score_filter.EnsembleScoreFilter

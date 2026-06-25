@@ -1,0 +1,22 @@
+defaults:
+  - case: navier_stokes
+  - method: si_sde
+  - scenario: superres_32
+  - _self_
+
+# Where tidy results land. Aggregated mean +/- std over seeds is written here,
+# then make_tables.py turns it into the LaTeX snippets under generated/.
+results_root: paper_experiments/results
+results_file: ${results_root}/${case.name}_results.csv
+
+# Fixed seed list (mirrors common.seeding.SEED_LIST). Mean +/- std over these is
+# reported in every table (reproducibility Section 9).
+seeds: [0, 1, 2, 3, 4]
+
+# Shared sampler settings (spec Section 1.3). Sweep E / M in the ablation.
+ensemble_size: 64   # E
+num_steps: 50       # M
+
+# Override at the CLI, e.g.:
+#   python paper_experiments/run.py case=navier_stokes method=fm_sde scenario=sparse_5
+#   python paper_experiments/run.py --multirun method=si_sde,fm_sde,fm_ode

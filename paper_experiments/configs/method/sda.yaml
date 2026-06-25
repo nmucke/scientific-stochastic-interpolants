@@ -1,0 +1,11 @@
+# SDA baseline (rozet_score-based_2023): score-based DA with the all-at-once
+# trajectory score. Second-wave baseline (GAP E5; decided after Phase 1).
+name: SDA
+stepper: sde
+
+likelihood_model:
+  # TODO(E5): all-at-once trajectory-score DA. Not implemented yet.
+  _target_: scisi.likelihood_models.sda.SDALikelihood
+
+posterior_model:
+  _target_: scisi.posterior_models.diffusion_posterior.DiffusionPosterior

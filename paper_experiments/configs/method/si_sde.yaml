@@ -1,0 +1,21 @@
+# Ours (SI-SDE) -- Sampler 1 of the unified family (spec Section 1.1).
+# a0 = x0, g_tau = gamma_tau (native), Brownian increment retained, score in b_theta.
+name: Ours (SI-SDE)
+stepper: sde
+diffusion_term:
+  # Native SI diffusion g_tau = gamma_tau.
+  multiplier: 1.0
+
+# w_tau = a_tau + 0.5 g_tau^2 (GAP P1; replaces the legacy correction_multiplier).
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  # likelihood_mode: inflated | dps_full | dps_jacobian_free.
+  #   inflated          -- PiGDM-style full Sigma_s, G=I; exact for the Gaussian case
+  #                        (analytical gate ~0.005). PROVISIONAL DEFAULT / headline rows.
+  #   dps_full          -- paper's multiplicative-gain DPS surrogate (ablation).
+  #   dps_jacobian_free -- Corollary cheap_drift (cheap ablation; inaccurate at mid-tau).
+  likelihood_mode: inflated
+
+posterior_model:
+  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
+  resample: false

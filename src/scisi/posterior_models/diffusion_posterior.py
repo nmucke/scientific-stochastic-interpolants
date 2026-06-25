@@ -14,7 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class DiffusionPosterior(BasePosterior):
-    """Diffusion posterior."""
+    """Diffusion (VP/VE) posterior — NON-PAPER baseline.
+
+    This is a guided reverse-diffusion sampler kept as a DPS-style baseline. It
+    is **not** a member of the paper's unified observation-interpolant family:
+    its likelihood term is scaled by an ad-hoc ``1/2 g_tau**2 sqrt(t)`` factor
+    rather than the paper's guidance weight ``w_tau = a_tau + 1/2 g_tau**2``
+    times the multiplicative gain ``G_tau``. It is intentionally excluded from
+    the unified-family claims; use ``StochasticInterpolantPosterior`` /
+    ``FlowMatchingPosterior`` for the paper samplers.
+    """
 
     def __init__(
         self,

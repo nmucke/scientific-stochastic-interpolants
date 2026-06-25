@@ -1,0 +1,36 @@
+# Case 3 -- urban airflow CFD over a building array (uDALES) (spec Section 6).
+# Multi-variable (velocity + temperature), solid cells. Author-provided data
+# (.nc + mask.npz); no in-repo CFD generator (GAP Section 6 decision).
+name: urban
+project: udales
+
+checkpoints:
+  Ours (SI-SDE): stochastic_interpolant_small_gamma1
+  Ours (FM-SDE): flow_matching_small
+  Ours (FM-ODE): flow_matching_small
+  FlowDAS: stochastic_interpolant_small_gamma1
+  Guided FM: flow_matching_small
+  Guided diffusion: stochastic_interpolant_small_gamma1
+
+test_sample_indices: [1]
+
+ensemble_size: 64
+num_physical_steps: 25
+num_steps: 50
+
+# Per-variable noise sigma -- TODO(spec Section 6): set with user (suggest 1-5% of
+# each variable's std). Stored as variance per channel.
+variance:
+  velocity: null
+  temperature: null
+
+likelihood_ensemble_size: 25
+
+reference: large_ensemble
+reference_ensemble_size: 1024
+
+# Multi-channel fields + solid-cell mask. Solid cells excluded from ALL metrics
+# (GAP E2; reproducibility Section 9).
+channels: [u, v, T]
+data_path: null         # TODO(E2): author-provided .nc
+mask_path: null         # TODO(E2): mask.npz (solid-cell mask)
