@@ -3,24 +3,26 @@
 name: navier_stokes
 project: stochastic_navier_stokes
 
-# Checkpoint run names under checkpoints/<project>/<name>/. The SI prior is the
-# shared prior for SI-SDE / FlowDAS; the FM prior (FM-SDE / FM-ODE) reuses the SAME
-# UNet drift architecture (and, when present, the SI drift weights) paired with a
-# rectified-flow interpolation so FlowMatchingModel.score is defined (GAP L1).
+# Checkpoint run names under checkpoints/<project>/<name>/. Both priors are trained:
+# the SI prior (SI-SDE / FlowDAS) and a DEDICATED FM prior (FM-SDE / FM-ODE). The
+# loader builds the FM model from the FM checkpoint's OWN config.yaml and loads its
+# model.pth (it only falls back to reusing the SI drift when fm_run is null).
 #
-# ON THE GPU BOX: set `si_run` (and `fm_run` once a dedicated FM checkpoint exists)
-# to the real run names that hold `model.pth`, and set `require_weights: true` so a
-# missing dir / model.pth is a HARD ERROR (never a silent random-weights fallback).
+# ON THE GPU BOX the trained weights live at:
+#   checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/model.pth
+#   checkpoints/stochastic_navier_stokes/flow_matching/model.pth
+# so set `require_weights: true` (or pass case.require_weights=true on the CLI) to
+# hard-fail if a dir / model.pth is missing instead of silently using random weights.
 #
-# IN THIS REPO: the run dirs carry only config.yaml (no model.pth). With
-# `require_weights: false` (default) the loader runs with RANDOM weights and emits a
-# loud warning -- results are smoke-scale only. There is currently NO trained FM
-# checkpoint, so leave `fm_run: null` to reuse the SI architecture/weights.
+# IN THIS (laptop) REPO the run dirs carry no model.pth, so with
+# `require_weights: false` (the default) the loader runs with RANDOM weights and emits
+# a loud warning -- results are smoke-scale only.
 checkpoints:
-  si_run: happy-bee-61    # real SI run on the GPU box (has model.pth there)
-  fm_run: null            # set to a real FM run once one exists; null reuses SI
+  si_run: stochastic_interpolant_small   # trained SI prior (has model.pth on the GPU box)
+  fm_run: flow_matching            # trained FM prior (has model.pth on the GPU box)
 
-# Hard-fail if the configured checkpoint dir / model.pth is missing (GPU box: true).
+# Hard-fail if the configured checkpoint dir / model.pth is missing. Keep false in
+# the repo so laptop smoke runs; the GPU runs override to true (run_gpu_ns.sh).
 require_weights: false
 
 # Inference device. CPU is the safe default (MPS lacks some linalg_solve / JVP

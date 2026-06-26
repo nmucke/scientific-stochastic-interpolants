@@ -219,6 +219,14 @@ forcing is essential — the prior `p(ω^n|ω^{n-1})` is a genuine distribution.
 `p(ω^n|ω^{n-1})` (paper Eqs. `SI_drift_loss`, `fm_loss`). **Use the same architecture, data,
 and schedules for both** so sampler comparisons are fair. Record training config.
 
+> **Trained weights (GPU machine).** Both priors are already trained and live at
+> `checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/` (SI) and
+> `checkpoints/stochastic_navier_stokes/flow_matching/` (FM), each holding a `model.pth` +
+> `config.yaml`. The `paper_experiments` NS driver loads them via the
+> `checkpoints.si_run` / `checkpoints.fm_run` keys in `configs/case/navier_stokes.yaml`
+> (see `paper_experiments/HANDOFF_GPU.md`). The laptop repo has no `model.pth`, so runs there
+> use random weights (smoke-scale only).
+
 **Observation scenarios**: `32^2→128^2`, `16^2→128^2` (super-res); `5%`, `1.5625%` (sparse).
 `R = 0.05^2 I`.
 

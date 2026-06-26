@@ -56,13 +56,13 @@ It passed a smoke run with RANDOM weights (proves wiring). **It needs real `mode
 
 ## 2. THE most important things to do here (in order)
 
-1. **Provide real weights and point the config at them** (§3). Until then everything runs with random
-   weights and a loud warning, producing only smoke-scale numbers.
-2. **Train an FM prior** (§6.1) — there is currently NO trained flow-matching checkpoint, only SI. The
-   FM-SDE and FM-ODE NS rows need an FM prior trained on the same NS data/architecture as the SI prior.
-3. **Run the full-scale NS headline + ablation** (§3 commands), then regenerate the tables (§3.4).
-4. **Decide the canonical likelihood mode** from the NS results (§5) — this is a deferred author decision.
-5. **Implement the remaining baselines** (§6.2) and the **urban case** when its data arrives (§6.3).
+1. **Point the config at the real weights** (§3.1). Both priors are already trained on the GPU box:
+   `checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/` (SI) and
+   `checkpoints/stochastic_navier_stokes/flow_matching/` (FM). The config already names these; just set
+   `require_weights: true` so a missing `model.pth` hard-fails instead of falling back to random weights.
+2. **Run the full-scale NS headline + ablation** (§3 commands / `run_gpu_ns.sh`), then regenerate the tables (§3.4).
+3. **Decide the canonical likelihood mode** from the NS results (§5) — this is a deferred author decision.
+4. **Implement the remaining baselines** (§6.2) and the **urban case** when its data arrives (§6.3).
 
 ---
 
@@ -80,19 +80,21 @@ It passed a smoke run with RANDOM weights (proves wiring). **It needs real `mode
   (the dir already holds the matching `config.yaml`s).
 
 ### 3.1 Point at real weights
-In `paper_experiments/configs/case/navier_stokes.yaml`:
+Both priors are already trained on the GPU box, at
+`checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/model.pth` (SI) and
+`checkpoints/stochastic_navier_stokes/flow_matching/model.pth` (FM). The config already names these:
 ```yaml
 checkpoints:
-  si_run: happy-bee-61      # real SI run that holds model.pth on this box
-  fm_run: <real_FM_run>     # once trained (see §6.1); null reuses the SI architecture/weights
-require_weights: true       # hard-fail if a configured dir / model.pth is missing
+  si_run: stochastic_interpolant_small   # trained SI prior (SI-SDE / FlowDAS)
+  fm_run: flow_matching            # trained FM prior (FM-SDE / FM-ODE)
+require_weights: true              # hard-fail if a configured dir / model.pth is missing
 reference_ensemble_size: 1024
 device: cuda
 ```
-**Caveat:** `require_weights: true` hard-fails on ANY missing configured checkpoint. Until a real FM
-checkpoint exists, either keep `fm_run: null` (reuses SI weights — acceptable only for SI-SDE rows) AND
-`require_weights: false` (loud random-weights warning for FM), or set `require_weights: true` only once
-BOTH si_run and fm_run point at real `model.pth` files. See §6.1.
+The loader builds the FM model from the `flow_matching` checkpoint's OWN `config.yaml` and loads its
+`model.pth` (no SI-reuse fallback needed). Set `require_weights: true` on the GPU box so a missing
+`model.pth` is a hard error rather than a silent random-weights run. Confirm the SI and FM checkpoints
+share the data/architecture/schedules used for a fair comparison (spec §5).
 
 ### 3.2 Headline run (Hydra multirun over the 3 samplers × scenarios; seeds loop internally)
 ```bash
@@ -162,12 +164,14 @@ general in α,β,γ, so this is consistent; just don't assume rectified-flow red
 
 ## 6. Remaining work (prioritized)
 
-### 6.1 Train an FM prior for NS (BLOCKS the FM-SDE/FM-ODE NS rows)
-All 17 NS checkpoints are `FollmerStochasticInterpolant` (SI). Train a flow-matching prior on the SAME NS
-data, architecture, and schedules (spec §5) using the existing training pipeline
-(`config/flow_matching_stochastic_navier_stokes*.yaml`, `src/scisi/bin/main_train.py`). Save as a run under
-`checkpoints/stochastic_navier_stokes/` and set `checkpoints.fm_run` (§3.1). Until then, FM-SDE/FM-ODE NS
-rows run with random FM weights (loud warning) and are smoke-scale only.
+### 6.1 FM prior for NS — already trained (no action needed beyond pointing at it)
+Both priors exist on the GPU box: SI at `checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/`
+and FM at `checkpoints/stochastic_navier_stokes/flow_matching/`. The config (§3.1) names them and the
+loader builds the FM model from the FM checkpoint's own `config.yaml`. **Verify once before the full run:**
+the FM checkpoint instantiates a `FlowMatchingModel` and its `model.pth` `load_state_dict` succeeds without
+key/shape errors, and that SI and FM share the data/architecture/schedules (spec §5) for a fair comparison.
+(If you ever need to retrain, the pipeline is `config/flow_matching_stochastic_navier_stokes*.yaml` +
+`src/scisi/bin/main_train.py`.)
 
 ### 6.2 Baselines (deferred "until after Phase 1" — now is the time)
 Wired today: FlowDAS (real), our 3 samplers. **Missing** (each lists as a row in the NS/urban tables):

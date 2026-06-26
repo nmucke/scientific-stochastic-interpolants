@@ -57,13 +57,20 @@ paper_experiments/
 
 Each case folder has its own `README.md` with the deliverables and TODO seams.
 
+**Trained priors (Case 2, GPU machine).** The Navier–Stokes case loads two trained priors —
+SI at `checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/` and FM at
+`checkpoints/stochastic_navier_stokes/flow_matching/` (each with `model.pth` + `config.yaml`),
+named by the `checkpoints.si_run` / `checkpoints.fm_run` keys in
+`configs/case/navier_stokes.yaml`. On the laptop (no `model.pth`) the driver runs with random
+weights and a loud warning — smoke-scale only. See `HANDOFF_GPU.md` for the full-scale run.
+
 ## Methods (canonical labels — `results_schema.Method`)
 
 Our three samplers (one shared unified loop, differing only in `g_tau`, `w_tau`,
 the source, and whether a Brownian increment is added):
 
 - **Ours (SI-SDE)** — `si_sde.yaml`
-- **Ours (FM-SDE)** — `fm_sde.yaml`  *(does not exist in `src/scisi` yet, GAP P3)*
+- **Ours (FM-SDE)** — `fm_sde.yaml`
 - **Ours (FM-ODE)** — `fm_ode.yaml`
 
 Baselines (generative ones share the trained prior):
