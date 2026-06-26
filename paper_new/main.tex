@@ -1,0 +1,108 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2025
+
+% The authors should use one of these tracks.
+% 0. "default" for submission
+ \usepackage{neurips_2025}
+
+% "preprint" option is used for arXiv or other preprint submissions
+ % \usepackage[preprint]{neurips_2025}
+
+% to avoid loading the natbib package, add option nonatbib:
+   % \usepackage[nonatbib]{neurips_2025}
+
+\input{style/packages.tex}
+\input{style/macros.tex}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+\title{A General Observation-Interpolant Method for Data Assimilation with Flow-Based Generative Models}
+
+
+\author{%
+  David S.~Hippocampus\thanks{Use footnote for providing further information
+    about author (webpage, alternative address)---\emph{not} for acknowledging
+    funding agencies.} \\
+  Department of Computer Science\\
+  Cranberry-Lemon University\\
+  Pittsburgh, PA 15213 \\
+  \texttt{hippo@cs.cranberry-lemon.edu} \\
+}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+Data assimilation combines mathematical models with observational data to estimate the state of complex dynamical systems. Efficiently sampling from high-dimensional posterior distributions in nonlinear dynamical systems remains a major computational challenge. We show that a single observation-interpolant mechanism turns \emph{any} pre-trained flow-based generative model -- whether a stochastic interpolant, sampled as a stochastic differential equation (SDE), or a flow matching model, sampled as either an SDE or an ordinary differential equation (ODE) -- into a posterior sampler for data assimilation, without retraining. The unifying object is the affine Gaussian probability path: conditioning it on an observation tilts the target to the posterior while preserving the path structure, so the conditional score and the conditional velocity differ from their prior counterparts by the same likelihood-score term, scaled respectively by one and by the velocity--score duality coefficient. Applying the marginal-preserving family of SDEs to this conditioned path yields a one-parameter family of posterior samplers indexed by a diffusion coefficient, whose three members of interest are the stochastic-interpolant SDE (native diffusion), the flow matching SDE (lifted diffusion), and a deterministic guided probability-flow ODE (zero diffusion), all sharing a single guidance weight that splits into a duality term and a diffusion term. The intractable likelihood is replaced by a tractable interpolated-observation likelihood whose conditional moments we derive in closed form, and we prove a closed-form multiplicative correction that maps the interpolant-likelihood score onto the standard Gaussian-surrogate (DPS-style) likelihood score; recovering the genuine likelihood score would additionally require the non-Gaussian shape we do not model. We give pseudo-code for all three samplers, summarise them in a common framework, relate the construction to Doob's $h$-transform, and demonstrate the approach on a series of test cases.
+\end{abstract}
+
+
+\section{Introduction}\label{sec:introduction}
+\input{sections/introduction}
+
+\section{Related work}\label{sec:related_work}
+\input{sections/related_work}
+
+\section{Preliminaries}\label{sec:preliminaries}
+\input{sections/preliminaries}
+
+\section{Methodology}\label{sec:methodology}
+\input{sections/methodology}
+
+\section{Implementation}\label{sec:implementation}
+\input{sections/implementation}
+
+\section{Results}\label{sec:results}
+\input{sections/results}
+
+\section{Conclusion}\label{sec:conclusion}
+\input{sections/conclusion}
+
+
+\bibliography{library_NTM}
+\bibliographystyle{icml2025}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\appendix
+
+\input{sections/appendix_score_velocity_duality}
+\input{sections/appendix_proof_conditioning}
+\input{sections/appendix_proof_posterior}
+\input{sections/appendix_proof_interpolant_likelihood_covariance}
+\input{sections/appendix_correction_factor_new}
+\input{sections/appendix_simple_test_case}
+
+
+\end{document}

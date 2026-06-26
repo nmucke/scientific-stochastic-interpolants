@@ -1,0 +1,59 @@
+
+\subsection{Flow-based generative models in physics applications}
+
+% Flow-based generative models have received substantial attention in recent years due to their success in generating images and videos. A similar development is occurring in physics applications, where these models are trained to perform probabilistic forecasting by learning to sample from the conditional distribution of the next state given the current state. Several approaches have emerged to address this challenge. Some methods combine deterministic neural operators with noise-based techniques: \cite{lippe_pde-refiner_2023} perform initial predictions using neural operators and add/remove noise inspired by denoising diffusion models, while \cite{gao_generative_2024} employ neural networks for time-stepping in latent space followed by physics-informed diffusion upsampling. Other approaches focus on direct conditional sampling. \cite{kohl_benchmarking_2024} trains denoising diffusion models to sample directly from the next state, while \cite{fotiadis_stochastic_2024} uses flow-matching models for direct conditional sampling. \cite{chen_probabilistic_2024} employs stochastic interpolant models to transform current states into samples from the conditional distribution, which \cite{mucke_physics-aware_2025} extended by incorporating energy consistency into the training.
+
+% \subsection{inverse problems with generative models}
+% There are already several examples of generative models being used for inverse problem solving. See \cite{daras_survey_2024} for a thorough survey. 
+
+% \begin{itemize}
+%     \item \cite{daras_survey_2024}, survey article
+%     \item \cite{pokle_training-free_2024} -- Training-free Linear Image Inverses via Flows
+%     \item \cite{zhang_flow_2025} -- Flow Priors for Linear Inverse
+% Problems via Iterative Corrupted Trajectory Match-
+% ing,
+%     \item \cite{yan_fig_2024} -- FIG: Flow
+% with Interpolant Guidance for Linear Inverse Prob-
+% lems.
+%     \item \cite{ahamed_dawn-si_2024} -- DAWN-SI: Data-Aware
+% and Noise-Informed Stochastic Interpolation for Solv-
+% ing Inverse Problems
+%     \item \cite{negrel_multitask_2025} -- Multitask Learning with Stochastic In-
+% terpolants
+% \end{itemize}
+
+
+% \subsection{Data assimilation with generative models}
+% \begin{itemize}
+%     \item \cite{chen_flowdas_2025} -- FlowDAS: A Stochastic Interpolant-based Frame-
+% work for Data Assimilation,
+%     \item \cite{bao_ensemble_2024} -- An Ensemble
+% Score Filter for Tracking High-Dimensional Nonlin-
+% ear Dynamical Systems
+%     \item \cite{si_latent-ensf_2024} -- Latent-EnSF: A Latent Ensem-
+% ble Score Filter for High-Dimensional Data Assim-
+% ilation with Sparse Observation Data,  
+%     \item \cite{qu_deep_2024} -- Deep Generative Data Assimilation in Multimodal Set-
+% ting
+%     \item \cite{rozet_score-based_2023} -- Score-based Data Assimi-
+% lation
+% \end{itemize}
+
+Flow-based generative models have received substantial attention in recent years due to their success in generating images and videos. A similar development is occurring in physics applications, where these models are trained to perform probabilistic forecasting by learning to sample from the conditional distribution of the next state given the current state. Several approaches have emerged to address this challenge. Some methods combine deterministic neural operators with noise-based techniques: \cite{lippe_pde-refiner_2023} perform initial predictions using neural operators and add/remove noise inspired by denoising diffusion models, while \cite{gao_generative_2024} employ neural networks for time-stepping in latent space followed by physics-informed diffusion upsampling. Other approaches focus on direct conditional sampling. \cite{kohl_benchmarking_2024} trains denoising diffusion models to sample directly from the next state, while \cite{fotiadis_stochastic_2024} uses flow-matching models for direct conditional sampling. \cite{chen_probabilistic_2024} employs stochastic interpolant models to transform current states into samples from the conditional distribution, which \cite{mucke_physics-aware_2025} extended by incorporating energy consistency into the training.
+
+\subsection{Inverse problems with generative models}
+Generative models are increasingly utilized for solving inverse problems, as detailed in the survey by \cite{daras_survey_2024}. For linear inverse problems, several training-free methods have been developed.  \cite{pokle_training-free_2024} introduces a method for image inverses via flows, while \cite{zhang_flow_2025} utilizes flow priors through iterative corrupted trajectory matching.  Recent advancements also include \cite{yan_fig_2024}, which proposes Flow with Interpolant Guidance (FIG).  In the domain of stochastic interpolation, \cite{ahamed_dawn-si_2024} developed DAWN-SI for data-aware and noise-informed solutions, and \cite{negrel_multitask_2025} explored multitask learning.
+
+\subsection{Data assimilation with generative models}
+
+The integration of generative models into data assimilation (DA) seeks to overcome the limitations of traditional methods like ensemble Kalman filters and particle filters.  Early efforts in this direction include score-based data assimilation by \cite{rozet_score-based_2023}.  For high-dimensional systems, \cite{bao_ensemble_2024} introduced an ensemble score filter, which was further extended by \cite{si_latent-ensf_2024} to a latent space for handling sparse observation data.  Multimodal settings have been addressed by \cite{qu_deep_2024} through deep generative DA. Most relevant to our approach is FlowDAS, introduced by \cite{chen_flowdas_2025}, which utilizes a stochastic interpolant-based framework for DA.
+
+\subsection{Guidance in deterministic flow ODEs}
+Conditioning a deterministic generator on measurements has been studied mostly for image inverse problems. The conditional decomposition $\nabla\log p_\tau(\bx\mid\obs)=\nabla\log p_\tau(\bx)+\nabla\log p_\tau(\obs\mid\bx)$ of \cite{song_score-based_2021} underlies score-based conditional sampling; while \cite{song_score-based_2021} instantiate it only in the reverse SDE, the same conditional score defines a conditional probability-flow ODE. For flow matching, training-free guidance methods correct the ODE velocity with a likelihood term: OT-ODE \cite{pokle_training-free_2024} and FIG \cite{yan_fig_2024} guide the probability-flow ODE, and the latter uses a measurement interpolant that coincides with our observation interpolant \eqref{eq:interpolated_observation}; \cite{zhang_flow_2025} instead solves a MAP problem along the flow, and \cite{martin_pnp-flow_2025} folds the flow prior into a plug-and-play denoiser. The Gaussian likelihood surrogate these methods (and ours, Section~\ref{sec:multiplicative_correction}) rely on originates in diffusion guidance: DPS \cite{chung_diffusion_2023} uses the denoiser mean with uninflated covariance, while $\Pi$GDM \cite{song_pseudoinverse_2023} inflates it by a posterior-covariance term. The coefficient multiplying the likelihood score in these ODE methods is fixed by the velocity--score conversion of the path \cite{albergo_stochastic_2023, ma_sit_2024}, which is exactly the duality coefficient $\vscoef_\tau$ in our guided-ODE weight. Our guided ODE generalises these schemes from static linear inverse problems to autoregressive data assimilation, and derives them as the zero-diffusion member of the same family that contains the SDE samplers.
+
+\subsection{From model-specific to model-agnostic assimilation}
+The guidance and assimilation methods above are typically tied to a particular generator: score-based and stochastic-interpolant methods exploit a diffusion term, whereas flow matching methods such as \cite{pokle_training-free_2024, zhang_flow_2025, yan_fig_2024} correct a deterministic ODE. Our perspective unifies these by viewing both as affine Gaussian probability paths \cite{albergo_stochastic_2023, lipman_flow_2023} and, crucially, by conditioning that path on the observation. Two known equivalences make this possible: the velocity and the score of an affine Gaussian path determine each other in closed form \cite{albergo_stochastic_2023, ma_sit_2024}, and the probability-flow ODE is one member of a family of equal-marginal SDEs with a freely tunable diffusion \cite{song_score-based_2021}. Applied to the conditioned path, these equivalences yield the conditional score and the conditional velocity from a single likelihood-score term, and the equal-marginal family then produces the SDE samplers and the guided ODE together. We thereby bring stochastic interpolants and flow matching, in both their stochastic and deterministic samplers, into one observation-interpolant method, rather than designing a separate guidance scheme for each. Relative to FlowDAS \cite{chen_flowdas_2025}, which commits to a stochastic-interpolant SDE with a Monte-Carlo likelihood estimate, we add the lifted flow matching SDE and the deterministic guided ODE, and replace the sampling-based likelihood with a closed-form interpolated-observation likelihood and multiplicative correction.
+
+
+
+

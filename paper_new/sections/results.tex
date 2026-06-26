@@ -1,0 +1,315 @@
+% =====================================================================
+%  RESULTS SECTION -- placeholder version
+%  Numbers, figures and tables to be filled in after experiments.
+%  Search for "TODO" to find every slot that needs a result.
+% =====================================================================
+
+% Lightweight placeholder box for figures not yet generated.
+% Replace each \figbox{width}{height}{filename} with
+%   \includegraphics[width=width]{filename}
+% once the figure exists.
+\newcommand{\figbox}[3]{%
+  \setlength{\fboxsep}{2pt}%
+  \fcolorbox{gray!55}{gray!12}{%
+    \parbox[c][#2][c]{#1}{\centering\ttfamily\scriptsize
+      [figure placeholder]\\[2pt]#3}}%
+}
+
+We evaluate the method on three test cases of increasing complexity and realism. The first is a linear--Gaussian system whose posterior is available in closed form; it isolates the posterior-sampling machinery from model error, since the prior drift is known analytically and no network is trained. The second is a stochastic, chaotic, high-dimensional fluid system (two-dimensional incompressible Navier--Stokes with random forcing) that exercises the method on a learned prior under realistic observation operators. The third is a multi-variable urban computational-fluid-dynamics (CFD) flow over a building array, representative of an applied data-assimilation setting with coupled velocity and temperature fields. In every case we instantiate the three samplers of Section~\ref{subsec:supplying_diffusion} -- the stochastic-interpolant SDE, the flow matching SDE, and the deterministic guided probability-flow ODE -- reported as \emph{Ours (SI-SDE)}, \emph{Ours (FM-SDE)}, and \emph{Ours (FM-ODE)}.
+
+\paragraph{Baselines.}
+We compare against three families. (i) Generative posterior samplers: FlowDAS \cite{chen_flowdas_2025} (stochastic-interpolant SDE with a Monte-Carlo likelihood), guided flow matching (FIG) \cite{yan_fig_2024}, and guided diffusion (DPS) \cite{chung_diffusion_2023}. (ii) Classical data assimilation: an ensemble Kalman filter / ensemble smoother \cite{evensen_data_2022} and a bootstrap particle filter \cite{carrassi_data_2018}. (iii) Score-based data assimilation: SDA \cite{rozet_score-based_2023} and an ensemble score filter \cite{bao_ensemble_2024}. The generative baselines (i) share the trained prior with our samplers, so differences isolate the assimilation mechanism rather than the generative model.
+
+\paragraph{Metrics.}
+We report four groups of metrics, evaluated over an ensemble of posterior samples and averaged over assimilation steps and test trajectories unless stated otherwise.
+\emph{(a) Point accuracy:} root-mean-square error (RMSE) of the ensemble mean against the ground-truth state, and an energy-spectrum RMSE that compares the radially-averaged spectrum of the reconstruction to that of the truth (a measure of whether small-scale structure is recovered rather than over-smoothed).
+\emph{(b) Probabilistic calibration:} the continuous ranked probability score (CRPS), the ensemble spread--skill ratio (the ratio of ensemble standard deviation to ensemble-mean RMSE; well-calibrated ensembles give a ratio near one), and rank (Talagrand) histograms.
+\emph{(c) Distributional fidelity:} the Kullback--Leibler (KL) divergence between the sampled and reference marginal posteriors at selected observed and unobserved grid points; in the analytical case the reference is the exact Gaussian posterior, and we additionally report a sliced-Wasserstein distance to the full joint.
+\emph{(d) Cost:} the number of model (network) evaluations per assimilation step (NFE) and wall-clock time per step, at matched ensemble size.
+
+\paragraph{Observation scenarios.}
+Two observation operators structure the comparison for the field-valued cases. \emph{Super-resolution:} the observation is a low-resolution (down-sampled) version of the field, denoted $32^2\!\to\!128^2$ and $16^2\!\to\!128^2$. \emph{Sparse sensors:} the field is observed at a random subset of grid points, at fractions $5\%$ and $1.5625\%$ (one point in $64$). Both operators are linear, matching the assumptions of Section~\ref{subsec:obs_interpolation}; observation noise is additive Gaussian with the standard deviations stated per case.
+
+% =====================================================================
+\subsection{Simple analytical test case}
+\label{subsec:results_analytical}
+% =====================================================================
+The first case is the linear--Gaussian system of Appendix~\ref{appendix:simple_test_case},
+\begin{subequations}\label{eq:analytical_system}
+\begin{align}
+    \state^1 &= \state^{0} + \modelnoise, & \modelnoise &\sim \mathcal{N}(0,\bI),\\
+    \obs^1 &= \obsmatrix\state^1 + \obsnoise, & \obsnoise &\sim \mathcal{N}(0,\obscov),
+\end{align}
+\end{subequations}
+with $\obsmatrix=\bI$ and $\obscov=\bI$. The posterior is the Gaussian $\mathcal{N}\!\big(\state^0+K(\obs^1-\obsmatrix\state^0),\,\bI-K\obsmatrix\big)$ with gain $K=\tfrac12\bI$, and the stochastic-interpolant drift is known in closed form (Proposition~B.9 of \cite{chen_probabilistic_2024}). No network is trained, so this case probes the posterior-sampling construction, the observation-interpolant likelihood, and the multiplicative correction in isolation from model error.
+
+\emph{What this case demonstrates.} (i) That each sampler reproduces the exact posterior mean and covariance as the discretisation is refined; (ii) the effect of the diffusion strength $\gdiff_\tau$ on accuracy for the SDE samplers, and the behaviour of the zero-diffusion guided ODE; (iii) the value of the multiplicative correction $G_\tau$ relative to the uncorrected interpolant-likelihood score.
+
+Figure~\ref{fig:analytical_panels} shows the prior conditional, the likelihood, the exact posterior, and a sampled posterior, together with the convergence of the KL divergence to the exact posterior as a function of diffusion strength and of the number of integration steps, and one-dimensional slices comparing sampled and exact densities. Table~\ref{tab:analytical_results} reports the KL divergence and sliced-Wasserstein distance to the exact posterior for all samplers and baselines, at a matched ensemble size and step count.
+
+\begin{figure*}[ht]
+    \centering
+    \begin{subfigure}{0.24\linewidth}\centering
+        \figbox{\linewidth}{2.4cm}{prior $p(x_1|x_0)$}
+        \caption{Prior conditional.}\label{fig:an_prior}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.24\linewidth}\centering
+        \figbox{\linewidth}{2.4cm}{likelihood}
+        \caption{Likelihood.}\label{fig:an_like}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.24\linewidth}\centering
+        \figbox{\linewidth}{2.4cm}{exact posterior}
+        \caption{Exact posterior.}\label{fig:an_true}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.24\linewidth}\centering
+        \figbox{\linewidth}{2.4cm}{sampled posterior}
+        \caption{Sampled posterior (one sampler).}\label{fig:an_sampled}
+    \end{subfigure}
+
+    \vspace{4pt}
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{KL vs.\ diffusion strength}
+        \caption{KL to exact posterior vs.\ diffusion strength $\gdiff_\tau$ (SDE samplers).}\label{fig:an_kl_diff}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{KL vs.\ \# steps}
+        \caption{KL to exact posterior vs.\ number of integration steps $M$, per sampler.}\label{fig:an_kl_steps}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{density slices}
+        \caption{1-D slices of sampled vs.\ exact posterior densities.}\label{fig:an_slices}
+    \end{subfigure}
+    \caption{Analytical linear--Gaussian case. Top row: prior conditional, likelihood, exact posterior, and a sampled posterior. Bottom row: convergence of the KL divergence to the exact posterior with respect to the diffusion strength and the number of integration steps, and one-dimensional density slices. \textbf{TODO: insert generated figures.}}
+    \label{fig:analytical_panels}
+\end{figure*}
+
+\begin{table}[ht]
+    \centering
+    \small
+    \caption{Analytical case: distance to the exact posterior $\conddist{\state^1}{\obs^1,\state^0}$, at matched ensemble size $E$ and steps $M$ (lower is better). \textbf{TODO: fill in.}}
+    \label{tab:analytical_results}
+    \begin{tabular}{l|cc}
+        \toprule
+        Method & KL$(\,\hat p\,\|\,p^\star)$ & Sliced-$W_2$ \\
+        \midrule
+        Ours (SI-SDE)        & & \\
+        Ours (FM-SDE)        & & \\
+        Ours (FM-ODE)        & & \\
+        \midrule
+        FlowDAS \cite{chen_flowdas_2025}        & & \\
+        Guided FM \cite{yan_fig_2024}           & & \\
+        Guided diffusion \cite{chung_diffusion_2023} & & \\
+        EnKF \cite{evensen_data_2022}           & & \\
+        Particle filter \cite{carrassi_data_2018} & & \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% =====================================================================
+\subsection{Stochastic incompressible Navier--Stokes}
+\label{subsec:results_ns}
+% =====================================================================
+The second case is an incompressible fluid on the torus $\mathcal{T}^2=[0,2\pi]^2$, governed by the vorticity form of the two-dimensional Navier--Stokes equations with stochastic forcing,
+\begin{align}\label{eq:ns_equation}
+    \rd\vorticity + \velocity\cdot\nabla\vorticity\,\rd t
+    = \nu\Delta\vorticity\,\rd t - \alpha\vorticity\,\rd t + \varepsilon\,\rd\xi,
+\end{align}
+where the velocity $\velocity=\nabla^\perp\psi=(-\partial_y\psi,\partial_x\psi)$ derives from the stream function $\psi$ solving $-\Delta\psi=\vorticity$, and $\rd\xi$ is a temporally white forcing applied to selected Fourier modes. The stochastic forcing makes the transition density genuinely non-deterministic, so the prior $\conddist{\vorticity^{n}}{\vorticity^{n-1}}$ is a distribution rather than a point, which the generative prior must capture. We observe the vorticity field through the linear operator $\obs=\obsoperator(\vorticity)+\obsnoise$, $\obsnoise\sim\mathcal{N}(0,\sigma^2\bI)$ with $\sigma=0.05$, under both the super-resolution and sparse-sensor scenarios.
+
+\emph{What this case demonstrates.} (i) That the method assimilates observations into a learned stochastic prior in high dimension; (ii) that the posterior ensemble is both accurate (low ensemble-mean RMSE, faithful energy spectrum) and calibrated (spread--skill near one, flat rank histogram); (iii) that the three samplers behave consistently and remain competitive with or better than the baselines across observation scenarios; (iv) the cost of each sampler at matched accuracy.
+
+Figure~\ref{fig:ns_trajectories} shows snapshots of a true trajectory, the prior (unconditioned) forecast, and the assimilated posterior ensemble mean with uncertainty, for one observation scenario. Figure~\ref{fig:ns_diagnostics} shows the RMSE as a function of assimilation step (to expose error growth or stabilisation over a trajectory), the energy spectra of truth, prior, and posterior, and a rank histogram summarising calibration. Tables~\ref{tab:ns_accuracy} and~\ref{tab:ns_calibration_cost} report accuracy/distributional and calibration/cost metrics across methods and scenarios.
+
+\begin{figure*}[ht]
+    \centering
+    \begin{subfigure}{\linewidth}\centering
+        \figbox{0.92\linewidth}{1.7cm}{true trajectory snapshots ($t_1,\dots,t_K$)}
+        \caption{Ground-truth vorticity over time.}\label{fig:ns_true}
+    \end{subfigure}\\[3pt]
+    \begin{subfigure}{\linewidth}\centering
+        \figbox{0.92\linewidth}{1.7cm}{prior (unconditioned) forecast}
+        \caption{Prior forecast (no assimilation).}\label{fig:ns_prior}
+    \end{subfigure}\\[3pt]
+    \begin{subfigure}{\linewidth}\centering
+        \figbox{0.92\linewidth}{1.7cm}{posterior ensemble mean $\pm$ spread}
+        \caption{Assimilated posterior (ours).}\label{fig:ns_post}
+    \end{subfigure}
+    \caption{Navier--Stokes case, one observation scenario. Rows: ground truth, prior forecast, and assimilated posterior. \textbf{TODO: insert generated figures; state observation operator and noise level in caption.}}
+    \label{fig:ns_trajectories}
+\end{figure*}
+
+\begin{figure*}[ht]
+    \centering
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{RMSE vs.\ assimilation step}
+        \caption{Ensemble-mean RMSE over a trajectory.}\label{fig:ns_rmse}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{energy spectra}
+        \caption{Energy spectra: truth, prior, posterior.}\label{fig:ns_spectrum}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\linewidth}\centering
+        \figbox{\linewidth}{3.0cm}{rank histogram}
+        \caption{Rank histogram (calibration).}\label{fig:ns_rank}
+    \end{subfigure}
+    \caption{Navier--Stokes diagnostics. \textbf{TODO: insert generated figures.}}
+    \label{fig:ns_diagnostics}
+\end{figure*}
+
+\begin{table*}[ht]
+    \centering
+    \small
+    \caption{Navier--Stokes: point accuracy and distributional fidelity. Columns are observation scenarios (super-resolution $32^2\!\to\!128^2$, sparse $5\%$); $16^2\!\to\!128^2$ and $1.5625\%$ reported in the appendix. Lower is better. \textbf{TODO: fill in.}}
+    \label{tab:ns_accuracy}
+    \begin{tabular}{l|cc|cc|cc}
+        \toprule
+        & \multicolumn{2}{c|}{\textbf{Vorticity RMSE}}
+        & \multicolumn{2}{c|}{\textbf{Energy-spec.\ RMSE}}
+        & \multicolumn{2}{c}{\textbf{KL at points}} \\
+        & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ \\
+        \midrule
+        Ours (SI-SDE) & & & & & & \\
+        Ours (FM-SDE) & & & & & & \\
+        Ours (FM-ODE) & & & & & & \\
+        \midrule
+        FlowDAS \cite{chen_flowdas_2025} & & & & & & \\
+        Guided FM \cite{yan_fig_2024} & & & & & & \\
+        Guided diffusion \cite{chung_diffusion_2023} & & & & & & \\
+        SDA \cite{rozet_score-based_2023} & & & & & & \\
+        Ensemble score filter \cite{bao_ensemble_2024} & & & & & & \\
+        EnKF \cite{evensen_data_2022} & & & & & & \\
+        Particle filter \cite{carrassi_data_2018} & & & & & & \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
+    \small
+    \caption{Navier--Stokes: probabilistic calibration and cost. CRPS and $|1-\text{spread/skill}|$ lower is better; NFE and wall-clock at matched ensemble size. \textbf{TODO: fill in.}}
+    \label{tab:ns_calibration_cost}
+    \begin{tabular}{l|cc|cc|cc}
+        \toprule
+        & \multicolumn{2}{c|}{\textbf{CRPS}}
+        & \multicolumn{2}{c|}{\textbf{Spread--skill}}
+        & \multicolumn{2}{c}{\textbf{Cost}} \\
+        & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ & NFE & s/step \\
+        \midrule
+        Ours (SI-SDE) & & & & & & \\
+        Ours (FM-SDE) & & & & & & \\
+        Ours (FM-ODE) & & & & & & \\
+        \midrule
+        FlowDAS \cite{chen_flowdas_2025} & & & & & & \\
+        Guided FM \cite{yan_fig_2024} & & & & & & \\
+        Guided diffusion \cite{chung_diffusion_2023} & & & & & & \\
+        SDA \cite{rozet_score-based_2023} & & & & & & \\
+        Ensemble score filter \cite{bao_ensemble_2024} & & & & & & \\
+        EnKF \cite{evensen_data_2022} & & & & & & \\
+        Particle filter \cite{carrassi_data_2018} & & & & & & \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+% =====================================================================
+\subsection{Urban airflow}
+\label{subsec:results_urban}
+% =====================================================================
+The third case is a computational-fluid-dynamics flow over an urban building array: airflow and heat transport through a configuration of bluff bodies (buildings) on a structured domain, with coupled velocity and temperature fields. Relative to the Navier--Stokes case it adds (i) solid obstacles and the associated boundary layers, wakes, and recirculation zones, (ii) a second physical variable (temperature) transported by the flow, and (iii) anisotropic, spatially heterogeneous statistics. It tests the method on a realistic multi-variable applied setting. We use the same two observation scenarios; sensors are placed in physically plausible locations (for the sparse scenario) and the super-resolution scenario observes a coarsened field. Observation noise is additive Gaussian with the per-variable standard deviations stated in the experimental setup.
+
+\emph{What this case demonstrates.} (i) That the method handles coupled multi-variable fields with obstacle-induced structure; (ii) that both velocity and temperature are reconstructed accurately and with calibrated uncertainty, including in unobserved wake regions; (iii) that performance and cost carry over from the idealised to the applied setting.
+
+Figure~\ref{fig:urban_fields} shows the domain geometry and representative true, prior, and posterior velocity and temperature fields. Tables~\ref{tab:urban_accuracy} and~\ref{tab:urban_calibration_cost} report the metrics, separated by physical variable.
+
+\begin{figure*}[ht]
+    \centering
+    \begin{subfigure}{0.48\linewidth}\centering
+        \figbox{\linewidth}{2.6cm}{velocity: truth / prior / posterior}
+        \caption{Velocity field.}\label{fig:urban_vel}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.48\linewidth}\centering
+        \figbox{\linewidth}{2.6cm}{temperature: truth / prior / posterior}
+        \caption{Temperature field.}\label{fig:urban_temp}
+    \end{subfigure}
+    \caption{Urban airflow case: geometry and reconstructed fields (truth, prior forecast, assimilated posterior) for velocity and temperature. \textbf{TODO: insert generated figures; mark building footprints and sensor locations.}}
+    \label{fig:urban_fields}
+\end{figure*}
+
+\begin{table*}[ht]
+    \centering
+    \small
+    \caption{Urban airflow: point accuracy and distributional fidelity, per variable. Columns are observation scenarios. Lower is better. \textbf{TODO: fill in.}}
+    \label{tab:urban_accuracy}
+    \begin{tabular}{l|cc|cc|cc}
+        \toprule
+        & \multicolumn{2}{c|}{\textbf{Velocity RMSE}}
+        & \multicolumn{2}{c|}{\textbf{Temperature RMSE}}
+        & \multicolumn{2}{c}{\textbf{KL at points}} \\
+        & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ \\
+        \midrule
+        Ours (SI-SDE) & & & & & & \\
+        Ours (FM-SDE) & & & & & & \\
+        Ours (FM-ODE) & & & & & & \\
+        \midrule
+        FlowDAS \cite{chen_flowdas_2025} & & & & & & \\
+        Guided FM \cite{yan_fig_2024} & & & & & & \\
+        Guided diffusion \cite{chung_diffusion_2023} & & & & & & \\
+        SDA \cite{rozet_score-based_2023} & & & & & & \\
+        Ensemble score filter \cite{bao_ensemble_2024} & & & & & & \\
+        EnKF \cite{evensen_data_2022} & & & & & & \\
+        Particle filter \cite{carrassi_data_2018} & & & & & & \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
+    \small
+    \caption{Urban airflow: probabilistic calibration and cost (aggregated over variables unless noted). \textbf{TODO: fill in.}}
+    \label{tab:urban_calibration_cost}
+    \begin{tabular}{l|cc|cc|cc}
+        \toprule
+        & \multicolumn{2}{c|}{\textbf{CRPS}}
+        & \multicolumn{2}{c|}{\textbf{Spread--skill}}
+        & \multicolumn{2}{c}{\textbf{Cost}} \\
+        & $32^2\!\to\!128^2$ & $5\%$ & $32^2\!\to\!128^2$ & $5\%$ & NFE & s/step \\
+        \midrule
+        Ours (SI-SDE) & & & & & & \\
+        Ours (FM-SDE) & & & & & & \\
+        Ours (FM-ODE) & & & & & & \\
+        \midrule
+        FlowDAS \cite{chen_flowdas_2025} & & & & & & \\
+        Guided FM \cite{yan_fig_2024} & & & & & & \\
+        Guided diffusion \cite{chung_diffusion_2023} & & & & & & \\
+        SDA \cite{rozet_score-based_2023} & & & & & & \\
+        Ensemble score filter \cite{bao_ensemble_2024} & & & & & & \\
+        EnKF \cite{evensen_data_2022} & & & & & & \\
+        Particle filter \cite{carrassi_data_2018} & & & & & & \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+% =====================================================================
+\subsection{Ablations}
+\label{subsec:results_ablations}
+% =====================================================================
+On the Navier--Stokes case we isolate the effect of the components introduced in Section~\ref{sec:methodology}. We vary: (i) the multiplicative correction (full $G_\tau$ vs.\ the Jacobian-free $G_\tau$ of Corollary~\ref{cor:cheap_drift} vs.\ no correction, $G_\tau=\bI$), to test the value of the second-order term flagged in Section~\ref{sec:multiplicative_correction}; (ii) the diffusion strength $\gdiff_\tau$ for the FM-SDE, to map the accuracy/calibration trade-off between the deterministic ODE ($\gdiff_\tau=0$) and strong-diffusion limits; (iii) the number of integration steps $M$; and (iv) the ensemble size $E$. Table~\ref{tab:ablation} collects the results.
+
+\begin{table}[ht]
+    \centering
+    \small
+    \caption{Ablations on the Navier--Stokes case (one observation scenario). \textbf{TODO: fill in.}}
+    \label{tab:ablation}
+    \begin{tabular}{l|ccc}
+        \toprule
+        Configuration & RMSE & CRPS & Spread--skill \\
+        \midrule
+        Full gain $G_\tau$              & & & \\
+        Jacobian-free $G_\tau$          & & & \\
+        No correction ($G_\tau=\bI$)    & & & \\
+        \midrule
+        $\gdiff_\tau$ sweep (low/med/high) & & & \\
+        Steps $M$ (e.g.\ $10/50/100$)      & & & \\
+        Ensemble $E$ (e.g.\ $16/64/256$)   & & & \\
+        \bottomrule
+    \end{tabular}
+\end{table}
