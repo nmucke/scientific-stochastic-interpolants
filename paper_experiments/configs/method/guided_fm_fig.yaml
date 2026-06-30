@@ -1,0 +1,25 @@
+# FIG baseline (yan_fig_2025): "Flow with Interpolant Guidance for Linear Inverse
+# Problems" (Yan, Zhang, Meng & Zhao, ICLR 2025). Faithful re-implementation of
+# the official FIG_flow/sampler.py corrector: a guided probability-flow ODE that,
+# after each prior Euler flow step, pulls the proposed state toward the
+# measurement interpolant y_t = t_next * y by k gradient-descent corrections with
+# step size c * (1 - t) / t (paper Algorithm 1 / Eqs. 9-10). Shares the trained
+# FM prior; routed through FlowMatchingPosterior with stepper=ode (g=0).
+#
+# Distinct from the legacy ``guided_fm`` baseline (GuidanceGaussianLikelihood),
+# which is a one-step DPS-style guidance, NOT FIG's measurement interpolant.
+name: Guided FM (FIG)
+stepper: ode
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.guidance.FIGGaussianLikelihood
+  # FIG hyper-parameters. LOCKED from the traj1/sparse-5% sweep (vs the E=1000
+  # EnKF posterior): k=1 (more inner steps hurt: k=1 >> k=2,4), c=80 (best RMSE
+  # 0.515 / KL 16.0; c sweep 40->80->160 gave RMSE 0.525/0.515/0.532), w=0.
+  guidance_steps: 1     # FIG's k -- inner corrector iterations per flow step
+  guidance_scale: 80.0  # FIG's c -- corrector step-size scale
+  interpolant_noise: 0.0  # FIG's w -- noise weight in the measurement interpolant
+
+posterior_model:
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

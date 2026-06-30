@@ -1,36 +1,81 @@
 # Case 3 -- urban airflow CFD over a building array (uDALES) (spec Section 6).
-# Multi-variable (velocity + temperature), solid cells. Author-provided data
-# (.nc + mask.npz); no in-repo CFD generator (GAP Section 6 decision).
+# Multi-variable (u, v, w, thl), solid cells. Author-provided data
+# (data/udales/*.nc + data/udales/mask.npz); no in-repo CFD generator
+# (PROJECT_HANDOFF B.4). Trained SI / FM priors under checkpoints/udales/.
 name: urban
 project: udales
 
+# Checkpoint run names under checkpoints/udales/<name>/. Unlike NS, urban has
+# DEDICATED, separately-trained SI and FM priors, so the loader loads each from
+# its own config.yaml + model.pth (the SI-drift reuse fallback never triggers).
+#
+# Best pair selected (see PROJECT_HANDOFF / the urban-prep report): the BIG
+# matched pair (49M-param UNet, hidden_channels [32,64,128,256]) -- it has the
+# lowest held-out one-step loss of the available variants and is trained on the
+# full 0-150 split with the current per-channel normalisation. SI and FM share
+# the SAME UNet size here, satisfying the SI-vs-FM fairness caveat (cf. the NS
+# case, where the SI and FM UNets differ).
+#
+#   checkpoints/udales/stochastic_interpolant_big_gamma1/model.pth  (SI prior)
+#   checkpoints/udales/flow_matching_big/model.pth                  (FM prior)
+#
+# Lighter MATCHED alternative (12.6M-param UNet, hidden_channels [16,32,64,128]),
+# ~3-5% higher held-out loss but much faster sampling -- swap these in if the big
+# pair is too slow for the full grid:
+#   si_run: stochastic_interpolant_small_gamma1
+#   fm_run: flow_matching_small
+# (Do NOT use stochastic_interpolant_small_original: legacy run trained on a
+#  smaller 0-40 split with different normalisation stats -- clearly worse.)
 checkpoints:
-  Ours (SI-SDE): stochastic_interpolant_small_gamma1
-  Ours (FM-SDE): flow_matching_small
-  Ours (FM-ODE): flow_matching_small
-  FlowDAS: stochastic_interpolant_small_gamma1
-  Guided FM: flow_matching_small
-  Guided diffusion: stochastic_interpolant_small_gamma1
+  si_run: stochastic_interpolant_big_gamma1   # trained SI prior (has model.pth)
+  fm_run: flow_matching_big                    # trained FM prior (has model.pth)
+  # SDA + SURGE need a diffusion prior. Urban has no dedicated diffusion checkpoint,
+  # so build it from the (well-trained) FM model via
+  # DenoiseDiffusionModel.from_flow_matching (velocity mode), exactly as NS does.
+  diffusion_from_fm: true
 
-test_sample_indices: [1]
+# Hard-fail if the configured checkpoint dir / model.pth is missing. The udales
+# checkpoints DO carry model.pth, so default to true (these are real weights, not
+# a smoke fallback); set false only to exercise the wiring with random init.
+require_weights: true
+
+# Inference device. CPU is the safe default (matches NS); set cuda/mps on the GPU
+# box when free. The big priors are heavy -- prefer cuda for the full grid.
+device: cpu
+
+# Which test trajectories to run (test split is sims 170-178; index into that set).
+# Five trajectories for the headline metrics (averaged), matching the NS setup;
+# figures are produced for trajectory 1 only.
+test_sample_indices: [1, 2, 3, 4, 5]
 
 ensemble_size: 64
-num_physical_steps: 25
-num_steps: 50
+num_physical_steps: 25   # must exceed len_field_history (=5); n_assim = 25 - 5 = 20
+num_steps: 50            # M (sampler steps per assimilation step)
 
-# Per-variable noise sigma -- TODO(spec Section 6): set with user (suggest 1-5% of
-# each variable's std). Stored as variance per channel.
+# Observation noise R = sigma^2 I in the NORMALISED state space (every channel has
+# unit std after the per-channel preprocesser), so a single scalar variance applies
+# uniformly across u, v, w, thl -- the faithful multi-channel analogue of the NS
+# variance: 0.0025 (sigma = 0.05). TODO(spec Section 6): confirm the noise level
+# with the user; if a genuinely per-channel R is wanted, generalise the obs
+# operator / likelihood to a diagonal R (currently scalar).
 variance:
-  velocity: null
-  temperature: null
+  normalised: 0.0025    # sigma = 0.05 in normalised space (scalar R)
+  velocity: null        # TODO: physical-space per-variable sigma (if a diagonal R is added)
+  temperature: null     # TODO: physical-space per-variable sigma
 
 likelihood_ensemble_size: 25
 
-reference: large_ensemble
-reference_ensemble_size: 1024
+# NO KL-at-points for urban (no ground-truth posterior), so NO reference ensemble
+# is drawn -- calibration is spread--skill + split CRPS vs the ground-truth state.
+# (reference_* kept absent on purpose; the urban pipeline never reads them.)
 
-# Multi-channel fields + solid-cell mask. Solid cells excluded from ALL metrics
-# (GAP E2; reproducibility Section 9).
-channels: [u, v, T]
-data_path: null         # TODO(E2): author-provided .nc
-mask_path: null         # TODO(E2): mask.npz (solid-cell mask)
+# Multi-channel state + solid-cell mask. The state is (u, v, w, thl) -- 4 channels;
+# the trained UNet has in_channels=out_channels=4. "Temperature" is thl (channel 3,
+# ~295 K). Solid cells (mask==0) are excluded from ALL metrics and from the sparse
+# sensor pool (PROJECT_HANDOFF B.4; reproducibility Section 9). The loader reads the
+# data + mask from the dataset config baked into each checkpoint's config.yaml
+# (paths: data/udales, mask: data/udales/mask.npz), so the keys below are
+# informational -- the active paths come from the checkpoint's test_data block.
+channels: [u, v, w, thl]
+data_path: data/udales            # author-provided .nc directory
+mask_path: data/udales/mask.npz   # solid-cell mask (mask==1 fluid, mask==0 solid)

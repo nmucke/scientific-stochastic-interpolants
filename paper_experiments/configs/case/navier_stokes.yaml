@@ -20,6 +20,11 @@ project: stochastic_navier_stokes
 checkpoints:
   si_run: stochastic_interpolant_small   # trained SI prior (has model.pth on the GPU box)
   fm_run: flow_matching            # trained FM prior (has model.pth on the GPU box)
+  diffusion_run: diffusion_model   # dedicated diffusion checkpoint (used only if diffusion_from_fm=false)
+  # Build the Guided-diffusion baseline's prior FROM the (better-trained) FM model
+  # via DenoiseDiffusionModel.from_flow_matching, instead of loading diffusion_run.
+  # The dedicated diffusion checkpoint is poorly trained; set false to use it.
+  diffusion_from_fm: true
 
 # Hard-fail if the configured checkpoint dir / model.pth is missing. Keep false in
 # the repo so laptop smoke runs; the GPU runs override to true (run_gpu_ns.sh).

@@ -1,8 +1,45 @@
 # GPU-Machine Handoff — Paper-Sync Experiments
 
+> **2026-06-29 evening — a run is LIVE.** The NS step-count benchmark
+> (`run_ns_stepbench.sh`, 640 runs, M∈{50,100,250,500}) is running detached on the
+> GPU; see `RUN_STATUS.md` (top) and `NEXT_SESSION_PROMPT.md` (START HERE block)
+> for progress, the ~120–150 GPU-h ETA, the FlowDAS-regression flag, and the
+> tomorrow checklist. Don't start the D-Flow/SURGE sweeps or headline runs until
+> the step-bench frees the GPU (or run them after it).
+
+
+
 **Audience:** a fresh agent (or engineer) on the GPU machine that has the trained model weights.
 **Branch:** `sync-with-paper`. **Goal:** run the full-scale Navier–Stokes (and later urban) experiments
 that cannot run on the laptop (no GPU, no `model.pth` weights there).
+
+> ## Session update — 2026-06-29
+>
+> **This document is largely SUPERSEDED.** Read `PROJECT_HANDOFF.md` and
+> `paper_experiments/RUN_STATUS.md` first; they are the current source of truth.
+> The corrections that matter here:
+> - **Method lineup is final** (9 generative + classical): Ours SI-SDE / FM-ODE /
+>   FM-SDE ("FM-SDE (DM)"); FlowDAS; Guided FM (FIG); Guided FM (OT-ODE); D-Flow
+>   SGLD; SDA; SURGE. Classical (NS only): EnKF (E=1000 non-localized = ground-truth
+>   posterior / KL reference; E=64 localized = baseline), LETKF, particle filter,
+>   ensemble score filter. The legacy "Guided FM" (one-step DPS-on-flow) and "Guided
+>   diffusion" (DPS) are **DROPPED**.
+> - **The multiplicative gain `G_τ` was dropped** — there are no longer three "modes"
+>   to choose between for accuracy; the relevant axis is the covariance
+>   (`inflated` / `inflated_shared` vs isotropic Jacobian-free). `dps_full`/`G_τ` are
+>   kept off-by-default in code only.
+> - **The FM prior is a dedicated trained checkpoint** (`flow_matching` /
+>   `flow_matching_big`), NOT the SI drift reused. The SDA/SURGE **diffusion prior is
+>   built from the FM model** (`diffusion_from_fm: true`), since the trained diffusion
+>   checkpoint is weak.
+> - **All baselines are implemented** (FlowDAS, FIG, OT-ODE, D-Flow SGLD, SDA, SURGE +
+>   classical filters). The "missing baselines" list in §6.2 is stale.
+> - **Analytical case is DONE** with the full faithful lineup; three baseline bugs
+>   (FlowDAS, D-Flow SGLD, SDA) were found and fixed (details in `RUN_STATUS.md`).
+> - **NS + urban headline runs are PENDING the GPU** — manuscript NS/urban tables are
+>   `\tbd`; old NS baseline numbers are stale and must be re-run with the fixed
+>   methods. Urban is generative-only, sparse-only, no KL/energy.
+> - The live paper is `manuscript/` (compiles clean), not `paper_new/`.
 
 Read this top-to-bottom before running anything. The companion documents are:
 - `paper_new/GAP_ANALYSIS.md` — the full paper↔code gap analysis and the 6-phase plan (the "why").
@@ -31,18 +68,18 @@ New library capabilities live in `src/scisi/` (metrics, super-res operator); exp
 live in `paper_experiments/`.
 
 ### What is already a real, final result (ran on the laptop, no training needed)
-**Case 1 (analytical linear–Gaussian)** — `tab:analytical_results` is filled with real numbers:
+**Case 1 (analytical linear–Gaussian)** — `tab:analytical_results` is filled with real numbers for the
+full faithful lineup. KL to exact (mean over 5 seeds): SI-SDE 0.0009, FM-SDE 0.0016, FM-ODE 0.0011;
+FlowDAS 0.080; Guided FM (OT-ODE) 0.0021; D-Flow SGLD 0.079; SDA 0.019; SURGE 0.0021; EnKF 0.0012; PF
+0.0030; Guided FM (FIG) collapsed (structurally degenerate). Headline message: with faithful
+implementations essentially every baseline recovers the linear-Gaussian posterior (an exactness check,
+not strawmen) — methods separate on the nonlinear fluid cases.
 
-| Method | KL to exact | Sliced-W₂ |
-|---|---|---|
-| Ours (SI-SDE / FM-SDE / FM-ODE) | 0.001 / 0.002 / 0.001 | 0.017 / 0.024 / 0.020 |
-| FlowDAS | 0.299 | 0.352 |
-| Guided FM / Guided diffusion | 0.104 / 0.174 | 0.185 / 0.194 |
-| EnKF / Particle filter | 0.001 / 0.003 | 0.021 / 0.028 |
+> **Note:** the OLD numbers that used to be here (FlowDAS 0.299, Guided FM 0.104, Guided diffusion 0.174)
+> are obsolete — they predate the baseline bug fixes and the dropped DPS baselines.
 
-Figures: `paper_experiments/figures/results/analytical/` (the 7 panels of `fig:analytical_panels` + a
-dimensionality-convergence panel). The dimensionality study confirms `inflated` converges to exact while
-the DPS modes plateau — the key finding (see §5).
+Figures: `manuscript/figures/analytical/` (analytical_case.pdf, analytical_kl_vs_steps.pdf,
+analytical_covariance_ablation.pdf).
 
 ### What is wired but needs THIS machine (real weights + GPU)
 **Case 2 (Navier–Stokes)** — full pipeline wired (`paper_experiments/cases/navier_stokes/`): loads a
@@ -131,7 +168,12 @@ before launching the full grid. `run_gpu_ns.sh` does this automatically.
 
 ---
 
-## 4. The three likelihood modes (config: `likelihood_mode`)
+## 4. The likelihood modes (config: `likelihood_mode`)
+
+> **2026-06-29:** the multiplicative-gain mode `dps_full` was DROPPED from the paper
+> (kept off-by-default in code). The meaningful axis is the covariance: per-member
+> `inflated`, shared `inflated_shared`, or isotropic `dps_jacobian_free`. See
+> `PROJECT_HANDOFF.md`.
 
 `InterpolantGaussianLikelihood` (in `src/scisi/likelihood_models/gaussian_likelihood.py`):
 
@@ -147,15 +189,13 @@ Deprecated keys still map for back-compat (`gain: full→dps_full`, `gain: jacob
 
 ---
 
-## 5. Open scientific decision (deferred to the author, informed by NS results)
+## 5. The gain decision — RESOLVED (2026-06-29): the multiplicative gain is dropped
 
-A review finding (verified against the closed-form posterior): **only the `inflated` (ΠGDM) covariance
-recovers the exact analytical posterior; the paper's multiplicative-gain Theorem (`S_τ = G_τ S̄`) yields the
-less-accurate DPS surrogate.** The manuscript currently presents the DPS surrogate as the method and defers
-the inflated covariance to "future work," but `results.tex` claim (i) ("reproduces the exact posterior")
-only holds for `inflated`. **No paper text has been changed** (author's instruction). After the NS runs,
-the author will decide which mode is the canonical/default and whether to update the methodology/results
-prose. The code supports all three modes so this can be decided empirically.
+The multiplicative-gain Theorem (`S_τ = G_τ S̄`, mode `dps_full`) did NOT improve accuracy; accuracy
+comes from **inflating the covariance** (`inflated` / `inflated_shared`), not the gain. The gain is
+therefore dropped from the paper (the methodology drift is now `b_prior + w_τ S̄`) and kept only as an
+off-by-default code option. The ablation is a **covariance** comparison, not a gain comparison. This
+section is retained for history; the decision is closed.
 
 Also: the SI model uses **quadratic-β** (`β=t²`), per author decision — all schedule-derived formulas are
 general in α,β,γ, so this is consistent; just don't assume rectified-flow reductions for SI.
@@ -173,22 +213,22 @@ key/shape errors, and that SI and FM share the data/architecture/schedules (spec
 (If you ever need to retrain, the pipeline is `config/flow_matching_stochastic_navier_stokes*.yaml` +
 `src/scisi/bin/main_train.py`.)
 
-### 6.2 Baselines (deferred "until after Phase 1" — now is the time)
-Wired today: FlowDAS (real), our 3 samplers. **Missing** (each lists as a row in the NS/urban tables):
-- **Guided diffusion / DPS** — `paper_experiments/configs/method/guided_diffusion.yaml` exists but
-  `DPSGaussianLikelihood` is NOT implemented (TODO marker in the config).
-- **EnKF** — exists OFF-pipeline in `external_libs/jax_cfd_lib`; wrap it as a benchmark method sharing the
-  same truth+obs+mask.
-- **Bootstrap particle filter** — `src/scisi/particle_filter/` is an empty stub; implement (the analytical
-  case has a minimal PF in `paper_experiments/cases/analytical/samplers.py` to reference).
-- **SDA** and **ensemble score filter** — entirely absent (second wave).
-Classical filters (EnKF/PF) need the true NS solver for propagation (note this as their advantage over the
-generative methods, per spec §1.2).
+### 6.2 Baselines — ALL IMPLEMENTED (2026-06-29; this §6.2 list is stale)
+All baselines are wired: FlowDAS, Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD
+(`DFlowPosterior`), SDA, SURGE (`SurgePosterior`); and the true-solver classical
+filters EnKF, LETKF, particle filter, ensemble score filter (`enkf_baseline.py`).
+Classical filters need the true NS solver for propagation (their advantage over the
+generative methods, per spec §1.2) — so they run on NS only, not urban.
+**What remains is RUNNING them at headline scale on the GPU** and locking the D-Flow
+SGLD / SURGE NS hyperparameters, not implementing them.
 
-### 6.3 Urban case (Case 3) — pending author-provided data
-`paper_experiments/cases/urban/` is a stub. The author will provide uDALES `.nc` runs + `mask.npz`. When
-they arrive: place under `data/udales/`, set `data_size` to the real channel count (velocity + temperature),
-ensure solid-cell masking is applied in the obs operator AND all metrics, and reuse the NS driver pattern.
+### 6.3 Urban case (Case 3) — IMPLEMENTED; headline runs pending the GPU (2026-06-29)
+Data + models arrived and the case is wired (`cases/urban/{driver.py,_urban_pipeline.py}`,
+`configs/case/urban.yaml`). Data is **4-channel `(u, v, w, thl)`** (NOT 3). Generative-only,
+**sparse 5% and sparse 1.5625% only (no super-res)**, no KL, no energy/enstrophy — per-variable RMSE +
+split CRPS + spread-skill against the ground-truth state. Solid-cell masking is applied in the obs
+operator and all metrics. `urban.yaml`: si_run `stochastic_interpolant_big_gamma1`, fm_run
+`flow_matching_big`, `diffusion_from_fm: true`, test sims 170–178. **The headline runs are not done.**
 
 ### 6.4 After NS results
 Decide the canonical likelihood mode (§5); then (author) update the manuscript prose accordingly; fill the

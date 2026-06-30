@@ -1,0 +1,21 @@
+# SURGE -- NEW BASELINE (diffusion model + guided SDE + SMC particle filter).
+#
+# Wei, Ren, Shi & Lu, "SURGE: Approximation and Training Free Particle Filter for
+# Diffusion Surrogate" (arXiv:2605.18745). Single-window adaptation: a guided
+# reverse-diffusion SDE proposal (DPS Gaussian observation guidance) with
+# Girsanov-corrected SMC reweighting and ESS-based resampling across particles,
+# run on the diffusion-model prior (built from the FM model by default,
+# case.checkpoints.diffusion_from_fm). Gaussian init (a0 = 0).
+#
+# Unlike the likelihood-only baselines, SURGE needs the injected SDE noise (for
+# the martingale weight term) and cross-particle resampling, so it is a dedicated
+# posterior class (SurgePosterior), not a likelihood plugged into DiffusionPosterior.
+name: SURGE
+stepper: sde
+
+posterior_model:
+  _target_: scisi.posterior_models.surge_posterior.SurgePosterior
+  # lambda: guidance strength on the DPS gradient (paper's guidance scale).
+  guidance_scale: 1.0
+  # Resample when effective sample size / N drops below this fraction.
+  ess_threshold: 0.5

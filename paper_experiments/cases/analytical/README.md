@@ -1,8 +1,13 @@
 # Case 1 — Analytical linear–Gaussian
 
+**Status (2026-06-29): DONE — real numbers, all 11 methods, three figures generated.**
+
 Correctness probe (spec Section 4). Closed-form posterior, **no network trained**,
-so it isolates the posterior-sampling machinery (observation-interpolant
-likelihood + multiplicative correction) from model error.
+so it isolates the posterior-sampling machinery (the observation-interpolant
+likelihood) from model error. The headline message: with **faithful** baseline
+implementations essentially every method recovers the linear-Gaussian posterior
+(this case is an exactness check, not a place where the baselines are strawmen);
+methods separate on the nonlinear fluid cases.
 
 ## System
 
@@ -21,12 +26,33 @@ convergence study (KL stays tractable — compare sample mean/cov to exact).
 ## Deliverables
 
 - **`tab:analytical_results`** — KL and sliced-`W2` to the exact posterior for
-  SI-SDE, FM-SDE, FM-ODE, FlowDAS, Guided FM, Guided diffusion, EnKF, particle
-  filter, at matched `E`, `M`. Emitted by `make_tables.py` →
-  `generated/tab_analytical_results.tex`.
-- **`fig:analytical_panels`** — (a) prior conditional, (b) likelihood, (c) exact
-  posterior, (d) sampled posterior, (e) KL vs diffusion strength `g_tau`,
-  (f) KL vs steps `M`, (g) 1-D density slices. *(Figure code: separate TODO.)*
+  the full lineup at matched `E`, `M`. Emitted by `make_tables.py` →
+  `generated/tab_analytical_results.tex`. **Filled with real numbers** (mean over 5
+  seeds, KL to exact):
+
+  | method | KL→exact |
+  |---|---|
+  | Ours SI-SDE / FM-SDE / FM-ODE | 0.0009 / 0.0016 / 0.0011 |
+  | FlowDAS | 0.080 |
+  | Guided FM (OT-ODE) | 0.0021 |
+  | D-Flow SGLD | 0.079 |
+  | SDA | 0.019 |
+  | SURGE | 0.0021 |
+  | EnKF (E=1000 ref) | 0.0012 |
+  | Particle filter | 0.0030 |
+  | Guided FM (FIG) | collapsed (KL degenerate; sliced-W2 0.733) |
+
+  FIG is faithfully implemented (matches official riccizz/FIG) but is structurally
+  mismatched to full noisy observation — its corrector targets the measurement
+  interpolant `y_t = t·y` and concentrates the ensemble onto the measurement
+  (covariance→0), so its KL is degenerate. Reported as "collapsed".
+- **Three figures** under `manuscript/figures/analytical/`:
+  - `analytical_case.pdf` — 2D prior / likelihood / posterior contours.
+  - `analytical_kl_vs_steps.pdf` — KL vs `M ∈ {20,50,100,250,500}`, all methods,
+    table-consistent protocol.
+  - `analytical_covariance_ablation.pdf` (appendix) — our 3 samplers ×
+    {per-member exact, shared, isotropic Jacobian-free}; per-member ≡ shared in
+    the linear case, Jacobian-free plateaus.
 
 ## Pass criteria (report in text)
 
@@ -40,21 +66,26 @@ one row per (method, seed) before aggregation.
 
 ## Implementation (GAP E4 — done)
 
-- `samplers.py` — compact closed-form vector SDE/ODE integrators on the analytic
-  Gaussian prior for the three samplers (SI-SDE, FM-SDE, FM-ODE), the three
-  config-selectable likelihood modes (`inflated` / `dps_full` /
-  `dps_jacobian_free`), and the baselines (FlowDAS Monte-Carlo likelihood, a
-  stochastic EnKF, and a bootstrap particle filter — all exact here since the
-  forward model is known). Guidance weights and scores are derived in closed form
-  and verified against the exact posterior (mean 3, cov 0.5 for `x0=5, y=1`).
+- `samplers.py` — **all 11 methods are self-contained CLOSED-FORM samplers** here;
+  they do NOT use the `scisi/src` posterior classes, because the linear-Gaussian
+  prior velocity / score / drift are available in closed form. Covers the three
+  ours samplers (SI-SDE, FM-SDE, FM-ODE), and the faithful baselines: FlowDAS
+  (paper Algorithm-2 importance-weighted residual guidance), Guided FM in both
+  FIG and OT-ODE modes, D-Flow SGLD (Adam-style bias-corrected RMSProp
+  preconditioner), SDA (DiffusionPosterior `fm_coeff` weighting, no DPS
+  step-norm), SURGE (guided reverse-SDE + Girsanov SMC reweighting), a stochastic
+  EnKF, and a bootstrap particle filter. Guidance weights and scores are derived
+  in closed form and verified against the exact posterior.
+- **Regime-appropriate hyperparameters** are used here (OT-ODE `σ_y²=R, γ=1`;
+  D-Flow `K=200`) because the NS-locked noiseless / few-step settings are
+  degenerate in the full-observation analytical regime.
 - `driver.py::AnalyticalRunner.evaluate` — runs each method, computes Gaussian KL
   and sliced-`W2` to the exact posterior, emits the tidy rows. Truth + obs are
   seeded identically across methods.
-- `figures.py` — the 7 panels of `fig:analytical_panels` →
-  `figures/results/analytical/an_{prior,like,true,sampled,kl_diff,kl_steps,slices}`.
-- `convergence_study.py` — the d ∈ {2,10,100} × mode ablation (`inflated`
-  converges; `dps_full` / `dps_jacobian_free` plateau) →
-  `figures/results/analytical/an_dim_convergence`.
+- The three manuscript figures (see Deliverables) are generated under
+  `manuscript/figures/analytical/`.
+- `convergence_study.py` — the covariance-mode ablation (per-member exact ≡
+  shared in the linear case; isotropic Jacobian-free plateaus).
 
 KL / sliced-`W2` estimators are reused from
 `paper/scripts/analytical_utils/kl_divergence.py`.

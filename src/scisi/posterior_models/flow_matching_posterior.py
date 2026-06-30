@@ -124,7 +124,9 @@ class FlowMatchingPosterior(BasePosterior):
     ) -> torch.Tensor:
         """One step of the FM posterior (ODE or SDE, per ``diffusion_term``)."""
 
-        base.requires_grad = True
+        # Fresh grad-enabled leaf (not an in-place mutation of the caller's tensor,
+        # which can corrupt the autoregressive feedback / fail on a non-leaf base).
+        base = base.detach().requires_grad_(True)
 
         # FM velocity v_theta.
         velocity = self.model.drift(base, t, field_history, field_cond, pars_cond)

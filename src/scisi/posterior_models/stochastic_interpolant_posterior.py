@@ -91,7 +91,9 @@ class StochasticInterpolantPosterior(BasePosterior):
     ) -> torch.Tensor:
         """One Euler--Maruyama step of the SI-SDE posterior."""
 
-        base.requires_grad = True
+        # Fresh grad-enabled leaf (not an in-place mutation of the caller's tensor,
+        # which can corrupt the autoregressive feedback / fail on a non-leaf base).
+        base = base.detach().requires_grad_(True)
 
         if self.log_likelihood is None:
             self.log_likelihood = []

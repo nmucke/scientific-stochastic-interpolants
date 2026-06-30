@@ -58,7 +58,9 @@ class DiffusionPosterior(BasePosterior):
     ) -> torch.Tensor:
         """One step of the diffusion posterior."""
 
-        base.requires_grad = True
+        # Fresh grad-enabled leaf (not an in-place mutation of the caller's tensor,
+        # which can corrupt the autoregressive feedback / fail on a non-leaf base).
+        base = base.detach().requires_grad_(True)
         # Compute the drift
         drift = self.model.drift(base, t, field_history, field_cond, pars_cond).detach()
 
@@ -66,7 +68,8 @@ class DiffusionPosterior(BasePosterior):
         velocity = self.model._get_velocity_from_score(base, t, score)
 
         # Compute the likelihood score
-        likelihood_score = self.likelihood_model.score(
+        # The DPS likelihood returns (guidance_score, log_likelihood); unpack it.
+        likelihood_out = self.likelihood_model.score(
             observations=observations,
             x=base,
             t=t,
@@ -75,6 +78,9 @@ class DiffusionPosterior(BasePosterior):
             field_cond=field_cond,
             pars_cond=pars_cond,
             dt=dt,
+        )
+        likelihood_score = (
+            likelihood_out[0] if isinstance(likelihood_out, tuple) else likelihood_out
         ).detach()
 
         # Euler-Maruyama drift step
@@ -83,9 +89,17 @@ class DiffusionPosterior(BasePosterior):
         # Euler-Maruyama diffusion step
         base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
-        # Likelihood score step
-        base = (
-            base + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score * dt * t.sqrt()
-        )
+        # Likelihood score step. Default (legacy DPS-style) weight is
+        # ``0.5 g^2 sqrt(t)``. A likelihood may instead request the FM
+        # score->state coefficient ``a_tau + 0.5 g^2`` by setting
+        # ``guidance_weight = "fm_coeff"`` (FIX 3, used by SDALikelihood): this
+        # avoids both the SDA under-powering and a fold that diverges as t -> 0.
+        g_t = self.diffusion_term(t)
+        if getattr(self.likelihood_model, "guidance_weight", None) == "fm_coeff":
+            a_tau = self.model.interpolation.velocity_score_coeff(t)
+            weight = a_tau + 0.5 * g_t**2
+            base = base + weight * likelihood_score * dt
+        else:
+            base = base + 0.5 * g_t**2 * likelihood_score * dt * t.sqrt()
 
         return base.detach()

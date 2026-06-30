@@ -17,36 +17,97 @@ DEFAULT_NUM_PHYSICAL_STEPS = 10
 
 
 class DenoiseDiffusionModel(BaseModel):
-    """Diffusion model."""
+    """Diffusion model.
+
+    Supports two parametrisations of the underlying network, selected at
+    construction:
+
+    * **denoise mode** (``denoise_model``): the network predicts the noise
+      ``eps``; the score is ``s = -eps / alpha`` (a VP/VE diffusion prior).
+    * **velocity mode** (``velocity_model``): the network predicts the
+      flow-matching velocity ``v``; the score is recovered from ``v`` via the
+      affine-path velocity<->score identity with the diffusion anchor
+      ``a0 = 0``. This lets a well-trained flow-matching model stand in for a
+      (poorly trained) diffusion prior -- the reverse-SDE drift
+      ``v + 1/2 g^2 s`` is identical either way. Build it with
+      :meth:`from_flow_matching`.
+
+    Exactly one of ``denoise_model`` / ``velocity_model`` must be provided.
+    """
 
     def __init__(
         self,
         interpolation: nn.Module,
-        denoise_model: nn.Module,
+        denoise_model: Optional[nn.Module] = None,
+        velocity_model: Optional[nn.Module] = None,
         diffusion_term: Optional[nn.Module] = None,
         mask_path: Optional[str] = None,
     ) -> None:
         """Initialize Diffusion model."""
         super(DenoiseDiffusionModel, self).__init__(mask_path=mask_path)
 
+        if (denoise_model is None) == (velocity_model is None):
+            raise ValueError(
+                "DenoiseDiffusionModel needs exactly one of `denoise_model` "
+                "(noise parametrisation) or `velocity_model` (flow-matching "
+                "velocity parametrisation)."
+            )
+
         self.interpolation = interpolation
         self.denoise_model = denoise_model
+        self.velocity_model = velocity_model
+        self._use_velocity = velocity_model is not None
 
         self.diffusion_term = diffusion_term
         if diffusion_term is None:
             self.diffusion_term = self.interpolation.alpha
 
+    @classmethod
+    def from_flow_matching(
+        cls,
+        flow_matching_model: nn.Module,
+        diffusion_term: Optional[nn.Module] = None,
+        mask_path: Optional[str] = None,
+    ) -> "DenoiseDiffusionModel":
+        """Build a diffusion prior from a trained flow-matching model.
+
+        Reuses the flow-matching model's interpolation (an affine Gaussian path
+        with deterministic anchor ``a0 = 0``) and its trained velocity network.
+        The score is reconstructed from the velocity on the fly, so the
+        resulting object behaves as a diffusion prior (``score`` / ``drift`` /
+        reverse-SDE sampling) while only ever evaluating the FM velocity net.
+
+        Args:
+            flow_matching_model: A ``FlowMatchingModel`` (exposes
+                ``interpolation`` and ``drift_model``).
+            diffusion_term: Reverse-SDE diffusion coefficient ``g(t)``. Defaults
+                to ``interpolation.alpha`` (endpoint-vanishing at the data end),
+                matching the denoise-mode default.
+            mask_path: Optional inpainting mask path.
+
+        Returns:
+            DenoiseDiffusionModel: A velocity-mode diffusion prior.
+        """
+        return cls(
+            interpolation=flow_matching_model.interpolation,
+            velocity_model=flow_matching_model.drift_model,
+            diffusion_term=diffusion_term,
+            mask_path=mask_path,
+        )
+
     @property
     def model(self) -> nn.Module:
         """
-        Get the drift model.
+        Get the underlying network.
 
-        This is to ensure compatibility with the rest of the code base.
+        This is to ensure compatibility with the rest of the code base (e.g. the
+        NFE counter). Returns the velocity net in velocity mode, else the
+        denoise net.
 
         Returns:
-            nn.Module: The drift model.
+            nn.Module: The active network.
         """
-        return self.denoise_model
+        return self.velocity_model if self._use_velocity else self.denoise_model
 
     def score(
         self,
@@ -56,7 +117,28 @@ class DenoiseDiffusionModel(BaseModel):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute the score of the Diffusion model."""
+        """Compute the score of the Diffusion model.
+
+        In velocity mode the score is recovered from the flow-matching velocity
+        via the shared velocity->score identity (anchor ``a0 = 0``); in denoise
+        mode it is ``-eps / alpha``.
+        """
+        # The base-posterior main loop passes t as [B, 1] but its first-step path
+        # passes a bare [1]; normalise to [., 1] so the net and _expand_t both get
+        # the rank they expect.
+        if t.dim() == 1:
+            t = t.reshape(-1, 1)
+        if self._use_velocity:
+            velocity = self.velocity_model(
+                x, t, field_history, field_cond, pars_cond
+            )
+            t_expanded = _expand_t(t, x) if t.dim() < x.dim() else t
+            return self.interpolation.score_from_velocity(
+                x=x,
+                v=velocity,
+                t=t_expanded,
+                a0=torch.zeros_like(x),
+            )
 
         return -self.denoise_model(
             x, t, field_history, field_cond, pars_cond
@@ -100,11 +182,29 @@ class DenoiseDiffusionModel(BaseModel):
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
         """
 
-        score = self.score(x, t, field_history, field_cond, pars_cond)
+        # Normalise a bare [1] (base-posterior first-step path) to [., 1].
+        if t.dim() == 1:
+            t = t.reshape(-1, 1)
+        t_expanded = _expand_t(t, x) if t.dim() < x.dim() else t
 
-        velocity = self._get_velocity_from_score(x, t, score)
+        if self._use_velocity:
+            # Velocity mode: one net eval gives v directly; derive the score from
+            # it (no round-trip score->velocity, which would re-recover the same
+            # v) and assemble the reverse-SDE drift.
+            velocity = self.velocity_model(
+                x, t, field_history, field_cond, pars_cond
+            )
+            score = self.interpolation.score_from_velocity(
+                x=x,
+                v=velocity,
+                t=t_expanded,
+                a0=torch.zeros_like(x),
+            )
+        else:
+            score = self.score(x, t, field_history, field_cond, pars_cond)
+            velocity = self._get_velocity_from_score(x, t, score)
 
-        return velocity + 0.5 * self.diffusion_term(t) ** 2 * score  # type: ignore[misc]
+        return velocity + 0.5 * self.diffusion_term(t_expanded) ** 2 * score  # type: ignore[misc]
 
     def forward(
         self,
@@ -132,6 +232,12 @@ class DenoiseDiffusionModel(BaseModel):
             torch.Tensor: Drift tensor [B, C, H, W].
             torch.Tensor: Interpolation derivative tensor [B, C, H, W].
         """
+        if self._use_velocity:
+            raise RuntimeError(
+                "DenoiseDiffusionModel built in velocity mode "
+                "(from_flow_matching) is inference-only: train the underlying "
+                "flow-matching model instead of calling forward()."
+            )
 
         interpolant = self.interpolation.forward(
             base=noise,

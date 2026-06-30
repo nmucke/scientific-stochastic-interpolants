@@ -165,9 +165,18 @@ class BasePosterior(nn.Module):
             assert base is not None, (
                 "SI posterior requires a point-mass init base = x0; got None."
             )
-            assert torch.allclose(
-                base.to(field_history.device), field_history[..., -1], atol=1e-5
-            ), "SI posterior init must equal x0 (field_history[..., -1])."
+            # The SI source is the point mass delta_{x0}, so the loop must start
+            # at x0 = field_history[..., -1]. We only enforce this when the state
+            # is FINITE: a numerically diverging sampler (e.g. an unstable baseline)
+            # produces non-finite states, and `allclose(nan, nan)` is False -- the
+            # hard assert would then crash the WHOLE run (all methods/cells) on one
+            # diverging cell. Skipping it for non-finite states lets the divergence
+            # surface as NaN metrics for that cell instead, without blocking others.
+            base_dev = base.to(field_history.device)
+            if torch.isfinite(base_dev).all():
+                assert torch.allclose(
+                    base_dev, field_history[..., -1], atol=1e-5
+                ), "SI posterior init must equal x0 (field_history[..., -1])."
 
         # Sample first step
         start_time = 0

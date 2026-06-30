@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from functools import partial
 from typing import Any, Callable, Dict, Optional
 
@@ -6,6 +7,26 @@ import torch
 import torch.nn as nn
 
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
+
+
+@contextmanager
+def _math_sdpa():
+    """Force the math scaled-dot-product-attention backend.
+
+    ``torch.autograd.functional.jvp`` uses the double-backward trick, but on
+    CUDA the flash / mem-efficient SDPA kernels have no double-backward
+    (``derivative for aten::_scaled_dot_product_efficient_attention_backward is
+    not implemented``). The math backend supports double-backward (it is what the
+    CPU path already used), so the full-Sigma_s JVP through a UNet with attention
+    must run under it. Numerically identical to the other backends.
+    """
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+    except ImportError:  # pragma: no cover - older torch without the public API
+        yield
+        return
+    with sdpa_kernel(SDPBackend.MATH):
+        yield
 
 # Clamp pseudo-time away from the endpoints {0, 1} when evaluating
 # schedule-derived quantities whose denominators vanish there. The guidance
@@ -126,16 +147,42 @@ class InterpolantGaussianLikelihood(nn.Module):
         if likelihood_mode == "inflated" and correct_likelihood_score is False:
             likelihood_mode = "dps_jacobian_free"
 
-        if likelihood_mode not in ("inflated", "dps_full", "dps_jacobian_free"):
+        if likelihood_mode not in (
+            "inflated",
+            "inflated_shared",
+            "dps_full",
+            "dps_jacobian_free",
+        ):
             raise ValueError(
-                "likelihood_mode must be 'inflated', 'dps_full' or "
-                f"'dps_jacobian_free', got {likelihood_mode!r}."
+                "likelihood_mode must be 'inflated', 'inflated_shared', "
+                f"'dps_full' or 'dps_jacobian_free', got {likelihood_mode!r}."
             )
         self.likelihood_mode = likelihood_mode
         # Whether this mode uses the full (Jacobian) Sigma_s or the isotropic one.
-        self.use_full_sigma_s = likelihood_mode in ("inflated", "dps_full")
-        # Whether this mode multiplies by the gain G_tau.
+        self.use_full_sigma_s = likelihood_mode in (
+            "inflated",
+            "inflated_shared",
+            "dps_full",
+        )
+        # Whether this mode multiplies by the multiplicative gain G_tau. RETAINED
+        # AS AN OPTION (``dps_full``) but OFF by default: the gain did not improve
+        # accuracy in the experiments (analytical KL 0.001 inflated vs 0.174 gain;
+        # NS sparse rmse ~0.16 inflated vs ~0.72 cheap), so it was dropped from the
+        # paper and the runs. The accuracy comes from inflating the covariance
+        # (G_tau = I), not from the gain. Every default mode sets G_tau = I.
         self.apply_gain = likelihood_mode == "dps_full"
+        # ``inflated_shared``: tractable approximation of ``inflated`` for the
+        # full-scale (UNet-prior) runs. The full source-covariance Jacobian is
+        # evaluated ONCE at the ensemble-mean state (shared Sigma_s) instead of
+        # per member, so Sigma_bar = beta^2 R + H Sigma_s H^T is a single
+        # N_y x N_y matrix (factorised once, reused for every member's RHS) and
+        # ``H Sigma_s H^T`` is built by a chunked column-batched JVP. This drops
+        # the per-member factor (the exact ``inflated`` does B x N_y network
+        # Jacobian evaluations per pseudo-step, which is intractable at NS scale).
+        # It collapses EXACTLY to ``inflated`` when the ensemble members coincide.
+        self.share_sigma_s = likelihood_mode == "inflated_shared"
+        # Column chunk for the shared H Sigma_s H^T build (memory vs launches).
+        self.shared_sigma_chunk = 64
 
         if model_class not in ("si", "fm"):
             raise ValueError(
@@ -271,6 +318,36 @@ class InterpolantGaussianLikelihood(nn.Module):
             HSHt[:, :, j] = self.obs_operator(sigma_s_apply(v))  # [B, N_y]
         return HSHt
 
+    def _build_HSHt_shared(
+        self, ref: torch.Tensor, sigma_s_apply: Callable
+    ) -> torch.Tensor:
+        """Form a single ``H Sigma_s H^T`` (shape ``[N_y, N_y]``).
+
+        The ``inflated_shared`` approximation evaluates ``Sigma_s`` once at the
+        ensemble-mean state, so a single matrix is built and reused for every
+        member's RHS (vs the per-member ``[B, N_y, N_y]`` of :meth:`_build_HSHt`).
+        Columns are processed in chunks: ``sigma_s_apply`` broadcasts the captured
+        mean state to the chunk's batch, turning ``N_y`` single-column JVPs into
+        ``ceil(N_y / chunk)`` batched ones. Column ``j`` is
+        ``H Sigma_s (H^T e_j)``.
+        """
+        H = self._get_obs_matrix(ref)  # [N_y, N_u]
+        N_y = H.shape[0]
+        cols = self.obs_operator.transpose(
+            torch.eye(N_y, device=H.device, dtype=H.dtype)
+        )  # [N_y, C, H, W]
+
+        HSHt = torch.empty(N_y, N_y, device=H.device, dtype=H.dtype)
+        chunk = max(1, int(self.shared_sigma_chunk))
+        for start in range(0, N_y, chunk):
+            block = cols[start : start + chunk]  # [k, C, H, W]
+            # obs_operator(Sigma_s block) is [k, N_y]; its row i is the
+            # (start+i)-th COLUMN of H Sigma_s H^T.
+            HSHt[:, start : start + block.shape[0]] = self.obs_operator(
+                sigma_s_apply(block)
+            ).transpose(0, 1)
+        return HSHt
+
     def _interpolant_score(
         self,
         x: torch.Tensor,
@@ -327,6 +404,18 @@ class InterpolantGaussianLikelihood(nn.Module):
             # grad_xbar_mu = H * (rho/sigma_tau^2); for rho = sigma_tau^2 this
             # is exactly H.
             return (rho_s / sigma_tau_sq_s) * Ht_sol
+
+        if self.share_sigma_s:
+            # Shared Sigma_s (inflated_shared): one Sigma_bar for the whole
+            # ensemble, factorised once and solved for every member's RHS.
+            HSHt = self._build_HSHt_shared(x, sigma_s_apply)  # [N_y, N_y]
+            Sigma_bar = beta_sq_R * eye + HSHt  # [N_y, N_y]
+            sol = torch.linalg.solve(
+                Sigma_bar, residual_obs.transpose(0, 1)
+            ).transpose(0, 1)  # [B, N_y]
+            Ht_sol = self.obs_operator.transpose(sol)  # [B, C, H, W]
+            # Front factor uses the SAME shared Sigma_s (broadcast over members).
+            return sigma_s_apply(Ht_sol) / sigma_tau_sq_s
 
         # Full Sigma_s: Sigma_bar = beta^2 R + H Sigma_s H^T, per member.
         HSHt = self._build_HSHt(x, sigma_s_apply)  # [B, N_y, N_y]
@@ -456,17 +545,36 @@ class InterpolantGaussianLikelihood(nn.Module):
         # the gain; the isotropic mode (dps_jacobian_free) leaves it None.
         sigma_s_apply = None
         if self.use_full_sigma_s:
-            sigma_s_apply = self._build_full_sigma_s_apply(
-                x=x,
-                t=t_grid,
-                t_net=t_net,
-                field_history=field_history,
-                field_cond=field_cond,
-                pars_cond=pars_cond,
-                drift=drift,
-                score=score,
-                rho=rho,
-            )
+            if self.share_sigma_s:
+                # inflated_shared: evaluate the Jacobian ONCE at the ensemble
+                # mean (pseudo-time tau is identical across members, so the
+                # schedule scalars are unchanged; only the state is averaged).
+                def _mean0(z):
+                    return None if z is None else z.mean(dim=0, keepdim=True)
+
+                sigma_s_apply = self._build_full_sigma_s_apply(
+                    x=_mean0(x),
+                    t=t_grid[:1],
+                    t_net=t_net[:1],
+                    field_history=_mean0(field_history),
+                    field_cond=_mean0(field_cond),
+                    pars_cond=_mean0(pars_cond),
+                    drift=None,
+                    score=None,
+                    rho=rho[:1] if rho.dim() > 0 else rho,
+                )
+            else:
+                sigma_s_apply = self._build_full_sigma_s_apply(
+                    x=x,
+                    t=t_grid,
+                    t_net=t_net,
+                    field_history=field_history,
+                    field_cond=field_cond,
+                    pars_cond=pars_cond,
+                    drift=drift,
+                    score=score,
+                    rho=rho,
+                )
 
         # --- interpolant score Sbar (closed form) ---------------------------
         # The isotropic source scale rho_tau coincides with the source variance
@@ -534,6 +642,23 @@ class InterpolantGaussianLikelihood(nn.Module):
         beta = self.interpolant.beta(t)
         beta_diff = self.interpolant.beta_diff(t)
 
+        def _bcast(tensor: Optional[torch.Tensor], k: int) -> Optional[torch.Tensor]:
+            """Broadcast a captured ``[B0, ...]`` tensor to leading batch ``k``.
+
+            The JVP is evaluated at the captured state ``x`` against a tangent
+            ``v`` whose leading dim may differ: it equals ``B`` on the per-member
+            path (no-op) but is the column-chunk / member count on the
+            shared-state path, where ``x`` and the conditioning are captured at
+            batch 1 (the ensemble mean). ``expand`` keeps it a view (no copy).
+            """
+            if tensor is None or tensor.shape[0] == k:
+                return tensor
+            if tensor.shape[0] == 1:
+                return tensor.expand(k, *tensor.shape[1:])
+            raise ValueError(
+                f"cannot broadcast batch {tensor.shape[0]} to {k}."
+            )
+
         if self.source_type == "si":
             gamma = self.interpolant.gamma(t)
             gamma_diff = self.interpolant.gamma_diff(t)
@@ -542,15 +667,20 @@ class InterpolantGaussianLikelihood(nn.Module):
             jac_scale = gamma**4 * t**2 * A
 
             def jvp_fn(v: torch.Tensor) -> torch.Tensor:
-                # J_b @ v, with b_theta = model.drift(x, ...).
-                def fn(inp: torch.Tensor) -> torch.Tensor:
-                    return self.model.drift(
-                        inp, t_net, field_history, field_cond, pars_cond
-                    )
+                # J_b @ v, with b_theta = model.drift(x, ...). State and
+                # conditioning are broadcast to v's batch (shared-state path).
+                k = v.shape[0]
+                xk = _bcast(x, k)
+                tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
+                fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
 
-                _, jv = torch.autograd.functional.jvp(
-                    fn, (x,), (v,), create_graph=False
-                )
+                def fn(inp: torch.Tensor) -> torch.Tensor:
+                    return self.model.drift(inp, tk, fhk, fck, pck)
+
+                with _math_sdpa():
+                    _, jv = torch.autograd.functional.jvp(
+                        fn, (xk,), (v,), create_graph=False
+                    )
                 return jv.detach()
 
             def sigma_s_apply(v: torch.Tensor) -> torch.Tensor:
@@ -565,14 +695,18 @@ class InterpolantGaussianLikelihood(nn.Module):
 
         def jvp_fn_fm(v: torch.Tensor) -> torch.Tensor:
             # grad_x s @ v with s = model.score(x, ...).
-            def fn(inp: torch.Tensor) -> torch.Tensor:
-                return self.model.score(
-                    inp, t_net, field_history, field_cond, pars_cond
-                )
+            k = v.shape[0]
+            xk = _bcast(x, k)
+            tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
+            fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
 
-            _, jv = torch.autograd.functional.jvp(
-                fn, (x,), (v,), create_graph=False
-            )
+            def fn(inp: torch.Tensor) -> torch.Tensor:
+                return self.model.score(inp, tk, fhk, fck, pck)
+
+            with _math_sdpa():
+                _, jv = torch.autograd.functional.jvp(
+                    fn, (xk,), (v,), create_graph=False
+                )
             return jv.detach()
 
         def sigma_s_apply_fm(v: torch.Tensor) -> torch.Tensor:
@@ -633,41 +767,31 @@ class FlowdasGaussianLikelihood(nn.Module):
         """
         pass
 
-    def _compute_one_step_prediction(
+    def _denoiser_mean(
         self,
         x: torch.Tensor,
         t: torch.Tensor,
-        dt: torch.Tensor,
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
         drift: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute the one step predictions."""
+        """Deterministic one-step denoiser mean ``mu_x1 = E[x_1 | x_tau]``.
 
-        # Milstein step
+        A noise-free Milstein+RK (Heun) predictor of ``x_1`` from ``x_tau``.
+        This is the FlowDAS predictor's *mean*; the Monte-Carlo spread is added
+        separately in :meth:`score` so the guidance can be normalized.
+        """
         drift_milstein = (
             drift
             if drift is not None
-            else self.model.drift_model(x, t, field_history, field_cond, pars_cond)
+            else self.model.drift(x, t, field_history, field_cond, pars_cond)
         )
         pred = x + drift_milstein * (1.0 - t)
-
-        # Add noise = integral of the diffusion term from t to 1
-        pred = pred + torch.randn_like(x) * self.integral_variance(t)
-
-        # RK step
-        drift_rk = self.model.drift_model(
+        drift_rk = self.model.drift(
             pred, torch.ones_like(t), field_history, field_cond, pars_cond
         )
-        pred = x + 0.5 * (drift_milstein + drift_rk) * (1 - t)
-
-        # Expand the prediction to the ensemble size
-        pred = pred.repeat(self.ensemble_size, 1, 1, 1)
-
-        # Add noise = integral of the diffusion term from t to 1
-        return pred + torch.randn_like(pred) * self.integral_variance(t)
-
+        return x + 0.5 * (drift_milstein + drift_rk) * (1.0 - t)
 
     def score(
         self,
@@ -680,23 +804,77 @@ class FlowdasGaussianLikelihood(nn.Module):
         dt: Optional[torch.Tensor] = None,
         drift: Optional[torch.Tensor] = None,
         **kwargs: Any,
-    ) -> torch.Tensor:
-        """Compute the likelihood score."""
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """FlowDAS guidance (chen_flowdas_2025, Algorithm 2 line 10).
 
-        preds = self._compute_one_step_prediction(
-            x, t, dt, field_history, field_cond, pars_cond, drift
-        )
+        Faithful Monte-Carlo guidance: draw ``J = n_mc`` one-step predictions of
+        ``x_1`` from ``x_tau`` as ``X1_hat^(j) = mu_x1 + sqrt(v1) eps_j``, with
+        ``eps_j ~ N(0, I)`` DETACHED constants so the only ``x_tau``-dependence is
+        through the denoiser mean ``mu_x1(x_tau)``. Compute DETACHED importance
+        weights ``w_j = softmax_j(-||y - H X1_hat^(j)||^2 / (2 sigma^2))`` and then
+        take the gradient of the weighted observation error THROUGH the predictor
 
-        diff_norm = torch.linalg.norm(observations - self.obs_operator(preds), dim=1) ** 2
-        diff_norm = -diff_norm / (2 * self.original_variance)
+            g = -grad_{x_tau} sum_j w_j ||y - H X1_hat^(j)||^2
+              = -grad_{x_tau} ||y - H xhat1||^2   (weights detached),
+              xhat1 = sum_j w_j X1_hat^(j).
 
-        # Compute weights
-        weights = torch.softmax(diff_norm.detach(), dim=0)
+        The crucial point (vs the old bounded surrogate ``(x1_hat - mu_x1)/(v1+R)``
+        which vanishes as ``v1 -> 0``): the residual ``(y - H xhat1)`` is pulled
+        THROUGH the denoiser Jacobian by autograd, so it points toward the
+        observation and does NOT vanish at the data end.
 
-        # Compute weighted gradient
-        score = torch.autograd.grad(
-            outputs=(diff_norm * weights).sum(),
-            inputs=x,
-        )[0]
+        The raw ``1/sigma^2``-scaled gradient through the network was what diverged
+        at NS scale (the step SIZE, not the algorithm), so we step-normalize like
+        the other guided baselines (DPS-style): ``guidance = -grad / (||grad|| +
+        eps)``. The posterior applies ``w_tau`` as the schedule. Returns
+        ``(guidance, log_likelihood)``; computed on a detached grad-enabled leaf so
+        the caller's autoregressive working state is never mutated in place.
+        """
+        n_mc = self.ensemble_size
+        R = self.original_variance
 
-        return -score, weights
+        # Conditional spread (FlowDAS predictor std); state-independent scalar.
+        s = self.integral_variance(t)
+
+        # Detached grad-enabled leaf: the DPS gradient flows through mu_x1(x_g)
+        # but the caller's working tensor is untouched.
+        x_g = x.detach().requires_grad_(True)
+        with torch.enable_grad():
+            mu_x1 = self._denoiser_mean(
+                x_g, t, field_history, field_cond, pars_cond, drift
+            )
+            b, c, h, w = mu_x1.shape
+
+            # J one-step predictions with DETACHED source noise; the x_g-dependence
+            # is ONLY through mu_x1 (eps_j are constants).
+            eps = torch.randn(
+                (n_mc, *mu_x1.shape), device=mu_x1.device, dtype=mu_x1.dtype
+            )
+            preds = mu_x1.unsqueeze(0) + s * eps  # [J, B, C, H, W]
+
+            Hpreds = self.obs_operator(preds.reshape(n_mc * b, c, h, w)).reshape(
+                n_mc, b, -1
+            )
+            residual = observations.unsqueeze(0) - Hpreds  # [J, B, N_y]
+            sq_err = (residual**2).sum(dim=-1)  # [J, B]
+
+            # DETACHED importance weights (constants in the autograd graph).
+            log_w = -0.5 * sq_err.detach() / R  # [J, B]
+            weights = torch.softmax(log_w, dim=0)  # [J, B]
+
+            # Weighted observation error, differentiated through the predictor.
+            weighted_err = (weights * sq_err).sum(dim=0).sum()  # scalar
+            grad = torch.autograd.grad(outputs=weighted_err, inputs=x_g)[0]
+
+        # DPS-style step normalization (the step SIZE was the divergence, not the
+        # algorithm): unit-L2 per member; descent on the error => -grad.
+        gnorm = grad.reshape(b, -1).norm(dim=1).reshape(b, *([1] * (grad.dim() - 1)))
+        guidance = -grad / (gnorm + 1e-6)
+
+        # Per-member log marginal likelihood (for optional SMC reweighting).
+        log_likelihood = (
+            torch.logsumexp(log_w, dim=0)
+            - torch.log(torch.tensor(float(n_mc), device=log_w.device))
+        ).detach()
+
+        return guidance.detach(), log_likelihood

@@ -224,7 +224,16 @@ def _likelihood_guidance(
 
     # Source covariance choice (the ablation): exact v1 for inflated / dps_full,
     # isotropic v1 = sigma_tau^2 / beta^2 for the Jacobian-free corollary.
-    v1 = v1_exact if likelihood_mode in ("inflated", "dps_full") else sigma_tau_sq / beta**2
+    # ``inflated_shared`` (the ensemble-mean / shared-Jacobian variant) coincides
+    # EXACTLY with ``inflated`` here: the source covariance v1_exact is
+    # state-independent for this linear-Gaussian system, so sharing it across the
+    # ensemble introduces no error (the shared/individual gap only appears for a
+    # nonlinear prior, e.g. Navier--Stokes). It therefore also uses v1_exact.
+    v1 = (
+        v1_exact
+        if likelihood_mode in ("inflated", "inflated_shared", "dps_full")
+        else sigma_tau_sq / beta**2
+    )
 
     # mu_bar = H E[ybar | x_tau, x0]; for SI = alpha x0 + beta mu_x1, FM = beta mu_x1.
     mu_bar = (alpha * x0 + beta * mu_x1) if model_class == "si" else beta * mu_x1
@@ -434,12 +443,30 @@ def flowdas_posterior(
     n_mc: int,
     generator: torch.Generator,
 ) -> Tensor:
-    """FlowDAS baseline (chen_flowdas_2025): SI-SDE prior with a Monte-Carlo
-    likelihood instead of the observation-interpolant score.
+    """FlowDAS baseline (chen_flowdas_2025, Algorithm 2 line 10).
 
-    At each step, draw ``n_mc`` one-step predictions of ``x1`` (the analytic
-    denoiser mean plus its conditional spread), softmax-weight by ``N(y; H x1, R)``
-    and use the weighted score as the guidance. ``J = n_mc`` is reported.
+    Same analytical SI-SDE prior as our samplers (linear ``beta = t``); only the
+    guidance differs. Per step, draw ``J = n_mc`` one-step predictions of ``x1``
+    from ``X_s`` as ``X1_hat^(j) = mu_x1 + sqrt(v1) eps_j`` (the ``eps_j`` are
+    DETACHED constants, so the ``X_s``-dependence is only through ``mu_x1``);
+    compute DETACHED importance weights ``w_j = softmax_j(-||y - X1_hat^(j)||^2 /
+    (2 sigma^2))`` and take the gradient of the weighted observation error THROUGH
+    the predictor
+
+        g = -grad_{X_s} sum_j w_j ||y - X1_hat^(j)||^2 .
+
+    For the affine denoiser ``mu_x1`` with ``d mu_x1 / d X_s = denoise_slope``
+    (scalar) and weights detached, this is the CLOSED FORM
+
+        grad_{X_s} sum_j w_j ||y - X1_hat^(j)||^2
+            = 2 denoise_slope (xhat1 - y),   xhat1 = sum_j w_j X1_hat^(j),
+
+    so ``g = 2 denoise_slope (y - xhat1)``. Crucially the residual ``(y - xhat1)``
+    is pulled THROUGH the denoiser Jacobian and points TOWARD the observation; it
+    does NOT vanish as ``v1 -> 0`` (the old ``(xhat1 - mu_x1)/(v1+R)`` surrogate
+    did). Step-normalize per member (DPS-style: the step SIZE was the original
+    divergence, not the algorithm) and apply with the SI guidance weight ``w_tau``.
+    ``J = n_mc`` is reported.
     """
     d = sys.d
     R = sys.obs_var
@@ -451,19 +478,374 @@ def flowdas_posterior(
         beta = t
         gamma = g0 * (1.0 - t)
         var_path = beta**2 * c + gamma**2 * t
-        mu_x1 = x0 + (beta * c / var_path) * (x - x0)
+        denoise_slope = beta * c / var_path  # d mu_x1 / d X_s
+        mu_x1 = x0 + denoise_slope * (x - x0)
         v1 = c - (beta * c) ** 2 / var_path
         b_prior = _si_prior_drift(x, x0, t, g0, c)
-        # Monte-Carlo predictions of x1 and softmax weights.
+        # J one-step predictions of x1 with DETACHED source noise; softmax weights.
         eps = torch.randn(n_mc, ensemble_size, d, generator=generator)
-        preds = mu_x1.unsqueeze(0) + max(v1, 0.0) ** 0.5 * eps
-        log_w = -0.5 * ((y - preds) ** 2).sum(-1) / R  # [n_mc, E]
-        w = torch.softmax(log_w, dim=0)  # [n_mc, E]
+        preds = mu_x1.unsqueeze(0) + max(v1, 0.0) ** 0.5 * eps  # [J, E, d]
+        log_w = -0.5 * ((y - preds) ** 2).sum(-1) / R  # [J, E]
+        w = torch.softmax(log_w, dim=0)  # [J, E]
         x1_hat = (w.unsqueeze(-1) * preds).sum(0)  # weighted mean prediction
-        guidance = (x1_hat - mu_x1) / (v1 + R)  # MC likelihood pull
+        # FlowDAS guidance: -grad of the weighted obs error through the predictor,
+        # = denoise_slope (y - xhat1) (H = I); step-normalize per member.
+        grad = denoise_slope * (x1_hat - y)  # propto grad_{X_s} (weighted err)
+        gnorm = grad.norm(dim=1, keepdim=True)
+        guidance = -grad / (gnorm + 1e-6)
         w_tau = _guidance_weight_ode(t, "si", g0, c)
         x = x + (b_prior + w_tau * guidance) * dt
         x = x + gamma * (dt**0.5) * torch.randn(ensemble_size, d, generator=generator)
+    return x
+
+
+# --------------------------------------------------------------------------- #
+# New posterior-sampling baselines (closed-form / autograd on the Gaussian).
+#
+# Each mirrors its NS reference implementation, specialised to H = I, R = 1:
+#   * Guided FM (FIG)      -> guidance.py FIGGaussianLikelihood
+#   * Guided FM (OT-ODE)   -> guidance.py GuidanceGaussianLikelihood._score_ot_ode
+#   * D-Flow SGLD          -> dflow_posterior.py DFlowPosterior
+#   * SDA                  -> sda.py SDALikelihood (+ DiffusionPosterior weighting)
+#   * SURGE                -> surge_posterior.py SurgePosterior
+# --------------------------------------------------------------------------- #
+
+
+def guided_fm_fig_posterior(
+    sys: GaussianSystem,
+    x0: Tensor,
+    y: Tensor,
+    *,
+    ensemble_size: int,
+    num_steps: int,
+    guidance_steps: int = 1,
+    guidance_scale: float = 80.0,
+    interpolant_noise: float = 0.0,
+    generator: torch.Generator,
+) -> Tensor:
+    """FIG measurement-interpolant guided FM-ODE (yan_fig_2025).
+
+    FM-ODE prior (source ``N(0, I)``). After each prior Euler step
+    ``x_next = x + v dt`` run ``k`` corrector iterations pulling toward the
+    measurement interpolant ``y_t = t_next y`` with step ``c (1 - t) / t``,
+    differentiating the residual NORM ``||y_t - x_next||`` (H = I): the gradient
+    is ``-(y_t - x_next) / ||y_t - x_next||`` so the update is
+    ``x_next += step (y_t - x_next) / ||y_t - x_next||``.
+
+    Stability (FIX 1): (a) the unit-direction move magnitude is capped at the
+    residual norm, ``effective_step = min(c (1 - t)/t, ||y_t - x_next||)``, so a
+    single inner step lands at most ON ``y_t`` and never overshoots/collapses the
+    ensemble (the M-independent fix for high-M variance collapse); (b) the
+    corrector is skipped on the first and last integration steps (the official
+    FIG ``1 <= i < N - 1`` guard).
+    """
+    d = sys.d
+    c = sys.prior_var
+    dt = 1.0 / num_steps
+    x = torch.randn(ensemble_size, d, generator=generator)
+    for i in range(num_steps):
+        t = (i + 1) * dt
+        t = min(max(t, 1e-4), 1.0 - 1e-4)
+        t_next = min(t + dt, 1.0)
+        v = _fm_prior_velocity(x, x0, t, c)
+        x_next = x + v * dt
+        # Official corrector guard: skip the first and last integration steps.
+        if t <= dt + 1e-9 or t >= 1.0 - dt - 1e-9:
+            x = x_next
+            continue
+        step = guidance_scale * (1.0 - t) / t
+        y_t = t_next * y.unsqueeze(0)
+        if interpolant_noise != 0.0:
+            y_t = y_t + interpolant_noise * (1.0 - t) * torch.randn(
+                ensemble_size, d, generator=generator
+            )
+        for _ in range(max(guidance_steps, 1)):
+            residual = y_t - x_next  # H = I
+            norm = residual.norm(dim=1, keepdim=True)
+            # Cap the move magnitude at the residual norm so a single inner step
+            # lands at most ON y_t (never past it -> no overshoot/collapse).
+            eff_step = torch.clamp(norm, max=step)
+            # grad_{x} ||y_t - x|| = -(y_t - x)/||y_t - x||; descent on the NORM.
+            x_next = x_next + eff_step * residual / (norm + 1e-12)
+        x = x_next
+    return x
+
+
+def guided_fm_otode_posterior(
+    sys: GaussianSystem,
+    x0: Tensor,
+    y: Tensor,
+    *,
+    ensemble_size: int,
+    num_steps: int,
+    obs_variance: float = 0.0,
+    guidance_scale: float = 4.0,
+    generator: torch.Generator,
+) -> Tensor:
+    """OT-ODE covariance-preconditioned guided FM-ODE (pokle_training-free_2024).
+
+    FM-ODE prior. One-step denoiser ``xhat1 = x + (1 - t) v``; posterior-variance
+    estimate ``r_t^2 = (1-t)^2 / ((1-t)^2 + t^2)`` floored at 1e-2; preconditioned
+    guidance ``g = J (y - xhat1) / (r_t^2 + sigma_y^2)`` where ``J = d xhat1/dx``
+    (a scalar for the affine FM denoiser, derived in closed form). The posterior
+    velocity gains ``a_tau guidance_scale g`` with ``a_tau = (1 - t)/t`` (the
+    score->velocity coefficient applied by ``FlowMatchingPosterior``).
+    """
+    R2_FLOOR = 1e-2
+    d = sys.d
+    c = sys.prior_var
+    dt = 1.0 / num_steps
+    x = torch.randn(ensemble_size, d, generator=generator)
+    for i in range(num_steps):
+        t = (i + 1) * dt
+        t = min(max(t, 1e-4), 1.0 - 1e-4)
+        alpha = 1.0 - t
+        beta = t
+        v = _fm_prior_velocity(x, x0, t, c)
+        xhat1 = x + (1.0 - t) * v  # E[x1 | x_t]
+        # J = d xhat1 / dx (scalar for the affine FM denoiser).
+        # xhat1 = x + (1-t) v, v = alpha_d mean_z + beta_d mean_x1; both means are
+        # affine in x with slope d v/dx = (-alpha + beta c)/var_path, so
+        # J = 1 + (1-t) dv/dx.
+        var_path = alpha**2 + beta**2 * c
+        dvdx = (-alpha + beta * c) / var_path
+        J = 1.0 + (1.0 - t) * dvdx
+        r2 = max((1.0 - t) ** 2 / ((1.0 - t) ** 2 + t**2), R2_FLOOR)
+        g = J * (y.unsqueeze(0) - xhat1) / (r2 + obs_variance)  # H = I
+        a_tau = (1.0 - t) / t
+        x = x + (v + a_tau * guidance_scale * g) * dt
+    return x
+
+
+def _fm_ode_flow(
+    z0: Tensor, x0: Tensor, num_steps: int, prior_var: float
+) -> Tensor:
+    """Differentiable FM-ODE rollout ``x1 = Phi(z0)`` (forward Euler, g = 0)."""
+    dt = 1.0 / num_steps
+    x = z0
+    for i in range(num_steps):
+        t = (i + 1) * dt
+        t = min(max(t, 1e-4), 1.0 - 1e-4)
+        v = _fm_prior_velocity(x, x0, t, prior_var)
+        x = x + v * dt
+    return x
+
+
+def dflow_sgld_posterior(
+    sys: GaussianSystem,
+    x0: Tensor,
+    y: Tensor,
+    *,
+    ensemble_size: int,
+    num_steps: int,
+    num_optim_steps: int = 20,
+    step_size: float = 0.05,
+    noise_scale: float = 1.0,
+    guidance_scale: float = 1.0,
+    precond_decay: float = 0.99,
+    precond_eps: float = 1e-8,
+    generator: torch.Generator,
+) -> Tensor:
+    """D-Flow SGLD (ben-hamu_d-flow_2024): pSGLD over the FM source latent z0.
+
+    Optimise/sample ``z0`` so the differentiable FM-ODE flow ``Phi(z0) = x1``
+    matches ``y``, targeting ``p(z0 | y) ~ N(y; Phi(z0), R) N(z0; 0, I)`` with a
+    preconditioned-SGLD (RMSProp diagonal) update, then return ``Phi(z0)``. For
+    this affine-Gaussian flow D-Flow SGLD targets the EXACT source posterior.
+    """
+    d = sys.d
+    R = sys.obs_var
+    c = sys.prior_var
+    eta = step_size
+    rho = precond_decay
+    eps = precond_eps
+    z = torch.randn(ensemble_size, d, generator=generator)
+    V = torch.zeros_like(z)
+    yb = y.unsqueeze(0)
+    for k in range(1, max(num_optim_steps, 0) + 1):
+        z_g = z.detach().requires_grad_(True)
+        with torch.enable_grad():
+            x1 = _fm_ode_flow(z_g, x0, num_steps, c)
+            residual = yb - x1  # H = I
+            data_term = 0.5 * (residual**2).sum(dim=1) / R
+            prior_term = 0.5 * (z_g**2).sum(dim=1)
+            loss = guidance_scale * data_term + prior_term
+            grad = torch.autograd.grad(loss.sum(), z_g)[0]
+        V = rho * V + (1.0 - rho) * grad * grad
+        # FIX 2: Adam-style bias correction on the 2nd moment kills the RMSProp
+        # cold-start P explosion (V ~ (1-rho) g^2 at k=1 -> P ~ 1/(|g| sqrt(1-rho))
+        # ~ 10x too large). V_hat = V / (1 - rho^k) restores the published P form.
+        V_hat = V / (1.0 - rho**k)
+        P = 1.0 / (eps + V_hat.sqrt())
+        if noise_scale != 0.0:
+            noise = (
+                noise_scale
+                * (2.0 * eta) ** 0.5
+                * P.sqrt()
+                * torch.randn(ensemble_size, d, generator=generator)
+            )
+        else:
+            noise = torch.zeros_like(z)
+        z = (z_g - eta * P * grad).detach() + noise
+    with torch.no_grad():
+        x1 = _fm_ode_flow(z, x0, num_steps, c)
+    return x1
+
+
+def sda_posterior(
+    sys: GaussianSystem,
+    x0: Tensor,
+    y: Tensor,
+    *,
+    ensemble_size: int,
+    num_steps: int,
+    g0: float,
+    generator: torch.Generator,
+) -> Tensor:
+    """SDA single-window guidance on the diffusion-model (FM) prior (rozet_2023).
+
+    DM prior = the FM prior reused: score ``_fm_prior_score``, velocity
+    ``_fm_prior_velocity``, reverse-SDE drift ``v + 1/2 g^2 s`` with
+    endpoint-vanishing ``g = g0 sqrt(alpha beta)``, source ``N(0, I)``. Guidance:
+    Tweedie denoiser ``xhat1`` and ``Gamma_tau = (sigma^2 + rho) I`` with
+    ``rho = alpha^2`` (the FM source variance).
+
+    FIX 3: drop the ``1/||Gamma^-1 r||`` step-normalisation (it is exactly the DPS
+    rescaling SDA warns against, and the old ``0.5 g^2 sqrt(t)`` weight then
+    under-powered the guidance ~10-16x). Use the RAW likelihood score
+    ``s_lik = J Gamma^-1 (y - xhat1)`` (J = denoise_slope) and apply it with the
+    FM score->state coefficient ``a_tau + 0.5 g^2`` (``a_tau = alpha/beta``),
+    dropping the ``sqrt(t)`` factor.
+    """
+    d = sys.d
+    R = sys.obs_var
+    c = sys.prior_var
+    dt = 1.0 / num_steps
+    x = torch.randn(ensemble_size, d, generator=generator)
+    yb = y.unsqueeze(0)
+    for i in range(num_steps):
+        t = (i + 1) * dt
+        t = min(max(t, 1e-4), 1.0 - 1e-4)
+        alpha = 1.0 - t
+        beta = t
+        v = _fm_prior_velocity(x, x0, t, c)
+        s = _fm_prior_score(x, x0, t, c)
+        g = g0 * (alpha * beta) ** 0.5
+        drift = v + 0.5 * g**2 * s
+
+        # Tweedie denoiser xhat1 = E[x1 | x_t] = (x + sigma^2 s) / beta, a0 = 0.
+        sigma_tau_sq = alpha**2
+        xhat1 = (x + sigma_tau_sq * s) / beta
+        # J = d xhat1 / dx for the affine FM denoiser.
+        var_path = alpha**2 + beta**2 * c
+        denoise_slope = beta * c / var_path  # d E[x1|x_t]/dx (exact)
+        J = denoise_slope
+        rho = alpha**2  # FM source variance
+        gamma_scale = R + rho  # Gamma = (sigma^2 + rho) I  (H H^T = I)
+        # Raw likelihood score (NO step-normalisation): s_lik = J Gamma^-1 r.
+        s_lik = J * (yb - xhat1) / gamma_scale
+        a_tau = alpha / beta
+
+        x = x + drift * dt
+        x = x + g * torch.randn(ensemble_size, d, generator=generator) * dt**0.5
+        x = x + (a_tau + 0.5 * g**2) * s_lik * dt
+    return x
+
+
+def surge_posterior(
+    sys: GaussianSystem,
+    x0: Tensor,
+    y: Tensor,
+    *,
+    ensemble_size: int,
+    num_steps: int,
+    g0: float,
+    guidance_scale: float = 1.0,
+    ess_threshold: float = 0.5,
+    generator: torch.Generator,
+) -> Tensor:
+    """SURGE guided-SDE + Girsanov-corrected SMC particle filter (wei_surge).
+
+    DM prior reverse-SDE proposal (``v + 1/2 g^2 s``, ``g = g0 sqrt(alpha beta)``,
+    source ``N(0, I)``) with step-normalised DPS guidance. Reward
+    ``R_t = -1/2 ||y - xhat1||^2 / sigma^2``. Girsanov SMC log-weight increments
+    (reward delta + martingale ``- Sigma^{1/2} grad_G . sqrt(dt) xi`` and
+    quadratic-variation ``- 1/2 Sigma ||grad_G||^2 dt``); ESS-resample across the
+    ensemble when ESS/N < threshold, and a final resample.
+    """
+    d = sys.d
+    R = sys.obs_var
+    c = sys.prior_var
+    dt = 1.0 / num_steps
+    E = ensemble_size
+    x = torch.randn(E, d, generator=generator)
+    yb = y.unsqueeze(0)
+    log_w = torch.zeros(E)
+
+    def denoise_and_reward(xx: Tensor, tt: float) -> tuple[Tensor, Tensor, Tensor]:
+        """Return (xhat1, reward, grad_G_normalised)."""
+        alpha = 1.0 - tt
+        beta = tt
+        s = _fm_prior_score(xx, x0, tt, c)
+        xhat1 = (xx + alpha**2 * s) / beta  # a0 = 0
+        residual = yb - xhat1
+        reward = -0.5 / R * (residual**2).sum(dim=1)  # [E]
+        # grad_x reward = J^T H^T (y - xhat1)/sigma^2 (H = I); J = denoise slope.
+        var_path = alpha**2 + beta**2 * c
+        J = beta * c / var_path
+        grad = J * residual / R  # [E, d]
+        gnorm = grad.norm(dim=1, keepdim=True)
+        grad_tilde = guidance_scale * grad / (gnorm + 1e-6)
+        return xhat1, reward, grad_tilde
+
+    def maybe_resample(
+        xx: Tensor, lw: Tensor, force: bool = False
+    ) -> tuple[Tensor, Tensor]:
+        lw = torch.nan_to_num(lw, nan=-1e30, neginf=-1e30, posinf=1e30)
+        w = torch.softmax(lw - lw.max(), dim=0)
+        ess = 1.0 / torch.clamp((w**2).sum(), min=1e-30)
+        if not force and float(ess) >= ess_threshold * E:
+            return xx, lw
+        u0 = torch.rand(1, generator=generator) / E
+        positions = u0 + torch.arange(E) / E
+        cumsum = torch.cumsum(w, dim=0)
+        cumsum[-1] = 1.0
+        idx = torch.searchsorted(cumsum, positions).clamp(max=E - 1)
+        return xx[idx].clone(), torch.zeros(E)
+
+    for i in range(num_steps):
+        t = (i + 1) * dt
+        t = min(max(t, 1e-4), 1.0 - 1e-4)
+        t_next = min(t + dt, 1.0)
+        alpha = 1.0 - t
+        beta = t
+        v = _fm_prior_velocity(x, x0, t, c)
+        s = _fm_prior_score(x, x0, t, c)
+        g = g0 * (alpha * beta) ** 0.5
+        drift = v + 0.5 * g**2 * s
+        sigma2 = g**2
+
+        _, reward_k, grad_G = denoise_and_reward(x, t)
+
+        noise = torch.randn(E, d, generator=generator)
+        diffusion_incr = g * noise * dt**0.5
+        x_next = x + (drift + sigma2 * grad_G) * dt + diffusion_incr
+
+        # Reward at x_{k+1} for the reward-delta term.
+        _, reward_next, _ = denoise_and_reward(x_next, t_next)
+        reward_delta = t_next * reward_next - t * reward_k
+        flat_grad = g * grad_G
+        flat_dW = noise * dt**0.5
+        martingale = -(flat_grad * flat_dW).sum(dim=1)
+        quad_var = -0.5 * sigma2 * (grad_G**2).sum(dim=1) * dt
+        log_incr = reward_delta + martingale + quad_var
+        log_incr = torch.nan_to_num(log_incr, nan=-1e30, neginf=-1e30, posinf=1e30)
+        log_w = log_w + log_incr
+
+        x = x_next
+        x, log_w = maybe_resample(x, log_w)
+
+    x, _ = maybe_resample(x, log_w, force=True)
     return x
 
 
@@ -473,4 +855,9 @@ __all__ = [
     "enkf_posterior",
     "particle_filter_posterior",
     "flowdas_posterior",
+    "guided_fm_fig_posterior",
+    "guided_fm_otode_posterior",
+    "dflow_sgld_posterior",
+    "sda_posterior",
+    "surge_posterior",
 ]

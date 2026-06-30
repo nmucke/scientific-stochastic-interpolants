@@ -57,23 +57,34 @@ class Method(str, Enum):
     ``make_tables.METHOD_ROW_ORDER`` and ``METHOD_LATEX_LABEL``).
     """
 
+    # ---- FINAL PAPER METHOD LINEUP -------------------------------------- #
     # Our three samplers (unified family; differ only in g_tau / w_tau / source).
     OURS_SI_SDE = "Ours (SI-SDE)"
-    OURS_FM_SDE = "Ours (FM-SDE)"
     OURS_FM_ODE = "Ours (FM-ODE)"
+    OURS_FM_SDE = "Ours (FM-SDE)"  # FM-SDE (a diffusion-model sampler); shown as "FM-SDE (DM)"
 
-    # Generative posterior-sampler baselines (share the trained prior).
+    # SI prior + SDE.
     FLOWDAS = "FlowDAS"
-    GUIDED_FM = "Guided FM"  # FIG (yan_fig_2024)
-    GUIDED_DIFFUSION = "Guided diffusion"  # DPS (chung_diffusion_2023)
 
-    # Classical data assimilation.
+    # Flow-matching prior + ODE.
+    GUIDED_FM_FIG = "Guided FM (FIG)"  # FIG measurement-interpolant guidance (yan_fig_2025)
+    GUIDED_FM_OTODE = "Guided FM (OT-ODE)"  # OT-ODE guided flow (pokle_training-free_2024)
+    D_FLOW_SGLD = "D-Flow SGLD"  # D-Flow (ben-hamu_d-flow_2024) optimised with SGLD -- TODO implement
+
+    # Diffusion-model prior + SDE.
+    SDA = "SDA"  # score-based DA (rozet_score-based_2023), single-window, on the DM prior
+    SURGE = "SURGE"  # TODO implement
+
+    # Classical data assimilation (ground-truth EnKF + conventional baselines).
     ENKF = "EnKF"
+    LETKF = "LETKF"
     PARTICLE_FILTER = "Particle filter"
-
-    # Score-based data assimilation.
-    SDA = "SDA"
     ENSEMBLE_SCORE_FILTER = "Ensemble score filter"
+
+    # ---- DEPRECATED (kept for back-compat with old result files; NOT in the
+    # final paper lineup, removed from the run registry in driver.NS_METHODS). #
+    GUIDED_FM = "Guided FM"  # legacy simple guided FM (yan_fig_2024)
+    GUIDED_DIFFUSION = "Guided diffusion"  # DPS (chung_diffusion_2023)
 
 
 METHODS: tuple[Method, ...] = tuple(Method)
@@ -118,7 +129,9 @@ class Metric(str, Enum):
     ENERGY_SPEC_RMSE = "energy_spec_rmse"  # log-spectrum RMSE
 
     # (b) Probabilistic calibration.
-    CRPS = "crps"
+    CRPS = "crps"  # CRPS over the whole field (all grid points)
+    CRPS_OBSERVED = "crps_observed"  # CRPS at observed grid points only
+    CRPS_UNOBSERVED = "crps_unobserved"  # CRPS at unobserved grid points only
     SPREAD_SKILL = "spread_skill"  # report |1 - spread/skill| (0 = calibrated)
 
     # (c) Distributional fidelity.

@@ -30,14 +30,23 @@ seeds via `common/seeding.py`). `R = 0.05^2 I`.
   {`32^2->128^2`, `5%`}. → `generated/tab_ns_accuracy.tex`.
 - **`tab:ns_calibration_cost`** — CRPS, `|1-spread/skill|`, NFE, s/step × same.
   → `generated/tab_ns_calibration_cost.tex`.
-- **`tab:ablation`** — full / Jacobian-free / no `G_tau`; `g_tau` low/med/high
-  (incl. `g=0`=FM-ODE); `M ∈ {10,50,100}`; `E ∈ {16,64,256}`. On the FM-SDE
-  sampler. → `generated/tab_ablation.tex`.
-- **Appendix table** — `16^2->128^2` and `1.5625%` columns, same format.
-- **`fig:ns_trajectories`**, **`fig:ns_diagnostics`** — figure code is a TODO.
+- **`tab:ablation`** — covariance axis (per-member `inflated` vs shared
+  `inflated_shared` vs isotropic Jacobian-free); `g_tau` low/med/high (incl.
+  `g=0`=FM-ODE); `M ∈ {10,50,100}`; `E ∈ {16,64,256}`. On the FM-SDE sampler.
+  → `generated/tab_ablation.tex`.
+- **Appendix table** — `1.5625%` column, same format (super-res dropped; sparse
+  only — see Methods note).
+- **`fig:ns_trajectories`**, **`fig:ns_diagnostics`** — figure code exists; run
+  with `+save_figures=true`.
 
-Methods: our three + FlowDAS, Guided FM, Guided diffusion, SDA, ensemble score
-filter, EnKF, particle filter.
+**Method lineup (as of 2026-06-29).** Generative: our three (SI-SDE, FM-SDE,
+FM-ODE) + FlowDAS, Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD, SDA, SURGE.
+Classical (true-solver, NS only): EnKF, LETKF, particle filter, ensemble score
+filter. The **E=1000 non-localized EnKF is the ground-truth posterior / KL
+reference**; E=64 localized EnKF is a baseline. The legacy "Guided FM" (one-step
+DPS-on-flow) and "Guided diffusion" (DPS) are **DROPPED** from the paper — their
+`Method` enum entries are kept for back-compat but removed from the run
+registries (`NS_METHODS`/`WIRED_METHODS`, `make_tables`).
 
 ## Tidy rows this case emits
 
@@ -47,41 +56,50 @@ plus `nfe`/`seconds`. Ablation rows use `method=Ours (FM-SDE)` and the
 `ablation:*` tags in the `scenario` column (consumed by
 `make_tables.render_ablation_body`).
 
-## Status (wiring landed)
+## Status (2026-06-29 — all methods wired; full headline runs PENDING the GPU)
 
-`driver.py` + `_ns_pipeline.py` + `_ns_figures.py` now implement the full
-assimilation + evaluation pipeline:
+`driver.py` + `_ns_pipeline.py` + `_ns_figures.py` implement the full
+assimilation + evaluation pipeline, and all 10 generative + 4 classical methods
+are wired. **The headline 5-trajectory grid has NOT been re-run with the fixed
+methods** — the NS manuscript table cells are `\tbd` pending the GPU. The old NS
+baseline numbers are STALE (FlowDAS / SDA changed from the bug fixes; legacy
+Guided FM / Guided diffusion removed; D-Flow SGLD and SURGE are new and their NS
+hyperparameters are not yet locked).
 
 - **Obs operators (E1)** — block-average super-res (`super_res`) and seeded
   sparse masks (`random`, mask via `common.seeding.mask_seed`).
-- **Three samplers (E4)** — SI-SDE / FM-SDE / FM-ODE, sharing the trained prior;
-  FlowDAS wired. FM prior reuses the SI checkpoint's UNet drift + a rectified-flow
-  interpolation so `FlowMatchingModel.score` (L1) is defined; the FM correctness
-  asserts live in `FlowMatchingPosterior` (no `Phi_0^obs` reweighting; bounded
-  drift at `τ→1`).
+- **Three samplers (E4)** — SI-SDE / FM-SDE / FM-ODE, sharing the trained prior.
+  FM-SDE is shown in the paper as "FM-SDE (DM)" — a diffusion-model-style SDE on
+  the FM prior. The FM model is a **dedicated trained FM checkpoint**
+  (`flow_matching` / `flow_matching_big`), not the SI drift reused.
 - **Metrics (E7/E9/E10/E11/E13)** — ensemble-mean RMSE, log-spectrum energy
   RMSE, unbiased CRPS, spread-skill `|1-ratio|` (guarded for `E<2`), KL-at-points
   (observed vs unobserved) measured against a **large-E reference ensemble** drawn
   once per (scenario, seed) by the headline SI-SDE sampler on the same
   truth+obs+mask (size = `reference_ensemble_size`), NFE (drift-net forward
   counter) + wall-clock (`StepTimer`).
-- **Ablation (E12)** — `run_ablation()` (entrypoint; `run.py ablation=true`) drives
-  `evaluate_ablation`, which sweeps gain (likelihood_mode: `dps_full`/full,
-  `dps_jacobian_free`/JF, `inflated`/G=I), g_tau (incl. `g=0` == FM-ODE), M and E.
+- **Ablation (E12)** — `run_ablation()` (entrypoint; `run.py +ablation=true`)
+  drives `evaluate_ablation`, sweeping the **covariance axis** (`inflated_shared`
+  vs isotropic Jacobian-free — the multiplicative gain `dps_full` is dropped from
+  the paper, kept off-by-default in code), g_tau (incl. `g=0` == FM-ODE), M and E.
   Each sweep point is emitted with a per-point tag `ablation:<axis>:<value>` AND
-  the actual swept `E`/`M`, so across-seed aggregation (keyed on E/M) keeps points
-  distinct; the representative point per axis also fills the canonical
-  `make_tables` row (`ablation:steps_sweep`, etc.).
-- **Figures** — `_ns_figures` writes `fig:ns_trajectories` + `fig:ns_diagnostics`.
+  the actual swept `E`/`M`, so across-seed aggregation keeps points distinct.
+- **Figures** — `_ns_figures` writes `fig:ns_trajectories` + `fig:ns_diagnostics`;
+  `make_method_figures.py` / `make_conventional_figures.py` write per-method and
+  per-scenario comparison panels.
 
-The other baselines (Guided FM/diffusion, SDA, ensemble score filter, EnKF,
-particle filter) emit `--` TODO rows (Phase 4).
+### Diffusion prior is built from the FM model
+The SDA and SURGE baselines (and the FM-SDE sampler's diffusion sibling) use a
+**diffusion prior constructed from the trained FM model** via
+`DenoiseDiffusionModel.from_flow_matching` (velocity mode), because the separately
+trained diffusion checkpoint is weak. This is controlled by
+`case.checkpoints.diffusion_from_fm: true` in `navier_stokes.yaml`.
 
 ### Pointing at real weights (GPU box)
 `configs/case/navier_stokes.yaml`:
 - `checkpoints.si_run` — real SI run name (dir holds `model.pth`).
-- `checkpoints.fm_run` — real FM run name, or `null` to reuse the SI
-  architecture + SI drift weights (no dedicated FM checkpoint exists yet).
+- `checkpoints.fm_run` — real FM run name (a dedicated trained FM checkpoint).
+- `checkpoints.diffusion_from_fm: true` — build the DM prior from the FM model.
 - `require_weights: true` — hard-fail if the dir / `model.pth` is missing (no
   silent random-weights fallback). Default `false` keeps the random-init smoke
   path with a LOUD warning.
@@ -93,12 +111,12 @@ particle filter) emit `--` TODO rows (Phase 4).
   now expand `t` to the state rank for grid math while keeping `[B,1]` for the
   drift/score network and observation-space terms.
 
-### Remaining for a full-scale GPU run
-- Set `checkpoints.si_run` (+ `fm_run` once trained) to real run names holding
-  `model.pth` and `require_weights: true`.
-- Run on GPU with `likelihood_mode=inflated` (the full-Sigma_s path does one
-  network JVP per observation column per pseudo-time step, ≈ `N_y` extra forwards
-  — far too slow on CPU at 128² where `N_y` is 819–1024; cheap on GPU), E=64,
-  M=50, full seed list, all test ids.
-- `reference_ensemble_size: 1024` for KL-at-points (kept small in the smoke).
-- Implement the Phase-4 baselines.
+### Remaining for a full-scale GPU run (PENDING, 2026-06-29)
+- The headline 5-trajectory runs (E=64, M=50; E=1000 only for the ground-truth
+  EnKF) with the FIXED methods — these fill all `\tbd` cells in the NS table.
+- D-Flow SGLD and SURGE NS hyperparameter sweeps (never completed; D-Flow pSGLD
+  is ~17 min/config from the gradient-checkpointing recompute) — their NS configs
+  are not yet locked.
+- The step-count benchmark (M=100 / 500) is still deferred.
+- Locked so far: FIG (k=1, c=80, w=0); OT-ODE (σ_y²=0, γ=4), from a traj1 /
+  sparse-5% sweep vs the E=1000 EnKF posterior.

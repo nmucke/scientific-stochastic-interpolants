@@ -10,13 +10,12 @@ Source of truth for *what* to run: `paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md
 (Sections 8–9 in particular). Source of truth for *gaps and decisions*:
 `paper_new/GAP_ANALYSIS.md`.
 
-> **Status.** This is the **scaffold**. The schema, seeding, aggregation, and the
-> table emitter (`make_tables.py`) are fully working today (prove it with
-> `python paper_experiments/make_tables.py --demo`). The per-case scientific logic
-> (`cases/*/driver.py`) is **stubbed** — it raises `NotImplementedError` with a
-> `TODO` pointing at the GAP item / spec section it needs, because it depends on
-> the unified-sampler rebuild in `src/scisi/` happening in parallel
-> (GAP_ANALYSIS Phases 0–3).
+> **Status (2026-06-29).** Fully implemented. The schema, seeding, aggregation,
+> and the table emitter (`make_tables.py`) work; all three case drivers
+> (`cases/*/driver.py`) are implemented with all methods wired. **Analytical case
+> is DONE** (real numbers, all 11 methods, 3 figures). **NS and urban headline
+> runs are PENDING the GPU** — their manuscript table cells are `\tbd`. See
+> `RUN_STATUS.md` and `PROJECT_HANDOFF.md` for what is done vs pending.
 
 ---
 
@@ -53,7 +52,7 @@ paper_experiments/
 |---|---|---|---|
 | 1. Analytical linear–Gaussian | `cases/analytical` | correctness vs the closed-form posterior, no training | `tab:analytical_results`, `fig:analytical_panels` |
 | 2. Stochastic Navier–Stokes | `cases/navier_stokes` | learned prior, high-dim chaotic, the main benchmark | `tab:ns_accuracy`, `tab:ns_calibration_cost`, `tab:ablation`, `fig:ns_trajectories`, `fig:ns_diagnostics` |
-| 3. Urban airflow (uDALES) | `cases/urban` | multi-variable applied realism, solid obstacles | `tab:urban_accuracy`, `tab:urban_calibration_cost`, `fig:urban_fields` |
+| 3. Urban airflow (uDALES) | `cases/urban` | multi-variable applied realism, solid obstacles; **generative-only, sparse-only, no KL/energy** | `tab:urban_accuracy`, `tab:urban_calibration_cost`, `fig:urban_fields` |
 
 Each case folder has its own `README.md` with the deliverables and TODO seams.
 
@@ -70,21 +69,33 @@ Our three samplers (one shared unified loop, differing only in `g_tau`, `w_tau`,
 the source, and whether a Brownian increment is added):
 
 - **Ours (SI-SDE)** — `si_sde.yaml`
-- **Ours (FM-SDE)** — `fm_sde.yaml`
 - **Ours (FM-ODE)** — `fm_ode.yaml`
+- **Ours (FM-SDE)** — `fm_sde.yaml` (shown in the paper as **FM-SDE (DM)**, a
+  diffusion-model-style SDE on the FM prior)
 
-Baselines (generative ones share the trained prior):
+Baselines, grouped by (prior, sampler) (generative ones share the trained prior):
 
-- **FlowDAS** · **Guided FM** (FIG) · **Guided diffusion** (DPS) · **EnKF** ·
-  **Particle filter** · **SDA** · **Ensemble score filter**
+- **SI prior + SDE:** FlowDAS
+- **Flow-matching prior + ODE:** Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD
+- **Diffusion-model prior + SDE:** SDA, SURGE — both use the DM prior built from
+  the FM model (`DenoiseDiffusionModel.from_flow_matching`)
+- **Classical (Navier–Stokes ONLY — true solver):** EnKF (E=1000 non-localized =
+  ground-truth posterior / KL reference; E=64 localized = baseline), LETKF,
+  particle filter, ensemble score filter
+
+**DROPPED from the paper:** the legacy "Guided FM" (one-step DPS-on-flow) and
+"Guided diffusion" (DPS). Their `Method` enum entries are kept for back-compat but
+are removed from the run registries and `make_tables`.
 
 The exact strings are the `Method` enum *values*; `make_tables.py` keys every
-row off them and maps to the `\cite{...}` row labels in `results.tex`.
+row off them. Methods are cited in prose + an appendix "Method descriptions"
+section (no per-row `\cite`).
 
 ## Scenarios (canonical labels — `results_schema.Scenario`)
 
-- `32^2->128^2` and `16^2->128^2` — super-resolution (block-average operator)
-- `sparse 5%` and `sparse 1.5625%` — sparse sensors
+- `sparse 5%` and `sparse 1.5625%` — sparse sensors (the NS + urban scenarios)
+- `32^2->128^2` and `16^2->128^2` — super-resolution (block-average operator);
+  defined in code but **urban uses sparse only**
 - `analytical` — Case 1's single joint scenario
 
 ## Metrics (canonical keys — `results_schema.Metric`)
@@ -183,15 +194,15 @@ These constrain the case drivers and are baked into the configs here:
   schedule-derived quantity (`a_tau`, `A_tau`, source moments, `G_tau`) must be
   implemented **generally in `α, β, γ` and their derivatives**, never hard-coded
   to rectified flow.
-- **`G_tau`: implement BOTH full and Jacobian-free, config-selectable** (the
-  `gain: full | jacobian_free` switch in the method configs). The full
-  source-covariance Jacobian term enables the full-vs-JF ablation row.
+- **Multiplicative gain `G_tau` was DROPPED** (it didn't improve accuracy — see
+  `PROJECT_HANDOFF.md`). Accuracy comes from inflating the covariance, not the
+  gain. The ablation is now a **covariance axis** (`inflated` / `inflated_shared`
+  vs isotropic Jacobian-free); `dps_full`/`_apply_gain` are kept off-by-default.
 - **uDALES data is author-provided** (`.nc` + `mask.npz`); no in-repo CFD
-  generator. Case 3 scope is the loader, solid-cell masking, channel-count fix,
-  and metrics around the supplied data.
-- **Baseline scope decided after Phase 1.** Default first wave: FlowDAS + EnKF +
-  bootstrap PF + DPS; SDA + ensemble score filter as a second wave. All ten
-  method configs exist here so the rows are ready when each baseline lands.
+  generator. Case 3 (urban) is generative-only, sparse-only, no KL/energy.
+- **Final baseline lineup (2026-06-29):** FlowDAS, Guided FM (FIG), Guided FM
+  (OT-ODE), D-Flow SGLD, SDA, SURGE + the classical filters (NS only). The legacy
+  Guided FM / Guided diffusion (DPS) baselines are dropped from the paper.
 
 ## TODO seams (where the rebuilt `src/scisi` plugs in)
 

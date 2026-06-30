@@ -1,0 +1,41 @@
+# D-Flow with SGLD -- NEW BASELINE (flow matching + ODE).
+#
+# D-Flow (Ben-Hamu, Puny, Gat, Karrer, Singer & Lipman, "D-Flow: Differentiating
+# through Flows for Controlled Generation", ICML 2024, arXiv:2402.14017) performs
+# controlled generation by optimising the SOURCE latent z_0 so that the
+# deterministic FM-ODE flow Phi(z_0) = x_1 matches the observations, with the data
+# cost differentiated through the WHOLE ODE solve (d x_1 / d z_0). The paper uses
+# LBFGS + line search for a single MAP point and an optional source regulariser
+# R(z_0) = -log p(||z_0||).
+#
+# The "SGLD" variant turns the MAP optimisation into approximate POSTERIOR
+# sampling: each ensemble member is a stochastic-gradient Langevin chain over its
+# own z_0, targeting p(z_0 | y) propto N(y; H Phi(z_0), R) N(z_0; 0, I) (the
+# Gaussian source prior of the trained FM model):
+#
+#   z_0 <- z_0 - eta grad[ 1/(2R) ||y - H Phi(z_0)||^2 + 1/2 ||z_0||^2 ]
+#              + sqrt(2 eta) noise_scale xi,   xi ~ N(0, I),  K = num_optim_steps,
+#
+# returning x_1 = Phi(z_0). noise_scale = 0 recovers plain gradient-descent D-Flow.
+#
+# Shares the trained FM prior; the forward map is the deterministic FM-ODE
+# (stepper=ode, g=0). Because D-Flow backprops through the ENTIRE rollout it does
+# NOT fit the per-step _one_step + likelihood pattern (which detaches each step),
+# so it uses a dedicated DFlowPosterior that overrides sample() with a
+# differentiable rollout; the likelihood object is a thin holder for H and R.
+name: D-Flow SGLD
+stepper: ode
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.dflow.DFlowSGLDLikelihood
+  # Preconditioned-SGLD (pSGLD, paper Eq. 20) hyperparameters (tune in a sweep).
+  num_optim_steps: 20        # pSGLD steps K per assimilation window
+  step_size: 0.05            # learning rate eta (preconditioned)
+  noise_scale: 1.0           # P^{1/2}-scaled Langevin noise multiplier (0 -> MAP)
+  guidance_scale: 1.0        # extra multiplier on the data-term gradient
+  precond_decay: 0.99        # RMSProp rho for the running 2nd-moment V
+  precond_eps: 1.0e-8        # floor in P = 1/(eps + sqrt(V))
+
+posterior_model:
+  _target_: scisi.posterior_models.dflow_posterior.DFlowPosterior

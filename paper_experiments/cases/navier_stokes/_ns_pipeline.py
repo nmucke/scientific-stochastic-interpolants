@@ -40,12 +40,19 @@ from scisi.likelihood_models.gaussian_likelihood import (
     FlowdasGaussianLikelihood,
     InterpolantGaussianLikelihood,
 )
+from scisi.likelihood_models.guidance import (
+    DPSGaussianLikelihood,
+    FIGGaussianLikelihood,
+    GuidanceGaussianLikelihood,
+)
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.sda import SDALikelihood
 from scisi.metrics.accuracy import ensemble_mean_rmse
 from scisi.metrics.calibration import crps, rank_histogram, spread_skill
 from scisi.metrics.cost import NFECounter, StepTimer
 from scisi.metrics.distributional import kl_at_points
 from scisi.metrics.spectral import energy_spectrum_rmse
+from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.models.flow_matching_model import FlowMatchingModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.models.interpolations import LinearDeterministicInterpolation
@@ -81,6 +88,7 @@ class LoadedPrior:
     train_cfg: DictConfig
     checkpoint_name: str
     has_trained_weights: bool
+    diffusion_model: Optional[torch.nn.Module] = None  # DenoiseDiffusionModel (DPS)
 
 
 def _checkpoint_dir(project: str, name: str) -> Path:
@@ -240,6 +248,27 @@ def load_prior(case_cfg: DictConfig, device: str) -> LoadedPrior:
     si_model.eval().to(device)
     fm_model.eval().to(device)
 
+    # --- Diffusion prior (for the DPS / Guided-diffusion baseline) ---------- #
+    # The Guided-diffusion baseline needs a diffusion prior. Two sources:
+    #
+    #  * ``checkpoints.diffusion_from_fm: true`` (DEFAULT) -- build it FROM the
+    #    well-trained FM model via ``DenoiseDiffusionModel.from_flow_matching``
+    #    (velocity mode: score / reverse-SDE drift reconstructed from the FM
+    #    velocity). Preferred because the dedicated diffusion checkpoint is poorly
+    #    trained; the FM prior is the same architecture, better optimised.
+    #  * else -- a DEDICATED trained diffusion model loaded from
+    #    ``checkpoints.diffusion_run`` (default "diffusion_model").
+    #
+    # None when neither a usable FM prior nor a diffusion checkpoint is available.
+    diffusion_model = None
+    diffusion_from_fm = bool(case_cfg.get("checkpoints", {}).get("diffusion_from_fm", True))
+    if diffusion_from_fm:
+        diffusion_model = DenoiseDiffusionModel.from_flow_matching(fm_model)
+        diffusion_model.eval().to(device)
+        logger.info("Built diffusion prior from the FM model (diffusion_from_fm=True).")
+    else:
+        diffusion_model = _load_diffusion_checkpoint(case_cfg, project, device, require_weights)
+
     preprocesser = hydra.utils.instantiate(train_cfg.preprocesser)
     test_dataset = hydra.utils.instantiate(train_cfg.test_data)
 
@@ -252,7 +281,42 @@ def load_prior(case_cfg: DictConfig, device: str) -> LoadedPrior:
         train_cfg=train_cfg,
         checkpoint_name=si_run,
         has_trained_weights=has_weights,
+        diffusion_model=diffusion_model,
     )
+
+
+def _load_diffusion_checkpoint(
+    case_cfg: DictConfig, project: str, device: str, require_weights: bool
+) -> Optional[torch.nn.Module]:
+    """Load a dedicated trained diffusion model from ``checkpoints.diffusion_run``.
+
+    Returns None when no diffusion checkpoint dir/config is configured. Used only
+    when ``checkpoints.diffusion_from_fm`` is False.
+    """
+    diffusion_model = None
+    diff_run = _configured_run(case_cfg, "diffusion")
+    diff_dir = _checkpoint_dir(project, diff_run) if diff_run else None
+    if diff_dir is not None and diff_dir.is_dir() and (diff_dir / "config.yaml").is_file():
+        diff_train_cfg = OmegaConf.load(diff_dir / "config.yaml")
+        diffusion_model = hydra.utils.instantiate(diff_train_cfg.model)
+        if (diff_dir / "model.pth").is_file():
+            diffusion_model.load_state_dict(
+                torch.load(diff_dir / "model.pth", map_location="cpu")
+            )
+            logger.info("Loaded diffusion weights from %s", diff_dir / "model.pth")
+        elif require_weights:
+            raise FileNotFoundError(
+                f"require_weights=True but no model.pth at {diff_dir} "
+                f"(diffusion_run={diff_run!r})."
+            )
+        diffusion_model.eval().to(device)
+    elif require_weights and diff_run:
+        raise FileNotFoundError(
+            f"require_weights=True but diffusion_run {diff_run!r} dir/config.yaml "
+            f"is missing under checkpoints/{project}/."
+        )
+
+    return diffusion_model
 
 
 # --------------------------------------------------------------------------- #
@@ -269,7 +333,13 @@ def attach_nfe_counter(model: torch.nn.Module) -> NFECounter:
     one extra forward). This is the true NFE per assimilation step (spec 3d).
     """
     counter = NFECounter()
-    net = model.drift_model
+    # The network attribute is ``drift_model`` for SI/FM and ``denoise_model``
+    # for the diffusion prior (DenoiseDiffusionModel); fall back to ``.model``.
+    net = (
+        getattr(model, "drift_model", None)
+        or getattr(model, "denoise_model", None)
+        or model.model
+    )
     if getattr(net, "_nfe_wrapped", False):
         net._nfe_counter = counter  # type: ignore[attr-defined]
         return counter
@@ -424,6 +494,214 @@ def build_posterior(
         )
         posterior = StochasticInterpolantPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "Guided FM":
+        # FIG / Guided-FM baseline (yan_fig_2024): the legacy one-step guidance
+        # likelihood (GuidanceGaussianLikelihood) routed through the FM
+        # probability-flow ODE (FM-ODE), reusing the trained FM prior. The config
+        # targets FlowMatchingPosterior with stepper=ode (g=0, deterministic).
+        model = prior.fm_model
+        likelihood = GuidanceGaussianLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+        )
+        posterior = FlowMatchingPosterior(
+            model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "Guided FM (FIG)":
+        # FIG baseline (yan_fig_2025): the faithful measurement-interpolant
+        # corrector (FIGGaussianLikelihood) routed through the FM probability-flow
+        # ODE (FM-ODE), reusing the trained FM prior. The corrector pulls each
+        # post-flow state toward y_t = t_next * y by k gradient-descent steps with
+        # scale c * (1 - t) / t (paper Algorithm 1). Config targets
+        # FlowMatchingPosterior with stepper=ode (g=0, deterministic).
+        model = prior.fm_model
+        lik_cfg = method_cfg.get("likelihood_model", {})
+        likelihood = FIGGaussianLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            guidance_steps=int(lik_cfg.get("guidance_steps", 2)),
+            guidance_scale=float(lik_cfg.get("guidance_scale", 10.0)),
+            interpolant_noise=float(lik_cfg.get("interpolant_noise", 0.0)),
+        )
+        posterior = FlowMatchingPosterior(
+            model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "Guided FM (OT-ODE)":
+        # OT-ODE baseline (pokle_training-free_2024): "Training-free Linear Image
+        # Inverses via Flows" (Pokle, Muckley, Chen & Karrer, TMLR 2024). The
+        # GuidanceGaussianLikelihood in weighting='ot_ode' mode -- covariance-
+        # preconditioned guidance g = (d xhat_1/d z_t)^T H^T
+        # (r_t^2 H H^T + sigma_y^2 I)^{-1} (y - H xhat_1) with r_t^2 = (1-t)^2 /
+        # ((1-t)^2 + t^2) (paper Eq. 16 / Alg. 1, mapped to our forward time).
+        # Reuses the trained FM prior; routed through FlowMatchingPosterior with
+        # stepper=ode (g=0, deterministic).
+        model = prior.fm_model
+        lik_cfg = method_cfg.get("likelihood_model", {})
+        obs_var = lik_cfg.get("obs_variance", None)
+        likelihood = GuidanceGaussianLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            weighting="ot_ode",
+            obs_variance=float(obs_var) if obs_var is not None else None,
+            guidance_scale=float(lik_cfg.get("guidance_scale", 1.0)),
+        )
+        posterior = FlowMatchingPosterior(
+            model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "Guided diffusion":
+        # DPS baseline (chung_diffusion_2023): faithful DPS likelihood (Tweedie
+        # denoiser xhat_1 with autograd through the network, raw R = sigma^2 I)
+        # on a diffusion prior (DenoiseDiffusionModel), routed through the
+        # purpose-built reverse-SDE DiffusionPosterior (Gaussian init a0=0). The
+        # prior is built FROM the FM model by default (case.checkpoints.
+        # diffusion_from_fm=true) since the dedicated diffusion checkpoint is
+        # poorly trained; set diffusion_from_fm=false to use checkpoints.
+        # diffusion_run instead. Either way model.score / .drift behave as a
+        # diffusion prior, so DPS is unchanged.
+        from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
+
+        model = prior.diffusion_model
+        if model is None:
+            raise ValueError(
+                "Guided diffusion requires a diffusion prior, but none was loaded. "
+                "Either keep case.checkpoints.diffusion_from_fm=true (build it from "
+                "the FM model) or set case.checkpoints.diffusion_run to a checkpoint "
+                "under checkpoints/<project>/."
+            )
+        # model_class='fm' -> Tweedie denoiser from model.score with anchor a0=0,
+        # which is exactly the diffusion model's parametrisation (source ~ N(0,I)).
+        likelihood = DPSGaussianLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            model_class="fm",
+        )
+        posterior = DiffusionPosterior(
+            model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "SDA":
+        # SDA baseline (rozet_score-based_2023), single-window adaptation: SDA's
+        # DPS-style guidance with the Gamma_tau = sigma^2 I + gamma_tau^2 H H^T
+        # covariance (see scisi.likelihood_models.sda). SDA is a score/diffusion
+        # method, so -- like Guided diffusion -- it runs on the diffusion prior
+        # (built from the FM model by default, case.checkpoints.diffusion_from_fm)
+        # through the reverse-SDE DiffusionPosterior (Gaussian init a0=0).
+        # model_class='fm' -> Tweedie denoiser from model.score with anchor a0=0,
+        # rho_tau = alpha^2 (the diffusion source variance). NOTE: this is the
+        # single-window guidance, not SDA's full all-at-once trajectory score
+        # (documented in the SDALikelihood module docstring).
+        from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
+
+        model = prior.diffusion_model
+        if model is None:
+            raise ValueError(
+                "SDA requires a diffusion prior, but none was loaded. Either keep "
+                "case.checkpoints.diffusion_from_fm=true (build it from the FM "
+                "model) or set case.checkpoints.diffusion_run to a checkpoint "
+                "under checkpoints/<project>/."
+            )
+        likelihood = SDALikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            model_class="fm",
+        )
+        posterior = DiffusionPosterior(
+            model=model, likelihood_model=likelihood, diffusion_term=None
+        )
+        return model, posterior, stepper
+
+    if method_name == "D-Flow SGLD":
+        # NEW baseline (flow matching + ODE): D-Flow (ben-hamu_d-flow_2024)
+        # optimise-the-source-latent guidance, sampled with SGLD. Differentiates
+        # the data cost through the WHOLE FM-ODE flow Phi(z_0) and runs SGLD over
+        # the source latent z_0, targeting p(z_0 | y) propto N(y; H Phi(z_0), R)
+        # N(z_0; 0, I). Because it backprops through the entire rollout it does
+        # NOT fit the per-step _one_step + likelihood pattern, so it uses a
+        # dedicated DFlowPosterior that overrides sample() with a differentiable
+        # rollout; the likelihood is a thin holder for H and R. Reuses the trained
+        # FM prior; forward map is the deterministic FM-ODE (stepper=ode, g=0).
+        from scisi.likelihood_models.dflow import DFlowSGLDLikelihood
+        from scisi.posterior_models.dflow_posterior import DFlowPosterior
+
+        model = prior.fm_model
+        lik_cfg = method_cfg.get("likelihood_model", {})
+        num_optim_steps = int(lik_cfg.get("num_optim_steps", 20))
+        step_size = float(lik_cfg.get("step_size", 0.01))
+        noise_scale = float(lik_cfg.get("noise_scale", 1.0))
+        guidance_scale = float(lik_cfg.get("guidance_scale", 1.0))
+        precond_decay = float(lik_cfg.get("precond_decay", 0.99))
+        precond_eps = float(lik_cfg.get("precond_eps", 1e-8))
+        likelihood = DFlowSGLDLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            num_optim_steps=num_optim_steps,
+            step_size=step_size,
+            noise_scale=noise_scale,
+            guidance_scale=guidance_scale,
+        )
+        posterior = DFlowPosterior(
+            model=model,
+            likelihood_model=likelihood,
+            diffusion_term=None,
+            num_optim_steps=num_optim_steps,
+            step_size=step_size,
+            noise_scale=noise_scale,
+            guidance_scale=guidance_scale,
+            precond_decay=precond_decay,
+            precond_eps=precond_eps,
+            variance=variance,
+        )
+        return model, posterior, stepper
+
+    if method_name == "SURGE":
+        # SURGE baseline (wei_surge_2026, arXiv:2605.18745), single-window: a
+        # guided reverse-diffusion SDE proposal (DPS Gaussian observation
+        # guidance) with Girsanov-corrected SMC reweighting + ESS-based
+        # resampling across particles. Runs on the diffusion-model prior (built
+        # from the FM model by default, case.checkpoints.diffusion_from_fm), like
+        # SDA. Unlike the likelihood-only baselines it owns the full sampler
+        # (needs the injected SDE noise + cross-particle resampling), so it is a
+        # dedicated posterior (SurgePosterior), not a DiffusionPosterior+likelihood.
+        from scisi.posterior_models.surge_posterior import SurgePosterior
+
+        model = prior.diffusion_model
+        if model is None:
+            raise ValueError(
+                "SURGE requires a diffusion prior, but none was loaded. Either "
+                "keep case.checkpoints.diffusion_from_fm=true (build it from the "
+                "FM model) or set case.checkpoints.diffusion_run to a checkpoint "
+                "under checkpoints/<project>/."
+            )
+        surge_cfg = method_cfg.get("posterior_model", {})
+        posterior = SurgePosterior(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            guidance_scale=float(surge_cfg.get("guidance_scale", 1.0)),
+            ess_threshold=float(surge_cfg.get("ess_threshold", 0.5)),
+            diffusion_term=None,
         )
         return model, posterior, stepper
 
@@ -613,12 +891,22 @@ def compute_metrics(
     E = post.shape[0]
     C, H, W = post.shape[1], post.shape[2], post.shape[3]
 
-    # Observed-point mask on the flat grid (for KL observed/unobserved split).
+    # Observed-point mask on the flat grid (for the observed/unobserved split of
+    # both KL-at-points and CRPS). For sparse (selection) operators the observed
+    # set is the sensor locations; for the block-average super-res operator every
+    # point feeds an observation, so the unobserved set is empty and the
+    # unobserved CRPS is NaN (no unobserved points to score).
     obs_mask_grid = obs_operator.obs_indices_on_grid.reshape(-1).to(torch.bool)
+    obs_mask_chw = obs_mask_grid.reshape(C, H, W)
+    unobs_mask_chw = ~obs_mask_chw
+    has_obs = bool(obs_mask_chw.any())
+    has_unobs = bool(unobs_mask_chw.any())
 
     rmse_steps: list[float] = []
     espec_steps: list[float] = []
     crps_steps: list[float] = []
+    crps_obs_steps: list[float] = []
+    crps_unobs_steps: list[float] = []
     ss_steps: list[float] = []
     kl_steps: list[float] = []
 
@@ -654,6 +942,11 @@ def compute_metrics(
             float(energy_spectrum_rmse(xbar[0], true_t[0]))
         )
         crps_steps.append(float(crps(ens_t, true_t)))
+        # CRPS split into observed vs unobserved grid points (vs the truth).
+        if has_obs:
+            crps_obs_steps.append(float(crps(ens_t, true_t, mask=obs_mask_chw)))
+        if has_unobs:
+            crps_unobs_steps.append(float(crps(ens_t, true_t, mask=unobs_mask_chw)))
         # spread-skill is undefined for a single-member ensemble (needs E >= 2).
         if E >= 2:
             ss = spread_skill(ens_t, true_t)
@@ -666,15 +959,17 @@ def compute_metrics(
             ref_t = reference_trajectory[..., t].reshape(
                 reference_trajectory.shape[0], -1
             )[:, point_idx]  # [E_ref, P]
+            kl = kl_at_points(
+                sampled=ens_flat,
+                reference=ref_t,
+                observed_mask=point_is_obs,
+                method="gaussian",
+            )
+            kl_steps.append(float(kl["mean"]))
         else:
-            ref_t = ens_flat  # degenerate self-reference (no reference supplied)
-        kl = kl_at_points(
-            sampled=ens_flat,
-            reference=ref_t,
-            observed_mask=point_is_obs,
-            method="gaussian",
-        )
-        kl_steps.append(float(kl["mean"]))
+            # No reference posterior supplied -> KL is undefined (NaN), NOT a
+            # degenerate self-reference (which would falsely read as ~0).
+            kl_steps.append(float("nan"))
 
     def _mean(xs: list[float]) -> float:
         return float(sum(xs) / len(xs)) if xs else float("nan")
@@ -683,10 +978,25 @@ def compute_metrics(
         "rmse": _mean(rmse_steps),
         "energy_spec_rmse": _mean(espec_steps),
         "crps": _mean(crps_steps),
+        "crps_observed": _mean(crps_obs_steps),
+        "crps_unobserved": _mean(crps_unobs_steps),
         "spread_skill": _mean(ss_steps),
         "kl_points": _mean(kl_steps),
         "nfe": result.nfe_per_step,
         "seconds": result.seconds_per_step,
+        # Per-(assimilation-)step metric curves (one value per scored time step,
+        # i.e. t = len_field_history .. T-1). Consumed by ``_save_states`` so the
+        # metrics-vs-time plots can be made without recomputing. NOT a CSV row
+        # (``_metric_rows`` reads only the scalar Metric keys above).
+        "per_step": {
+            "rmse": list(rmse_steps),
+            "energy_spec_rmse": list(espec_steps),
+            "crps": list(crps_steps),
+            "crps_observed": list(crps_obs_steps),
+            "crps_unobserved": list(crps_unobs_steps),
+            "spread_skill": list(ss_steps),
+            "kl_points": list(kl_steps),
+        },
     }
 
 

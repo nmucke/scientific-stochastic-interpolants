@@ -305,3 +305,153 @@ Tables~\ref{tab:samplers} and~\ref{tab:si_vs_fm} collect the construction. Table
         \bottomrule
     \end{tabular}
 \end{table*}
+
+\subsection{Approximations and simplifications}
+\label{subsec:approximations}
+
+The construction above is exact under a small, explicitly stated set of
+assumptions. We collect them here so that the scope of the method is transparent
+and the empirical trade-offs studied in Section~\ref{sec:results} are easy to
+locate. Table~\ref{tab:approximations} summarises the full list, grouped by
+where each enters the pipeline; the paragraphs below give the one-line rationale
+and validity range for each.
+
+\subsubsection{Modelling assumptions}
+
+\paragraph{Linear--Gaussian observation model.}
+The observation operator $\obsoperator$ is taken to be linear with matrix
+$\obsmatrix$ and the observation noise to be additive Gaussian,
+$\obsnoise\sim\mathcal{N}(0,\obscov)$ (Lemma~\ref{lem:interpolated_likelihood}).
+This is what makes the interpolated likelihood Gaussian in closed form. Mildly
+nonlinear $\obsoperator$ can be accommodated by local linearisation, at the cost
+of the exactness of Lemma~\ref{lem:interpolated_likelihood}.
+
+\paragraph{Autoregressive posterior factorisation.}
+A trajectory is assimilated one observation at a time, propagating each posterior
+sample forward as the next conditioning state. This is exact for a single
+assimilation step; over a window it corresponds to the optimal proposal of
+particle filtering with the importance weights $\conddist{\obs^{i}}{\state^{i-1}}$
+and the conditioning on future observations omitted -- the standard approximation
+in autoregressive generative data assimilation.
+
+\subsubsection{Likelihood-surrogate approximations}
+
+\paragraph{Observation interpolation.}
+The exact likelihood tilt $\Phi_\tau^{\obs}$ requires integrating the dynamics
+and backpropagating through the trajectory. We replace it by the directly
+computable surrogate built from the observation interpolant
+$\interpolantobs_\tau=\alpha_\tau\obsmatrix\bm a_0+\beta_\tau\obs$
+(Section~\ref{subsec:obs_interpolation}). The surrogate is exact at the endpoints
+($\interpolantobs_1=\obs$) and interpolates the influence of the observation in
+between.
+
+\paragraph{Gaussian likelihood surrogates.}
+Both the interpolant likelihood \eqref{eq:interpolant_likelihood_gaussian} and the
+true likelihood \eqref{eq:true_likelihood_gaussian} are approximated by Gaussians,
+the latter being the Diffusion Posterior Sampling (DPS) surrogate centred at the
+denoiser. Exact when the conditional $p(\bx_1\mid\bx_\tau,\bx_0)$ is Gaussian
+(e.g.\ the analytical linear--Gaussian case of
+Appendix~\ref{appendix:simple_test_case}); a controlled approximation otherwise.
+
+\paragraph{Fixed-covariance score gradients.}
+Gradients of the Gaussian log-densities are taken with the covariances
+$\bar\Sigma_\tau$ and $\obscov$ held fixed with respect to $\bx_\tau$
+(Section~\ref{sec:multiplicative_correction}), as is standard in guidance methods.
+This drops a higher-order term in the score and keeps the correction a single
+rank-$N_y$ operator.
+
+\paragraph{Uninflated vs.\ inflated covariance.}
+We present the uninflated DPS covariance $\obscov$ as the method and note that the
+$\Pi$GDM-style inflation
+$\obscov+\obsmatrix\,\cov(\bx_1\mid\bx_\tau,\bx_0)\,\obsmatrix^\top$ is available
+at no extra derivation cost, since $\cov(\bx_1\mid\bx_\tau,\bx_0)=\srccov_\tau/\beta_\tau^2$
+(Lemma~\ref{lem:source_moments}). The inflated covariance is exact in the
+analytical linear--Gaussian case; we treat the choice as an empirical one and
+report both in Section~\ref{sec:results}.
+
+\subsubsection{Gain-correction approximations}
+
+\paragraph{Full multiplicative gain.}
+Theorem~\ref{thm:multiplicative_correction} gives the exact gain
+$G_\tau=\bI+\beta_\tau^{-2}\srccov_\tau\obsmatrix^\top\obscov^{-1}\obsmatrix$
+relating the surrogate and interpolant scores under the Gaussian surrogates. Its
+source covariance $\srccov_\tau$ carries a network-Jacobian term.
+
+\paragraph{Jacobian-free isotropic gain.}
+Replacing $\srccov_\tau$ by its isotropic part $\rho_\tau\bI$
+(Corollary~\ref{cor:cheap_drift}, Eq.~\eqref{eq:G_cheap}) removes the Jacobian and
+makes the correction a precomputable $\mathcal{O}(N_uN_y)$ operator. Accurate when
+$\sigpath_\tau^2\|\nabla_{\bx}^2\log p_\tau\|\ll1$ (small source scale near
+$\tau\to1$, or near-Gaussian priors); the discarded term is the second-order
+curvature, which may matter for multimodal priors at intermediate $\tau$.
+
+\paragraph{Ensemble-shared source covariance.}
+When the full source covariance $\srccov_\tau$ is retained -- i.e.\ the inflated
+covariance or the full gain of Theorem~\ref{thm:multiplicative_correction}, rather
+than the Jacobian-free approximation above -- forming
+$\bar\Sigma_\tau=\beta_\tau^2\obscov+\obsmatrix\srccov_\tau\obsmatrix^\top$ requires
+applying the network Jacobian $\nabla_{\bx}\drift_\theta$ as $N_y$ Jacobian--vector
+products \emph{per ensemble member} at every pseudo-time step -- an
+$\mathcal{O}(E\,N_y)$ network-evaluation cost (ensemble size $E$) that is
+prohibitive at field resolution. For the high-dimensional experiments we therefore
+evaluate the Jacobian \emph{once at the ensemble mean}, sharing $\srccov_\tau$ across
+the ensemble, so that $\bar\Sigma_\tau$ is a single $N_y\times N_y$ system factorised
+once and reused for every member's right-hand side -- removing the ensemble factor
+$E$ from the dominant cost. The approximation is exact in the limit of a tight
+ensemble (it reduces to the per-member computation as the members coincide) and is
+the natural analogue of the shared forecast covariance used by ensemble Kalman
+filters.
+
+\subsubsection{Schedule and numerical simplifications}
+
+\paragraph{Quadratic-$\beta$ stochastic-interpolant schedule.}
+The trained SI model uses a quadratic schedule $\beta_\tau=\tau^2$; all
+schedule-derived quantities ($\vscoef_\tau$, $A_\tau$, the source moments, and
+$G_\tau$) are kept general in $(\alpha_\tau,\beta_\tau,\gamma_\tau)$ and their
+derivatives, so no rectified-flow reduction is assumed.
+
+\paragraph{Endpoint-vanishing diffusion for the FM-SDE lift.}
+The free diffusion $\gdiff_\tau$ of the lifted flow-matching SDE is chosen to
+vanish at the endpoints (e.g.\ $\gdiff_\tau\propto\sqrt{\alpha_\tau\beta_\tau}$),
+which keeps the recovered FM score finite as $\tau\to1$ and matches the boundary
+behaviour of the native SI diffusion.
+
+\paragraph{Pseudo-time clamping.}
+The interpolant coefficients degenerate at $\tau=0$ ($\beta_0=0$ makes $G_\tau$ and
+$\gweight_\tau$ singular); the correction is applied from $\tau=\Delta\tau$
+onwards and $\tau$ is clamped away from $\{0,1\}$.
+
+\begin{table*}[ht]
+    \centering
+    \caption{Approximations and simplifications of the observation-interpolant
+    method, grouped by where they enter the pipeline. ``Exact when'' states the
+    regime in which the approximation incurs no error. All schedule-derived
+    quantities are kept general in $(\alpha_\tau,\beta_\tau,\gamma_\tau)$.}
+    \label{tab:approximations}
+    \small
+    \begin{tabular}{p{0.21\linewidth} p{0.30\linewidth} p{0.20\linewidth} p{0.21\linewidth}}
+        \toprule
+        \textbf{Approximation} & \textbf{What is assumed / dropped} & \textbf{Where} & \textbf{Exact when} \\
+        \midrule
+        \multicolumn{4}{l}{\emph{Modelling}}\\
+        Linear--Gaussian observations & $\obsoperator$ linear ($\obsmatrix$), noise $\mathcal N(0,\obscov)$ & Lem.~\ref{lem:interpolated_likelihood} & $\obsoperator$ exactly linear \\
+        Autoregressive factorisation & Optimal proposal; drop importance weights and future conditioning & Sec.~\ref{sec:preliminaries} & Single assimilation step \\
+        \midrule
+        \multicolumn{4}{l}{\emph{Likelihood surrogate}}\\
+        Observation interpolation & Replace intractable tilt $\Phi_\tau^{\obs}$ by $\interpolantobs_\tau$ surrogate & Sec.~\ref{subsec:obs_interpolation} & $\tau=1$ (and endpoints) \\
+        Gaussian likelihoods & Interpolant and true (DPS) likelihoods are Gaussian & Eqs.~\eqref{eq:interpolant_likelihood_gaussian}--\eqref{eq:true_likelihood_gaussian} & $p(\bx_1\mid\bx_\tau,\bx_0)$ Gaussian \\
+        Fixed-covariance gradients & Differentiate scores with covariances detached & Sec.~\ref{sec:multiplicative_correction} & Locally constant covariance \\
+        Uninflated covariance & Use $\obscov$, not $\obscov+\obsmatrix\srccov_\tau\beta_\tau^{-2}\obsmatrix^\top$ & Sec.~\ref{sec:multiplicative_correction} & Inflated form: linear--Gaussian \\
+        \midrule
+        \multicolumn{4}{l}{\emph{Gain correction}}\\
+        Full gain $G_\tau$ & Exact rank-$N_y$ gain with source-covariance Jacobian & Thm.~\ref{thm:multiplicative_correction} & Under the Gaussian surrogates \\
+        Jacobian-free gain & $\srccov_\tau\approx\rho_\tau\bI$; drop network Jacobian & Cor.~\ref{cor:cheap_drift} & $\sigpath_\tau^2\|\nabla^2_{\bx}\log p_\tau\|\ll1$ \\
+        Ensemble-shared $\srccov_\tau$ & Full-$\srccov_\tau$ Jacobian evaluated once at the ensemble mean (shared) & Sec.~\ref{subsec:approximations} & Tight ensemble (members coincide) \\
+        \midrule
+        \multicolumn{4}{l}{\emph{Schedule / numerical}}\\
+        Quadratic-$\beta$ SI schedule & $\beta_\tau=\tau^2$; general in $(\alpha,\beta,\gamma)$ & Sec.~\ref{sec:methodology} & Modelling choice (no error) \\
+        Endpoint-vanishing $\gdiff_\tau$ & $\gdiff_\tau\!\to\!0$ at endpoints for the FM-SDE lift & Sec.~\ref{subsec:posterior_dynamics} & Keeps FM score finite at $\tau\to1$ \\
+        Pseudo-time clamping & Apply correction for $\tau\in[\Delta\tau,1-\Delta\tau]$ & Sec.~\ref{sec:implementation} & $\Delta\tau\to0$ \\
+        \bottomrule
+    \end{tabular}
+\end{table*}

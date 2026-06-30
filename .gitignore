@@ -65,3 +65,6 @@ multirun/
 
 # pdf
 *.pdf
+
+# Saved posterior/truth states from save_states=true (large .npz files)
+paper_experiments/results/states/

@@ -13,6 +13,7 @@ carried through as the mean of the contributing rows when consistent.
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections import defaultdict
 
@@ -39,8 +40,16 @@ def aggregate_over_seeds(records: list[ResultRecord]) -> list[ResultRecord]:
     aggregated: list[ResultRecord] = list(passthrough)
     for (case, method, scenario, metric, E, M), rows in groups.items():
         values = [r.value for r in rows]
-        mean = statistics.fmean(values)
-        std = statistics.stdev(values) if len(values) > 1 else 0.0
+        # NaN-safe: ``statistics.stdev`` raises on NaN ("'float' object has no
+        # attribute 'numerator'"), and metrics legitimately carry NaN (e.g. NFE
+        # for classical filters, or a diverging sampler's score). Aggregate over
+        # the finite values; if all NaN, the metric stays NaN.
+        finite = [v for v in values if v is not None and not math.isnan(v)]
+        if not finite:
+            mean, std = float("nan"), float("nan")
+        else:
+            mean = statistics.fmean(finite)
+            std = statistics.stdev(finite) if len(finite) > 1 else 0.0
         aggregated.append(
             ResultRecord(
                 case=case,
