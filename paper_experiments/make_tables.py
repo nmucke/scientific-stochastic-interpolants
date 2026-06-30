@@ -68,37 +68,43 @@ MISSING_CELL = "--"
 # the baselines -- matching the \midrule structure already in results.tex.
 _OURS: tuple[Method, ...] = (
     Method.OURS_SI_SDE,
-    Method.OURS_FM_SDE,
     Method.OURS_FM_ODE,
+    Method.OURS_FM_SDE,
 )
-_ANALYTICAL_BASELINES: tuple[Method, ...] = (
+# Generative baselines, grouped: SI+SDE, then FM+ODE, then DM+SDE.
+_GENERATIVE_BASELINES: tuple[Method, ...] = (
     Method.FLOWDAS,
-    Method.GUIDED_FM,
-    Method.GUIDED_DIFFUSION,
-    Method.ENKF,
-    Method.PARTICLE_FILTER,
-)
-_FIELD_BASELINES: tuple[Method, ...] = (
-    Method.FLOWDAS,
-    Method.GUIDED_FM,
-    Method.GUIDED_DIFFUSION,
+    Method.GUIDED_FM_OTODE,
+    Method.D_FLOW_SGLD,
     Method.SDA,
-    Method.ENSEMBLE_SCORE_FILTER,
+    Method.SURGE,
+)
+_ANALYTICAL_BASELINES: tuple[Method, ...] = _GENERATIVE_BASELINES + (
     Method.ENKF,
     Method.PARTICLE_FILTER,
+)
+_FIELD_BASELINES: tuple[Method, ...] = _GENERATIVE_BASELINES + (
+    # Classical / true-solver baselines (EnSF is now a true-solver method too).
+    Method.ENKF,
+    Method.LETKF,
+    Method.PARTICLE_FILTER,
+    Method.ENSEMBLE_SCORE_FILTER,
 )
 
 # Map a method to the exact LaTeX row label (with \cite) used in results.tex.
 METHOD_LATEX_LABEL: dict[Method, str] = {
     Method.OURS_SI_SDE: r"Ours (SI-SDE)",
-    Method.OURS_FM_SDE: r"Ours (FM-SDE)",
     Method.OURS_FM_ODE: r"Ours (FM-ODE)",
+    Method.OURS_FM_SDE: r"Ours (FM-SDE/DM)",
     Method.FLOWDAS: r"FlowDAS \cite{chen_flowdas_2025}",
-    Method.GUIDED_FM: r"Guided FM \cite{yan_fig_2024}",
-    Method.GUIDED_DIFFUSION: r"Guided diffusion \cite{chung_diffusion_2023}",
+    Method.GUIDED_FM_FIG: r"Guided FM (FIG) \cite{yan_fig_2025}",
+    Method.GUIDED_FM_OTODE: r"Guided FM (OT-ODE) \cite{pokle_training-free_2024}",
+    Method.D_FLOW_SGLD: r"D-Flow SGLD \cite{ben-hamu_d-flow_2024}",
     Method.SDA: r"SDA \cite{rozet_score-based_2023}",
+    Method.SURGE: r"SURGE",
     Method.ENSEMBLE_SCORE_FILTER: r"Ensemble score filter \cite{bao_ensemble_2024}",
     Method.ENKF: r"EnKF \cite{evensen_data_2022}",
+    Method.LETKF: r"LETKF \cite{hunt_efficient_2007}",
     Method.PARTICLE_FILTER: r"Particle filter \cite{carrassi_data_2018}",
 }
 
@@ -237,27 +243,30 @@ SPEC_NS_CALIBRATION_COST = TableSpec(
     fmt="{:.3f}",
 )
 
-# tab:urban_accuracy -- (velocity RMSE | temperature RMSE | KL) x scenarios.
+# Urban methods: generative-only (no true solver => no EnKF/LETKF/PF/EnSF; the
+# Ensemble Score Filter is now a true-solver method too. See urban driver.)
+_URBAN_METHODS = _OURS + _GENERATIVE_BASELINES
+
+# tab:urban_accuracy -- (velocity RMSE | temperature RMSE) x scenarios. No KL: urban
+# has no ground-truth posterior to reference (only a ground-truth state).
 SPEC_URBAN_ACCURACY = TableSpec(
     label="tab:urban_accuracy",
     case=Case.URBAN,
-    methods=_OURS + _FIELD_BASELINES,
+    methods=_URBAN_METHODS,
     n_ours=len(_OURS),
     columns=(
         Column(Metric.RMSE_VELOCITY, Scenario.SUPERRES_32),
         Column(Metric.RMSE_VELOCITY, Scenario.SPARSE_5),
         Column(Metric.RMSE_TEMPERATURE, Scenario.SUPERRES_32),
         Column(Metric.RMSE_TEMPERATURE, Scenario.SPARSE_5),
-        Column(Metric.KL_POINTS, Scenario.SUPERRES_32),
-        Column(Metric.KL_POINTS, Scenario.SPARSE_5),
     ),
 )
 
-# tab:urban_calibration_cost -- mirror of the NS calibration/cost table.
+# tab:urban_calibration_cost -- spread--skill + CRPS (vs the ground-truth state) + cost.
 SPEC_URBAN_CALIBRATION_COST = TableSpec(
     label="tab:urban_calibration_cost",
     case=Case.URBAN,
-    methods=_OURS + _FIELD_BASELINES,
+    methods=_URBAN_METHODS,
     n_ours=len(_OURS),
     columns=(
         Column(Metric.CRPS, Scenario.SUPERRES_32),
@@ -306,14 +315,13 @@ def render_table_body(spec: TableSpec, index: RecordIndex) -> str:
 # by the ablation driver, with metric in {rmse, crps, spread_skill}.
 ABLATION_ROWS: tuple[tuple[str, str], ...] = (
     # (LaTeX row label, scenario tag emitted by the ablation driver)
-    (r"Full gain $G_\tau$", "ablation:gain_full"),
-    (r"Jacobian-free $G_\tau$", "ablation:gain_jacfree"),
-    (r"No correction ($G_\tau=\bI$)", "ablation:gain_none"),
+    (r"Inflated covariance $\bar\Sigma_\tau$", "ablation:cov_inflated"),
+    (r"Jacobian-free covariance", "ablation:cov_jacfree"),
     (r"$\gdiff_\tau$ sweep (low/med/high)", "ablation:gdiff_sweep"),
     (r"Steps $M$ (e.g.\ $10/50/100$)", "ablation:steps_sweep"),
     (r"Ensemble $E$ (e.g.\ $16/64/256$)", "ablation:ensemble_sweep"),
 )
-ABLATION_MIDRULE_AFTER = 3  # \midrule after the three gain rows.
+ABLATION_MIDRULE_AFTER = 2  # \midrule after the two covariance rows.
 ABLATION_METRICS: tuple[Metric, ...] = (
     Metric.RMSE,
     Metric.CRPS,
