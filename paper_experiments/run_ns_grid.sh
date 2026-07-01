@@ -34,7 +34,7 @@
 #   setsid nohup bash paper_experiments/run_ns_grid.sh >run_ns_grid.log 2>&1 & disown
 # Track:  .venv/bin/python paper_experiments/status.py --case navier_stokes
 #
-# Env overrides (subset the grid): TRAJ, SCENARIOS, STEPS, GROUPS, E, NP, DEVICE.
+# Env overrides (subset the grid): TRAJ, SCENARIOS(|-sep), STEPS, GRPS, E, NP, DEVICE.
 # =============================================================================
 set -u
 cd /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants
@@ -53,9 +53,9 @@ NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
 # Scenarios as a bash array (canonical labels).
-if [ -n "${SCENARIOS:-}" ]; then read -r -a SCEN_ARR <<< "$SCENARIOS";
+if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
 else SCEN_ARR=("16^2->128^2" "32^2->128^2" "sparse 5%" "sparse 1.5625%"); fi
-GROUPS="${GROUPS:-ours_jacfree ours_shared baselines classical}"
+GRPS="${GRPS:-ours_jacfree ours_shared baselines classical}"
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD"]'
@@ -63,10 +63,10 @@ CLASSICAL='["EnKF","Particle filter"]'
 # -----------------------------------------------------------------------------
 
 slug() { echo "$1" | sed -E 's/[^A-Za-z0-9]+/_/g; s/^_+//; s/_+$//'; }
-has_group() { echo " $GROUPS " | grep -q " $1 "; }
+has_group() { echo " $GRPS " | grep -q " $1 "; }
 
 LOG="$ROOT/run_ns_grid.log"
-echo "[nsgrid] START $(date) | E=$E NP=$NP dev=$DEVICE | traj=[$TRAJ] steps=[$STEPS] groups=[$GROUPS]" | tee -a "$LOG"
+echo "[nsgrid] START $(date) | E=$E NP=$NP dev=$DEVICE | traj=[$TRAJ] steps=[$STEPS] groups=[$GRPS]" | tee -a "$LOG"
 
 # run_cell <outfile> <group-tag> <extra run.py args...>
 run_cell() {

@@ -26,7 +26,7 @@ TRAJ="${TRAJ:-1 2 3 4 5}"
 NP="${NP:-20}"
 E_REF="${E_REF:-1000}"
 DEVICE="${DEVICE:-cuda}"
-if [ -n "${SCENARIOS:-}" ]; then read -r -a SCEN_ARR <<< "$SCENARIOS";
+if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
 else SCEN_ARR=("16^2->128^2" "32^2->128^2" "sparse 5%" "sparse 1.5625%"); fi
 
 LOG="$ROOT/run_ns_reference.log"

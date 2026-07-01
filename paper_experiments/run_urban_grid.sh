@@ -24,7 +24,7 @@
 #
 # Launch: setsid nohup bash paper_experiments/run_urban_grid.sh >run_urban_grid.log 2>&1 & disown
 # Track : .venv/bin/python paper_experiments/status.py --case urban
-# Env overrides: TRAJ, SCENARIOS, STEPS, GROUPS, E, NP, DEVICE, REQUIRE_W.
+# Env overrides: TRAJ, SCENARIOS(|-sep), STEPS, GRPS, E, NP, DEVICE, REQUIRE_W.
 # =============================================================================
 set -u
 cd /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants
@@ -40,18 +40,18 @@ E="${E:-64}"
 NP="${NP:-20}"
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"
-if [ -n "${SCENARIOS:-}" ]; then read -r -a SCEN_ARR <<< "$SCENARIOS";
+if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
 else SCEN_ARR=("sparse 5%" "sparse 1.5625%"); fi
-GROUPS="${GROUPS:-ours_jacfree ours_shared baselines}"
+GRPS="${GRPS:-ours_jacfree ours_shared baselines}"
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD"]'
 
 slug() { echo "$1" | sed -E 's/[^A-Za-z0-9]+/_/g; s/^_+//; s/_+$//'; }
-has_group() { echo " $GROUPS " | grep -q " $1 "; }
+has_group() { echo " $GRPS " | grep -q " $1 "; }
 
 LOG="$ROOT/run_urban_grid.log"
-echo "[urbangrid] START $(date) | E=$E NP=$NP dev=$DEVICE | traj=[$TRAJ] steps=[$STEPS] groups=[$GROUPS]" | tee -a "$LOG"
+echo "[urbangrid] START $(date) | E=$E NP=$NP dev=$DEVICE | traj=[$TRAJ] steps=[$STEPS] groups=[$GRPS]" | tee -a "$LOG"
 
 run_cell() {
   local outfile="$1"; shift
