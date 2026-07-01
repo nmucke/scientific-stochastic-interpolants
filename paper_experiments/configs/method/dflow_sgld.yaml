@@ -1,41 +1,96 @@
-# D-Flow with SGLD -- NEW BASELINE (flow matching + ODE).
+# D-Flow SGLD -- BASELINE (flow matching + ODE), arXiv:2602.21469.
 #
-# D-Flow (Ben-Hamu, Puny, Gat, Karrer, Singer & Lipman, "D-Flow: Differentiating
-# through Flows for Controlled Generation", ICML 2024, arXiv:2402.14017) performs
-# controlled generation by optimising the SOURCE latent z_0 so that the
-# deterministic FM-ODE flow Phi(z_0) = x_1 matches the observations, with the data
-# cost differentiated through the WHOLE ODE solve (d x_1 / d z_0). The paper uses
-# LBFGS + line search for a single MAP point and an optional source regulariser
-# R(z_0) = -log p(||z_0||).
+# D-Flow SGLD (Parikh, Chen & Wang, "D-Flow SGLD: Source-Space Posterior Sampling
+# for Scientific Inverse Problems with Flow Matching") performs training-free
+# posterior sampling by running preconditioned SGLD (pSGLD) over the SOURCE latent
+# z_0 of a trained flow-matching prior, differentiating the data cost through the
+# WHOLE FM-ODE flow Phi(z_0) = x_1. Per Algorithm 1 the per-step update is
 #
-# The "SGLD" variant turns the MAP optimisation into approximate POSTERIOR
-# sampling: each ensemble member is a stochastic-gradient Langevin chain over its
-# own z_0, targeting p(z_0 | y) propto N(y; H Phi(z_0), R) N(z_0; 0, I) (the
-# Gaussian source prior of the trained FM model):
+#   L1 = ||y - F(Phi(z_0))||^2                          (data misfit, L6)
+#   L  = L1 + lambda ||z_0||^2                           (optional source reg, Eq. 31)
+#   V  <- omega V + (1 - omega) grad(L1) (.) grad(L1)    (RMSProp on data grad, L14)
+#   P  =  1 / (sqrt(V) + delta)                          (preconditioner, L15)
+#   z_0 <- z_0 - eta P grad(L) + N(0, 2 eta s P)         (Langevin step, L19)
 #
-#   z_0 <- z_0 - eta grad[ 1/(2R) ||y - H Phi(z_0)||^2 + 1/2 ||z_0||^2 ]
-#              + sqrt(2 eta) noise_scale xi,   xi ~ N(0, I),  K = num_optim_steps,
-#
-# returning x_1 = Phi(z_0). noise_scale = 0 recovers plain gradient-descent D-Flow.
-#
-# Shares the trained FM prior; the forward map is the deterministic FM-ODE
-# (stepper=ode, g=0). Because D-Flow backprops through the ENTIRE rollout it does
-# NOT fit the per-step _one_step + likelihood pattern (which detaches each step),
-# so it uses a dedicated DFlowPosterior that overrides sample() with a
-# differentiable rollout; the likelihood object is a thin holder for H and R.
+# returning x_1 = Phi(z_0). The data term is the PLAIN squared residual (no 1/(2R)
+# factor); V uses the DATA-term gradient only; there is no bias correction. The
+# differentiable rollout uses a MIDPOINT (RK2) integrator with 6 steps (Table D.3,
+# D-Flow / D-Flow SGLD column). It backprops through the whole rollout, so it uses
+# a dedicated DFlowPosterior overriding sample(); the likelihood object holds F/H.
 name: D-Flow SGLD
 stepper: ode
 diffusion_term: null
 
 likelihood_model:
   _target_: scisi.likelihood_models.dflow.DFlowSGLDLikelihood
-  # Preconditioned-SGLD (pSGLD, paper Eq. 20) hyperparameters (tune in a sweep).
-  num_optim_steps: 20        # pSGLD steps K per assimilation window
-  step_size: 0.05            # learning rate eta (preconditioned)
-  noise_scale: 1.0           # P^{1/2}-scaled Langevin noise multiplier (0 -> MAP)
-  guidance_scale: 1.0        # extra multiplier on the data-term gradient
-  precond_decay: 0.99        # RMSProp rho for the running 2nd-moment V
-  precond_eps: 1.0e-8        # floor in P = 1/(eps + sqrt(V))
+
+  # ---------------------------------------------------------------------------
+  # Per-cell hyperparameter tables (same convention as flowdas.yaml). ANY knob
+  # below may be a scalar OR a [scenario][num_sde_steps M] table marked by a
+  # `default:` key; the pipeline (resolve_scheduled_hparams) resolves it to ONE
+  # scalar per run from (scenario_key, num_steps). A missing scenario / missing
+  # M column / null entry falls back to `default` with a warning, so a table can
+  # hold null placeholders for cells not tuned yet. Env vars override the whole
+  # resolved value (top precedence, so a sweep needs no edit to this YAML):
+  #   DFLOW_NSTEPS, DFLOW_STEP_SIZE, DFLOW_NOISE_SCALE, DFLOW_LAMBDA.
+  #
+  # Defaults below are Table D.3's "Turb" (wall-bounded turbulence) column, the
+  # closest paper case to this repo's fluid setup. Reference values per paper case
+  # (fill the tables below to reproduce or per-cell tune; alpha=beta=0 always):
+  #   Toy : Nsteps=500, eta=5e-2, s=1e-2, lambda=0.1 (S-curve)/0.05 (Two-moon)
+  #   KS  : Nsteps=300, eta=1e-2, s=1e-3, lambda=1e-3
+  #   Turb: Nsteps=600, eta=5e-2, s=1e-3, lambda=5e-6
+  # NOTE: Nsteps is the dominant compute knob (each step backprops a 6-step
+  # midpoint rollout per member); dial it down per cell here for cheaper runs.
+  # ---------------------------------------------------------------------------
+
+  # num_optim_steps = Nsteps, pSGLD steps per window (endpoint taken post-burn).
+  # NOTE (peculiar to D-Flow): the driver drives num_optim_steps from the global
+  # sampler step count `num_steps` (M). D-Flow's differentiable ODE rollout is
+  # FIXED at ode_steps=6, so M would otherwise be inert -- mapping M ->
+  # num_optim_steps makes the {50,100,250,500} sweep D-Flow's Langevin-steps axis.
+  # The DFLOW_NSTEPS env var still overrides (top precedence); this table is used
+  # only as the fallback when M is unset.
+  num_optim_steps:
+    default: 600
+    #              M=50   M=100  M=250  M=500
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
+
+  # step_size = eta, pSGLD step size.
+  step_size:
+    default: 0.05
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
+
+  # noise_scale = s, Langevin noise scale; increment ~ N(0, 2 eta s P) (s=0 -> MAP).
+  noise_scale:
+    default: 1.0e-3
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
+
+  # lambda_reg = lambda, weight on source reg lambda ||z_0||^2 (Eq. 31; 0 disables).
+  # MOST IMPORTANT knob: balances data misfit vs source-prior plausibility; its
+  # tuned value spans ~5 orders of magnitude across problems (see refs above).
+  lambda_reg:
+    default: 5.0e-6
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
+
+  # Fixed across all paper cases (Table D.3) -> plain scalars; promote to a table
+  # like the ones above if a future sweep needs to tune them per cell.
+  precond_decay: 0.99        # omega, RMSProp decay for V (data-grad 2nd moment)
+  precond_eps: 1.0e-3        # delta, floor in P = 1/(sqrt(V) + delta)
+  ode_steps: 6               # midpoint (RK2) rollout steps (decoupled from num_steps)
+  burn: 100                  # burn-in (documented; endpoint-per-chain collection)
 
 posterior_model:
   _target_: scisi.posterior_models.dflow_posterior.DFlowPosterior

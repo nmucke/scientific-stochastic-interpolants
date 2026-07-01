@@ -32,7 +32,7 @@ convergence study (KL stays tractable — compare sample mean/cov to exact).
 
   | method | KL→exact |
   |---|---|
-  | Ours SI-SDE / FM-SDE / FM-ODE | 0.0009 / 0.0016 / 0.0011 |
+  | Ours SI-SDE / DM-SDE / FM-ODE | 0.0009 / 0.0016 / 0.0011 |
   | FlowDAS | 0.080 |
   | Guided FM (OT-ODE) | 0.0021 |
   | D-Flow SGLD | 0.079 |
@@ -69,7 +69,7 @@ one row per (method, seed) before aggregation.
 - `samplers.py` — **all 11 methods are self-contained CLOSED-FORM samplers** here;
   they do NOT use the `scisi/src` posterior classes, because the linear-Gaussian
   prior velocity / score / drift are available in closed form. Covers the three
-  ours samplers (SI-SDE, FM-SDE, FM-ODE), and the faithful baselines: FlowDAS
+  ours samplers (SI-SDE, DM-SDE, FM-ODE), and the faithful baselines: FlowDAS
   (paper Algorithm-2 importance-weighted residual guidance), Guided FM in both
   FIG and OT-ODE modes, D-Flow SGLD (Adam-style bias-corrected RMSProp
   preconditioner), SDA (DiffusionPosterior `fm_coeff` weighting, no DPS

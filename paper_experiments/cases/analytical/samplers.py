@@ -8,7 +8,7 @@ Spec Section 4. The prior transition is the analytic Gaussian
 Because no network is trained here, every quantity the unified posterior drift
 needs (the prior velocity/score, the source conditional moments, the
 interpolant-likelihood score and the multiplicative gain) is available in closed
-form. We implement the three samplers of the paper -- ``SI-SDE``, ``FM-SDE`` and
+form. We implement the three samplers of the paper -- ``SI-SDE``, ``DM-SDE`` and
 ``FM-ODE`` -- directly as vector SDE/ODE integrators on this analytic prior,
 parameterised by the three config-selectable likelihood modes
 (``inflated`` / ``dps_full`` / ``dps_jacobian_free``).
@@ -282,7 +282,7 @@ def _g_tau(t: float, model_class: str, g0: float) -> float:
     """Diffusion strength ``g_tau``.
 
     * SI-SDE: native ``g_tau = gamma_tau = g0 (1 - tau)``.
-    * FM-SDE: endpoint-vanishing ``g_tau = g0 sqrt(alpha beta)`` (spec Alg. 3),
+    * DM-SDE: endpoint-vanishing ``g_tau = g0 sqrt(alpha beta)`` (spec Alg. 3),
       keeping ``0.5 g^2 s`` finite as ``tau -> 1``.
     """
     if model_class == "si":
@@ -302,7 +302,7 @@ def sample_posterior(
     x0: Tensor,
     y: Tensor,
     *,
-    sampler: str,  # "si_sde" | "fm_sde" | "fm_ode"
+    sampler: str,  # "si_sde" | "dm_sde" | "fm_ode"
     likelihood_mode: str = "inflated",
     ensemble_size: int = 64,
     num_steps: int = 50,
@@ -323,7 +323,7 @@ def sample_posterior(
     if sampler == "si_sde":
         model_class, use_noise = "si", True
         x = x0b.clone()  # SI init: point mass at x0
-    elif sampler == "fm_sde":
+    elif sampler == "dm_sde":
         model_class, use_noise = "fm", True
         x = torch.randn(ensemble_size, d, generator=generator)  # exact N(0,I) init
     elif sampler == "fm_ode":

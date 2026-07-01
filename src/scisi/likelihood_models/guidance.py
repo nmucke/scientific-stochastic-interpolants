@@ -318,35 +318,56 @@ class GuidanceGaussianLikelihood(nn.Module):
         r2 = (one_minus_t**2) / (one_minus_t**2 + t_grid**2)
         r2_scalar = max(float(r2.reshape(-1)[0]), R2_FLOOR)
 
-        # Guidance on a DETACHED grad-enabled leaf so the caller's autoregressive
-        # working state is never mutated in place (mirrors DPS / SDA).
-        x_g = x.detach().requires_grad_(True)
-        with torch.enable_grad():
-            # One-step denoiser xhat_1 = E[x_1 | x_t] = x + (1-t) v (forward).
-            # Recompute the velocity FROM x_g (not from the pre-frozen ``drift``)
-            # so that autograd can flow through d(xhat_1)/d(x_g) = I + (1-t)*dv/dx.
-            # Using the frozen ``drift`` would set J = I and under-weight the VJP
-            # by the true Jacobian, producing ~50x over-guidance at small t.
-            velocity_g = self.model.drift(
-                x_g, t_grid, field_history, field_cond, pars_cond
-            )
-            xhat1 = x_g + (1.0 - t_grid) * velocity_g
-            residual = observations - self.obs_operator(xhat1)  # [B, N_y]
+        # Chunked guidance over the ensemble batch.
+        # The U-Net backward graph for the full B=64 ensemble at 128×128 exceeds
+        # GPU memory. quad[b] is independent across b (each member's xhat_1 only
+        # depends on its own activations), so chunking is mathematically exact.
+        _OT_CHUNK = 8  # members per backward pass; lower if still OOM
+        B = x.shape[0]
 
-            # Preconditioner M = r_t^2 H H^T + sigma_y^2 I  (Pokle Alg. 1 line 7).
-            HHt = self._get_HHt(x_g)  # [N_y, N_y]
-            N_y = HHt.shape[0]
-            eye = torch.eye(N_y, device=HHt.device, dtype=HHt.dtype)
-            M = r2_scalar * HHt + self.obs_variance * eye
-            # M is held fixed w.r.t. x (detached); the gradient flows only through
-            # the residual (xhat_1). Writing the quadratic form with the solve
-            # INSIDE the graph makes autograd return the OT-ODE VJP
-            # g = (d xhat_1/d z_t)^T A^T M^{-1} (y - A xhat_1) (M symmetric).
-            sol = torch.linalg.solve(
-                M.detach(), residual.transpose(0, 1)
-            ).transpose(0, 1)  # [B, N_y] = M^{-1} (y - H xhat_1)
-            quad = 0.5 * (residual * sol).sum(dim=1)  # [B]
-            grad = torch.autograd.grad(outputs=quad.sum(), inputs=x_g)[0]
+        # Build the shared preconditioner M once (independent of x).
+        HHt = self._get_HHt(x)  # [N_y, N_y]
+        N_y = HHt.shape[0]
+        eye = torch.eye(N_y, device=HHt.device, dtype=HHt.dtype)
+        M = r2_scalar * HHt + self.obs_variance * eye
+
+        grad_chunks: list[torch.Tensor] = []
+        residual_chunks: list[torch.Tensor] = []
+        for b0 in range(0, B, _OT_CHUNK):
+            b1 = min(b0 + _OT_CHUNK, B)
+            sl = slice(b0, b1)
+
+            x_chunk = x[sl].detach().requires_grad_(True)
+            tc_chunk = t_clamped[sl] if t_clamped.shape[0] == B else t_clamped
+            tg_chunk = t_grid[sl] if t_grid.shape[0] == B else t_grid
+            fh_chunk = field_history[sl]
+            fc_chunk = field_cond[sl] if field_cond is not None else None
+            pc_chunk = pars_cond[sl] if pars_cond is not None else None
+            obs_chunk = observations[sl]
+
+            with torch.enable_grad():
+                # Recompute velocity FROM x_chunk so autograd tracks the full
+                # Jacobian J = I + (1-t)*dv/dx.  Using frozen drift → J = I,
+                # ~50× over-guidance at small t (see class docstring).
+                vel_chunk = self.model.drift(
+                    x_chunk, tc_chunk, fh_chunk, fc_chunk, pc_chunk
+                )
+                xhat1_chunk = x_chunk + (1.0 - tg_chunk) * vel_chunk
+                res_chunk = obs_chunk - self.obs_operator(xhat1_chunk)  # [n, N_y]
+                # M is held fixed (detached); gradient flows only through residual.
+                sol_chunk = torch.linalg.solve(
+                    M.detach(), res_chunk.transpose(0, 1)
+                ).transpose(0, 1)  # [n, N_y]
+                quad_chunk = 0.5 * (res_chunk * sol_chunk).sum(dim=1)  # [n]
+                g_chunk = torch.autograd.grad(
+                    outputs=quad_chunk.sum(), inputs=x_chunk
+                )[0]
+
+            grad_chunks.append(g_chunk.detach())
+            residual_chunks.append(res_chunk.detach())
+
+        grad = torch.cat(grad_chunks, dim=0)        # [B, ...]
+        residual = torch.cat(residual_chunks, dim=0)  # [B, N_y]
 
         # grad = -(d xhat_1/d z_t)^T H^T M^{-1} (y - H xhat_1); flip sign so
         # g = +VJP toward the data (Pokle's line-7 g points up the log-likelihood).

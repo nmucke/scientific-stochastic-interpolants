@@ -6,16 +6,18 @@ of the canonical results schema and the LaTeX table emitter; every case driver
 conforms to the schema here, and `sections/results.tex` is filled from the
 snippets emitted here.
 
-Source of truth for *what* to run: `paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md`
-(Sections 8–9 in particular). Source of truth for *gaps and decisions*:
-`paper_new/GAP_ANALYSIS.md`.
+Source of truth for *what* to run: `results/README.md` (the reduced grid), with
+`RUN_STATUS.md` for status and `DESIGN_NOTES.md` for design rationale. The original
+pre-restructure experiment spec and gap analysis are archived at
+`../archive/paper_new/{EXPERIMENTS_IMPLEMENTATION_SPEC,GAP_ANALYSIS}.md`.
 
 > **Status (2026-06-29).** Fully implemented. The schema, seeding, aggregation,
 > and the table emitter (`make_tables.py`) work; all three case drivers
 > (`cases/*/driver.py`) are implemented with all methods wired. **Analytical case
 > is DONE** (real numbers, all 11 methods, 3 figures). **NS and urban headline
 > runs are PENDING the GPU** — their manuscript table cells are `\tbd`. See
-> `RUN_STATUS.md` and `PROJECT_HANDOFF.md` for what is done vs pending.
+> `RUN_STATUS.md` (status) and `results/README.md` (the reduced-grid layout) for
+> what is done vs pending.
 
 ---
 
@@ -30,7 +32,7 @@ paper_experiments/
   configs/                   # mirrors paper/configs conventions
     benchmark.yaml           #   defaults: case + method + scenario
     case/                    #   analytical, navier_stokes, urban
-    method/                  #   si_sde, fm_sde, fm_ode + baselines
+    method/                  #   si_sde, dm_sde, fm_ode + baselines
     scenario/                #   superres_32/16, sparse_5/1p5
   cases/
     analytical/              # Case 1 driver + README (closed-form posterior)
@@ -61,7 +63,8 @@ SI at `checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/` and F
 `checkpoints/stochastic_navier_stokes/flow_matching/` (each with `model.pth` + `config.yaml`),
 named by the `checkpoints.si_run` / `checkpoints.fm_run` keys in
 `configs/case/navier_stokes.yaml`. On the laptop (no `model.pth`) the driver runs with random
-weights and a loud warning — smoke-scale only. See `HANDOFF_GPU.md` for the full-scale run.
+weights and a loud warning — smoke-scale only. See `RUN_STATUS.md` for the full-scale run
+(and `DESIGN_NOTES.md` for the checkpoint/likelihood-mode/cost details).
 
 ## Methods (canonical labels — `results_schema.Method`)
 
@@ -70,7 +73,7 @@ the source, and whether a Brownian increment is added):
 
 - **Ours (SI-SDE)** — `si_sde.yaml`
 - **Ours (FM-ODE)** — `fm_ode.yaml`
-- **Ours (FM-SDE)** — `fm_sde.yaml` (shown in the paper as **FM-SDE (DM)**, a
+- **Ours (DM-SDE)** — `dm_sde.yaml` (shown in the paper as **DM-SDE**, a
   diffusion-model-style SDE on the FM prior)
 
 Baselines, grouped by (prior, sampler) (generative ones share the trained prior):
@@ -135,7 +138,7 @@ results/<case>_results.csv               # tidy file (the spec's "one file per c
 generated/tab_*.tex                       # one snippet per labelled table
         │   \input
         ▼
-paper_new/sections/results.tex
+manuscript/sections/results.tex
 ```
 
 `make_tables.py` maps a tidy `(method, scenario, metric)` triple to a specific
@@ -149,7 +152,7 @@ LaTeX cell. The mapping (which columns each table has) is declarative in
 | NS `crps` / `spread_skill` × scen + `nfe`/`seconds` | `tab:ns_calibration_cost` | 6 cells |
 | urban `rmse_velocity`/`rmse_temperature`/`kl_points` × scen | `tab:urban_accuracy` | 6 cells |
 | urban `crps`/`spread_skill` × scen + cost | `tab:urban_calibration_cost` | 6 cells |
-| NS ablation tags (`ablation:*`) on FM-SDE | `tab:ablation` | RMSE, CRPS, Spread–skill |
+| NS ablation tags (`ablation:*`) on DM-SDE | `tab:ablation` | RMSE, CRPS, Spread–skill |
 
 Each emitted snippet is the `tabular` **body** (the data rows plus the
 `\midrule` that separates "ours" from the baselines), so it drops straight into
@@ -170,7 +173,7 @@ python paper_experiments/make_tables.py --demo
 # 1. run a case for all its methods/scenarios over the fixed seed list
 #    (works once the case driver is implemented — see status note above)
 python paper_experiments/run.py --multirun \
-    case=navier_stokes method=si_sde,fm_sde,fm_ode,flowdas scenario=superres_32,sparse_5
+    case=navier_stokes method=si_sde,dm_sde,fm_ode,flowdas scenario=superres_32,sparse_5
 #    -> results/navier_stokes_results.csv  (aggregated mean +/- std over seeds)
 
 # 2. emit the LaTeX snippets
@@ -195,7 +198,7 @@ These constrain the case drivers and are baked into the configs here:
   implemented **generally in `α, β, γ` and their derivatives**, never hard-coded
   to rectified flow.
 - **Multiplicative gain `G_tau` was DROPPED** (it didn't improve accuracy — see
-  `PROJECT_HANDOFF.md`). Accuracy comes from inflating the covariance, not the
+  `DESIGN_NOTES.md` §4). Accuracy comes from inflating the covariance, not the
   gain. The ablation is now a **covariance axis** (`inflated` / `inflated_shared`
   vs isotropic Jacobian-free); `dps_full`/`_apply_gain` are kept off-by-default.
 - **uDALES data is author-provided** (`.nc` + `mask.npz`); no in-repo CFD
@@ -214,5 +217,5 @@ These constrain the case drivers and are baked into the configs here:
   samplers), E7/E9/E10/E11 (metrics), E12 (ablation knobs).
 - `cases/urban/driver.py` — GAP E2 (author data + solid-cell masking).
 - Method configs reference `src/scisi` `_target_`s that are mid-rebuild
-  (FM `.score` is GAP L1; FM-SDE posterior is GAP P3; several baseline targets do
+  (FM `.score` is GAP L1; DM-SDE posterior is GAP P3; several baseline targets do
   not exist yet — marked `TODO(E5)`).

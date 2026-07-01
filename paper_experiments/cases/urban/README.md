@@ -14,7 +14,7 @@ obstacles — anisotropic, spatially heterogeneous statistics.
 > attribute. Accuracy is reported per-variable: **velocity RMSE** over `(u, v, w)`
 > and **temperature RMSE** over `thl`.
 
-## Data (author-provided — PROJECT_HANDOFF B.4)
+## Data (author-provided — archive/PROJECT_HANDOFF.md §B.4)
 
 The uDALES runs are **author-provided** under `data/udales/` (`sim_*.nc`,
 ~179 sims × 250 timesteps each, 128×128) + `data/udales/mask.npz` (solid-cell
@@ -45,7 +45,7 @@ sensor inside a building). Observe all 4 channels.
 Calibration is assessed by **spread–skill + split CRPS** (observed/unobserved),
 scored against the ground-truth STATE. **Generative-only** (no conventional
 baselines — urban has no true forward solver here). Method lineup = the NS
-generative set: our three (SI-SDE, FM-SDE, FM-ODE) + FlowDAS, Guided FM (FIG),
+generative set: our three (SI-SDE, DM-SDE, FM-ODE) + FlowDAS, Guided FM (FIG),
 Guided FM (OT-ODE), D-Flow SGLD, SDA, SURGE. `URBAN_METHODS` excludes EnKF /
 LETKF / PF / EnSF and the dropped legacy Guided FM / Guided diffusion.
 

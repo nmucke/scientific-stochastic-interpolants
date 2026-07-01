@@ -2,7 +2,7 @@
 
 This is the E3 deliverable: a working converter that reads the canonical tidy
 results file (see :mod:`results_schema`) and produces, for every labelled table
-in ``paper_new/sections/results.tex``, a standalone ``.tex`` snippet that the
+in ``manuscript/sections/results.tex``, a standalone ``.tex`` snippet that the
 paper can ``\\input``.
 
 Run::
@@ -69,7 +69,7 @@ MISSING_CELL = "--"
 _OURS: tuple[Method, ...] = (
     Method.OURS_SI_SDE,
     Method.OURS_FM_ODE,
-    Method.OURS_FM_SDE,
+    Method.OURS_DM_SDE,
 )
 # Generative baselines, grouped: SI+SDE, then FM+ODE, then DM+SDE.
 _GENERATIVE_BASELINES: tuple[Method, ...] = (
@@ -95,13 +95,15 @@ _FIELD_BASELINES: tuple[Method, ...] = _GENERATIVE_BASELINES + (
 METHOD_LATEX_LABEL: dict[Method, str] = {
     Method.OURS_SI_SDE: r"Ours (SI-SDE)",
     Method.OURS_FM_ODE: r"Ours (FM-ODE)",
-    Method.OURS_FM_SDE: r"Ours (FM-SDE/DM)",
+    Method.OURS_DM_SDE: r"Ours (DM-SDE)",
     Method.FLOWDAS: r"FlowDAS \cite{chen_flowdas_2025}",
     Method.GUIDED_FM_FIG: r"Guided FM (FIG) \cite{yan_fig_2025}",
     Method.GUIDED_FM_OTODE: r"Guided FM (OT-ODE) \cite{pokle_training-free_2024}",
     Method.D_FLOW_SGLD: r"D-Flow SGLD \cite{ben-hamu_d-flow_2024}",
     Method.SDA: r"SDA \cite{rozet_score-based_2023}",
     Method.SURGE: r"SURGE",
+    Method.SURGE_SDA: r"SURGE + SDA",
+    Method.SURGE_FLOWDAS: r"SURGE + FlowDAS",
     Method.ENSEMBLE_SCORE_FILTER: r"Ensemble score filter \cite{bao_ensemble_2024}",
     Method.ENKF: r"EnKF \cite{evensen_data_2022}",
     Method.LETKF: r"LETKF \cite{hunt_efficient_2007}",
@@ -332,7 +334,7 @@ ABLATION_METRICS: tuple[Metric, ...] = (
 def render_ablation_body(index: RecordIndex) -> str:
     """Render the tab:ablation body.
 
-    Ablation tidy rows use ``case=navier_stokes``, ``method=Ours (FM-SDE)`` (the
+    Ablation tidy rows use ``case=navier_stokes``, ``method=Ours (DM-SDE)`` (the
     sampler the ablations vary), and the ablation tag in the ``scenario`` column.
     """
     lines: list[str] = []
@@ -341,10 +343,10 @@ def render_ablation_body(index: RecordIndex) -> str:
             lines.append(r"\midrule")
         cells = []
         for metric in ABLATION_METRICS:
-            # Any "ours" method may carry the ablation; FM-SDE is the canonical one.
+            # Any "ours" method may carry the ablation; DM-SDE is the canonical one.
             value, std = index.get(
                 Case.NAVIER_STOKES.value,
-                Method.OURS_FM_SDE.value,
+                Method.OURS_DM_SDE.value,
                 tag,
                 metric.value,
             )
@@ -453,11 +455,11 @@ def make_demo_records(seed: int = 0) -> list[ResultRecord]:
         add(Case.URBAN, m, Scenario.SUPERRES_32.value, Metric.NFE, 50.0)
         add(Case.URBAN, m, Scenario.SUPERRES_32.value, Metric.SECONDS, 0.6)
 
-    # Ablations (FM-SDE on NS, ablation tags in the scenario column).
+    # Ablations (DM-SDE on NS, ablation tags in the scenario column).
     for _, tag in ABLATION_ROWS:
-        add(Case.NAVIER_STOKES, Method.OURS_FM_SDE, tag, Metric.RMSE, 0.15)
-        add(Case.NAVIER_STOKES, Method.OURS_FM_SDE, tag, Metric.CRPS, 0.07)
-        add(Case.NAVIER_STOKES, Method.OURS_FM_SDE, tag, Metric.SPREAD_SKILL, 0.10)
+        add(Case.NAVIER_STOKES, Method.OURS_DM_SDE, tag, Metric.RMSE, 0.15)
+        add(Case.NAVIER_STOKES, Method.OURS_DM_SDE, tag, Metric.CRPS, 0.07)
+        add(Case.NAVIER_STOKES, Method.OURS_DM_SDE, tag, Metric.SPREAD_SKILL, 0.10)
 
     return records
 

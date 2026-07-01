@@ -15,7 +15,7 @@ Algorithm~\ref{alg:unified} in the main text states the shared loop for one assi
 \end{algorithm}
 
 \begin{algorithm}[ht]
-\caption{Sampler 2 -- Flow matching SDE (lifted diffusion)}
+\caption{Sampler 2 -- Diffusion-model SDE (lifted diffusion)}
 \label{alg:fm_sde}
 \begin{algorithmic}[1]
 \STATE \textbf{Model:} FM velocity $\fmvel_\theta$; \textbf{anchor} $\bm a_0=\bm 0$, $\bx_0$ as conditioning input; \textbf{diffusion} $\gdiff_\tau>0$ (free, e.g.\ $\gdiff_\tau\propto\sqrt{\alpha_\tau\beta_\tau}$)
@@ -44,7 +44,7 @@ Algorithm~\ref{alg:unified} in the main text states the shared loop for one assi
 
 \begin{table*}[ht]
     \centering
-    \caption{Model-specific quantities for the observation-interpolant method, instantiated for stochastic interpolants and flow matching. The general framework (left column) treats both as affine Gaussian probability paths; the model-specific quantities differ only in the source process $\src_\tau$ and how the velocity and score are obtained. The guided ODE and FM-SDE share the flow matching column; the SI-SDE uses the stochastic interpolant column.}
+    \caption{Model-specific quantities for the observation-interpolant method, instantiated for stochastic interpolants and flow matching. The general framework (left column) treats both as affine Gaussian probability paths; the model-specific quantities differ only in the source process $\src_\tau$ and how the velocity and score are obtained. The guided ODE and DM-SDE share the flow matching column; the SI-SDE uses the stochastic interpolant column.}
     \label{tab:si_vs_fm}
     \small
     \begin{tabular}{p{0.235\linewidth}|p{0.345\linewidth}|p{0.345\linewidth}}
@@ -74,7 +74,7 @@ Algorithm~\ref{alg:unified} in the main text states the shared loop for one assi
             & ODE $\rd\bX=\fmvel_\theta\rd\tau$ \\
         Available samplers
             & SI-SDE ($\gdiff_\tau=\gamma_\tau$)
-            & FM-SDE ($\gdiff_\tau>0$), guided ODE ($\gdiff_\tau=0$) \\
+            & DM-SDE ($\gdiff_\tau>0$), guided ODE ($\gdiff_\tau=0$) \\
         Observation interpolant $\interpolantobs_\tau$
             & $\alpha_\tau\obsmatrix\bx_0 + \beta_\tau\obs$
             & $\beta_\tau\obs$ \\
@@ -119,7 +119,7 @@ Algorithm~\ref{alg:unified} in the main text states the shared loop for one assi
         \midrule
         \multicolumn{4}{l}{\emph{Schedule / numerical}}\\
         Quadratic-$\beta$ SI schedule & $\beta_\tau=\tau^2$; general in $(\alpha,\beta,\gamma)$ & Sec.~\ref{sec:methodology} & Modelling choice (no error) \\
-        Endpoint-vanishing $\gdiff_\tau$ & $\gdiff_\tau\!\to\!0$ at endpoints for the FM-SDE lift & Sec.~\ref{subsec:posterior_dynamics} & Keeps FM score finite at $\tau\to1$ \\
+        Endpoint-vanishing $\gdiff_\tau$ & $\gdiff_\tau\!\to\!0$ at endpoints for the DM-SDE lift & Sec.~\ref{subsec:posterior_dynamics} & Keeps FM score finite at $\tau\to1$ \\
         Pseudo-time clamping & Apply correction for $\tau\in[\Delta\tau,1-\Delta\tau]$ & Sec.~\ref{sec:implementation} & $\Delta\tau\to0$ \\
         \bottomrule
     \end{tabular}
@@ -168,7 +168,7 @@ This appendix collects supplementary figures and the extended Navier--Stokes res
 \begin{figure*}[ht]
     \centering
     \includegraphics[width=0.92\linewidth]{figures/analytical/analytical_covariance_ablation.pdf}
-    \caption{Source-covariance approximation ablation for our three samplers on the analytical linear--Gaussian case: KL to the exact posterior versus the number of sampler steps $M$, for the per-member (exact) Jacobian, the shared ensemble-mean Jacobian, and the isotropic Jacobian-free covariance (Corollary~\ref{cor:cheap_drift}). All three samplers reach the exact posterior (KL $\approx10^{-3}$) with either the exact or the shared Jacobian, while the isotropic Jacobian-free approximation plateaus at a step-independent bias (KL $\approx0.9$--$1.4$). In this linear--Gaussian case the source covariance is state-independent, so the per-member and shared Jacobians \emph{coincide exactly} (their curves overlap); the per-member-vs-shared distinction only matters for a nonlinear prior (the Navier--Stokes and urban cases).}
+    \caption{Source-covariance approximation ablation for our three samplers on the analytical linear--Gaussian case: KL to the exact posterior versus the number of sampler steps $M$, for the per-member (exact) Jacobian, the shared ensemble-mean Jacobian, and the isotropic Jacobian-free covariance (Corollary~\ref{cor:cheap_drift}). In this linear--Gaussian case the source covariance is state-independent, so the per-member and shared Jacobians \emph{coincide exactly}; the per-member-vs-shared distinction only matters for a nonlinear prior (the Navier--Stokes and urban cases).}
     \label{fig:analytical_covariance}
 \end{figure*}
 
@@ -208,6 +208,27 @@ This appendix collects supplementary figures and the extended Navier--Stokes res
     \label{fig:ns_diagnostics}
 \end{figure*}
 
+\begin{table*}[ht]
+    \centering
+    \scriptsize
+    \setlength{\tabcolsep}{3.5pt}
+    \caption{Navier--Stokes, \emph{Jacobian-free} isotropic covariance (Corollary~\ref{cor:cheap_drift}, \texttt{dps\_jacobian\_free}): ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to\!128^2$, $32^2\!\to\!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Companion to the shared-inflated results in Table~\ref{tab:ns_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \tbd{} cells pending the reduced-grid run.}
+    \label{tab:ns_accuracy_jacfree}
+    \begin{tabular}{l|cccc|cccc|cccc|c}
+        \toprule
+        & \multicolumn{4}{c|}{\textbf{Vorticity RMSE}}
+        & \multicolumn{4}{c|}{\textbf{CRPS}}
+        & \multicolumn{4}{c|}{\textbf{Spread--skill}}
+        & \textbf{Cost} \\
+        & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & s/step \\
+        \midrule
+        Ours (SI-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        Ours (DM-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        Ours (FM-ODE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
 \subsection{Urban airflow}
 \label{subsec:results_urban}
 The third case is a computational-fluid-dynamics flow over an urban building array: airflow and heat transport through a configuration of bluff bodies (buildings) on a structured domain, with coupled velocity and temperature fields. Relative to the Navier--Stokes case it adds (i) solid obstacles and the associated boundary layers, wakes, and recirculation zones, (ii) a second physical variable (temperature) transported by the flow, and (iii) anisotropic, spatially heterogeneous statistics. It tests the method on a realistic multi-variable applied setting. We use the same two observation scenarios; sensors are placed in physically plausible locations (for the sparse scenario) and the super-resolution scenario observes a coarsened field. Observation noise is additive Gaussian with the per-variable standard deviations stated in the experimental setup. \emph{This case is not yet run: the dataset is still being generated, and the figures and all table cells (\texttt{--}) are placeholders to be filled once the data is available.}
@@ -228,6 +249,28 @@ The third case is a computational-fluid-dynamics flow over an urban building arr
 
 \begin{table*}[ht]
     \centering
+    \scriptsize
+    \setlength{\tabcolsep}{4pt}
+    \caption{Urban airflow, \emph{Jacobian-free} isotropic covariance (Corollary~\ref{cor:cheap_drift}, \texttt{dps\_jacobian\_free}): per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta_\ell$, fluid cells only), CRPS, and spread--skill ($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Companion to the shared-inflated results in Table~\ref{tab:urban_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \tbd{} cells pending the reduced-grid run.}
+    \label{tab:urban_accuracy_jacfree}
+    \begin{tabular}{l|cc|cc|cc|cc|c}
+        \toprule
+        & \multicolumn{2}{c|}{\textbf{Velocity RMSE}}
+        & \multicolumn{2}{c|}{\textbf{Temp.\ RMSE}}
+        & \multicolumn{2}{c|}{\textbf{CRPS}}
+        & \multicolumn{2}{c|}{\textbf{Spread--skill}}
+        & \textbf{Cost} \\
+        & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & s/step \\
+        \midrule
+        Ours (SI-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        Ours (DM-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        Ours (FM-ODE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\begin{table*}[ht]
+    \centering
     \small
     \caption{Urban airflow: point accuracy per variable, per observation scenario. Lower is better. \emph{Data pending}; all cells (\texttt{--}) are placeholders. There is no ground-truth posterior for the urban case (only a ground-truth state), so KL-at-points is not reported; calibration is assessed by spread--skill and CRPS in Table~\ref{tab:urban_calibration_cost}.}
     \label{tab:urban_accuracy}
@@ -238,7 +281,7 @@ The third case is a computational-fluid-dynamics flow over an urban building arr
         & $5\%$ & $1.5625\%$ & $5\%$ & $1.5625\%$ \\
         \midrule
         Ours (SI-SDE) & -- & -- & -- & -- \\
-        Ours (FM-SDE) & -- & -- & -- & -- \\
+        Ours (DM-SDE) & -- & -- & -- & -- \\
         Ours (FM-ODE) & -- & -- & -- & -- \\
         \midrule
         FlowDAS & -- & -- & -- & -- \\
@@ -264,7 +307,7 @@ The third case is a computational-fluid-dynamics flow over an urban building arr
         & $5\%$ & $1.5625\%$ & $5\%$ & $1.5625\%$ & NFE & s/step \\
         \midrule
         Ours (SI-SDE) & -- & -- & -- & -- & -- & -- \\
-        Ours (FM-SDE) & -- & -- & -- & -- & -- & -- \\
+        Ours (DM-SDE) & -- & -- & -- & -- & -- & -- \\
         Ours (FM-ODE) & -- & -- & -- & -- & -- & -- \\
         \midrule
         FlowDAS & -- & -- & -- & -- & -- & -- \\
@@ -279,9 +322,7 @@ The third case is a computational-fluid-dynamics flow over an urban building arr
 
 \subsection{Ablations}
 \label{subsec:results_ablations}
-On the Navier--Stokes case we isolate the effect of the components introduced in Section~\ref{sec:methodology}. We vary: (i) the covariance along the cost/accuracy axis of Section~\ref{subsec:approximations} -- the Jacobian-free isotropic covariance of Corollary~\ref{cor:cheap_drift} (\texttt{dps\_jacobian\_free}) versus the ensemble-shared inflated source covariance (\texttt{inflated-shared}); (ii) the diffusion strength $\gdiff_\tau$ for the FM-SDE, to map the accuracy/calibration trade-off between the deterministic ODE ($\gdiff_\tau=0$) and strong-diffusion limits; (iii) the number of integration steps $M$; and (iv) the ensemble size $E$. Table~\ref{tab:ablation} collects the results.
-
-\emph{Expected narrative (ablation run in progress).} The cells of Table~\ref{tab:ablation} are marked \texttt{--} while the ablation job runs; we state the outcome the construction predicts. The covariance axis should trade off with observation density, mirroring the two headline findings: the inflated-shared covariance helps most under \emph{sparse} observations, where the prior-covariance structure carries information across unobserved regions, whereas under \emph{dense} observations the cheap Jacobian-free covariance already suffices and the inflation adds little. Increasing the diffusion strength $\gdiff_\tau$ (moving from the ODE toward stronger-diffusion SDEs) should improve calibration -- better spread--skill and flatter rank histograms -- at fixed point accuracy, consistent with the role of the equal-marginal noise. Point accuracy should saturate in $M$ (diminishing returns past a moderate step count, the discretisation error already being small), and the ensemble spread should improve with $E$ as the empirical source covariance and the shared-Jacobian approximation tighten toward their population limits.
+On the Navier--Stokes case we isolate the effect of the components introduced in Section~\ref{sec:methodology}. We vary: (i) the covariance along the cost/accuracy axis of Section~\ref{subsec:approximations} -- the Jacobian-free isotropic covariance of Corollary~\ref{cor:cheap_drift} (\texttt{dps\_jacobian\_free}) versus the ensemble-shared inflated source covariance (\texttt{inflated-shared}); (ii) the diffusion strength $\gdiff_\tau$ for the DM-SDE, to map the accuracy/calibration trade-off between the deterministic ODE ($\gdiff_\tau=0$) and strong-diffusion limits; (iii) the number of integration steps $M$; and (iv) the ensemble size $E$. Table~\ref{tab:ablation} collects the results.
 
 \begin{table}[ht]
     \centering
@@ -307,27 +348,24 @@ On the linear--Gaussian case the exact posterior is available, so we isolate the
 likelihood-covariance approximation directly. Table~\ref{tab:analytical_ablation} reports the KL to
 the exact posterior for the three choices -- the individual (per-member) Jacobian
 (\texttt{inflated}), the ensemble-shared Jacobian (\texttt{inflated-shared}), and the isotropic
-Jacobian-free corollary (\texttt{dps\_jacobian\_free}) -- for each of our three samplers. The
-individual and shared covariances coincide to within seed scatter (KL $\approx 10^{-3}$): the source
-covariance is \emph{state-independent} for a linear prior, so sharing the Jacobian across the
-ensemble introduces no error, and the shared/individual gap only appears for a nonlinear prior (the
-Navier--Stokes case). Dropping the curvature entirely (Jacobian-free isotropic) is
-$\sim\!30$--$50\times$ worse (KL $\approx 0.04$--$0.07$); the sliced-$W_2$ distances follow the same
-pattern (individual/shared $0.016$--$0.022$, Jacobian-free $0.12$--$0.16$). This is the analytical
-counterpart of the Navier--Stokes covariance ablation above, with the exact posterior as reference.
+Jacobian-free corollary (\texttt{dps\_jacobian\_free}) -- for each of our three samplers. Because the
+source covariance is \emph{state-independent} for a linear prior, sharing the Jacobian across the
+ensemble introduces no error, so the shared/individual gap only appears for a nonlinear prior (the
+Navier--Stokes case). This is the analytical counterpart of the Navier--Stokes covariance ablation
+above, with the exact posterior as reference.
 
 \begin{table}[ht]
     \centering
     \small
-    \caption{Analytical covariance-approximation ablation: KL divergence to the exact posterior (lower is better), averaged over seeds, per sampler, for the three likelihood-covariance modes. Individual $\approx$ shared (the state-independent covariance makes sharing exact); the isotropic Jacobian-free mode loses accuracy. Sliced-$W_2$ follows the same ordering.}
+    \caption{Analytical covariance-approximation ablation: KL divergence to the exact posterior (lower is better), averaged over seeds, per sampler, for the three likelihood-covariance modes. \tbd{} cells pending the reduced-grid run.}
     \label{tab:analytical_ablation}
     \begin{tabular}{l|ccc}
         \toprule
-        Covariance mode & SI-SDE & FM-SDE & FM-ODE \\
+        Covariance mode & SI-SDE & DM-SDE & FM-ODE \\
         \midrule
-        Individual Jacobian (\texttt{inflated})        & 0.001 & 0.002 & 0.001 \\
-        Shared Jacobian (\texttt{inflated-shared})     & 0.002 & 0.001 & 0.001 \\
-        Jacobian-free isotropic (\texttt{dps\_jac.\,free}) & 0.041 & 0.048 & 0.073 \\
+        Individual Jacobian (\texttt{inflated})        & \tbd & \tbd & \tbd \\
+        Shared Jacobian (\texttt{inflated-shared})     & \tbd & \tbd & \tbd \\
+        Jacobian-free isotropic (\texttt{dps\_jac.\,free}) & \tbd & \tbd & \tbd \\
         \bottomrule
     \end{tabular}
 \end{table}

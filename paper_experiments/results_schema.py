@@ -4,7 +4,7 @@ This module is the single source of truth for the format every case driver must
 emit. It defines:
 
 * :class:`ResultRecord` -- one tidy row, matching the spec columns exactly
-  (Section 8 of ``paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md``):
+  (Section 8 of ``archive/paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md``):
   ``case, method, scenario, metric, value, std, E, M, seed, NFE, seconds``.
 * Canonical method / scenario / metric / case name constants so every case
   labels its rows identically. ``make_tables.py`` keys off these exact strings.
@@ -61,7 +61,7 @@ class Method(str, Enum):
     # Our three samplers (unified family; differ only in g_tau / w_tau / source).
     OURS_SI_SDE = "Ours (SI-SDE)"
     OURS_FM_ODE = "Ours (FM-ODE)"
-    OURS_FM_SDE = "Ours (FM-SDE)"  # FM-SDE (a diffusion-model sampler); shown as "FM-SDE (DM)"
+    OURS_DM_SDE = "Ours (DM-SDE)"  # diffusion-model-style SDE on the FM prior (was "FM-SDE")
 
     # SI prior + SDE.
     FLOWDAS = "FlowDAS"
@@ -73,7 +73,10 @@ class Method(str, Enum):
 
     # Diffusion-model prior + SDE.
     SDA = "SDA"  # score-based DA (rozet_score-based_2023), single-window, on the DM prior
-    SURGE = "SURGE"  # TODO implement
+    SURGE = "SURGE"  # SURGE particle filter (wei_surge_2026), standalone DPS guidance
+    # SURGE combined with another method's guidance (paper: SURGE + SDA / FlowDAS).
+    SURGE_SDA = "SURGE (SDA)"  # SURGE SMC on the FM/DM prior, SDA likelihood as guidance
+    SURGE_FLOWDAS = "SURGE (FlowDAS)"  # SURGE SMC on the SI prior, FlowDAS likelihood as guidance
 
     # Classical data assimilation (ground-truth EnKF + conventional baselines).
     ENKF = "EnKF"
@@ -187,9 +190,17 @@ class ResultRecord:
     seed: int = SEED_AGGREGATED
     nfe: float | None = None
     seconds: float | None = None
+    # Free-form variant tag distinguishing otherwise-identical (method, scenario,
+    # E, M) cells. Used for the two "Ours" likelihood-covariance modes
+    # (``jacfree`` = dps_jacobian_free, ``shared`` = inflated_shared); ``None``
+    # (empty cell) for every method with a single mode. Keeps the canonical
+    # ``Method`` label clean while letting both modes coexist as distinct rows.
+    variant: str | None = None
 
     # Column order on disk. ``NFE``/``seconds`` keep their spec capitalisation in
     # the header while the dataclass field is lowercase (``nfe``) for Python style.
+    # ``variant`` is appended LAST so pre-variant CSVs (which lack the column) still
+    # load -- ``from_row`` reads it with ``.get`` and defaults to ``None``.
     # ClassVar so it is not treated as a dataclass field.
     FIELDNAMES: ClassVar[tuple[str, ...]] = (
         "case",
@@ -203,6 +214,7 @@ class ResultRecord:
         "seed",
         "NFE",
         "seconds",
+        "variant",
     )
 
     def to_row(self) -> dict[str, object]:
@@ -219,11 +231,13 @@ class ResultRecord:
             "seed": self.seed,
             "NFE": self.nfe,
             "seconds": self.seconds,
+            "variant": self.variant,
         }
 
     @classmethod
     def from_row(cls, row: dict[str, object]) -> "ResultRecord":
         """Inverse of :meth:`to_row`; tolerant of string-typed CSV cells."""
+        variant = row.get("variant")
         return cls(
             case=str(row["case"]),
             method=str(row["method"]),
@@ -236,6 +250,7 @@ class ResultRecord:
             seed=_as_opt_int(row.get("seed")) or SEED_AGGREGATED,
             nfe=_as_opt_float(row.get("NFE")),
             seconds=_as_opt_float(row.get("seconds")),
+            variant=None if _is_empty(variant) else str(variant),
         )
 
 
@@ -407,6 +422,7 @@ if dataclasses.is_dataclass(ResultRecord):  # pragma: no cover - import-time gua
         "seed",
         "nfe",
         "seconds",
+        "variant",
     )
     _actual = tuple(f.name for f in dataclasses.fields(ResultRecord))
     assert _actual == _expected, (_actual, _expected)

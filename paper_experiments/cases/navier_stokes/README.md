@@ -19,7 +19,7 @@ codebase/user).
 
 ## Protocol
 
-Train SI (SI-SDE) and FM (FM-SDE, FM-ODE) priors with the **same** architecture,
+Train SI (SI-SDE) and FM (DM-SDE, FM-ODE) priors with the **same** architecture,
 data, and schedules. Assimilate `y^1..y^N` autoregressively at ensemble size `E`,
 steps `M`. All methods run on **identical truth + observations + masks** (shared
 seeds via `common/seeding.py`). `R = 0.05^2 I`.
@@ -32,14 +32,14 @@ seeds via `common/seeding.py`). `R = 0.05^2 I`.
   → `generated/tab_ns_calibration_cost.tex`.
 - **`tab:ablation`** — covariance axis (per-member `inflated` vs shared
   `inflated_shared` vs isotropic Jacobian-free); `g_tau` low/med/high (incl.
-  `g=0`=FM-ODE); `M ∈ {10,50,100}`; `E ∈ {16,64,256}`. On the FM-SDE sampler.
+  `g=0`=FM-ODE); `M ∈ {10,50,100}`; `E ∈ {16,64,256}`. On the DM-SDE sampler.
   → `generated/tab_ablation.tex`.
 - **Appendix table** — `1.5625%` column, same format (super-res dropped; sparse
   only — see Methods note).
 - **`fig:ns_trajectories`**, **`fig:ns_diagnostics`** — figure code exists; run
   with `+save_figures=true`.
 
-**Method lineup (as of 2026-06-29).** Generative: our three (SI-SDE, FM-SDE,
+**Method lineup (as of 2026-06-29).** Generative: our three (SI-SDE, DM-SDE,
 FM-ODE) + FlowDAS, Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD, SDA, SURGE.
 Classical (true-solver, NS only): EnKF, LETKF, particle filter, ensemble score
 filter. The **E=1000 non-localized EnKF is the ground-truth posterior / KL
@@ -52,7 +52,7 @@ registries (`NS_METHODS`/`WIRED_METHODS`, `make_tables`).
 
 `case=navier_stokes`; `scenario ∈ {32^2->128^2, 16^2->128^2, sparse 5%, sparse
 1.5625%}`; `metric ∈ {rmse, energy_spec_rmse, kl_points, crps, spread_skill}`
-plus `nfe`/`seconds`. Ablation rows use `method=Ours (FM-SDE)` and the
+plus `nfe`/`seconds`. Ablation rows use `method=Ours (DM-SDE)` and the
 `ablation:*` tags in the `scenario` column (consumed by
 `make_tables.render_ablation_body`).
 
@@ -68,8 +68,8 @@ hyperparameters are not yet locked).
 
 - **Obs operators (E1)** — block-average super-res (`super_res`) and seeded
   sparse masks (`random`, mask via `common.seeding.mask_seed`).
-- **Three samplers (E4)** — SI-SDE / FM-SDE / FM-ODE, sharing the trained prior.
-  FM-SDE is shown in the paper as "FM-SDE (DM)" — a diffusion-model-style SDE on
+- **Three samplers (E4)** — SI-SDE / DM-SDE / FM-ODE, sharing the trained prior.
+  DM-SDE is shown in the paper as "DM-SDE" — a diffusion-model-style SDE on
   the FM prior. The FM model is a **dedicated trained FM checkpoint**
   (`flow_matching` / `flow_matching_big`), not the SI drift reused.
 - **Metrics (E7/E9/E10/E11/E13)** — ensemble-mean RMSE, log-spectrum energy
@@ -89,7 +89,7 @@ hyperparameters are not yet locked).
   per-scenario comparison panels.
 
 ### Diffusion prior is built from the FM model
-The SDA and SURGE baselines (and the FM-SDE sampler's diffusion sibling) use a
+The SDA and SURGE baselines (and the DM-SDE sampler's diffusion sibling) use a
 **diffusion prior constructed from the trained FM model** via
 `DenoiseDiffusionModel.from_flow_matching` (velocity mode), because the separately
 trained diffusion checkpoint is weak. This is controlled by

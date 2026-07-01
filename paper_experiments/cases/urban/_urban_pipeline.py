@@ -18,7 +18,7 @@ driven by the urban case being GENERATIVE-ONLY and MULTI-CHANNEL with solid cell
   threaded into the model exactly as the NS history is.
 * NO KL-at-points: urban has only a ground-truth STATE, not a ground-truth
   posterior, so there is no reference ensemble to draw and ``compute_metrics``
-  does not emit ``kl_points`` (author decision, PROJECT_HANDOFF B.4).
+  does not emit ``kl_points`` (author decision, archive/PROJECT_HANDOFF.md §B.4).
 * NO conventional / true-solver baselines: there is no in-repo CFD solver for the
   urban data, so EnKF / LETKF / PF / EnSF are excluded (the driver's
   ``URBAN_METHODS`` already omits them). Every wired method shares the learned
@@ -299,6 +299,18 @@ def compute_metrics(
         "spread_skill": _mean(ss_steps),
         "nfe": result.nfe_per_step,
         "seconds": result.seconds_per_step,
+        # Per-(assimilation-)step metric curves (one value per scored step), so
+        # the driver can persist metric-vs-time curves for every trajectory
+        # without saving the raw ensembles. Mirrors the NS pipeline.
+        "per_step": {
+            "rmse": list(rmse_steps),
+            "rmse_velocity": list(rmse_vel_steps),
+            "rmse_temperature": list(rmse_temp_steps),
+            "crps": list(crps_steps),
+            "crps_observed": list(crps_obs_steps),
+            "crps_unobserved": list(crps_unobs_steps),
+            "spread_skill": list(ss_steps),
+        },
     }
 
 

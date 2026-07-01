@@ -1,25 +1,30 @@
 """D-Flow SGLD posterior sampler -- BASELINE.
 
-D-Flow (Ben-Hamu, Puny, Gat, Karrer, Singer & Lipman, "D-Flow: Differentiating
-through Flows for Controlled Generation", ICML 2024, arXiv:2402.14017) controls
-generation by optimising the SOURCE latent ``z_0`` so that the deterministic
-FM-ODE flow ``Phi(z_0) = x_1`` matches a task cost, differentiating the cost
-through the WHOLE ODE solve (``d x_1 / d z_0``). The original paper minimises
+D-Flow SGLD (Parikh, Chen & Wang, "D-Flow SGLD: Source-Space Posterior Sampling
+for Scientific Inverse Problems with Flow Matching", arXiv:2602.21469) turns the
+D-Flow controlled-generation idea (Ben-Hamu, Puny, Gat, Karrer, Singer & Lipman,
+"D-Flow: Differentiating through Flows for Controlled Generation", ICML 2024,
+arXiv:2402.14017) into approximate POSTERIOR sampling. D-Flow controls generation
+by optimising the SOURCE latent ``z_0`` so the deterministic FM-ODE flow
+``Phi(z_0) = x_1`` matches a task cost, differentiating through the WHOLE ODE
+solve (``d x_1 / d z_0``); the original paper minimises it with LBFGS for a single
+MAP point. D-Flow SGLD instead runs preconditioned stochastic-gradient Langevin
+dynamics (pSGLD) over ``z_0`` so each chain is a posterior sampler.
 
-    L_tilde(z_0) = L(Phi(z_0)) + R(z_0),     R(z_0) = -log p(||z_0||)
+Following the paper's Algorithm 1 / Table D.3, the per-step pSGLD update over the
+source-space energy is
 
-with LBFGS + line search (a MAP-style point estimate). For a data-assimilation
-*posterior* (we need an ENSEMBLE, not one MAP point) we use the natural
-stochastic-gradient Langevin (SGLD) variant: each ensemble member is a Langevin
-chain over its own source latent ``z_0``, targeting the posterior
-``p(z_0 | y) propto N(y; H Phi(z_0), R) * N(z_0; 0, I)`` (the Gaussian source
-prior of the trained FM model). The per-step update is
+    L1 = ||y - F(Phi(z_0))||^2                        (data misfit, Alg.1 L6)
+    L  = L1 + lambda * ||z_0||^2                        (optional source reg, Eq. 31)
+    V  <- omega V + (1 - omega) grad(L1) (.) grad(L1)  (RMSProp on data grad, L14)
+    P  =  diag( 1 / (sqrt(V) + delta) )                (preconditioner, L15)
+    z_0 <- z_0 - eta P grad(L) + xi,  xi ~ N(0, 2 eta s P)   (Langevin step, L19)
 
-    z_0 <- z_0 - eta * grad_{z_0}[ 1/(2R) ||y - H Phi(z_0)||^2 + 1/2 ||z_0||^2 ]
-               + sqrt(2 eta) * noise_scale * xi,      xi ~ N(0, I),
-
-for ``K = num_optim_steps`` iterations, returning ``x_1 = Phi(z_0)``. With
-``noise_scale = 0`` this reduces to plain gradient-descent D-Flow (MAP).
+for ``Nsteps = num_optim_steps`` iterations, returning ``x_1 = Phi(z_0)``. Note
+the data term is the PLAIN squared residual (no 1/(2R) factor -- the data/prior
+balance is controlled by ``lambda``), the RMSProp second moment uses the DATA-term
+gradient only, and there is no bias correction. With ``s = 0`` this reduces to
+preconditioned gradient-descent D-Flow (MAP).
 
 WHY A NEW POSTERIOR (not a likelihood).
 The repo's per-step ``_one_step`` + likelihood pattern DETACHES every ODE step
@@ -34,8 +39,9 @@ autoregressive windowing / field-history threading is identical to every other
 posterior; only the per-window solver differs.
 
 Time convention (forward FM): ``t : 0 -> 1``, ``t = 0`` source ``~ N(0, I)``,
-``t = 1`` clean field; ``x_t = (1-t) eps + t x_1``; velocity ``v = model.drift``;
-Euler step ``x_{t+dt} = x_t + v dt``. The rollout starts from ``z_0`` at ``t=0``.
+``t = 1`` clean field; ``x_t = (1-t) eps + t x_1``; velocity ``v = model.drift``.
+The differentiable rollout uses the MIDPOINT (RK2) integrator with
+``self.ode_steps`` steps (Table D.3: 6), starting from ``z_0`` at ``t=0``.
 """
 
 import logging
@@ -64,42 +70,68 @@ class DFlowPosterior(BasePosterior):
         model: nn.Module,
         likelihood_model: nn.Module,
         diffusion_term: Optional[Callable] = None,
-        num_optim_steps: int = 20,
-        step_size: float = 1e-2,
-        noise_scale: float = 1.0,
-        guidance_scale: float = 1.0,
+        num_optim_steps: int = 300,
+        step_size: float = 5e-2,
+        noise_scale: float = 1e-3,
+        lambda_reg: float = 5e-6,
         precond_decay: float = 0.99,
-        precond_eps: float = 1e-8,
+        precond_eps: float = 1e-3,
+        ode_steps: int = 6,
+        burn: int = 100,
+        guidance_scale: float = 1.0,
         variance: float = 0.05,
     ) -> None:
         """Initialize the D-Flow SGLD posterior.
 
+        Parameter names follow the paper's Algorithm 1 / Table D.3 (Parikh, Chen &
+        Wang, "D-Flow SGLD: Source-Space Posterior Sampling for Scientific Inverse
+        Problems with Flow Matching", arXiv:2602.21469). The pSGLD update is::
+
+            L1 = ||y - F(T_theta(x0))||^2                 (data term, Eq. Alg.1 L6)
+            L  = L1 + lambda * ||x0||^2                    (optional source reg, Eq. 31)
+            V  <- omega V + (1 - omega) grad(L1) (.) grad(L1)
+            P  =  diag( 1 / (sqrt(V) + delta) )
+            x0 <- x0 - eta P grad(L) + N(0, 2 eta s P)
+
         Args:
             model: Trained FM model (``FlowMatchingModel``); supplies the
                 deterministic FM-ODE flow via ``model.drift``.
-            likelihood_model: Carries the linear observation operator ``H``
-                (``likelihood_model.obs_operator``) and the measurement variance
-                ``R`` (``likelihood_model.original_variance``); its ``score`` is
-                NOT used (D-Flow differentiates the full rollout, not a per-step
-                guidance term).
+            likelihood_model: Carries the observation operator ``F`` / ``H``
+                (``likelihood_model.obs_operator``); its ``score`` is NOT used
+                (D-Flow differentiates the full rollout, not a per-step guidance
+                term). The measurement variance ``R`` is NOT used in the loss --
+                Algorithm 1's data term is the plain SSE ``||y - F(x1)||^2``.
             diffusion_term: Ignored (kept for interface symmetry); the D-Flow
                 flow is the deterministic FM-ODE (g = 0).
-            num_optim_steps: K, number of SGLD/optimisation steps per window.
-            step_size: Langevin step size eta.
-            noise_scale: Multiplier on the Langevin noise sqrt(2 eta); 0 -> MAP
-                preconditioned gradient descent (deterministic D-Flow), 1 ->
-                standard pSGLD.
-            guidance_scale: Extra multiplier on the data-term gradient (1/R is
-                applied separately); lets the data pull be tempered vs. the
-                source prior, mirroring the other baselines' ``guidance_scale``.
-            precond_decay: RMSProp decay rho for the running second-moment
-                estimate V used to build the diagonal preconditioner P (paper
-                Eq. 20, "(diagonal) adaptive preconditioner from running
-                second-moment statistics of the gradient").
-            precond_eps: Floor lambda in P = 1 / (lambda + sqrt(V)); also the
-                value at rho=... step 0. Keeps P bounded when V is tiny.
-            variance: Fallback measurement variance R if the likelihood does not
-                expose ``original_variance``.
+            num_optim_steps: ``Nsteps``, number of pSGLD steps per window
+                (Table D.3: 500 toy / 300 KS / 600 turb).
+            step_size: pSGLD step size ``eta`` (Table D.3: 5e-2 toy/turb, 1e-2 KS).
+            noise_scale: Langevin noise scale ``s``; the increment is
+                ``N(0, 2 eta s P)`` (Table D.3: ``s(i)`` = 1e-2 toy, 1e-3 KS/turb).
+                ``s = 0`` recovers preconditioned MAP descent (deterministic D-Flow).
+            lambda_reg: ``lambda``, weight on the source-space regulariser
+                ``lambda ||x0||^2`` (Eq. 31; Table D.3: 0.1/0.05 toy, 1e-3 KS,
+                5e-6 turb). This is the single most important knob -- it balances
+                measurement consistency against source-prior plausibility and its
+                tuned value spans ~5 orders of magnitude across problems (shrinks
+                steeply with dimension). ``0`` disables the regulariser (recovering
+                the brittle off-manifold behaviour of deterministic D-Flow).
+            precond_decay: RMSProp decay ``omega`` for the running second-moment
+                ``V`` of the LIKELIHOOD (data-term) gradient only (Algorithm 1 L14;
+                Table D.3: 0.99).
+            precond_eps: Floor ``delta`` in ``P = 1 / (sqrt(V) + delta)``
+                (Algorithm 1 L15; Table D.3: ``delta(i)`` = 1e-3).
+            ode_steps: Number of steps for the differentiable FM-ODE rollout,
+                integrated with the MIDPOINT (RK2) method (Table D.3, D-Flow /
+                D-Flow SGLD column: "midpoint, 6 steps"). Decoupled from the global
+                solver ``num_steps`` because the rollout is backpropagated through.
+            burn: ``burn``, burn-in length (Table D.3: 100). Documented for
+                reference; see ``sample`` for how the endpoint-per-chain collection
+                maps onto the autoregressive harness.
+            guidance_scale: Unused for D-Flow SGLD (the paper's ``b`` is a guidance,
+                not a source-inference, hyperparameter). Kept for wiring symmetry.
+            variance: Unused in the loss (see ``likelihood_model``); kept for
+                interface symmetry.
         """
         # FM-ODE is deterministic; force g = 0 and the N(0, I) source init.
         super(DFlowPosterior, self).__init__(
@@ -110,10 +142,13 @@ class DFlowPosterior(BasePosterior):
         )
         self.num_optim_steps = int(num_optim_steps)
         self.step_size = float(step_size)
-        self.noise_scale = float(noise_scale)
-        self.guidance_scale = float(guidance_scale)
-        self.precond_decay = float(precond_decay)
-        self.precond_eps = float(precond_eps)
+        self.noise_scale = float(noise_scale)  # paper's ``s`` (noise scale)
+        self.lambda_reg = float(lambda_reg)  # paper's ``lambda`` (source reg weight)
+        self.precond_decay = float(precond_decay)  # paper's ``omega``
+        self.precond_eps = float(precond_eps)  # paper's ``delta``
+        self.ode_steps = int(ode_steps)  # midpoint rollout steps (Table D.3: 6)
+        self.burn = int(burn)
+        self.guidance_scale = float(guidance_scale)  # unused (kept for symmetry)
         # Gradient-checkpoint the differentiable rollout (O(1) activation memory
         # at ~2x compute); without it the backprop-through-ODE OOMs at realistic
         # ensemble size / num_steps.
@@ -139,20 +174,27 @@ class DFlowPosterior(BasePosterior):
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        """Differentiable FM-ODE rollout x_1 = Phi(z_0) (forward Euler, g = 0).
+        """Differentiable FM-ODE rollout x_1 = Phi(z_0) (MIDPOINT / RK2, g = 0).
 
-        Builds the rollout from ``model.drift`` with grad ENABLED so
-        ``d x_1 / d z_0`` flows for the SGLD gradient (the no-grad ``model.sample``
-        would break the optimisation). Mirrors ``BaseModel._integrate`` /
-        ``FlowMatchingPosterior._one_step`` (ODE branch: ``x += v * dt``) but
-        WITHOUT the per-step ``detach``.
+        Integrates ``dx/dt = v_theta(t, x)`` from ``t=0`` (source ``z_0``) to
+        ``t=1`` with the explicit MIDPOINT method (Table D.3, D-Flow / D-Flow SGLD
+        column: "midpoint, 6 steps")::
+
+            k1 = v(t, x);  k2 = v(t + dt/2, x + dt/2 k1);  x <- x + dt k2
+
+        Built from ``model.drift`` with grad ENABLED so ``d x_1 / d z_0`` flows for
+        the SGLD gradient (the no-grad ``model.sample`` would break the
+        optimisation). ``num_steps`` here is ``self.ode_steps`` (6), NOT the global
+        solver step count -- the rollout is backpropagated through, so it uses the
+        paper's short accurate midpoint schedule rather than the many-step Euler
+        schedule of the guidance baselines.
 
         MEMORY. A naive grad-enabled rollout stores every step's UNet activations
         for backward, which is O(num_steps) and OOMs at realistic E / num_steps.
-        With ``self.use_checkpoint`` each Euler step is wrapped in gradient
-        checkpointing: only the step INPUT is kept and the forward is recomputed
-        during backward, cutting activation memory to O(1) at ~2x compute. Skipped
-        automatically when ``x`` carries no grad (the final no-grad reconstruction).
+        With ``self.use_checkpoint`` each step is wrapped in gradient checkpointing:
+        only the step INPUT is kept and the forward is recomputed during backward,
+        cutting activation memory to O(1) at ~2x compute. Skipped automatically when
+        ``x`` carries no grad (the final no-grad reconstruction).
         """
         t_vec = torch.linspace(0.0, 1.0, num_steps + 1, device=z0.device).unsqueeze(0)
         x = z0
@@ -161,8 +203,14 @@ class DFlowPosterior(BasePosterior):
             dt = t_vec[0, i + 1] - t_vec[0, i]
 
             def step(x_in: torch.Tensor, _t=t, _dt=dt) -> torch.Tensor:
-                v = self.model.drift(x_in, _t, field_history, field_cond, pars_cond)
-                return x_in + v * _dt
+                # Explicit midpoint (RK2): evaluate the drift at the interval
+                # midpoint of an Euler half-step, then take the full step with it.
+                k1 = self.model.drift(x_in, _t, field_history, field_cond, pars_cond)
+                x_mid = x_in + 0.5 * _dt * k1
+                k2 = self.model.drift(
+                    x_mid, _t + 0.5 * _dt, field_history, field_cond, pars_cond
+                )
+                return x_in + _dt * k2
 
             if self.use_checkpoint and x.requires_grad:
                 x = torch.utils.checkpoint.checkpoint(step, x, use_reentrant=False)
@@ -182,12 +230,22 @@ class DFlowPosterior(BasePosterior):
         stepper: Callable = euler_maruyama_step,
         return_field_history: bool = False,
     ) -> torch.Tensor:
-        """Sample one assimilation window via SGLD over the source latent z_0.
+        """Sample one assimilation window via pSGLD over the source latent z_0.
 
-        For each ensemble member, initialise ``z_0 ~ N(0, I)`` then run K SGLD
-        steps targeting ``p(z_0 | y) propto N(y; H Phi(z_0), R) N(z_0; 0, I)``,
-        returning ``x_1 = Phi(z_0)``. The expensive backprop-through-the-flow is
-        batched over members (``batch_size`` chunks) exactly like the base loop.
+        Each ensemble member runs an independent pSGLD chain (Algorithm 1) over
+        its own source latent ``z_0 ~ N(0, I)``, conditioned on that member's own
+        ``field_history``, and returns the post-burn endpoint ``x_1 = Phi(z_0)``.
+
+        COLLECTION NOTE. Algorithm 1 runs ``Nparallel`` chains and collects EVERY
+        post-burn (optionally thinned) source sample ``{x0^i}_{i >= burn}`` across
+        chains (Eq. 22). That single-shot collection assumes all chains share one
+        conditioning context. In this autoregressive DA harness each ensemble
+        member instead carries its OWN evolving ``field_history`` forward between
+        windows, so we map "Nparallel chains x collected samples" onto "one
+        independent chain per member, take its endpoint": with
+        ``num_optim_steps > burn`` the endpoint is a valid post-burn-in draw, and
+        the per-member history threading is preserved. The rollout uses
+        ``self.ode_steps`` midpoint steps, NOT the global ``num_steps``.
         """
         ensemble_size = field_history.shape[0]
         observations = observations.to(self.device)
@@ -240,7 +298,6 @@ class DFlowPosterior(BasePosterior):
             x1 = self._sgld_window(
                 z0=base[batch_ids].to(self.device),
                 observations=y,
-                num_steps=num_steps,
                 **inp,
             )
             out[batch_ids] = x1.detach().cpu()
@@ -259,67 +316,78 @@ class DFlowPosterior(BasePosterior):
         self,
         z0: torch.Tensor,
         observations: torch.Tensor,
-        num_steps: int,
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        """Run K preconditioned-SGLD (pSGLD) steps over z_0 for one batch.
+        """Run ``Nsteps`` preconditioned-SGLD (pSGLD) steps over z_0 for one batch.
 
         Preconditioned SGLD (Li, Chen, Carlson & Carin, 2016), matching D-Flow
-        SGLD Eq. 20: a per-element RMSProp diagonal preconditioner ``P`` built
-        from the running second moment ``V`` of the energy gradient tempers the
-        ``1/R``-scaled data gradient (which is otherwise ~400x the source-prior
-        gradient and very anisotropic), and the Langevin noise is scaled by
-        ``P^{1/2}`` so the stationary distribution is preserved:
+        SGLD Algorithm 1. The data term is the plain squared measurement residual
+        ``L1 = ||y - F(Phi(z_0))||^2`` (Algorithm 1 L6 -- NO 1/(2R) factor; the
+        data/prior balance is set by ``lambda``, not by R). The optional source
+        regulariser is ``L2 = lambda ||z_0||^2`` (Eq. 31), so the total loss is
+        ``L = L1 + L2``. The full gradient ``grad L = grad L1 + 2 lambda z_0``
+        drives the preconditioned descent, while the diagonal RMSProp
+        preconditioner ``P`` is built from the running second moment ``V`` of the
+        DATA-term gradient ``grad L1`` ONLY (L14):
 
-            V   <- rho V + (1 - rho) g (.) g
-            P   =  1 / (eps + sqrt(V))
-            z   <- z - eta P (.) g + noise_scale sqrt(2 eta) sqrt(P) (.) xi.
+            V   <- omega V + (1 - omega) grad(L1) (.) grad(L1)
+            P   =  1 / (sqrt(V) + delta)
+            z   <- z - eta P (.) grad(L) + xi,   xi ~ N(0, 2 eta s P).
 
-        ``V`` resets each window (fresh z_0 ~ N(0, I) per window). noise_scale=0
+        ``V`` resets each window (fresh z_0 ~ N(0, I) per window). ``s = 0``
         recovers preconditioned gradient descent (MAP D-Flow).
         """
         eta = self.step_size
-        R = self.original_variance
-        rho = self.precond_decay
-        eps = self.precond_eps
+        s = self.noise_scale
+        lam = self.lambda_reg
+        omega = self.precond_decay
+        delta = self.precond_eps
         z = z0.detach().clone()
         V = torch.zeros_like(z)  # running second moment (per element), reset/window
 
-        for k in range(1, max(self.num_optim_steps, 0) + 1):
+        for _ in range(max(self.num_optim_steps, 0)):
             z_g = z.detach().requires_grad_(True)
             with torch.enable_grad():
-                # Differentiable rollout x_1 = Phi(z_0).
+                # Differentiable rollout x_1 = Phi(z_0) (midpoint, self.ode_steps).
                 x1 = self._flow(
-                    z_g, num_steps, field_history, field_cond, pars_cond
+                    z_g, self.ode_steps, field_history, field_cond, pars_cond
                 )
                 residual = observations - self.obs_operator(x1)  # [B, N_y]
-                data_term = 0.5 * (residual.reshape(residual.shape[0], -1) ** 2).sum(
+                # Data term L1 = ||y - F(Phi(z_0))||^2 (Algorithm 1 L6).
+                data_term = (residual.reshape(residual.shape[0], -1) ** 2).sum(
                     dim=1
-                ) / R  # [B]
-                prior_term = 0.5 * (z_g.reshape(z_g.shape[0], -1) ** 2).sum(dim=1)  # [B]
-                loss = self.guidance_scale * data_term + prior_term
-                grad = torch.autograd.grad(outputs=loss.sum(), inputs=z_g)[0]
+                )  # [B]
+                # Data-term gradient grad L1 (drives P and the descent). The source
+                # regulariser gradient is analytic (= 2 lambda z_0), so only L1 is
+                # differentiated through the flow.
+                data_grad = torch.autograd.grad(
+                    outputs=data_term.sum(), inputs=z_g
+                )[0]
 
-            # Diagonal RMSProp preconditioner from the running 2nd moment, with
-            # Adam-style bias correction (FIX 2): without it V ~ (1-rho) g^2 at
-            # k=1 makes P ~ 1/(|g| sqrt(1-rho)) ~ 10x too large (cold-start
-            # explosion). V_hat = V / (1 - rho^k) restores the published P form.
-            V = rho * V + (1.0 - rho) * grad * grad
-            V_hat = V / (1.0 - rho**k)
-            P = 1.0 / (eps + V_hat.sqrt())
+            # Full loss gradient grad L = grad L1 + lambda grad(||z_0||^2), with
+            # the source regulariser lambda ||z_0||^2 (Eq. 31) so grad = 2 lambda
+            # z_0 (added in closed form).
+            grad = data_grad + 2.0 * lam * z_g.detach()
 
-            # pSGLD update: preconditioned descent + P^{1/2}-scaled Langevin noise
-            # (scaled by noise_scale; 0 -> preconditioned MAP descent).
+            # Diagonal RMSProp preconditioner from the running 2nd moment of the
+            # DATA-term gradient ONLY (Algorithm 1 L14-15). No bias correction --
+            # canonical pSGLD / the paper use the raw running V.
+            V = omega * V + (1.0 - omega) * data_grad * data_grad
+            P = 1.0 / (delta + V.sqrt())
+
+            # pSGLD update (Algorithm 1 L19): preconditioned descent + Langevin
+            # noise xi ~ N(0, 2 eta s P), i.e. sqrt(2 eta s) P^{1/2} (.) standard
+            # normal (s = 0 -> preconditioned MAP descent).
             noise = (
-                self.noise_scale * (2.0 * eta) ** 0.5 * P.sqrt() * torch.randn_like(z)
-                if self.noise_scale != 0.0
+                (2.0 * eta * s) ** 0.5 * P.sqrt() * torch.randn_like(z)
+                if s != 0.0
                 else torch.zeros_like(z)
             )
             z = (z_g - eta * P * grad).detach() + noise
 
         # Final clean reconstruction x_1 = Phi(z_0) (no grad needed).
         with torch.no_grad():
-            x1 = self._flow(z, num_steps, field_history, field_cond, pars_cond)
+            x1 = self._flow(z, self.ode_steps, field_history, field_cond, pars_cond)
         return x1

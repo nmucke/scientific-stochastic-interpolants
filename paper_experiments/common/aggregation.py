@@ -25,7 +25,9 @@ def aggregate_over_seeds(records: list[ResultRecord]) -> list[ResultRecord]:
 
     Rows already aggregated (``seed == SEED_AGGREGATED``) pass through unchanged;
     they are not double-reduced. Grouping key is
-    (case, method, scenario, metric, E, M).
+    (case, method, scenario, metric, E, M, variant) -- ``variant`` is part of the
+    key so the two "Ours" likelihood-covariance modes (jacfree / shared) reduce to
+    two distinct rows instead of collapsing into one.
     """
     groups: dict[tuple, list[ResultRecord]] = defaultdict(list)
     passthrough: list[ResultRecord] = []
@@ -34,11 +36,11 @@ def aggregate_over_seeds(records: list[ResultRecord]) -> list[ResultRecord]:
         if r.seed == SEED_AGGREGATED:
             passthrough.append(r)
             continue
-        key = (r.case, r.method, r.scenario, r.metric, r.E, r.M)
+        key = (r.case, r.method, r.scenario, r.metric, r.E, r.M, r.variant)
         groups[key].append(r)
 
     aggregated: list[ResultRecord] = list(passthrough)
-    for (case, method, scenario, metric, E, M), rows in groups.items():
+    for (case, method, scenario, metric, E, M, variant), rows in groups.items():
         values = [r.value for r in rows]
         # NaN-safe: ``statistics.stdev`` raises on NaN ("'float' object has no
         # attribute 'numerator'"), and metrics legitimately carry NaN (e.g. NFE
@@ -63,6 +65,7 @@ def aggregate_over_seeds(records: list[ResultRecord]) -> list[ResultRecord]:
                 seed=SEED_AGGREGATED,
                 nfe=_mean_opt([r.nfe for r in rows]),
                 seconds=_mean_opt([r.seconds for r in rows]),
+                variant=variant,
             )
         )
     return aggregated

@@ -13,21 +13,33 @@ module therefore implements SDA's *single-window* guidance only -- the
 DPS-style Gaussian observation guidance with SDA's covariance approximation,
 applied to one window's state. It is NOT the full all-at-once trajectory score.
 
-SDA's single-window guidance (their Eq. for the observation log-likelihood
-gradient) approximates the measurement covariance seen at pseudo-time ``tau`` by
+SDA's single-window guidance (Rozet & Louppe Eq. 15) approximates the
+measurement covariance seen at pseudo-time ``tau`` by
 
-    Gamma_tau = sigma^2 I + gamma_tau^2 H H^T,
+    Gamma_tau = sigma^2 I + gamma_sda * (sigma_tau / mu_tau)^2 H H^T,
 
-i.e. the raw noise ``R = sigma^2 I`` *inflated* by the denoiser variance
-projected into observation space, with ``gamma_tau^2`` the source variance
-``rho_tau`` read off the interpolation path (``gamma^2 t`` for SI, ``alpha^2``
-for FM). The guidance score is then
+i.e. the raw noise ``R = sigma^2 I`` *inflated* by the Gaussian denoiser
+variance ``(sigma/mu)^2`` projected into observation space and scaled by the
+tunable spectral factor ``gamma_sda`` (SDA default ``1e-2``; their ``Gamma =
+gamma I`` approximation of ``Q Lambda (Lambda + I)^-1 Q^-1``). In our affine
+path convention the denoiser mean weight is ``mu_tau = beta_tau`` and the source
+scale is ``sigma_tau`` (``= alpha_tau`` for FM, ``gamma_tau sqrt(t)`` for SI),
+so ``(sigma_tau / mu_tau)^2 = (sigma_tau / beta_tau)^2`` -- SDA's ``(sigma/mu)^2``
+verbatim. The guidance score is then
 
     g_tau = grad_{x_tau} [ -1/2 (y - H xhat_1)^T Gamma_tau^{-1} (y - H xhat_1) ],
 
 with ``xhat_1 = E[x_1 | x_tau]`` the Tweedie denoiser (autograd through the
-network, as in DPS). This is the "diagonal-plus-low-rank" heuristic SDA uses to
-avoid forming the dense denoiser covariance.
+network, as in DPS). ``g_tau`` is injected into the reverse SDE with the SDA
+weight ``g_tau^2`` (the h-transform / classifier-guidance footing: the
+likelihood score enters ``-g^2 (s_prior + s_lik)`` on equal footing with the
+prior score), applied by ``DiffusionPosterior`` via ``guidance_weight``.
+
+Note: SDA's released code uses the purely diagonal ``sigma^2 + gamma_sda
+(sigma/mu)^2`` in observation space (i.e. ``H H^T`` dropped); for a selection /
+subsampling ``H`` (``H H^T = I``) that coincides with the ``H H^T`` form used
+here, and for a general ``H`` this is the more faithful rendering of Eq. 15's
+``A Gamma A^T``.
 
 Returns ``(score, log_likelihood)`` to match the
 ``InterpolantGaussianLikelihood`` / ``DPSGaussianLikelihood`` interface so it
@@ -56,6 +68,7 @@ class SDALikelihood(nn.Module):
         variance: float = 0.05,
         ensemble_size: int = 1,
         model_class: str = "si",
+        gamma_sda: float = 1e-2,
     ) -> None:
         super(SDALikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -68,10 +81,14 @@ class SDALikelihood(nn.Module):
         self.anchor = "x0" if model_class == "si" else "zeros"
         self.interpolant = self.model.interpolation
         self._HHt: Optional[torch.Tensor] = None
-        # FIX 3: ask DiffusionPosterior to apply the raw likelihood score with the
-        # FM score->state coefficient (a_tau + 0.5 g^2) instead of its legacy
-        # 0.5 g^2 sqrt(t) weight (which under-powers SDA ~10-16x).
-        self.guidance_weight = "fm_coeff"
+        # SDA's tunable spectral factor gamma in Gamma_tau = R + gamma (sigma/mu)^2 HH^T
+        # (Rozet & Louppe Eq. 15; released-code default 1e-2).
+        self.gamma_sda = float(gamma_sda)
+        # Inject the raw likelihood score into the reverse SDE with the SDA weight
+        # g_tau^2 (h-transform / classifier-guidance footing: s_lik enters
+        # -g^2 (s_prior + s_lik) on equal footing with the prior score). Keyed by
+        # DiffusionPosterior on ``guidance_weight == 'g_squared'``.
+        self.guidance_weight = "g_squared"
 
     def forward(self, *args: Any, **kwargs: Any) -> torch.Tensor:
         """Unused (score interface is the entry point)."""
@@ -115,8 +132,11 @@ class SDALikelihood(nn.Module):
 
         a0 = field_history[..., -1] if self.anchor == "x0" else torch.zeros_like(x)
         xhat1 = (x + sigma_tau**2 * s - alpha * a0) / beta
-        # rho_tau = sigma_tau^2 (the source / denoiser variance scale).
-        rho = (sigma_tau**2).reshape(-1)[0]
+        # SDA denoiser variance in obs space: gamma_sda * (sigma/mu)^2 with the
+        # denoiser mean weight mu_tau = beta_tau (Rozet & Louppe Eq. 15). NOT the
+        # bare source variance sigma_tau^2 -- the 1/mu^2 = 1/beta^2 factor is what
+        # makes the covariance grow toward the noise end as SDA prescribes.
+        rho = (self.gamma_sda * sigma_tau**2 / beta**2).reshape(-1)[0]
         return xhat1, rho
 
     def score(
@@ -147,7 +167,8 @@ class SDALikelihood(nn.Module):
             )
             residual = observations - self.obs_operator(xhat1)  # [B, N_y]
 
-            # Gamma_tau = sigma^2 I + gamma_tau^2 H H^T  (SDA diagonal-plus-low-rank).
+            # Gamma_tau = sigma^2 I + gamma_sda (sigma/mu)^2 H H^T (SDA Eq. 15;
+            # rho already carries gamma_sda * (sigma_tau/beta)^2).
             HHt = self._get_HHt(x_g)  # [N_y, N_y]
             N_y = HHt.shape[0]
             eye = torch.eye(N_y, device=HHt.device, dtype=HHt.dtype)
@@ -163,16 +184,12 @@ class SDALikelihood(nn.Module):
 
             grad = torch.autograd.grad(outputs=weighted.sum(), inputs=x_g)[0]
 
-        # FIX 3: drop the 1/||Gamma^-1 r|| step-normalisation -- it is exactly the
-        # DPS rescaling SDA warns against, and with DiffusionPosterior's legacy
-        # 0.5 g^2 sqrt(t) application weight it under-powered the guidance ~10-16x.
-        # Return the RAW likelihood score s_lik = -grad = J^T H^T Gamma^-1 r; the
-        # correct FM score->state application weight (a_tau + 0.5 g^2) is applied
-        # by DiffusionPosterior, which keys on ``self.guidance_weight == 'fm_coeff'``
-        # (set below). Folding the weight into the returned value instead would make
-        # it diverge as t -> 0 (a_tau/g^2 ~ 1/(g0^2 t^2)); applying it in the
-        # posterior keeps the returned guidance bounded and matches the analytical
-        # ``sda_posterior`` exactly.
+        # Return the RAW likelihood score s_lik = -grad = J^T H^T Gamma^-1 r, with
+        # NO 1/||Gamma^-1 r|| step-normalisation (that DPS rescaling is exactly what
+        # SDA warns against). The SDA injection weight g_tau^2 -- the h-transform /
+        # classifier-guidance footing that puts s_lik on the same -g^2 footing as
+        # the prior score -- is applied by DiffusionPosterior, which keys on
+        # ``self.guidance_weight == 'g_squared'`` (set above).
         guidance = -grad
 
         log_likelihood = -weighted.detach()

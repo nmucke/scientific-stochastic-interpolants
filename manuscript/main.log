@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Fedora 40) (preloaded format=pdflatex 2024.8.16)  30 JUN 2026 09:54
+This is pdfTeX, Version 3.141592653-2.6-1.40.25 (TeX Live 2023/Fedora 40) (preloaded format=pdflatex 2024.8.16)  1 JUL 2026 13:42
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -1108,72 +1108,88 @@ Package microtype Info: Loading configuration file microtype.cfg.
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/microtype.cfg
 File: microtype.cfg 2023/03/13 v3.1a microtype main configuration file (RS)
 ))
-\c@theorem=\count365
- (./main.aux)
+(/usr/share/texlive/texmf-dist/tex/latex/wrapfig/wrapfig.sty
+\wrapoverhang=\dimen338
+\WF@size=\dimen339
+\c@WF@wrappedlines=\count365
+\WF@box=\box93
+\WF@everypar=\toks54
+Package: wrapfig 2003/01/31  v 3.6
+)
+\c@theorem=\count366
+ (./main.aux
+
+LaTeX Warning: Label `subsec:results_urban' multiply defined.
+
+
+LaTeX Warning: Label `tab:urban_accuracy' multiply defined.
+
+)
 \openout1 = `main.aux'.
 
-LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 50.
-LaTeX Font Info:    ... okay on input line 50.
-(/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
+LaTeX Font Info:    Checking defaults for OML/cmm/m/it on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for OMS/cmsy/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for OT1/cmr/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for T1/cmr/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for TS1/cmr/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for OMX/cmex/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for U/cmr/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for PD1/pdf/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+LaTeX Font Info:    Checking defaults for PU/pdf/m/n on input line 51.
+LaTeX Font Info:    ... okay on input line 51.
+ (/usr/share/texlive/texmf-dist/tex/context/base/mkii/supp-pdf.mkii
 [Loading MPS to PDF converter (version 2006.09.02).]
-\scratchcounter=\count366
-\scratchdimen=\dimen338
-\scratchbox=\box93
-\nofMPsegments=\count367
-\nofMParguments=\count368
-\everyMPshowfont=\toks54
-\MPscratchCnt=\count369
-\MPscratchDim=\dimen339
-\MPnumerator=\count370
-\makeMPintoPDFobject=\count371
-\everyMPtoPDFconversion=\toks55
+\scratchcounter=\count367
+\scratchdimen=\dimen340
+\scratchbox=\box94
+\nofMPsegments=\count368
+\nofMParguments=\count369
+\everyMPshowfont=\toks55
+\MPscratchCnt=\count370
+\MPscratchDim=\dimen341
+\MPnumerator=\count371
+\makeMPintoPDFobject=\count372
+\everyMPtoPDFconversion=\toks56
 )
 Package caption Info: Begin \AtBeginDocument code.
 Package caption Info: hyperref package is loaded.
 Package caption Info: listings package is loaded.
+Package caption Info: wrapfig package is loaded.
 Package caption Info: End \AtBeginDocument code.
-\c@lstlisting=\count372
+\c@lstlisting=\count373
 
 
 Package todonotes Warning: The length marginparwidth is less than 2cm and will 
 most likely cause issues with the appearance of inserted todonotes. The issue c
 an be solved by adding a line like \setlength {\marginparwidth }{2cm} prior to 
-loading the todonotes package. on input line 50.
+loading the todonotes package. on input line 51.
 
-Package hyperref Info: Link coloring OFF on input line 50.
+Package hyperref Info: Link coloring OFF on input line 51.
 (./main.out) (./main.out)
 \@outlinefile=\write4
 \openout4 = `main.out'.
 
-LaTeX Info: Redefining \microtypecontext on input line 50.
-Package microtype Info: Applying patch `item' on input line 50.
-Package microtype Info: Applying patch `toc' on input line 50.
-Package microtype Info: Applying patch `eqnum' on input line 50.
-Package microtype Info: Applying patch `footnote' on input line 50.
-Package microtype Info: Applying patch `verbatim' on input line 50.
+LaTeX Info: Redefining \microtypecontext on input line 51.
+Package microtype Info: Applying patch `item' on input line 51.
+Package microtype Info: Applying patch `toc' on input line 51.
+Package microtype Info: Applying patch `eqnum' on input line 51.
+Package microtype Info: Applying patch `footnote' on input line 51.
+Package microtype Info: Applying patch `verbatim' on input line 51.
 Package microtype Info: Generating PDF output.
 Package microtype Info: Character protrusion enabled (level 2).
 Package microtype Info: Using default protrusion set `alltext'.
 Package microtype Info: Automatic font expansion enabled (level 2),
 (microtype)             stretch: 20, shrink: 20, step: 1, non-selected.
 Package microtype Info: Using default expansion set `alltext-nott'.
-LaTeX Info: Redefining \showhyphens on input line 50.
+LaTeX Info: Redefining \showhyphens on input line 51.
 Package microtype Info: No adjustment of tracking.
 Package microtype Info: No adjustment of interword spacing.
 Package microtype Info: No adjustment of character kerning.
@@ -1185,7 +1201,7 @@ File: mt-ptm.cfg 2006/04/20 v1.7 microtype config. file: Times (RS)
 File: mt-cmr.cfg 2013/05/19 v2.2 microtype config. file: Computer Modern Roman 
 (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msa on input line 54.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 55.
 
 
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsa.fd
@@ -1194,7 +1210,7 @@ File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 54.
+LaTeX Font Info:    Trying to load font information for U+msb on input line 55.
 
 
 (/usr/share/texlive/texmf-dist/tex/latex/amsfonts/umsb.fd
@@ -1203,7 +1219,7 @@ File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 (/usr/share/texlive/texmf-dist/tex/latex/microtype/mt-msb.cfg
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+rsfs on input line 54
+LaTeX Font Info:    Trying to load font information for U+rsfs on input line 55
 .
 
 (/usr/share/texlive/texmf-dist/tex/latex/jknapltx/ursfs.fd
@@ -1219,69 +1235,69 @@ Overfull \hbox (16.59924pt too wide) in paragraph at lines 77--89
  []
 
 )
-LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 1
-3.
+LaTeX Font Info:    Trying to load font information for TS1+ptm on input line 3
+2.
  (/usr/share/texlive/texmf-dist/tex/latex/psnfss/ts1ptm.fd
 File: ts1ptm.fd 2001/06/04 font definitions for TS1/ptm.
-) [2])
-(./sections/related_work.tex) [3] (./sections/preliminaries.tex [4])
+))
+(./sections/related_work.tex [2]) (./sections/preliminaries.tex [3] [4])
 (./sections/methodology.tex [5]
-
-LaTeX Warning: Reference `eq:general_interpolant' on page 6 undefined on input 
-line 20.
-
-
-LaTeX Warning: Reference `eq:vscoef_def' on page 6 undefined on input line 34.
-
-
-LaTeX Warning: Reference `eq:general_velocity_of_score' on page 6 undefined on 
-input line 37.
-
-[6]
-Overfull \hbox (3.85384pt too wide) detected at line 138
+Overfull \hbox (3.85384pt too wide) detected at line 231
 []
  []
 
 
-LaTeX Warning: Reference `eq:SI_score' on page 7 undefined on input line 139.
-
-[7] [8]
-
-LaTeX Warning: Reference `eq:SI_score' on page 9 undefined on input line 206.
+LaTeX Warning: Reference `eq:SI_score' on page 6 undefined on input line 232.
 
 
-Overfull \hbox (4.28244pt too wide) in paragraph at lines 197--210
+LaTeX Warning: Reference `eq:fm_score' on page 6 undefined on input line 239.
+
+
+LaTeX Warning: Reference `eq:cov_correction' on page 6 undefined on input line 
+254.
+
+[6]
+
+LaTeX Warning: Reference `eq:fm_score' on page 7 undefined on input line 309.
+
+
+LaTeX Warning: Reference `eq:fm_score' on page 7 undefined on input line 325.
+
+
+LaTeX Warning: Reference `eq:SI_score' on page 7 undefined on input line 325.
+
+
+LaTeX Warning: Reference `eq:fm_score' on page 7 undefined on input line 325.
+
+
+Overfull \hbox (4.28244pt too wide) in paragraph at lines 316--329
  [][] 
  []
 
-[9] (./figures/decision_guide.tex)) (./sections/comparison.tex)
-(./sections/implementation.tex [10]
+) (./sections/implementation.tex
 Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
 put line 5.
 
 
-LaTeX Warning: Reference `eq:SI_score' on page 11 undefined on input line 12.
+LaTeX Warning: Reference `eq:SI_score' on page 7 undefined on input line 12.
 
-) [11] (./sections/results.tex [12]
-<figures/analytical/analytical_case.pdf, id=725, 228.46129pt x 222.86224pt>
-File: figures/analytical/analytical_case.pdf Graphic file (type pdf)
-<use figures/analytical/analytical_case.pdf>
-Package pdftex.def Info: figures/analytical/analytical_case.pdf  used on input 
-line 73.
-(pdftex.def)             Requested size: 194.76982pt x 190.00168pt.
-<figures/analytical/analytical_kl_vs_steps.pdf, id=726, 362.70259pt x 356.4564p
+
+LaTeX Warning: Reference `eq:fm_score' on page 7 undefined on input line 12.
+
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 7 undefined on input line 24
+.
+
+) [7] (./sections/results.tex [8]
+<figures/analytical/analytical_kl_vs_steps.pdf, id=560, 362.70259pt x 356.4564p
 t>
 File: figures/analytical/analytical_kl_vs_steps.pdf Graphic file (type pdf)
 <use figures/analytical/analytical_kl_vs_steps.pdf>
 Package pdftex.def Info: figures/analytical/analytical_kl_vs_steps.pdf  used on
- input line 77.
-(pdftex.def)             Requested size: 194.76982pt x 191.42297pt.
-
-Underfull \vbox (badness 10000) has occurred while \output is active []
-
- [13]
-LaTeX Font Info:    Trying to load font information for T1+pcr on input line 95
-.
+ input line 35.
+(pdftex.def)             Requested size: 131.17076pt x 128.91162pt.
+LaTeX Font Info:    Trying to load font information for T1+pcr on input line 10
+2.
 
 (/usr/share/texlive/texmf-dist/tex/latex/psnfss/t1pcr.fd
 File: t1pcr.fd 2001/06/04 font definitions for T1/pcr.
@@ -1290,17 +1306,17 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             `pcr' (encoding: T1).
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
- [14 <./figures/analytical/analytical_case.pdf> <./figures/analytical/analytica
-l_kl_vs_steps.pdf>]
-Overfull \hbox (25.7276pt too wide) in paragraph at lines 109--136
- [][] 
- []
 
-) (./sections/conclusion.tex
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 9 undefined on input line 10
+2.
+
+) (./sections/conclusion.tex [9 <./figures/analytical/analytical_kl_vs_steps.pd
+f>]) (./main.bbl
 Underfull \vbox (badness 10000) has occurred while \output is active []
 
- [15])
-(./main.bbl [16] [17]
+ [10]
+[11] [12]
 Underfull \hbox (badness 2065) in paragraph at lines 299--307
 \T1/ptm/m/n/10 (+20) e-mat-i-cal Statis-tics Text-books. Cam-bridge Uni-ver-sit
 y Press, Cam-bridge, 2019.  ISBN
@@ -1318,44 +1334,48 @@ Underfull \hbox (badness 10000) in paragraph at lines 299--307
 ions /
  []
 
-[18]) (./sections/appendix_methods.tex [19] [20] [21])
-(./sections/appendix_score_velocity_duality.tex [22]
+) (./sections/appendix_methods.tex [13]
 
-LaTeX Warning: Reference `eq:general_interpolant' on page 23 undefined on input
- line 6.
+LaTeX Warning: Reference `appendix:score_velocity' on page 14 undefined on inpu
+t line 69.
 
+[14] [15]
 
-LaTeX Warning: Reference `eq:general_velocity' on page 23 undefined on input li
-ne 26.
+LaTeX Warning: Reference `appendix:score_velocity' on page 16 undefined on inpu
+t line 168.
 
+[16]
 
-LaTeX Warning: Reference `eq:vscoef_def' on page 23 undefined on input line 33.
+LaTeX Warning: Reference `appendix:score_velocity' on page 17 undefined on inpu
+t line 256.
 
+) (./sections/appendix_proof_conditioning.tex
 
-
-LaTeX Warning: Reference `eq:SI_score' on page 23 undefined on input line 39.
-
-
-LaTeX Warning: Reference `eq:SI_score' on page 23 undefined on input line 52.
-
-[23]) (./sections/appendix_proof_conditioning.tex
-
-LaTeX Warning: Reference `eq:general_velocity_of_score' on page 24 undefined on
- input line 4.
+LaTeX Warning: Reference `appendix:score_velocity' on page 17 undefined on inpu
+t line 5.
 
 
-LaTeX Warning: Reference `eq:general_interpolant' on page 24 undefined on input
- line 8.
+LaTeX Warning: Reference `eq:general_velocity_of_score' on page 17 undefined on
+ input line 5.
 
 
-LaTeX Warning: Reference `eq:general_velocity_of_score' on page 24 undefined on
- input line 23.
+LaTeX Warning: Reference `prop:marginal_preservation' on page 17 undefined on i
+nput line 5.
+
+[17]
+
+LaTeX Warning: Reference `eq:general_velocity_of_score' on page 18 undefined on
+ input line 40.
 
 
-LaTeX Warning: Reference `eq:general_velocity_of_score' on page 24 undefined on
- input line 23.
+LaTeX Warning: Reference `eq:general_velocity_of_score' on page 18 undefined on
+ input line 40.
 
-[24]) (./sections/appendix_proof_posterior.tex
+
+LaTeX Warning: Reference `prop:marginal_preservation' on page 18 undefined on i
+nput line 57.
+
+) (./sections/appendix_proof_posterior.tex
 
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 1.
@@ -1364,27 +1384,57 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 (hyperref)                removing `math shift' on input line 1.
 
-[25]
+
+LaTeX Warning: Reference `rem:doob' on page 18 undefined on input line 4.
+
+[18]
+
+LaTeX Warning: Reference `prop:marginal_preservation' on page 19 undefined on i
+nput line 82.
+
+
 Overfull \hbox (29.83421pt too wide) detected at line 100
 []
  []
 
-
+[19]
 Overfull \hbox (42.23814pt too wide) detected at line 108
 []
  []
 
-[26]) (./sections/appendix_proof_interpolant_likelihood_covariance.tex
+) (./sections/appendix_proof_interpolant_likelihood_covariance.tex [20]
 
-LaTeX Warning: Reference `eq:SI_score' on page 27 undefined on input line 53.
+LaTeX Warning: Reference `eq:bias' on page 21 undefined on input line 34.
 
-[27]
 
-LaTeX Warning: Reference `eq:SI_score' on page 28 undefined on input line 57.
+LaTeX Warning: Reference `eq:cov_correction' on page 21 undefined on input line
+ 41.
 
-) (./sections/appendix_simple_test_case.tex) (./sections/appendix_extra.tex
 
-LaTeX Warning: Reference `eq:SI_score' on page 28 undefined on input line 67.
+LaTeX Warning: Reference `eq:SI_score' on page 21 undefined on input line 53.
+
+
+LaTeX Warning: Reference `eq:SI_score' on page 21 undefined on input line 57.
+
+
+LaTeX Warning: Reference `lem:tweedie' on page 21 undefined on input line 61.
+
+
+LaTeX Warning: Reference `eq:fm_score' on page 21 undefined on input line 61.
+
+
+LaTeX Warning: Reference `lem:tweedie' on page 21 undefined on input line 65.
+
+) (./sections/appendix_simple_test_case.tex [21])
+(./sections/appendix_extra.tex
+
+LaTeX Warning: Reference `eq:fm_score' on page 22 undefined on input line 24.
+
+
+LaTeX Warning: Reference `eq:SI_score' on page 22 undefined on input line 67.
+
+
+LaTeX Warning: Reference `eq:fm_score' on page 22 undefined on input line 68.
 
 
 Underfull \hbox (badness 10000) in paragraph at lines 78--79
@@ -1396,15 +1446,27 @@ Overfull \hbox (6.18982pt too wide) in paragraph at lines 50--92
  [][] 
  []
 
-[28]
+
 Underfull \hbox (badness 10000) in paragraph at lines 114--114
 []\T1/ptm/m/n/9 (+20) Inflated co-vari-ance
  []
 
 
+LaTeX Warning: Reference `eq:inflated_covariance' on page 22 undefined on input
+ line 114.
+
+
 Underfull \hbox (badness 10000) in paragraph at lines 117--117
 []\T1/ptm/m/n/9 (+20) Jacobian-free co-vari-
  []
+
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 22 undefined on input line 1
+17.
+
+
+LaTeX Warning: Reference `subsec:approximations' on page 22 undefined on input 
+line 118.
 
 
 Underfull \hbox (badness 7649) in paragraph at lines 123--123
@@ -1452,14 +1514,22 @@ Overfull \hbox (4.79999pt too wide) in paragraph at lines 161--162
  [][][][] 
  []
 
-<figures/analytical/analytical_covariance_ablation.pdf, id=1216, 674.07516pt x 
-252.85165pt>
+<figures/analytical/analytical_covariance_ablation.pdf, id=955, 674.07516pt x 2
+52.85165pt>
 File: figures/analytical/analytical_covariance_ablation.pdf Graphic file (type 
 pdf)
 <use figures/analytical/analytical_covariance_ablation.pdf>
 Package pdftex.def Info: figures/analytical/analytical_covariance_ablation.pdf 
  used on input line 170.
 (pdftex.def)             Requested size: 365.68546pt x 137.1706pt.
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 22 undefined on input line 1
+71.
+
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 22 undefined on input line 1
+71.
+
 
 Overfull \hbox (4.79999pt too wide) in paragraph at lines 196--197
  [][][][] 
@@ -1475,46 +1545,63 @@ Overfull \hbox (4.79999pt too wide) in paragraph at lines 204--205
  [][][][] 
  []
 
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 22 undefined on input line 2
+15.
+
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 22 undefined on input line 2
+15.
+
 LaTeX Font Info:    Font shape `T1/pcr/m/it' in size <10> not available
-(Font)              Font shape `T1/pcr/m/sl' tried instead on input line 213.
-
-Underfull \vbox (badness 2980) has occurred while \output is active []
-
- [29]
-Overfull \hbox (4.79999pt too wide) in paragraph at lines 218--219
+(Font)              Font shape `T1/pcr/m/sl' tried instead on input line 234.
+[22]
+Overfull \hbox (4.79999pt too wide) in paragraph at lines 239--240
  [][][][] 
  []
 
 
-Overfull \hbox (4.79999pt too wide) in paragraph at lines 222--223
+Overfull \hbox (4.79999pt too wide) in paragraph at lines 243--244
  [][][][] 
  []
 
 
-Underfull \vbox (badness 10000) has occurred while \output is active []
-
- [30]
-Underfull \vbox (badness 7064) has occurred while \output is active []
-
- [31 <./figures/analytical/analytical_covariance_ablation.pdf>] [32]) [33] [34]
+LaTeX Warning: Reference `cor:cheap_drift' on page 23 undefined on input line 2
+54.
 
 
+LaTeX Warning: Reference `cor:cheap_drift' on page 23 undefined on input line 2
+54.
+
+
+LaTeX Warning: Reference `subsec:approximations' on page 23 undefined on input 
+line 325.
+
+
+LaTeX Warning: Reference `cor:cheap_drift' on page 23 undefined on input line 3
+25.
+
+[23]) [24] [25 <./figures/analytical/analytical_covariance_ablation.pdf>]
+[26] [27] 
 enddocument/afterlastpage: lastpage setting LastPage.
 (./main.aux)
 
 LaTeX Warning: There were undefined references.
 
+
+LaTeX Warning: There were multiply-defined labels.
+
 Package rerunfilecheck Info: File `main.out' has not changed.
-(rerunfilecheck)             Checksum: 0AE943D386CA1862F0324B8B3A3FBD13;9212.
+(rerunfilecheck)             Checksum: 8F9CDBD13FD2311E1DB4CB1A7BE71313;7993.
  ) 
 Here is how much of TeX's memory you used:
- 37641 strings out of 476034
- 760130 string characters out of 5792854
- 1910388 words of memory out of 6000000
- 56609 multiletter control sequences out of 15000+600000
- 613963 words of font info for 410 fonts, out of 8000000 for 9000
+ 37463 strings out of 476034
+ 757288 string characters out of 5792854
+ 1928388 words of memory out of 6000000
+ 56522 multiletter control sequences out of 15000+600000
+ 615766 words of font info for 381 fonts, out of 8000000 for 9000
  1137 hyphenation exceptions out of 8191
- 104i,21n,99p,1882b,1629s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 104i,19n,99p,1855b,1629s stack positions out of 10000i,1000n,20000p,200000b,200000s
 </usr/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></us
 r/share/texlive/texmf-dist/fonts/type1/public/amsfonts/cm/cmex10.pfb></usr/shar
 e/texlive/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex7.pfb></usr/share/
@@ -1538,17 +1625,16 @@ ist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/share/texlive/texmf-dist/fon
 ts/type1/public/amsfonts/cm/cmsy6.pfb></usr/share/texlive/texmf-dist/fonts/type
 1/public/amsfonts/cm/cmsy7.pfb></usr/share/texlive/texmf-dist/fonts/type1/publi
 c/amsfonts/cm/cmsy9.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfo
-nts/symbols/msam10.pfb></usr/share/texlive/texmf-dist/fonts/type1/public/amsfon
-ts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/courier/uc
-rr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/courier/ucrro8a.pfb></u
-sr/share/texlive/texmf-dist/fonts/type1/urw/helvetic/uhvb8a.pfb></usr/share/tex
-live/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/share/texlive/texmf-dist
-/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/ur
-w/times/utmri8a.pfb>
-Output written on main.pdf (34 pages, 638591 bytes).
+nts/symbols/msbm10.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/courier/u
+crr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/urw/courier/ucrro8a.pfb></
+usr/share/texlive/texmf-dist/fonts/type1/urw/helvetic/uhvb8a.pfb></usr/share/te
+xlive/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/share/texlive/texmf-dis
+t/fonts/type1/urw/times/utmr8a.pfb></usr/share/texlive/texmf-dist/fonts/type1/u
+rw/times/utmri8a.pfb>
+Output written on main.pdf (27 pages, 553751 bytes).
 PDF statistics:
- 1511 PDF objects out of 1728 (max. 8388607)
- 1235 compressed objects within 13 object streams
- 278 named destinations out of 1000 (max. 500000)
- 86588 words of extra memory for PDF output out of 89155 (max. 10000000)
+ 1242 PDF objects out of 1440 (max. 8388607)
+ 998 compressed objects within 10 object streams
+ 235 named destinations out of 1000 (max. 500000)
+ 90639 words of extra memory for PDF output out of 106986 (max. 10000000)
 

@@ -1,6 +1,6 @@
 """Evaluation metrics for the observation-interpolant DA experiments.
 
-Exact metric definitions follow ``paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md``
+Exact metric definitions follow ``archive/paper_new/EXPERIMENTS_IMPLEMENTATION_SPEC.md``
 Section 3. Conventions:
 
 * The ensemble dimension is the leading axis ``E`` of an ensemble tensor.

@@ -18,7 +18,7 @@ Wiring (now landed; see ``_ns_pipeline.py`` for the heavy lifting):
   UNet drift architecture paired with a rectified-flow interpolation so
   ``FlowMatchingModel.score`` is defined (GAP L1). When no ``model.pth`` is
   present the models run with random weights (smoke only).
-* unified samplers -- ``scisi.posterior_models`` SI-SDE / FM-SDE / FM-ODE (E4).
+* unified samplers -- ``scisi.posterior_models`` SI-SDE / DM-SDE / FM-ODE (E4).
 * obs operators -- ``scisi.likelihood_models.observation_operators``: block-
   average super-res (E1) and seeded sparse masks (Section 9).
 * metrics -- ensemble-mean RMSE (m1), log-spectrum energy RMSE (E11), unbiased
@@ -43,26 +43,27 @@ from cases.navier_stokes import _ns_figures, _ns_pipeline
 
 logger = logging.getLogger(__name__)
 
-# Final-paper method lineup (results.tex row order), grouped by (prior, sampler).
-# Legacy "Guided FM" and "Guided diffusion" (DPS) are intentionally DROPPED.
+# REDUCED paper method lineup (2026-07-01), grouped by (prior, sampler). The two
+# "Ours" likelihood-covariance modes (jacfree / shared) are NOT separate methods
+# here -- they are the same three samplers run under two ``likelihood_mode``
+# settings, tagged apart by the tidy ``variant`` column (see ``_variant``). Dropped
+# from the earlier lineup: Guided FM (FIG), Guided FM (OT-ODE), standalone SURGE,
+# LETKF, Ensemble score filter.
 NS_METHODS: tuple[Method, ...] = (
-    # Ours (unified family).
+    # Ours (unified family) -- run twice (jacfree + shared) by the master script.
     Method.OURS_SI_SDE,
     Method.OURS_FM_ODE,
-    Method.OURS_FM_SDE,  # FM-SDE (DM)
+    Method.OURS_DM_SDE,  # DM-SDE
     # SI + SDE.
     Method.FLOWDAS,
-    # Flow matching + ODE.
-    Method.GUIDED_FM_FIG,
-    Method.GUIDED_FM_OTODE,
-    Method.D_FLOW_SGLD,  # NEW -- not yet wired
+    Method.SURGE_FLOWDAS,  # FlowDAS + SURGE
     # Diffusion model + SDE.
     Method.SDA,
-    Method.SURGE,  # NEW -- not yet wired
-    # Classical (ground-truth EnKF + conventional baselines).
-    Method.ENSEMBLE_SCORE_FILTER,
+    Method.SURGE_SDA,  # SDA + SURGE
+    # Flow matching + ODE.
+    Method.D_FLOW_SGLD,
+    # Classical (ground-truth EnKF + conventional baseline).
     Method.ENKF,
-    Method.LETKF,
     Method.PARTICLE_FILTER,
 )
 
@@ -71,7 +72,7 @@ NS_METHODS: tuple[Method, ...] = (
 # samplers are implemented.
 WIRED_METHODS: tuple[Method, ...] = (
     Method.OURS_SI_SDE,
-    Method.OURS_FM_SDE,
+    Method.OURS_DM_SDE,
     Method.OURS_FM_ODE,
     Method.FLOWDAS,
     Method.GUIDED_FM_FIG,
@@ -79,7 +80,21 @@ WIRED_METHODS: tuple[Method, ...] = (
     Method.D_FLOW_SGLD,
     Method.SDA,
     Method.SURGE,
+    Method.SURGE_SDA,
+    Method.SURGE_FLOWDAS,
 )
+
+# The three "Ours" samplers -- the only methods that carry a ``variant`` tag
+# (their likelihood-covariance mode). Every other method runs in a single mode.
+OURS_METHODS: frozenset[Method] = frozenset(
+    (Method.OURS_SI_SDE, Method.OURS_DM_SDE, Method.OURS_FM_ODE)
+)
+
+# likelihood_mode -> the tidy ``variant`` tag written for the Ours rows.
+VARIANT_FROM_MODE: dict[str, str] = {
+    "dps_jacobian_free": "jacfree",
+    "inflated_shared": "shared",
+}
 
 # Classical / non-posterior DA baselines routed through ``_evaluate_classical``.
 # ALL of these are TRUE-SOLVER (jax-cfd, no learned prior): ENKF, LETKF and
@@ -99,7 +114,7 @@ CLASSICAL_METHODS: tuple[Method, ...] = (
 # two not-yet-wired methods carry placeholder configs).
 METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.OURS_SI_SDE: "si_sde",
-    Method.OURS_FM_SDE: "fm_sde",
+    Method.OURS_DM_SDE: "dm_sde",
     Method.OURS_FM_ODE: "fm_ode",
     Method.FLOWDAS: "flowdas",
     Method.GUIDED_FM_FIG: "guided_fm_fig",
@@ -107,6 +122,8 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.D_FLOW_SGLD: "dflow_sgld",
     Method.SDA: "sda",
     Method.SURGE: "surge",
+    Method.SURGE_SDA: "surge_sda",
+    Method.SURGE_FLOWDAS: "surge_flowdas",
 }
 
 # Main-table scenarios; the other two go to the appendix table.
@@ -354,6 +371,10 @@ class NavierStokesRunner(ExperimentRunner):
             variance=extra["variance"],
             likelihood_ensemble_size=extra["likelihood_ensemble_size"],
             likelihood_mode=self._cfg_get("likelihood_mode", None),
+            # Select the per-cell guidance scale (e.g. FlowDAS zeta) from the
+            # method config's [scenario][M] table.
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario],
+            num_steps=ctx.num_steps,
         )
 
         nfe = _ns_pipeline.attach_nfe_counter(model)
@@ -367,10 +388,12 @@ class NavierStokesRunner(ExperimentRunner):
             num_physical_steps=extra["num_physical_steps"],
             stepper=stepper,
             nfe_counter=nfe,
-            # Anchor a0 = 0 (FM-path and DM-path: FM-SDE/FM-ODE, FIG, OT-ODE,
-            # D-Flow, SDA, SURGE) inits from the N(0, I) latent; only the SI-path
-            # methods (SI-SDE, FlowDAS) use the x0 point-mass init.
-            gaussian_base=ctx.method not in (Method.OURS_SI_SDE, Method.FLOWDAS),
+            # Anchor a0 = 0 (FM-path and DM-path: DM-SDE/FM-ODE, FIG, OT-ODE,
+            # D-Flow, SDA, SURGE, SURGE+SDA) inits from the N(0, I) latent; only
+            # the SI-path methods (SI-SDE, FlowDAS, SURGE+FlowDAS) use the x0
+            # point-mass init.
+            gaussian_base=ctx.method
+            not in (Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS),
         )
 
         # Large-E reference ensemble for KL-at-points (cached per scenario+seed).
@@ -399,9 +422,13 @@ class NavierStokesRunner(ExperimentRunner):
         if self._cfg_get("save_figures", False) and ctx.method == WIRED_METHODS[0] and ctx.seed == self.seeds[0]:
             self._save_figures(ctx, result, obs_operator, prior.len_field_history)
 
-        # Optionally persist the raw posterior + truth states (off by default).
+        # Optionally persist the raw posterior + truth states (traj1 only, driven
+        # by the master script's save_states flag).
         if self._cfg_get("save_states", False):
             self._save_states(ctx, result, truth_obs, obs_operator, metrics=metrics)
+        # Optionally persist the per-step metric curves (all trajectories).
+        if self._cfg_get("save_per_step", False):
+            self._save_per_step(ctx, metrics)
 
         yield from self._metric_rows(ctx, metrics)
 
@@ -558,9 +585,12 @@ class NavierStokesRunner(ExperimentRunner):
             {k: round(v, 4) if isinstance(v, float) else v for k, v in metrics.items() if k != "per_step"},
         )
 
-        # Optionally persist the raw posterior + truth states (off by default).
+        # Optionally persist the raw posterior + truth states (traj1 only).
         if self._cfg_get("save_states", False):
             self._save_states(ctx, result, truth_obs, obs_operator, metrics=metrics)
+        # Optionally persist the per-step metric curves (all trajectories).
+        if self._cfg_get("save_per_step", False):
+            self._save_per_step(ctx, metrics)
 
         yield from self._metric_rows(ctx, metrics)
 
@@ -571,7 +601,7 @@ class NavierStokesRunner(ExperimentRunner):
 
         ``run()`` only invokes :meth:`evaluate`; this is the dedicated entrypoint
         for :meth:`evaluate_ablation` (the ablation table is otherwise never
-        produced). Runs the FM-SDE sweep on a single scenario (the first of
+        produced). Runs the DM-SDE sweep on a single scenario (the first of
         ``self.scenarios()``; override with ``ablation_scenario`` in config) over
         the seed list, then aggregates per (case, method, scenario-tag, metric,
         E, M) so distinct sweep points survive.
@@ -588,12 +618,12 @@ class NavierStokesRunner(ExperimentRunner):
         raw: list[ResultRecord] = []
         for seed in self.seeds:
             seed_everything(seed)
-            ctx = self.make_context(Method.OURS_FM_SDE, scen, seed)
+            ctx = self.make_context(Method.OURS_DM_SDE, scen, seed)
             raw.extend(self.evaluate_ablation(ctx))
         return aggregate_over_seeds(raw) if aggregate else raw
 
     def evaluate_ablation(self, ctx: RunContext) -> Iterable[ResultRecord]:
-        """Produce tab:ablation rows (FM-SDE on one scenario, spec Section 7).
+        """Produce tab:ablation rows (DM-SDE on one scenario, spec Section 7).
 
         Each axis emits RMSE/CRPS/spread-skill rows. To keep distinct sweep
         points from collapsing under across-seed aggregation (which groups by
@@ -616,7 +646,7 @@ class NavierStokesRunner(ExperimentRunner):
         prior = self._ensure_prior()
         scen = ctx.scenario
         scen_cfg = self._scenario_cfgs()[scen.value]
-        method_cfg = self._method_cfgs()[Method.OURS_FM_SDE]
+        method_cfg = self._method_cfgs()[Method.OURS_DM_SDE]
         device = self._device
         extra = ctx.extra
 
@@ -698,7 +728,7 @@ class NavierStokesRunner(ExperimentRunner):
 
         def _run(mode, g_mult, num_steps, E):  # type: ignore[no-untyped-def]
             model, posterior, stepper = _ns_pipeline.build_posterior(
-                method_name=Method.OURS_FM_SDE.value,
+                method_name=Method.OURS_DM_SDE.value,
                 method_cfg=method_cfg,
                 prior=prior,
                 obs_operator=obs_operator,
@@ -754,7 +784,21 @@ class NavierStokesRunner(ExperimentRunner):
 
     # -- record emitters --------------------------------------------------- #
 
+    def _variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
+        """Tidy ``variant`` tag for a cell: the Ours likelihood-covariance mode.
+
+        Only the three Ours samplers carry a variant (``jacfree`` /``shared``,
+        from ``likelihood_mode``); every baseline/classical method runs in a
+        single mode and gets ``None`` (empty cell). Lets both Ours modes coexist
+        as distinct rows under the same canonical method label.
+        """
+        if method not in OURS_METHODS:
+            return None
+        mode = self._cfg_get("likelihood_mode", None)
+        return VARIANT_FROM_MODE.get(str(mode)) if mode is not None else None
+
     def _metric_rows(self, ctx, metrics):  # type: ignore[no-untyped-def]
+        variant = self._variant(ctx.method)
         for metric in NS_FIELD_METRICS:
             yield ResultRecord(
                 case=self.case.value,
@@ -767,8 +811,11 @@ class NavierStokesRunner(ExperimentRunner):
                 seed=ctx.seed,
                 nfe=metrics["nfe"],
                 seconds=metrics["seconds"],
+                variant=variant,
             )
-        # Cost rows (so the calibration/cost table can read NFE / seconds).
+        # Cost rows (so the calibration/cost table can read NFE / seconds). Timing
+        # is on EVERY row too (nfe/seconds columns); these are the explicit metric
+        # rows so a table can read cost through the same machinery.
         for metric, key in ((Metric.NFE, "nfe"), (Metric.SECONDS, "seconds")):
             yield ResultRecord(
                 case=self.case.value,
@@ -781,7 +828,41 @@ class NavierStokesRunner(ExperimentRunner):
                 seed=ctx.seed,
                 nfe=metrics["nfe"],
                 seconds=metrics["seconds"],
+                variant=variant,
             )
+
+    def _save_per_step(self, ctx, metrics):  # type: ignore[no-untyped-def]
+        """Append this cell's per-step metric curves to ``per_step_file``.
+
+        Enabled with ``save_per_step=true`` (path from ``per_step_file``). Lets
+        trajectories 2..N keep their full metric-vs-step history WITHOUT saving the
+        raw ensemble states (which is done only for the first trajectory). Carries
+        the run timing (nfe/seconds per step) on every row.
+        """
+        from common.per_step_io import append_per_step, per_step_rows
+
+        per_step = (metrics or {}).get("per_step", {})
+        if not per_step:
+            return
+        path = self._cfg_get("per_step_file", None)
+        if not path:
+            logger.warning("[NS] save_per_step set but no per_step_file; skipping")
+            return
+        rows = per_step_rows(
+            case=self.case.value,
+            method=ctx.method.value,
+            scenario=ctx.scenario.value,
+            variant=self._variant(ctx.method),
+            E=ctx.ensemble_size,
+            M=ctx.num_steps,
+            seed=ctx.seed,
+            test_index=int(ctx.extra.get("test_index", -1)),
+            nfe=metrics.get("nfe"),
+            seconds=metrics.get("seconds"),
+            per_step=per_step,
+        )
+        append_per_step(path, rows)
+        logger.info("[NS] per-step curves -> %s (%d rows)", path, len(rows))
 
     def _ablation_rows(self, ctx, tag, metrics, E=None, M=None):  # type: ignore[no-untyped-def]
         # E / M carry the ACTUAL swept values (not the base ctx values) so the
@@ -791,7 +872,7 @@ class NavierStokesRunner(ExperimentRunner):
         for metric in (Metric.RMSE, Metric.CRPS, Metric.SPREAD_SKILL):
             yield ResultRecord(
                 case=self.case.value,
-                method=Method.OURS_FM_SDE.value,
+                method=Method.OURS_DM_SDE.value,
                 scenario=tag,
                 metric=metric.value,
                 value=metrics[metric.value],
@@ -804,6 +885,7 @@ class NavierStokesRunner(ExperimentRunner):
 
     def _todo_rows(self, ctx):  # type: ignore[no-untyped-def]
         """Emit NaN placeholder rows for unimplemented baselines (Phase 4)."""
+        variant = self._variant(ctx.method)
         for metric in NS_FIELD_METRICS + (Metric.NFE, Metric.SECONDS):
             yield ResultRecord(
                 case=self.case.value,
@@ -814,6 +896,7 @@ class NavierStokesRunner(ExperimentRunner):
                 E=ctx.ensemble_size,
                 M=ctx.num_steps,
                 seed=ctx.seed,
+                variant=variant,
             )
 
     # -- raw state persistence (off by default) ---------------------------- #
@@ -845,9 +928,13 @@ class NavierStokesRunner(ExperimentRunner):
         def _slug(s: object) -> str:
             return re.sub(r"[^A-Za-z0-9]+", "_", str(s)).strip("_")
 
+        # Variant (Ours jacfree/shared) goes in the filename so both modes' states
+        # coexist for the same (method, scenario, seed) instead of clobbering.
+        variant = self._variant(ctx.method)
+        var_tag = f"__{variant}" if variant else ""
         path = root / (
             f"{self.case.value}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}"
-            f"__seed{ctx.seed}__E{ctx.ensemble_size}_M{ctx.num_steps}.npz"
+            f"{var_tag}__seed{ctx.seed}__E{ctx.ensemble_size}_M{ctx.num_steps}.npz"
         )
 
         def _np(x):  # type: ignore[no-untyped-def]
@@ -876,6 +963,8 @@ class NavierStokesRunner(ExperimentRunner):
             * float(_np(result.posterior_trajectory).shape[-1]),
             method=ctx.method.value,
             scenario=ctx.scenario.value,
+            variant=variant if variant else "",
+            test_index=int(ctx.extra.get("test_index", -1)),
             seed=int(ctx.seed),
             E=int(ctx.ensemble_size),
             M=int(ctx.num_steps),
@@ -889,7 +978,7 @@ class NavierStokesRunner(ExperimentRunner):
         from pathlib import Path
 
         fig_root = Path(
-            str(self._cfg_get("figures_root", "paper_new/figures/results"))
+            str(self._cfg_get("figures_root", "manuscript/figures/results"))
         )
         traj_path = _ns_figures.save_ns_trajectories(
             result, obs_operator, fig_root / "ns_trajectories.png"

@@ -24,5 +24,5 @@ num_steps: 50       # M
 likelihood_mode: null
 
 # Override at the CLI, e.g.:
-#   python paper_experiments/run.py case=navier_stokes method=fm_sde scenario=sparse_5
-#   python paper_experiments/run.py --multirun method=si_sde,fm_sde,fm_ode
+#   python paper_experiments/run.py case=navier_stokes method=dm_sde scenario=sparse_5
+#   python paper_experiments/run.py --multirun method=si_sde,dm_sde,fm_ode

@@ -8,7 +8,7 @@ surrogates plateau away from it.
 
 Produces:
 * Table ``tab:analytical_results`` -- KL and sliced-W2 to the exact posterior, for
-  SI-SDE / FM-SDE / FM-ODE / FlowDAS / Guided FM / Guided diffusion / EnKF /
+  SI-SDE / DM-SDE / FM-ODE / FlowDAS / Guided FM / Guided diffusion / EnKF /
   particle filter, at matched E, M. Emitted via the tidy schema.
 * Figure ``fig:analytical_panels`` -- see ``figures.py``.
 
@@ -48,7 +48,11 @@ from scisi.posterior_models.flow_matching_posterior import (
 from scisi.posterior_models.stochastic_interpolant_posterior import (
     StochasticInterpolantPosterior,
 )
-from scisi.posterior_models.surge_posterior import SurgePosterior
+from scisi.posterior_models.surge_posterior import (
+    SurgeFlowMatchingPosterior,
+    SurgePosterior,
+    SurgeStochasticInterpolantPosterior,
+)
 
 from .prior_models import (
     build_dm_model,
@@ -72,29 +76,38 @@ from analytical_utils.kl_divergence import (  # noqa: E402
     wasserstein_distance,
 )
 
-# Methods present in tab:analytical_results (no SDA / ensemble score filter rows).
+# REDUCED paper lineup (2026-07-01), matched to the NS/urban lineup where it is
+# meaningful for the closed-form linear-Gaussian case. The three "Ours" samplers
+# each run under TWO likelihood-covariance modes (jacfree + shared), emitted as
+# distinct ``variant`` rows (see ``_OURS_VARIANTS`` + ``evaluate``). Dropped from
+# the earlier lineup: Guided FM (OT-ODE), standalone SURGE. Added: the two SURGE
+# combos. EnKF + particle filter are the closed-form classical references.
 ANALYTICAL_METHODS: tuple[Method, ...] = (
     Method.OURS_SI_SDE,
-    Method.OURS_FM_SDE,
+    Method.OURS_DM_SDE,
     Method.OURS_FM_ODE,
     Method.FLOWDAS,
-    Method.GUIDED_FM_OTODE,
-    Method.D_FLOW_SGLD,
+    Method.SURGE_FLOWDAS,
     Method.SDA,
-    Method.SURGE,
+    Method.SURGE_SDA,
+    Method.D_FLOW_SGLD,
     Method.ENKF,
     Method.PARTICLE_FILTER,
 )
 
-# Map each method to (sampler, likelihood_mode). Our three samplers run the
-# exact (inflated) mode. The new posterior-sampling baselines (FIG, OT-ODE,
-# D-Flow SGLD, SDA, SURGE) are dispatched to their own closed-form samplers in
-# ``_sample_and_count`` rather than via this table.
-_METHOD_SPEC: dict[Method, tuple[str, str]] = {
-    Method.OURS_SI_SDE: ("si_sde", "inflated"),
-    Method.OURS_FM_SDE: ("fm_sde", "inflated"),
-    Method.OURS_FM_ODE: ("fm_ode", "inflated"),
+# The three "Ours" samplers dispatched through ``sample_posterior``; each runs
+# under BOTH likelihood-covariance modes below, emitted as distinct ``variant``
+# rows. Mirrors the jacfree/shared split of the NS/urban master scripts (which set
+# likelihood_mode on separate invocations).
+_OURS_SAMPLER: dict[Method, str] = {
+    Method.OURS_SI_SDE: "si_sde",
+    Method.OURS_DM_SDE: "dm_sde",
+    Method.OURS_FM_ODE: "fm_ode",
 }
+_OURS_VARIANTS: tuple[tuple[str, str], ...] = (
+    ("jacfree", "dps_jacobian_free"),
+    ("shared", "inflated_shared"),
+)
 
 # Fixed analytic system parameters (spec Section 4).
 _OBS_VAR = 1.0  # R = I
@@ -110,9 +123,11 @@ _N_EVAL = 4096  # samples drawn for the metric estimates
 # (gamma_t = 4 still over-contracts here); these recover the exact posterior.
 _OTODE_OBS_VAR = _OBS_VAR  # OT-ODE sigma_y^2 = R in the preconditioner
 _OTODE_GAMMA = 1.0  # OT-ODE adaptive weight gamma_t (regime-appropriate)
-# D-Flow SGLD under-mixes at the NS-locked K = 20 (the chain starts at N(0,I)
-# and needs more steps to equilibrate to the posterior); use K = 200 here.
-_DFLOW_OPTIM_STEPS = 200  # D-Flow SGLD K (regime-appropriate)
+# D-Flow SGLD chain length K = num_optim_steps. SUPERSEDED: K is now driven by the
+# sampler step count M (M -> num_optim_steps, ode_steps fixed at 6), so the M-sweep
+# {50,100,250,500} is D-Flow's Langevin-steps axis. Kept only as documentation of
+# the former fixed value; the D_FLOW_SGLD branch uses M, not this constant.
+_DFLOW_OPTIM_STEPS = 200  # (unused; see the D_FLOW_SGLD branch)
 _DFLOW_STEP_SIZE = 0.05  # D-Flow SGLD eta
 _DFLOW_NOISE_SCALE = 1.0  # D-Flow SGLD Langevin noise multiplier
 _SURGE_GUIDANCE = 1.0  # SURGE guidance strength (surge.yaml)
@@ -140,6 +155,8 @@ class AnalyticalRunner(ExperimentRunner):
 
     # -- the per-(method, scenario, seed) work ----------------------------- #
     def evaluate(self, ctx: RunContext) -> Iterable[ResultRecord]:
+        import time
+
         d = self._dim()
         E, M = ctx.ensemble_size, ctx.num_steps
         sys_ = GaussianSystem(d=d, obs_var=_OBS_VAR, prior_var=_PRIOR_VAR)
@@ -155,29 +172,45 @@ class AnalyticalRunner(ExperimentRunner):
         gr = torch.Generator().manual_seed(derive_seed("analytical", "ref", ctx.seed))
         ref = sys_.exact_posterior_samples(x0, y, _N_EVAL, gr).numpy()
 
-        # Draw the method's posterior ensemble.
-        gm = torch.Generator().manual_seed(
-            derive_seed("analytical", ctx.method.value, ctx.seed)
-        )
-        samp, nfe = self._sample_and_count(ctx.method, sys_, x0, y, _N_EVAL, M, gm)
+        def _emit(samp, nfe, seconds, variant):  # type: ignore[no-untyped-def]
+            """KL + sliced-W2 rows for one draw, tagged with the variant + timing."""
+            samp_np = samp.numpy()
+            kl = float(gaussian_kl_divergence(ref, samp_np))
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                w2 = float(
+                    wasserstein_distance(ref, samp_np, num_projections=128, seed=0)
+                )
+            for metric, val in (
+                (Metric.KL_POINTS, kl),
+                (Metric.SLICED_W2, w2),
+            ):
+                yield ResultRecord(
+                    case=self.case.value, method=ctx.method.value,
+                    scenario=ctx.scenario.value, metric=metric.value,
+                    value=val, E=E, M=M, seed=ctx.seed,
+                    nfe=float(nfe), seconds=float(seconds), variant=variant,
+                )
 
-        samp_np = samp.numpy()
-        kl = float(gaussian_kl_divergence(ref, samp_np))
-        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
-            w2 = float(
-                wasserstein_distance(ref, samp_np, num_projections=128, seed=0)
+        if ctx.method in _OURS_SAMPLER:
+            # Ours: run BOTH likelihood-covariance modes -> two variant rows.
+            sampler = _OURS_SAMPLER[ctx.method]
+            for variant, mode in _OURS_VARIANTS:
+                gm = torch.Generator().manual_seed(
+                    derive_seed("analytical", f"{ctx.method.value}:{variant}", ctx.seed)
+                )
+                t0 = time.perf_counter()
+                samp = sample_posterior(
+                    sys_, x0, y, sampler=sampler, likelihood_mode=mode,
+                    ensemble_size=_N_EVAL, num_steps=M, g0=_G0, generator=gm,
+                )
+                yield from _emit(samp, M, time.perf_counter() - t0, variant)
+        else:
+            gm = torch.Generator().manual_seed(
+                derive_seed("analytical", ctx.method.value, ctx.seed)
             )
-
-        yield ResultRecord(
-            case=self.case.value, method=ctx.method.value,
-            scenario=ctx.scenario.value, metric=Metric.KL_POINTS.value,
-            value=kl, E=E, M=M, seed=ctx.seed, nfe=float(nfe),
-        )
-        yield ResultRecord(
-            case=self.case.value, method=ctx.method.value,
-            scenario=ctx.scenario.value, metric=Metric.SLICED_W2.value,
-            value=w2, E=E, M=M, seed=ctx.seed, nfe=float(nfe),
-        )
+            t0 = time.perf_counter()
+            samp, nfe = self._sample_and_count(ctx.method, sys_, x0, y, _N_EVAL, M, gm)
+            yield from _emit(samp, nfe, time.perf_counter() - t0, None)
 
     def _sample_and_count(
         self,
@@ -211,7 +244,7 @@ class AnalyticalRunner(ExperimentRunner):
         y_obs = y.reshape(1, d)
 
         # ------------------------------------------------------------------
-        # Our methods: SI-SDE, FM-SDE, FM-ODE (src/scisi posteriors)
+        # Our methods: SI-SDE, DM-SDE, FM-ODE (src/scisi posteriors)
         # ------------------------------------------------------------------
         if method == Method.OURS_SI_SDE:
             si_model = build_si_model(d=d, g0=_G0, prior_var=_PRIOR_VAR)
@@ -230,7 +263,7 @@ class AnalyticalRunner(ExperimentRunner):
                 )
             return out.reshape(n, d), M
 
-        if method == Method.OURS_FM_SDE:
+        if method == Method.OURS_DM_SDE:
             fm_model = build_fm_model(d=d, prior_var=_PRIOR_VAR)
             obs_op = build_identity_obs_operator(d=d)
             likelihood = InterpolantGaussianLikelihood(
@@ -273,7 +306,7 @@ class AnalyticalRunner(ExperimentRunner):
             obs_op = build_identity_obs_operator(d=d)
             likelihood = FlowdasGaussianLikelihood(
                 model=si_model, obs_operator=obs_op,
-                variance=_OBS_VAR, ensemble_size=_FLOWDAS_J,
+                variance=_OBS_VAR, num_mc_samples=_FLOWDAS_J,
             )
             posterior = StochasticInterpolantPosterior(
                 model=si_model, likelihood_model=likelihood,
@@ -314,16 +347,22 @@ class AnalyticalRunner(ExperimentRunner):
         if method == Method.D_FLOW_SGLD:
             fm_model = build_fm_model(d=d, prior_var=_PRIOR_VAR)
             obs_op = build_identity_obs_operator(d=d)
+            # PECULIAR TO D-FLOW: M drives the SGLD chain length num_optim_steps
+            # (the FM-ODE rollout stays fixed at ode_steps=6), so the analytical
+            # M-sweep {50,100,250,500} IS the Langevin-steps axis for D-Flow --
+            # matching the KL-vs-steps figure caption. (Supersedes the old fixed
+            # _DFLOW_OPTIM_STEPS.)
+            dflow_K = M
             likelihood = DFlowSGLDLikelihood(
                 model=fm_model, obs_operator=obs_op,
                 variance=_OBS_VAR,
-                num_optim_steps=_DFLOW_OPTIM_STEPS,
+                num_optim_steps=dflow_K,
                 step_size=_DFLOW_STEP_SIZE,
                 noise_scale=_DFLOW_NOISE_SCALE,
             )
             posterior = DFlowPosterior(
                 model=fm_model, likelihood_model=likelihood,
-                num_optim_steps=_DFLOW_OPTIM_STEPS,
+                num_optim_steps=dflow_K,
                 step_size=_DFLOW_STEP_SIZE,
                 noise_scale=_DFLOW_NOISE_SCALE,
                 variance=_OBS_VAR,
@@ -333,7 +372,7 @@ class AnalyticalRunner(ExperimentRunner):
                     base=None, batch_size=n, num_steps=M,
                     field_history=fh, observations=y_obs,
                 )
-            return out.reshape(n, d), _DFLOW_OPTIM_STEPS * M
+            return out.reshape(n, d), dflow_K * 6  # ~ Langevin steps x ode_steps(6)
 
         # ------------------------------------------------------------------
         # SDA (src/scisi SDALikelihood + DiffusionPosterior)
@@ -376,6 +415,50 @@ class AnalyticalRunner(ExperimentRunner):
             return out.reshape(n, d), M
 
         # ------------------------------------------------------------------
+        # SURGE (SDA): SURGE SMC on the DM prior, SDA likelihood as guidance.
+        # ------------------------------------------------------------------
+        if method == Method.SURGE_SDA:
+            dm_model = build_dm_model(d=d, prior_var=_PRIOR_VAR, g0=_G0)
+            obs_op = build_identity_obs_operator(d=d)
+            likelihood = SDALikelihood(
+                model=dm_model, obs_operator=obs_op,
+                variance=_OBS_VAR, model_class="fm",
+            )
+            posterior = SurgeFlowMatchingPosterior(
+                model=dm_model, obs_operator=obs_op, variance=_OBS_VAR,
+                likelihood_model=likelihood, ess_threshold=_SURGE_ESS,
+                diffusion_term=None,
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=None, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            return out.reshape(n, d), M
+
+        # ------------------------------------------------------------------
+        # SURGE (FlowDAS): SURGE SMC on the SI prior, FlowDAS MC likelihood.
+        # ------------------------------------------------------------------
+        if method == Method.SURGE_FLOWDAS:
+            si_model = build_si_model(d=d, g0=_G0, prior_var=_PRIOR_VAR)
+            obs_op = build_identity_obs_operator(d=d)
+            likelihood = FlowdasGaussianLikelihood(
+                model=si_model, obs_operator=obs_op,
+                variance=_OBS_VAR, num_mc_samples=_FLOWDAS_J,
+            )
+            posterior = SurgeStochasticInterpolantPosterior(
+                model=si_model, obs_operator=obs_op, variance=_OBS_VAR,
+                likelihood_model=likelihood, ess_threshold=_SURGE_ESS,
+                diffusion_term=None,
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=base_si, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            return out.reshape(n, d), M * (1 + _FLOWDAS_J)
+
+        # ------------------------------------------------------------------
         # Classical filters (use hand-coded samplers; no generative prior)
         # ------------------------------------------------------------------
         if method == Method.ENKF:
@@ -400,7 +483,7 @@ class AnalyticalRunner(ExperimentRunner):
     )
     _ABLATION_SAMPLERS: tuple[tuple[Method, str], ...] = (
         (Method.OURS_SI_SDE, "si_sde"),
-        (Method.OURS_FM_SDE, "fm_sde"),
+        (Method.OURS_DM_SDE, "dm_sde"),
         (Method.OURS_FM_ODE, "fm_ode"),
     )
 

@@ -94,11 +94,11 @@ def aggregate(by_traj: dict[int, list[Path]]) -> list[dict[str, object]]:
     for traj, paths in by_traj.items():
         for path in paths:
             for r in load_records(path):
-                key = (r.case, r.method, r.scenario, r.metric, r.E, r.M)
+                key = (r.case, r.method, r.scenario, r.metric, r.E, r.M, r.variant)
                 cells[key][traj].append(r)
 
     rows: list[dict[str, object]] = []
-    for (case, method, scenario, metric, E, M), per_traj in cells.items():
+    for (case, method, scenario, metric, E, M, variant), per_traj in cells.items():
         traj_vals = [_per_traj_value(recs) for recs in per_traj.values()]
         finite = [v for v in traj_vals if not math.isnan(v)]
         if not finite:  # skip all-NaN groups
@@ -118,6 +118,7 @@ def aggregate(by_traj: dict[int, list[Path]]) -> list[dict[str, object]]:
             seed=SEED_AGGREGATED,
             nfe=_mean_opt([r.nfe for r in all_recs]),
             seconds=_mean_opt([r.seconds for r in all_recs]),
+            variant=variant,
         )
         row = rec.to_row()
         row["n_traj"] = len(finite)

@@ -719,8 +719,13 @@ class FlowdasGaussianLikelihood(nn.Module):
     """FlowDAS Monte-Carlo likelihood (baseline, ``chen_flowdas_2025``).
 
     NOT the paper's observation-interpolant method. Kept as a baseline: it
-    draws one-step predictions of ``x_1`` and softmax-weights them by the raw
-    observation likelihood ``N(y; H x_1, R)``.
+    draws ``J`` one-step predictions of ``x_1`` from ``x_tau``, softmax-weights
+    them by the observation likelihood ``N(y; H x_1, R)``, and returns the RAW
+    guidance score ``grad log p(y|x_tau)`` differentiated through the predictor
+    (magnitude and ``1/sigma**2`` intact). The posterior multiplies it by the
+    tuned constant step size ``zeta`` (:meth:`sde_weight`) -- FlowDAS's own
+    guidance mechanism, rather than the SI-SDE velocity--score weight used by
+    the interpolant-likelihood method.
     """
 
     def __init__(
@@ -730,26 +735,75 @@ class FlowdasGaussianLikelihood(nn.Module):
         variance: float = 0.05,
         ensemble_size: int = 1,
         integration_order: int = 1,
+        guidance_scale: float = 1.0,
+        max_grad_norm: Optional[float] = None,
+        num_mc_samples: Optional[int] = 25,
     ) -> None:
-        """
-        Initialize Multivariate Gaussian likelihood.
-
-        Either covariance_matrix or precision_matrix must be provided.
+        """Initialize the FlowDAS Monte-Carlo likelihood.
 
         Args:
             obs_operator: Observation operator.
-            model: Model.
-            variance: Variance.
+            model: Trained SI prior (supplies drift + interpolation schedule).
+            variance: Observation-noise variance ``sigma**2`` (``R``).
+            ensemble_size: The DA ensemble size ``E``. Kept for interface
+                compatibility only -- it is **not** used for the Monte-Carlo
+                estimate (that is ``num_mc_samples``).
+            integration_order: Kept for interface compatibility.
+            guidance_scale: FlowDAS guidance step size ``zeta`` (the paper's tuned
+                constant). It is returned by :meth:`sde_weight` and multiplies the
+                RAW likelihood score in the posterior drift, so it must be tuned
+                per experiment (the raw ``1/sigma**2`` score is what diverged at
+                NS scale before -- start small and/or set ``max_grad_norm``).
+            max_grad_norm: Optional per-member L2 cap on the score. ``None`` leaves
+                the raw magnitude untouched; a float clips blow-ups WITHOUT
+                rescaling scores below the cap (unlike unit-normalisation, which
+                destroyed the time schedule).
+            num_mc_samples: Number of one-step ``x_1`` predictions ``J`` drawn
+                PER ensemble member for the likelihood estimate (paper Eq. 10;
+                recommended ``J=25`` irrespective of ``E``). This is decoupled
+                from ``ensemble_size``. ``None`` falls back to the ``25`` default.
         """
         super(FlowdasGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
         self.model = model
         self.original_variance = variance
+        # DA ensemble size E (interface only; NOT the Monte-Carlo count).
         self.ensemble_size = ensemble_size
+        # J = number of one-step x_1 predictions per member (paper Eq. 10).
+        self.num_mc_samples = int(num_mc_samples) if num_mc_samples is not None else 25
         self.dist = torch.distributions.MultivariateNormal
         self.integration_order = integration_order
+        self.guidance_scale = guidance_scale
+        self.max_grad_norm = max_grad_norm
 
+        # Gamma-multiplier of the trained interpolant: the whole stochastic part
+        # of the interpolant (hence the predictive spread of x_1 | x_tau) scales
+        # with it, but the hard-coded `integral_variance` below was derived for
+        # gamma_multiplier = 1. Scale by it so the Monte-Carlo cloud matches the
+        # ACTUAL trained noise level (NS prior uses gamma_multiplier = 0.1).
+        self._gamma_mult = float(
+            getattr(self.model.interpolation, "gamma_multiplier", 1.0)
+        )
+
+        # Predictive spread of x_1 given x_tau for gamma_multiplier = 1: large at
+        # tau -> 0 (only x_0 known) and 0 at tau -> 1 (x_1 determined). NOTE: this
+        # is used below as a STANDARD DEVIATION; whether the FlowDAS paper's
+        # predictor uses this as a std or a variance should be confirmed against
+        # the arXiv TeX (the `integral_variance` name suggests a variance).
         self.integral_variance = lambda t: 2 / 3 - t.sqrt() + (1 / 3) * (t.sqrt()) ** 3
+
+    def sde_weight(
+        self, t: torch.Tensor, diffusion_term: Optional[Callable] = None
+    ) -> torch.Tensor:
+        """Coefficient multiplying the likelihood score in the posterior drift.
+
+        FlowDAS applies a TUNED CONSTANT guidance step size ``zeta`` to the raw
+        likelihood score (paper: "``zeta_n`` typically constant"), rather than
+        the SI-SDE velocity--score weight ``a_tau + 1/2 g**2`` used by the
+        interpolant-likelihood method. The posterior queries this so each
+        likelihood owns how its score enters the SDE.
+        """
+        return self.guidance_scale * torch.ones_like(t)
 
     def forward(
         self, x: torch.Tensor, observations: torch.Tensor, variance: torch.Tensor
@@ -808,36 +862,33 @@ class FlowdasGaussianLikelihood(nn.Module):
         """FlowDAS guidance (chen_flowdas_2025, Algorithm 2 line 10).
 
         Faithful Monte-Carlo guidance: draw ``J = n_mc`` one-step predictions of
-        ``x_1`` from ``x_tau`` as ``X1_hat^(j) = mu_x1 + sqrt(v1) eps_j``, with
+        ``x_1`` from ``x_tau`` as ``X1_hat^(j) = mu_x1 + s eps_j``, with
         ``eps_j ~ N(0, I)`` DETACHED constants so the only ``x_tau``-dependence is
         through the denoiser mean ``mu_x1(x_tau)``. Compute DETACHED importance
-        weights ``w_j = softmax_j(-||y - H X1_hat^(j)||^2 / (2 sigma^2))`` and then
-        take the gradient of the weighted observation error THROUGH the predictor
+        weights ``w_j = softmax_j(-||y - H X1_hat^(j)||^2 / (2 sigma^2))`` and
+        return the RAW likelihood score, differentiated THROUGH the predictor
 
-            g = -grad_{x_tau} sum_j w_j ||y - H X1_hat^(j)||^2
-              = -grad_{x_tau} ||y - H xhat1||^2   (weights detached),
-              xhat1 = sum_j w_j X1_hat^(j).
+            grad log p(y|x_tau) = grad_{x_tau} [ -1/(2 sigma^2) sum_j w_j ||y - H X1_hat^(j)||^2 ]
+                                                                 (weights detached).
 
-        The crucial point (vs the old bounded surrogate ``(x1_hat - mu_x1)/(v1+R)``
-        which vanishes as ``v1 -> 0``): the residual ``(y - H xhat1)`` is pulled
-        THROUGH the denoiser Jacobian by autograd, so it points toward the
-        observation and does NOT vanish at the data end.
-
-        The raw ``1/sigma^2``-scaled gradient through the network was what diverged
-        at NS scale (the step SIZE, not the algorithm), so we step-normalize like
-        the other guided baselines (DPS-style): ``guidance = -grad / (||grad|| +
-        eps)``. The posterior applies ``w_tau`` as the schedule. Returns
-        ``(guidance, log_likelihood)``; computed on a detached grad-enabled leaf so
+        This is the paper's guidance term with its magnitude and ``1/sigma^2``
+        INTACT (no unit-normalisation). The posterior multiplies it by the tuned
+        constant step size ``zeta`` returned by :meth:`sde_weight` -- FlowDAS's
+        actual mechanism -- and optional ``max_grad_norm`` only caps blow-ups
+        (the NS-scale divergence) without rescaling smaller scores. Returns
+        ``(score, log_likelihood)``; computed on a detached grad-enabled leaf so
         the caller's autoregressive working state is never mutated in place.
         """
-        n_mc = self.ensemble_size
+        n_mc = self.num_mc_samples  # J: MC x_1 draws per member (decoupled from E)
         R = self.original_variance
 
-        # Conditional spread (FlowDAS predictor std); state-independent scalar.
-        s = self.integral_variance(t)
+        # Predictive spread of x_1 | x_tau, scaled by the interpolant's
+        # gamma_multiplier so the Monte-Carlo cloud matches the trained noise
+        # level (state-independent scalar).
+        s = self._gamma_mult * self.integral_variance(t)
 
-        # Detached grad-enabled leaf: the DPS gradient flows through mu_x1(x_g)
-        # but the caller's working tensor is untouched.
+        # Detached grad-enabled leaf: the score flows through mu_x1(x_g) but the
+        # caller's working tensor is untouched.
         x_g = x.detach().requires_grad_(True)
         with torch.enable_grad():
             mu_x1 = self._denoiser_mean(
@@ -862,14 +913,22 @@ class FlowdasGaussianLikelihood(nn.Module):
             log_w = -0.5 * sq_err.detach() / R  # [J, B]
             weights = torch.softmax(log_w, dim=0)  # [J, B]
 
-            # Weighted observation error, differentiated through the predictor.
-            weighted_err = (weights * sq_err).sum(dim=0).sum()  # scalar
-            grad = torch.autograd.grad(outputs=weighted_err, inputs=x_g)[0]
+            # log p(y|x_tau) with the 1/(2 sigma^2) factor kept; differentiate
+            # THROUGH the predictor (weights detached) to get the raw score. The
+            # -1/(2R) sign makes `grad` already point UP the log-likelihood, so
+            # the posterior ascends with a positive step size zeta.
+            log_lik = -0.5 * (weights * sq_err).sum(dim=0).sum() / R  # scalar
+            grad = torch.autograd.grad(outputs=log_lik, inputs=x_g)[0]
 
-        # DPS-style step normalization (the step SIZE was the divergence, not the
-        # algorithm): unit-L2 per member; descent on the error => -grad.
-        gnorm = grad.reshape(b, -1).norm(dim=1).reshape(b, *([1] * (grad.dim() - 1)))
-        guidance = -grad / (gnorm + 1e-6)
+        score = grad
+        # Optional safety cap: clip only members whose score exceeds max_grad_norm,
+        # leaving the direction and the relative magnitude of smaller scores intact
+        # (unlike unit-normalisation, which flattened the schedule).
+        if self.max_grad_norm is not None:
+            gn = score.reshape(b, -1).norm(dim=1).reshape(
+                b, *([1] * (score.dim() - 1))
+            )
+            score = score * (self.max_grad_norm / (gn + 1e-12)).clamp(max=1.0)
 
         # Per-member log marginal likelihood (for optional SMC reweighting).
         log_likelihood = (
@@ -877,4 +936,4 @@ class FlowdasGaussianLikelihood(nn.Module):
             - torch.log(torch.tensor(float(n_mc), device=log_w.device))
         ).detach()
 
-        return guidance.detach(), log_likelihood
+        return score.detach(), log_likelihood

@@ -1,8 +1,8 @@
-# Ours (FM-SDE) -- Sampler 2 of the unified family (spec Section 1.1).
+# Ours (DM-SDE) -- Sampler 2 of the unified family (spec Section 1.1).
 # a0 = 0, x ~ N(0,I) init (exact, no reweighting). Endpoint-vanishing diffusion
 # g_tau ~ sqrt(alpha_tau*beta_tau) keeps 0.5 g^2 s finite as tau->1. Score via
 # Eq. fm_score (needs FlowMatchingModel.score -- GAP L1). DOES NOT EXIST YET (P3).
-name: Ours (FM-SDE)
+name: Ours (DM-SDE)
 stepper: sde
 diffusion_term:
   # g_tau ~ sqrt(alpha*beta) endpoint-vanishing schedule (GAP L7/P3).

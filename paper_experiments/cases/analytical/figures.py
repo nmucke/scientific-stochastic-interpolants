@@ -39,8 +39,8 @@ _G0 = 1.0
 _X0 = torch.tensor([5.0, 5.0])
 _Y = torch.tensor([1.0, 1.0])
 _N = 8000
-_SAMPLERS = ("si_sde", "fm_sde", "fm_ode")
-_SAMPLER_LABEL = {"si_sde": "SI-SDE", "fm_sde": "FM-SDE", "fm_ode": "FM-ODE"}
+_SAMPLERS = ("si_sde", "dm_sde", "fm_ode")
+_SAMPLER_LABEL = {"si_sde": "SI-SDE", "dm_sde": "DM-SDE", "fm_ode": "FM-ODE"}
 
 
 def _save(fig: plt.Figure, name: str) -> Path:
@@ -89,10 +89,10 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
         _hist2d(ax, np.asarray(data), title, rng)
         written.append(_save(fig, key))
 
-    # (e) KL vs diffusion strength g_tau (SDE samplers SI-SDE, FM-SDE).
+    # (e) KL vs diffusion strength g_tau (SDE samplers SI-SDE, DM-SDE).
     g_list = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
     fig, ax = plt.subplots(figsize=(3.6, 3.0))
-    for sampler in ("si_sde", "fm_sde"):
+    for sampler in ("si_sde", "dm_sde"):
         kls = []
         for gv in g_list:
             gg = torch.Generator().manual_seed(0)

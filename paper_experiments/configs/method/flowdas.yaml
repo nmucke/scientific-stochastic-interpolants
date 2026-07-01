@@ -7,8 +7,34 @@ diffusion_term: null
 
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
-  # J = number of Monte-Carlo x1 draws (report the value used).
+  # NOTE: the NS/analytical drivers construct FlowdasGaussianLikelihood directly
+  # and read the knobs below from this block; J (Monte-Carlo x1 draws) is taken
+  # from the case's `likelihood_ensemble_size` (num_mc_samples here is an alias
+  # honoured only if the object is instantiated straight from this target).
   num_mc_samples: 25
+  # Optional L2 cap on the per-member score to tame blow-ups (null = uncapped).
+  max_grad_norm: null
+
+  # Per-cell hyperparameter tables. ANY hyperparameter in this block may be given
+  # either as a scalar OR as a [scenario][num_sde_steps M] table marked by a
+  # `default:` key; the pipeline (resolve_scheduled_hparams) resolves it to ONE
+  # scalar per run from (scenario_key, num_steps). null = not tuned yet -> falls
+  # back to `default` with a warning. Env FLOWDAS_ZETA overrides the whole table.
+  #
+  # guidance_scale = FlowDAS zeta on the RAW likelihood score.
+  # Confidence of filled cells:
+  #   M=500        : paper setting (superres_16 also validated here, E=64: rmse 0.264).
+  #   sparse_5 M=50: E=64 dedicated sweep (zeta*=0.002, rmse 0.434) -- solid.
+  #   superres_16  : E=16 sweep; RMSE is flat in zeta (~0.23), so these are approximate.
+  #   superres_32 M=250: E=16 sweep (provisional).
+  #   null cells   : diverged at the E=16 shortcut (invalid there) -> pending an E=64 redo.
+  guidance_scale:
+    default: 1.0
+    #             M=50    M=100   M=250   M=500
+    superres_16: { 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
+    superres_32: { 50: null,  100: null,   250: 0.31,  500: 1.0  }
+    sparse_5:    { 50: 0.002, 100: null,   250: null,  500: 1.0  }
+    sparse_1p5:  { 50: null,  100: null,   250: null,  500: 1.75 }
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

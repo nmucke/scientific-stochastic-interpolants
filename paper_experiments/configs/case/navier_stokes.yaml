@@ -4,7 +4,7 @@ name: navier_stokes
 project: stochastic_navier_stokes
 
 # Checkpoint run names under checkpoints/<project>/<name>/. Both priors are trained:
-# the SI prior (SI-SDE / FlowDAS) and a DEDICATED FM prior (FM-SDE / FM-ODE). The
+# the SI prior (SI-SDE / FlowDAS) and a DEDICATED FM prior (DM-SDE / FM-ODE). The
 # loader builds the FM model from the FM checkpoint's OWN config.yaml and loads its
 # model.pth (it only falls back to reusing the SI drift when fm_run is null).
 #
@@ -38,8 +38,10 @@ device: cpu
 test_sample_indices: [1, 2, 3, 4, 5]
 
 ensemble_size: 64
-num_physical_steps: 25
-num_steps: 50          # M (spec default; swept in ablation)
+# 5-step seeded history + 15 assimilation steps = 20 physical steps
+# (n_assim = num_physical_steps - len_field_history(5) = 15). Reduced-grid default.
+num_physical_steps: 20
+num_steps: 50          # M (spec default; swept over {50,100,250,500})
 
 # Observation noise variance R = sigma^2 I, sigma = 0.05 (vorticity) -> 0.0025.
 variance: 0.0025

@@ -81,7 +81,7 @@ class LoadedPrior:
     """The shared trained prior + the bits the loop needs around it."""
 
     si_model: torch.nn.Module  # FollmerStochasticInterpolant (SI / FlowDAS)
-    fm_model: torch.nn.Module  # FlowMatchingModel (FM-SDE / FM-ODE)
+    fm_model: torch.nn.Module  # FlowMatchingModel (DM-SDE / FM-ODE)
     preprocesser: Any
     test_dataset: Any
     len_field_history: int
@@ -106,7 +106,7 @@ def _configured_run(case_cfg: DictConfig, role: str) -> Optional[str]:
     explicit_key = f"{role}_run"
     if explicit_key in ckpts and ckpts[explicit_key]:
         return str(ckpts[explicit_key])
-    legacy_key = "Ours (SI-SDE)" if role == "si" else "Ours (FM-SDE)"
+    legacy_key = "Ours (SI-SDE)" if role == "si" else "Ours (DM-SDE)"
     if legacy_key in ckpts and ckpts[legacy_key]:
         return str(ckpts[legacy_key])
     return None
@@ -462,8 +462,93 @@ def prepare_truth_and_obs(
 
 
 # --------------------------------------------------------------------------- #
-# Sampler construction (SI-SDE / FM-SDE / FM-ODE / FlowDAS).
+# Sampler construction (SI-SDE / DM-SDE / FM-ODE / FlowDAS).
 # --------------------------------------------------------------------------- #
+
+
+def _is_schedule_table(value: Any) -> bool:
+    """A hyperparameter is a per-``[scenario][M]`` table iff it is a mapping that
+    carries a ``default:`` key (the explicit marker). Any other value -- scalar,
+    ``null``, string, or a plain nested mapping -- is left untouched.
+    """
+    if isinstance(value, DictConfig):
+        return "default" in value
+    return isinstance(value, dict) and "default" in value
+
+
+def resolve_scheduled_hparam(
+    value: Any,
+    scenario_key: Optional[str] = None,
+    num_steps: Optional[int] = None,
+    name: str = "hparam",
+) -> Any:
+    """Resolve ONE hyperparameter that may be a scalar OR a ``[scenario][M]`` table.
+
+    Model-agnostic: works for any per-cell-tuned hyperparameter (FlowDAS's
+    ``guidance_scale`` today; a future method's ``step_size``, ``K``,
+    ``max_grad_norm``, ...). The value may be
+
+    - anything that is not a schedule table (scalar, ``null``, ...) -> returned
+      as-is; or
+    - a table ``{default: x, <scenario>: {<M>: v, ...}, ...}`` -> looked up by
+      ``scenario_key`` then ``num_steps`` (int/str keys both work).
+
+    A missing scenario, missing ``M`` column, or ``null`` entry (an untuned cell)
+    falls back to the table's ``default`` with a warning, so a single table can
+    hold ``null`` placeholders for M values not yet tuned.
+    """
+    if not _is_schedule_table(value):
+        return value
+
+    table = (
+        OmegaConf.to_container(value, resolve=True)
+        if isinstance(value, DictConfig)
+        else dict(value)
+    )
+    tbl_default = table.get("default")
+    scen = table.get(scenario_key) if scenario_key is not None else None
+    if scen is None:
+        logger.warning(
+            "%s: no entry for scenario=%r; using default %s.",
+            name, scenario_key, tbl_default,
+        )
+        return tbl_default
+    scen = {str(k): v for k, v in scen.items()}
+    val = scen.get(str(num_steps))
+    if val is None:
+        logger.warning(
+            "%s: scenario=%r M=%s not tuned yet (null); using default %s.",
+            name, scenario_key, num_steps, tbl_default,
+        )
+        return tbl_default
+    return val
+
+
+def resolve_scheduled_hparams(
+    block: Any,
+    scenario_key: Optional[str] = None,
+    num_steps: Optional[int] = None,
+) -> dict:
+    """Resolve EVERY scheduled hyperparameter in a config block to a scalar.
+
+    Walks a method's config mapping and replaces each value that is a
+    ``[scenario][M]`` schedule table (see :func:`resolve_scheduled_hparam`) with
+    its resolved entry for ``(scenario_key, num_steps)``; scalars and other
+    values pass through unchanged. Lets a new method opt any of its
+    hyperparameters into per-cell tuning with zero bespoke wiring -- just write a
+    table (with a ``default:``) in its config and read the resolved value here.
+    """
+    if block is None:
+        return {}
+    items = (
+        OmegaConf.to_container(block, resolve=True).items()
+        if isinstance(block, DictConfig)
+        else dict(block).items()
+    )
+    return {
+        k: resolve_scheduled_hparam(v, scenario_key, num_steps, name=str(k))
+        for k, v in items
+    }
 
 
 def build_posterior(
@@ -475,22 +560,46 @@ def build_posterior(
     likelihood_ensemble_size: int,
     likelihood_mode: Optional[str] = None,
     g_multiplier: Optional[float] = None,
+    scenario_key: Optional[str] = None,
+    num_steps: Optional[int] = None,
 ) -> tuple[torch.nn.Module, torch.nn.Module, Callable]:
     """Instantiate (likelihood, posterior, stepper) for one method.
 
     Returns the trained model used, the posterior sampler, and the SDE/ODE
     stepper. ``likelihood_mode`` / ``g_multiplier`` override the config (used by
-    the ablation sweep).
+    the ablation sweep). ``scenario_key`` (e.g. ``"superres_16"``) and
+    ``num_steps`` (M) select the per-cell guidance scale from a config table.
     """
     stepper = _STEPPERS[method_cfg.stepper]
 
     if method_name == "FlowDAS":
+        import os
+
         model = prior.si_model
+        lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+        # Resolve any per-(scenario, M) scheduled hyperparameters in the config
+        # block to scalars (scalars pass through unchanged). Env vars still take
+        # top precedence so a tuning sweep needs no edit to the tracked YAML.
+        hp = resolve_scheduled_hparams(lik_cfg, scenario_key, num_steps)
+        _z = hp.get("guidance_scale", 1.0)
+        zeta = float(os.environ.get("FLOWDAS_ZETA", _z if _z is not None else 1.0))
+        _mgn = os.environ.get("FLOWDAS_MAX_GRAD_NORM", hp.get("max_grad_norm", None))
+        max_grad_norm = None if _mgn in (None, "", "null", "None") else float(_mgn)
+        # J = MC x_1 draws per member (paper Eq. 10; 25 irrespective of E).
+        # Decoupled from the DA ensemble size; falls back to the legacy
+        # likelihood_ensemble_size when the config key is absent.
+        n_mc = int(hp.get("num_mc_samples") or likelihood_ensemble_size)
+        logger.info(
+            "FlowDAS zeta=%s J=%d max_grad_norm=%s (scenario=%s, M=%s)",
+            zeta, n_mc, max_grad_norm, scenario_key, num_steps,
+        )
         likelihood = FlowdasGaussianLikelihood(
             model=model,
             obs_operator=obs_operator,
             variance=variance,
-            ensemble_size=likelihood_ensemble_size,
+            num_mc_samples=n_mc,
+            guidance_scale=zeta,
+            max_grad_norm=max_grad_norm,
         )
         posterior = StochasticInterpolantPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
@@ -599,15 +708,18 @@ def build_posterior(
 
     if method_name == "SDA":
         # SDA baseline (rozet_score-based_2023), single-window adaptation: SDA's
-        # DPS-style guidance with the Gamma_tau = sigma^2 I + gamma_tau^2 H H^T
-        # covariance (see scisi.likelihood_models.sda). SDA is a score/diffusion
-        # method, so -- like Guided diffusion -- it runs on the diffusion prior
-        # (built from the FM model by default, case.checkpoints.diffusion_from_fm)
-        # through the reverse-SDE DiffusionPosterior (Gaussian init a0=0).
-        # model_class='fm' -> Tweedie denoiser from model.score with anchor a0=0,
-        # rho_tau = alpha^2 (the diffusion source variance). NOTE: this is the
-        # single-window guidance, not SDA's full all-at-once trajectory score
-        # (documented in the SDALikelihood module docstring).
+        # DPS-style guidance with the Gamma_tau = R + gamma_sda (sigma/mu)^2 H H^T
+        # covariance (Rozet & Louppe Eq. 15; see scisi.likelihood_models.sda). SDA
+        # is a score/diffusion method, so -- like Guided diffusion -- it runs on
+        # the diffusion prior (built from the FM model by default,
+        # case.checkpoints.diffusion_from_fm) through the reverse-SDE
+        # DiffusionPosterior (Gaussian init a0=0). model_class='fm' -> Tweedie
+        # denoiser from model.score with anchor a0=0; the likelihood score is
+        # injected with the SDA weight g_tau^2. NOTE: this is the single-window
+        # guidance, not SDA's full all-at-once trajectory score (documented in the
+        # SDALikelihood module docstring).
+        import os
+
         from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
 
         model = prior.diffusion_model
@@ -618,12 +730,23 @@ def build_posterior(
                 "model) or set case.checkpoints.diffusion_run to a checkpoint "
                 "under checkpoints/<project>/."
             )
+        lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+        # Resolve any per-(scenario, M) scheduled hyperparameters in the config
+        # block to scalars (scalars pass through unchanged). Env SDA_GAMMA still
+        # takes top precedence so a tuning sweep needs no edit to the tracked YAML.
+        hp = resolve_scheduled_hparams(lik_cfg, scenario_key, num_steps)
+        _g = hp.get("gamma_sda", 1e-2)
+        gamma_sda = float(os.environ.get("SDA_GAMMA", _g if _g is not None else 1e-2))
+        logger.info(
+            "SDA gamma_sda=%s (scenario=%s, M=%s)", gamma_sda, scenario_key, num_steps
+        )
         likelihood = SDALikelihood(
             model=model,
             obs_operator=obs_operator,
             variance=variance,
             ensemble_size=likelihood_ensemble_size,
             model_class="fm",
+            gamma_sda=gamma_sda,
         )
         posterior = DiffusionPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
@@ -643,14 +766,46 @@ def build_posterior(
         from scisi.likelihood_models.dflow import DFlowSGLDLikelihood
         from scisi.posterior_models.dflow_posterior import DFlowPosterior
 
+        import os
+
         model = prior.fm_model
-        lik_cfg = method_cfg.get("likelihood_model", {})
-        num_optim_steps = int(lik_cfg.get("num_optim_steps", 20))
-        step_size = float(lik_cfg.get("step_size", 0.01))
-        noise_scale = float(lik_cfg.get("noise_scale", 1.0))
-        guidance_scale = float(lik_cfg.get("guidance_scale", 1.0))
-        precond_decay = float(lik_cfg.get("precond_decay", 0.99))
-        precond_eps = float(lik_cfg.get("precond_eps", 1e-8))
+        lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+        # Resolve any per-(scenario, M) scheduled hyperparameters in the config
+        # block to scalars (scalars pass through unchanged); env vars still take
+        # top precedence so a tuning sweep needs no edit to the tracked YAML.
+        # Algorithm 1 / Table D.3 hyperparameters (arXiv:2602.21469).
+        hp = resolve_scheduled_hparams(lik_cfg, scenario_key, num_steps)
+
+        def _env_float(name: str, val: float) -> float:
+            v = os.environ.get(name)
+            return float(v) if v not in (None, "", "null", "None") else float(val)
+
+        def _env_int(name: str, val: int) -> int:
+            v = os.environ.get(name)
+            return int(float(v)) if v not in (None, "", "null", "None") else int(val)
+
+        # PECULIAR TO D-FLOW SGLD: the global SDE/ODE step count `num_steps` (M)
+        # drives the SGLD chain length `num_optim_steps` for THIS method only. Its
+        # differentiable FM-ODE rollout is a FIXED `ode_steps`=6 midpoint
+        # integration (Table D.3), so the global M is otherwise inert for D-Flow;
+        # mapping M -> num_optim_steps makes the {50,100,250,500} sweep the
+        # Langevin-steps axis. Env DFLOW_NSTEPS still overrides for tuning; the
+        # config `num_optim_steps` table is the fallback only when M is unset.
+        _dflow_m = int(num_steps) if num_steps is not None else hp.get("num_optim_steps", 300)
+        num_optim_steps = _env_int("DFLOW_NSTEPS", _dflow_m)
+        step_size = _env_float("DFLOW_STEP_SIZE", hp.get("step_size", 0.05))
+        noise_scale = _env_float("DFLOW_NOISE_SCALE", hp.get("noise_scale", 1e-3))
+        lambda_reg = _env_float("DFLOW_LAMBDA", hp.get("lambda_reg", 5e-6))
+        precond_decay = float(hp.get("precond_decay", 0.99))        # omega
+        precond_eps = float(hp.get("precond_eps", 1e-3))            # delta
+        ode_steps = int(hp.get("ode_steps", 6))                     # midpoint steps
+        burn = int(hp.get("burn", 100))
+        logger.info(
+            "D-Flow SGLD Nsteps=%s eta=%s s=%s lambda=%s omega=%s delta=%s "
+            "ode_steps=%s (scenario=%s, M=%s)",
+            num_optim_steps, step_size, noise_scale, lambda_reg,
+            precond_decay, precond_eps, ode_steps, scenario_key, num_steps,
+        )
         likelihood = DFlowSGLDLikelihood(
             model=model,
             obs_operator=obs_operator,
@@ -659,7 +814,7 @@ def build_posterior(
             num_optim_steps=num_optim_steps,
             step_size=step_size,
             noise_scale=noise_scale,
-            guidance_scale=guidance_scale,
+            lambda_reg=lambda_reg,
         )
         posterior = DFlowPosterior(
             model=model,
@@ -668,9 +823,11 @@ def build_posterior(
             num_optim_steps=num_optim_steps,
             step_size=step_size,
             noise_scale=noise_scale,
-            guidance_scale=guidance_scale,
+            lambda_reg=lambda_reg,
             precond_decay=precond_decay,
             precond_eps=precond_eps,
+            ode_steps=ode_steps,
+            burn=burn,
             variance=variance,
         )
         return model, posterior, stepper
@@ -694,13 +851,124 @@ def build_posterior(
                 "FM model) or set case.checkpoints.diffusion_run to a checkpoint "
                 "under checkpoints/<project>/."
             )
-        surge_cfg = method_cfg.get("posterior_model", {})
+        surge_cfg = method_cfg.get("posterior_model", {}) or {}
+        # Resolve any per-(scenario, M) table on the SURGE knobs (guidance_scale)
+        # to a scalar; scalars pass through unchanged.
+        surge_hp = resolve_scheduled_hparams(surge_cfg, scenario_key, num_steps)
+        _gs = surge_hp.get("guidance_scale", 1.0)
         posterior = SurgePosterior(
             model=model,
             obs_operator=obs_operator,
             variance=variance,
-            guidance_scale=float(surge_cfg.get("guidance_scale", 1.0)),
-            ess_threshold=float(surge_cfg.get("ess_threshold", 0.5)),
+            guidance_scale=float(_gs if _gs is not None else 1.0),
+            ess_threshold=float(surge_hp.get("ess_threshold", 0.5)),
+            diffusion_term=None,
+        )
+        return model, posterior, stepper
+
+    if method_name == "SURGE (SDA)":
+        # SURGE + SDA (wei_surge_2026, combined with rozet_score-based_2023): the
+        # SURGE SMC particle filter with SDA's likelihood as the guidance G. SDA
+        # is a score/diffusion method, so it runs on the FM-derived diffusion
+        # prior (like the standalone SURGE / SDA baselines) through the FM SURGE
+        # variant (source N(0, I), anchor a0 = 0). SDALikelihood(model_class='fm')
+        # supplies grad_x G; SURGE owns the guided-SDE proposal + Girsanov SMC
+        # reweighting and computes the true-likelihood reward itself.
+        from scisi.posterior_models.surge_posterior import SurgeFlowMatchingPosterior
+
+        model = prior.diffusion_model
+        if model is None:
+            raise ValueError(
+                "SURGE (SDA) requires a diffusion prior, but none was loaded. "
+                "Either keep case.checkpoints.diffusion_from_fm=true (build it "
+                "from the FM model) or set case.checkpoints.diffusion_run to a "
+                "checkpoint under checkpoints/<project>/."
+            )
+        import os
+
+        lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+        surge_cfg = method_cfg.get("posterior_model", {}) or {}
+        # SDA hyperparameters: use the standalone SDA config's settings
+        # (configs/method/sda.yaml). Resolve any per-(scenario, M) table to a
+        # scalar; env SDA_GAMMA overrides (top precedence), matching the SDA branch.
+        hp = resolve_scheduled_hparams(lik_cfg, scenario_key, num_steps)
+        _g = hp.get("gamma_sda", 1e-2)
+        gamma_sda = float(os.environ.get("SDA_GAMMA", _g if _g is not None else 1e-2))
+        logger.info(
+            "SURGE (SDA) gamma_sda=%s (scenario=%s, M=%s); guidance weight = g^2",
+            gamma_sda, scenario_key, num_steps,
+        )
+        likelihood = SDALikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ensemble_size=likelihood_ensemble_size,
+            model_class="fm",
+            gamma_sda=gamma_sda,
+        )
+        # SURGE owns only the SMC layer; SDA's guidance enters with its OWN weight
+        # g^2 (SurgePosterior._injection_weight reads guidance_weight=='g_squared'),
+        # so there is no SURGE guidance_scale here -- only ess_threshold.
+        surge_hp = resolve_scheduled_hparams(surge_cfg, scenario_key, num_steps)
+        posterior = SurgeFlowMatchingPosterior(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            likelihood_model=likelihood,
+            ess_threshold=float(surge_hp.get("ess_threshold", 0.5)),
+            diffusion_term=None,
+        )
+        return model, posterior, stepper
+
+    if method_name == "SURGE (FlowDAS)":
+        # SURGE + FlowDAS (wei_surge_2026, combined with chen_flowdas_2025): the
+        # SURGE SMC particle filter with FlowDAS's Monte-Carlo likelihood as the
+        # guidance G. FlowDAS is SI-based (uses the SI drift + predictor spread),
+        # so it runs on the SI prior through the SI SURGE variant (point-mass
+        # delta_{x0} init). FlowdasGaussianLikelihood returns the RAW guidance
+        # score. FlowDAS's guidance strength zeta is a LIKELIHOOD knob, applied by
+        # SURGE via the likelihood's sde_weight (the combo proposal b + zeta*s_lik
+        # IS FlowDAS's guided SDE, plus the SMC layer); max_grad_norm caps NS-scale
+        # blow-ups. SURGE owns the guided-SDE proposal + Girsanov SMC and reward.
+        from scisi.posterior_models.surge_posterior import (
+            SurgeStochasticInterpolantPosterior,
+        )
+
+        import os
+
+        model = prior.si_model
+        lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+        surge_cfg = method_cfg.get("posterior_model", {}) or {}
+        # FlowDAS hyperparameters: use the standalone FlowDAS config's settings
+        # (configs/method/flowdas.yaml). guidance_scale (zeta) is a LIKELIHOOD knob;
+        # resolve any per-(scenario, M) table to a scalar; env FLOWDAS_ZETA /
+        # FLOWDAS_MAX_GRAD_NORM override, matching the FlowDAS branch.
+        hp = resolve_scheduled_hparams(lik_cfg, scenario_key, num_steps)
+        _z = hp.get("guidance_scale", 1.0)
+        zeta = float(os.environ.get("FLOWDAS_ZETA", _z if _z is not None else 1.0))
+        _mgn = os.environ.get("FLOWDAS_MAX_GRAD_NORM", hp.get("max_grad_norm", None))
+        max_grad_norm = None if _mgn in (None, "", "null", "None") else float(_mgn)
+        logger.info(
+            "SURGE (FlowDAS) zeta=%s max_grad_norm=%s (scenario=%s, M=%s)",
+            zeta, max_grad_norm, scenario_key, num_steps,
+        )
+        likelihood = FlowdasGaussianLikelihood(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            # J decoupled from E (paper Eq. 10); legacy fallback as above.
+            num_mc_samples=int(hp.get("num_mc_samples") or likelihood_ensemble_size),
+            guidance_scale=zeta,  # FlowDAS zeta; SURGE applies it via sde_weight.
+            max_grad_norm=max_grad_norm,
+        )
+        # SURGE owns only the SMC layer -> no guidance_scale, only ess_threshold.
+        surge_hp = resolve_scheduled_hparams(surge_cfg, scenario_key, num_steps)
+        posterior = SurgeStochasticInterpolantPosterior(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            likelihood_model=likelihood,
+            ess_threshold=float(surge_hp.get("ess_threshold", 0.5)),
             diffusion_term=None,
         )
         return model, posterior, stepper
@@ -726,7 +994,7 @@ def build_posterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
         )
     else:
-        # FM-ODE: diffusion_term=None -> g=0. FM-SDE: endpoint-vanishing schedule.
+        # FM-ODE: diffusion_term=None -> g=0. DM-SDE: endpoint-vanishing schedule.
         if method_cfg.stepper == "ode":
             diffusion_term = None
         else:
@@ -955,7 +1223,12 @@ def compute_metrics(
         # KL at points: sampled marginals [E, P] vs the large-E reference
         # marginals [E_ref, P] (separate reference ensemble; spec Section 9).
         ens_flat = ens_t.reshape(E, -1)[:, point_idx]  # [E, P]
-        if reference_trajectory is not None:
+        # Guard the time index against the reference's own length: an E=1000 EnKF
+        # reference generated at a SMALLER num_physical_steps than the current run
+        # (e.g. the np=15 refs reused under an np=20 grid) is shorter than the
+        # posterior rollout, so steps past its end have no reference -> KL is NaN
+        # for those steps rather than an out-of-bounds crash.
+        if reference_trajectory is not None and t < reference_trajectory.shape[-1]:
             ref_t = reference_trajectory[..., t].reshape(
                 reference_trajectory.shape[0], -1
             )[:, point_idx]  # [E_ref, P]
@@ -967,8 +1240,9 @@ def compute_metrics(
             )
             kl_steps.append(float(kl["mean"]))
         else:
-            # No reference posterior supplied -> KL is undefined (NaN), NOT a
-            # degenerate self-reference (which would falsely read as ~0).
+            # No reference posterior supplied (or reference shorter than the
+            # rollout) -> KL is undefined (NaN), NOT a degenerate self-reference
+            # (which would falsely read as ~0).
             kl_steps.append(float("nan"))
 
     def _mean(xs: list[float]) -> float:
@@ -1007,6 +1281,8 @@ __all__ = [
     "build_obs_operator",
     "prepare_truth_and_obs",
     "build_posterior",
+    "resolve_scheduled_hparam",
+    "resolve_scheduled_hparams",
     "run_assimilation",
     "build_reference_trajectory",
     "compute_metrics",

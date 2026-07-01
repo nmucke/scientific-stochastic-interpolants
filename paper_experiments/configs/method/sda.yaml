@@ -1,11 +1,34 @@
-# SDA baseline (rozet_score-based_2023): score-based DA with the all-at-once
-# trajectory score. Second-wave baseline (GAP E5; decided after Phase 1).
+# SDA baseline (rozet_score-based_2023): single-window adaptation of score-based
+# data assimilation -- DPS-style observation guidance with SDA's inflated
+# measurement covariance Gamma_tau = R + gamma_sda (sigma/mu)^2 H H^T (Rozet &
+# Louppe Eq. 15), injected into the reverse SDE with the classifier-guidance
+# weight g_tau^2. Runs on the diffusion prior (built from the FM model by
+# default). Shares the trained prior with our samplers. NOTE: this is SDA's
+# single-window guidance, not the full all-at-once trajectory score (see
+# scisi.likelihood_models.sda docstring).
 name: SDA
 stepper: sde
 
 likelihood_model:
-  # TODO(E5): all-at-once trajectory-score DA. Not implemented yet.
   _target_: scisi.likelihood_models.sda.SDALikelihood
+  # NOTE: the NS/analytical drivers construct SDALikelihood directly and read the
+  # knobs below from this block.
+
+  # Per-cell hyperparameter tables. ANY hyperparameter in this block may be given
+  # either as a scalar OR as a [scenario][num_sde_steps M] table marked by a
+  # `default:` key; the pipeline (resolve_scheduled_hparams) resolves it to ONE
+  # scalar per run from (scenario_key, num_steps). null = not tuned yet -> falls
+  # back to `default` with a warning. Env SDA_GAMMA overrides the whole table.
+  #
+  # gamma_sda = SDA's tunable spectral factor gamma in Gamma ~= gamma I
+  # (Rozet & Louppe Eq. 15; released-code default 1e-2).
+  gamma_sda:
+    default: 0.01
+    #             M=50    M=100   M=250   M=500
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
 
 posterior_model:
   _target_: scisi.posterior_models.diffusion_posterior.DiffusionPosterior

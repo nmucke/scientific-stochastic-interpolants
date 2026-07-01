@@ -6,7 +6,7 @@ CLI. The case driver (an :class:`ExperimentRunner`) does the science; this scrip
 only wires config -> driver -> tidy file -> (optionally) LaTeX snippets.
 
     python paper_experiments/run.py case=navier_stokes method=si_sde scenario=superres_32
-    python paper_experiments/run.py --multirun method=si_sde,fm_sde,fm_ode
+    python paper_experiments/run.py --multirun method=si_sde,dm_sde,fm_ode
 
 NOTE: the case drivers raise ``NotImplementedError`` until the unified-sampler
 rebuild lands (GAP_ANALYSIS Phases 0--3). The schema, aggregation, and table

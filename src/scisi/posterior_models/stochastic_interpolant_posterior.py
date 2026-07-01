@@ -118,7 +118,14 @@ class StochasticInterpolantPosterior(BasePosterior):
                 dt=dt,
             )
             corrected_score = corrected_score.detach()
-            w_tau = self._guidance_weight(t)
+            # Each likelihood may own how its score enters the SDE. The
+            # interpolant-likelihood uses the SI-SDE velocity--score weight
+            # ``a_tau + 1/2 g**2`` (the default below); the FlowDAS baseline
+            # returns its own tuned constant step size ``zeta`` via ``sde_weight``.
+            if hasattr(self.likelihood_model, "sde_weight"):
+                w_tau = self.likelihood_model.sde_weight(t, self.diffusion_term)
+            else:
+                w_tau = self._guidance_weight(t)
 
             self.log_likelihood.append(
                 torch.nan_to_num(log_likelihood.detach(), nan=float("-inf"))

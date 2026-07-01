@@ -1,4 +1,6 @@
-We denote discrete physical time steps with superscripts and pseudo-time steps with subscripts. E.g. $\state^{n}$ denotes a quantity at physical time step $n$ and $\bx_{\tau}$ denotes a quantity at pseudo-time $\tau$. Furthermore, the notation $\state^{n:m}$, with $n < m$, refers to the time series $(\state^{n}, \state^{n+1}, \ldots, \state^{m-1}, \state^{m})$. We write $X\sim \dist{x}$ when $X$ is distributed according to $P(X)$ and $X\sim \conddist{x}{y}$ when $X$ is distributed according to $P(X|Y)$, identifying distributions through their densities.
+
+
+We denote discrete physical time steps with superscripts and pseudo-time steps with subscripts: $\state^{n}$ is a quantity at physical time step $n$ and $\bx_{\tau}$ at pseudo-time $\tau$. The notation $\state^{n:m}$, with $n < m$, refers to the time series $(\state^{n}, \state^{n+1}, \ldots, \state^{m})$. We write $X\sim \dist{x}$ and $X\sim \conddist{x}{y}$ when $X$ is distributed according to $P(X)$ and $P(X|Y)$, identifying distributions through their densities.
 
 \subsection{Bayesian inverse problems and data assimilation}
 We outline the data assimilation setting; for more detail see \cite{carrassi_data_2018, evensen_data_2022}. We consider the discrete dynamical system:
@@ -8,114 +10,134 @@ We outline the data assimilation setting; for more detail see \cite{carrassi_dat
     \obs^{n} &= \obsoperator(\state^{n}) + \obsnoise^{n},  &\obsnoise^{n}\sim \dist[\obsnoise], \label{eq:observation}
 \end{align}
 \end{subequations}
-where, for $n=1,\ldots,N$, $\state^{n}\in\R^{\statedim}$ is the state, $\obs^n\in\R^{\obsdim}$ the observations, $\modelnoise^n\in\R^{\statedim}$ the model noise, $\obsnoise^n\in\R^{\obsdim}$ the observation noise, $\forwardmodel:\R^{\statedim}\rightarrow\R^{\statedim}$ the forward operator, and $\obsoperator:\R^{\statedim}\rightarrow\R^{\obsdim}$ the observation operator. The system may arise from a discretized PDE and is therefore potentially very high-dimensional. Eq. \eqref{eq:forward} induces a prior transition density $\conddist{\state^{n}}{\state^{n-1}}$, and the observation likelihood follows from the noise distribution, $\conddist{\obs^n}{\state^{n}} = \dist[\eta]{\obs^n-\obsoperator(\state^{n})}$.
+where, for $n=1,\ldots,N$, $\state^{n}\in\R^{\statedim}$ is the state, $\obs^n\in\R^{\obsdim}$ the observations, $\modelnoise^n\in\R^{\statedim}$ the model noise, $\obsnoise^n\in\R^{\obsdim}$ the observation noise, $\forwardmodel:\R^{\statedim}\rightarrow\R^{\statedim}$ the forward operator, and $\obsoperator:\R^{\statedim}\rightarrow\R^{\obsdim}$ the observation operator. The system may arise from a discretized PDE and be high-dimensional. Eq.~\eqref{eq:forward} induces a prior transition density $\conddist{\state^{n}}{\state^{n-1}}$, and the observation likelihood follows from the noise distribution, $\conddist{\obs^n}{\state^{n}} = \dist[\eta]{\obs^n-\obsoperator(\state^{n})}$.
 
-We are interested in the posterior distribution over trajectories, which by the Markovian property of Eq.~\eqref{eq:data_assimilation_problem} can be computed autoregressively by sampling from the one-step posterior:
+We are interested in the posterior over trajectories, which by the Markovian property of Eq.~\eqref{eq:data_assimilation_problem} factors autoregressively into the one-step posterior:
 \begin{align} \label{eq:posterior_distribution}
     \conddist{\state^{n}}{\obs^n, \state^{n-1}} = \frac{\conddist{\obs^{n}}{\state^{n}}\conddist{\state^{n}}{\state^{n-1}}}{\conddist{\obs^{n}}{\state^{n-1}}},
 \end{align}
-where $\conddist{\state^{n}}{\state^{n-1}}$ is denoted the prior, $\conddist{\obs^{n}}{\state^{n}}$ the likelihood, and denominator the evidence. In this work, the prior will be sampled from via generative models. 
+with $\conddist{\state^{n}}{\state^{n-1}}$ the prior, $\conddist{\obs^{n}}{\state^{n}}$ the likelihood, and the denominator the evidence. We sample the prior with generative models.
 
-% factorizes as \cite{carrassi_data_2018, evensen_data_2022}
-% \begin{align} \label{eq:posterior_trajectory_distribution}
-%     \conddist{\state^{0:n}}{\obs^{1:n}} \propto \dist{\state^{0}} \prod_{i=1}^{n} \conddist{\obs^{i}}{\state^{i}}\,\conddist{\state^{i}}{\state^{i-1}}.
-% \end{align}
-
-\subsection{Flow-based generative modelling}
+\subsection{Interpolation-based generative modelling}
 \label{subsec:flow_models}
 
-We build the prior $\conddist{\state^{n}}{\state^{n-1}}$ with a stochastic interpolant, presented as an instance of an \emph{affine Gaussian probability path} -- the single object on which our method operates, general enough that flow matching (Section~\ref{subsec:fm}) and denoising diffusion arise as special cases \cite{albergo_stochastic_2023, lipman_flow_2023, ma_sit_2024, holderrieth_generator_2024}. The goal is a generative model sampling from a target conditional density $\conddist{\bx_1}{\bx_0}$; in forecasting we set $\bx_0 = \state^{n-1}$, $\bx_1 = \state^{n}$ to recover the prior in Eq.~\eqref{eq:posterior_distribution}. Sampling proceeds over a pseudo-time $\tau\in[0,1]$, unrelated to physical time, that transports a tractable source distribution to the target.
+We build the prior $\conddist{\state^{n}}{\state^{n-1}}$ as a generative model that samples a target conditional $\conddist{\bx_1}{\bx_0}$; in forecasting, $\bx_0=\state^{n-1}$ and $\bx_1=\state^{n}$ recover the prior in Eq.~\eqref{eq:posterior_distribution}. The building block is a process that interpolates, over a pseudo-time $\tau\in[0,1]$ unrelated to physical time, between a tractable source and the target,
+\begin{align}\label{eq:general_interpolant}
+    \bx_\tau = \underbrace{\alpha_\tau \bx_0 + \sigpath_\tau \latentnoise}_{\text{source}} + \beta_\tau \bx_1,
+    \qquad \latentnoise \sim \mathcal{N}(0,\bI),
+\end{align}
+with $\bx_0$ a deterministic anchor available at sampling time, $\latentnoise$ independent of $\bx_1$, and schedules satisfying $\beta_0=0$, $\beta_1=1$, $\alpha_1=\sigpath_1=0$, so that $\bx_{\tau=1}=\bx_1$. Conditioned on $\bx_1$, Eq.~\eqref{eq:general_interpolant} is Gaussian with mean $\alpha_\tau\bx_0+\beta_\tau\bx_1$ and covariance $\sigpath_\tau^2\bI$, and the marginal $p_\tau(\bx\mid\bx_0)$ is the corresponding Gaussian mixture. Flow matching, stochastic interpolants, and diffusion are instances distinguished by the schedules and the sampling dynamics.
 
-\subsubsection{Stochastic interpolants}
-\label{subsec:si}
-The stochastic interpolant (SI) framework \cite{albergo_stochastic_2023, chen_probabilistic_2024} takes an anchor to be the previous state $\bm{a}_0=\bx_0=\state^{n-1}$ and embeds noise as a Brownian motion $\sigpath_\tau\latentnoise = \gamma_\tau\bW_\tau$, $\bW_\tau=\sqrt{\tau}\,\bz$, $\bz\sim\mathcal{N}(0,\bI)$:
+The path carries a velocity and a score. The velocity transports the source to $\conddist{\bx_1}{\bx_0}$ and is the conditional-mean instantaneous displacement,
+\begin{align}\label{eq:general_velocity}
+    \fmvel(\bx,\bx_0,\tau)
+    = \E\!\left[\dot\alpha_\tau \bx_0+ \dot\sigpath_\tau\latentnoise + \dot\beta_\tau\bx_1 \;\middle|\; \bX_\tau=\bx\right],
+\end{align}
+so samples follow from the probability-flow ODE $\rd\bX_\tau = \fmvel_\tau(\bX_\tau,\bx_0)\,\rd\tau$ \cite{lipman_flow_2023, albergo_stochastic_2023}. The score $\genscore_\tau(\bx,\bx_0) = \nabla_{\bx}\log p_\tau(\bx\mid\bx_0)$ follows from the velocity,
+\begin{align}\label{eq:general_score_velocity}
+    \genscore_\tau(\bx)
+    = \frac{\beta_\tau\,\fmvel(\bx,\bx_0,\tau) - \dot\beta_\tau\,\bx - (\dot\alpha_\tau\beta_\tau - \dot\beta_\tau\alpha_\tau)\,\bx_0}
+           {\beta_\tau\,\vscoef_\tau},
+    \qquad
+    \vscoef_\tau := \frac{\sigpath_\tau(\dot\beta_\tau\sigpath_\tau - \dot\sigpath_\tau\beta_\tau)}{\beta_\tau}.
+\end{align}
+
+\paragraph{Flow matching.}
+A pure Gaussian source: $\alpha_\tau\equiv 0$ with $\sigpath_\tau$ the source schedule (e.g.\ $\sigpath_\tau=1-\tau$, $\beta_\tau=\tau$ for rectified flow), and $\state^{n-1}$ entering only as a conditioning input to the network \cite{lipman_flow_2023, liu_rectified_2022}. Training regresses the velocity Eq.~\eqref{eq:general_velocity}; sampling integrates the probability-flow ODE from $\bX_0\sim\mathcal{N}(0,\bI)$, with no ODE solve during training.
+
+\paragraph{Stochastic interpolants.}
+The anchor is the previous state, $\bx_0=\state^{n-1}$, and noise enters as a Brownian motion $\gamma_\tau\bW_\tau$, $\bW_\tau=\sqrt\tau\,\bz$, $\bz\sim\mathcal{N}(0,\bI)$, so Eq.~\eqref{eq:general_interpolant} reads
 \begin{align}\label{eq:stochastic_interpolant}
     \bx_\tau = \alpha_\tau\bx_0 + \beta_\tau\bx_1 + \gamma_\tau\bW_\tau,
 \end{align}
-with $\alpha_0=\beta_1=1$ and $\alpha_1=\beta_0=\gamma_1=0$, so that $\bx_{\tau=0}=\bx_0$ and $\bx_{\tau=1}\sim\conddist{\bx_1}{\bx_0}$. The model is an SDE
+with marginal noise scale $\sigpath_\tau=\gamma_\tau\sqrt\tau$ and $\alpha_0=1$, $\gamma_1=0$ \cite{albergo_stochastic_2023, chen_probabilistic_2024}. The Brownian construction admits regressing the drift of the generative SDE directly,
 \begin{align}\label{eq:SI_SDE}
-    \rd\bX_\tau = \drift_\theta(\bX_\tau,\bx_0,\tau)\,\rd\tau + \gamma_\tau\,\rd\bW_\tau, \qquad \bX_0=\bx_0,
+    \rd\bX_\tau = \drift_\theta(\bX_\tau,\bx_0,\tau)\,\rd\tau + \gamma_\tau\,\rd\bW_\tau, \quad \bX_0=\bx_0, \quad
+    \drift_\theta = \E[\dot\alpha_\tau\bx_0 + \dot\beta_\tau\bx_1 + \dot\gamma_\tau\bW_\tau\mid\bX_\tau=\bx],
 \end{align}
-whose drift is trained to match $\drift_\theta(\bx,\bx_0,\tau) = \E[\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1 + \dot\gamma_\tau\bW_\tau\mid\bX_\tau=\bx]$. Importantly, the minimization can be done without ever solving the SDE during training.
+again without SDE solves during training.
 
-% by minimizing
-% \begin{align}\label{eq:SI_drift_loss}
-%     \mathcal{L}(\theta) = \int_0^1 \E\!\left[\norm{\drift_\theta(\bx_\tau,\bx_0,\tau) - (\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1 + \dot\gamma_\tau\bW_\tau)}_2^2\right]\rd\tau,
-% \end{align}
-% with expectation over $\bx_0,\bx_1\sim\dist{\bx_0,\bx_1}$, $\bW_\tau$, and $\tau\sim\mathcal{U}[0,1]$; no SDE solve is needed in training.  
-
-% The SDE drift already includes the score contribution, $\drift_\theta = \fmvel_\tau + \tfrac12\gamma_\tau^2\genscore_\tau$ with $\gdiff_\tau=\gamma_\tau$ in Eq.~\eqref{eq:general_sde_family}, and the score is recovered as \cite{chen_probabilistic_2024}
-% \begin{align}\label{eq:SI_score}
-%     \genscore_\tau(\bx,\bx_0) = A_\tau\!\left[\beta_\tau\drift_\theta(\bx,\bx_0,\tau) - c_\tau(\bx,\bx_0)\right],
-% \end{align}
-% with $A_\tau = \left[\tau\gamma_\tau(\dot\beta_\tau\gamma_\tau - \beta_\tau\dot\gamma_\tau)\right]^{-1}$ and $c_\tau(\bx,\bx_0)=\dot\beta_\tau\bx + (\beta_\tau\dot\alpha_\tau - \dot\beta_\tau\alpha_\tau)\bx_0$.
-
-
-\subsubsection{Flow matching}
-\label{subsec:fm}
-
-Flow matching (FM) is the special case obtained by \emph{removing the Wiener process from training}: whereas SI embeds noise as a Brownian motion $\gamma_\tau\bW_\tau$ and learns an SDE drift, FM keeps the interpolant deterministic and learns only the marginal velocity. FM \cite{lipman_flow_2023, liu_rectified_2022} takes a Gaussian source, $\latent\sim\mathcal{N}(0,\bI)$, with $\state^{n-1}$ entering only as a conditioning input. The interpolant is the deterministic path
-\begin{align}\label{eq:fm_interpolant}
-    \bx_\tau = \alpha_\tau\latent + \beta_\tau\bx_1, \qquad \alpha_0=\beta_1=1,\quad \alpha_1=\beta_0=0,
-\end{align}
-e.g.\ $\alpha_\tau=1-\tau$, $\beta_\tau=\tau$ for rectified flow. The model is the ODE
-\begin{align}\label{eq:fm_ode}
-    \rd\bX_\tau = \fmvel_\theta(\bX_\tau,\state^{n-1},\tau)\,\rd\tau, \qquad \bX_0\sim\mathcal{N}(0,\bI),
-\end{align}
-whose velocity is trained to match $\fmvel_\tau(\bx) = \E[\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1\mid\bX_\tau=\bx]$. As with SI, no ODE solve is needed and the per-sample target equals the marginal velocity in expectation \cite{lipman_flow_2023}. 
-
-% through the conditional flow matching loss
-% \begin{align}\label{eq:fm_loss}
-%     \mathcal{L}(\theta) = \int_0^1 \E\!\left[\norm{\fmvel_\theta(\bx_\tau,\state^{n-1},\tau) - (\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1)}_2^2\right]\rd\tau,
-% \end{align}
-% with expectation over $\bx_1\sim\conddist{\bx_1}{\state^{n-1}}$ and $\latent$; as with SI, no ODE solve is needed and the per-sample target equals the marginal velocity in expectation \cite{lipman_flow_2023}. 
-\paragraph{Lifting the FM ODE to a diffusion-model SDE sampler.}
-Although FM trains a deterministic generator sampled by Eq.~\eqref{eq:fm_ode}, it is \emph{not} restricted to deterministic sampling: the probability-flow ODE is one member of a one-parameter family with identical marginals \cite{song_score-based_2021, ma_sit_2024}. For any diffusion schedule $\gdiff_\tau\ge 0$, the SDE
+\paragraph{Diffusion models.}
+Sampling need not be deterministic: the probability-flow ODE is one member of a family of SDEs with identical marginals \cite{song_score-based_2021, ma_sit_2024}. For any schedule $\gdiff_\tau\ge 0$,
 \begin{align}\label{eq:general_sde_family}
     \rd\bX_\tau
-    = \underbrace{\left[\fmvel_\theta(\bX_\tau,\bx_0) + \tfrac{1}{2}\gdiff_\tau^2\,\genscore_\tau(\bX_\tau,\bx_0)\right]}_{=:\drift_\theta^{g}(\bX_\tau,\bx_0,\tau)}\rd\tau
-    + \gdiff_\tau\,\rd\bW_\tau, \qquad \bX_0\sim p_0,
+    = \big[\fmvel_\theta(\bX_\tau,\bx_0,\tau) + \tfrac{1}{2}\gdiff_\tau^2\,\genscore_\tau(\bX_\tau,\bx_0)\big]\,\rd\tau
+    + \gdiff_\tau\,\rd\bW_\tau,
 \end{align}
-has the same marginals as the ODE for every $\gdiff_\tau$ (Appendix~\ref{appendix:score_velocity}). The score can be computed from the trained velocity,
-\begin{align}\label{eq:fm_score}
-    \genscore_\tau(\bx) = \frac{\beta_\tau\,\fmvel_\theta(\bx,\state^{n-1},\tau) - \dot\beta_\tau\,\bx}{\alpha_\tau\,(\dot\beta_\tau\alpha_\tau - \dot\alpha_\tau\beta_\tau)},
-\end{align}
-which for rectified flow reduces to $\genscore_\tau(\bx) = (\tau\,\fmvel_\theta - \bx)/(1-\tau)$. Setting $\gdiff_\tau=0$ recovers the deterministic FM ODE; choosing $\gdiff_\tau>0$ injects noise at sampling time, with the score supplied in closed form by Eq.~\eqref{eq:fm_score}, so no additional network is required. 
+with the score in closed form from Eq.~\eqref{eq:general_score_velocity}. Setting $\gdiff_\tau=0$ recovers the flow-matching ODE and $\gdiff_\tau=\gamma_\tau$ the stochastic-interpolant SDE, so stochastic sampling needs no additional network.
 
-% The resulting \emph{FM-SDE} drives the FM-trained marginals with a Wiener process -- exactly the structure of a denoising-diffusion / score-SDE sampler \cite{song_score-based_2021, ho_denoising_2020}, with $\fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau$ the reverse-time diffusion drift and $\gdiff_\tau$ the noise schedule. Thus one trained FM model yields both a deterministic probability-flow ODE and a diffusion-model SDE; for SI this lifting is automatic, its drift already including the score with $\gdiff_\tau=\gamma_\tau$. In all cases the model provides a velocity (equivalently a score) for an affine Gaussian path, and Eq.~\eqref{eq:general_sde_family} turns it into an SDE with a chosen diffusion -- the common interface on which Section~\ref{sec:methodology} operates.
 
-% \paragraph{Affine Gaussian interpolant.}
+% \newpage
+
+% \subsection{Interpolation-based generative modelling}
+% \label{subsec:flow_models}
+
 % The common building block is a stochastic process that interpolates, in pseudo-time, between a tractable source and the target,
 % \begin{align}\label{eq:general_interpolant}
-%     \bx_\tau = \underbrace{\alpha_\tau \bm{a}_0 + \sigpath_\tau \latentnoise}_{\text{source contribution}} + \beta_\tau \bx_1,
+%     \bx_\tau = \underbrace{\alpha_\tau \bx_0 + \sigpath_\tau \latentnoise}_{\text{source contribution}} + \beta_\tau \bx_1,
 %     \qquad \latentnoise \sim \mathcal{N}(0,\bI),
 % \end{align}
-% where $\bm{a}_0$ is a deterministic anchor available at sampling time, $\latentnoise$ a standard normal driver independent of $\bx_1$, and the schedules $\alpha_\tau,\beta_\tau,\sigpath_\tau$ satisfy $\beta_0=0$, $\beta_1=1$, $\alpha_1=\sigpath_1=0$, so that $\bx_{\tau=1}=\bx_1$ and $\bx_{\tau=0}=\alpha_0\bm a_0 + \sigpath_0\latentnoise$. Conditioned on $\bx_1$ (and $\bm{a}_0$), Eq.~\eqref{eq:general_interpolant} is Gaussian with mean $\alpha_\tau\bm{a}_0 + \beta_\tau\bx_1$ and covariance $\sigpath_\tau^2\bI$; the marginal $p_\tau(\bx\mid\bx_0)$ is the corresponding Gaussian mixture. Two quantities are associated with this path.
+% where $\bx_0$ is a deterministic anchor available at sampling time, $\latentnoise$ a standard normal driver independent of $\bx_1$, and the schedules $\alpha_\tau,\beta_\tau,\sigpath_\tau$ satisfy $\beta_0=0$, $\beta_1=1$, $\alpha_1=\sigpath_1=0$, so that $\bx_{\tau=1}=\bx_1$ and $\bx_{\tau=0}=\alpha_0\bm a_0 + \sigpath_0\latentnoise$. Conditioned on $\bx_1$ (and $\bm{a}_0$), Eq.~\eqref{eq:general_interpolant} is Gaussian with mean $\alpha_\tau\bm{a}_0 + \beta_\tau\bx_1$ and covariance $\sigpath_\tau^2\bI$; the marginal $p_\tau(\bx\mid\bx_0)$ is the corresponding Gaussian mixture. Two quantities are associated with this path.
 
-% The \emph{velocity field} is the conditional expectation of the instantaneous interpolant displacement,
+% The \emph{velocity field} that transports $\bx_0$ to samples from $\conddist{\bx_1}{\bx_0}$ is the conditional expectation of the instantaneous interpolant displacement,
 % \begin{align}\label{eq:general_velocity}
-%     \fmvel_\tau(\bx,\bx_0)
-%     = \E\!\left[\dot\alpha_\tau\bm{a}_0 + \dot\sigpath_\tau\latentnoise + \dot\beta_\tau\bx_1 \;\middle|\; \bX_\tau=\bx\right],
+%     \fmvel(\bx,\bx_0,\tau)
+%     = \E\!\left[\dot\alpha_\tau \bx_0+ \dot\sigpath_\tau\latentnoise + \dot\beta_\tau\bx_1 \;\middle|\; \bX_\tau=\bx\right].
 % \end{align}
-% and is the drift of the probability-flow ODE $\rd\bX_\tau = \fmvel_\tau(\bX_\tau,\bx_0)\,\rd\tau$ that transports $p_0$ to $p_1$ \cite{lipman_flow_2023, albergo_stochastic_2023}. The \emph{score} is $\genscore_\tau(\bx,\bx_0) = \nabla_{\bx}\log p_\tau(\bx\mid\bx_0)$. For affine Gaussian paths the velocity and the score obey an exact linear identity. Introducing the \emph{velocity--score coefficient}
-% \begin{align}\label{eq:vscoef_def}
-%     \vscoef_\tau := \sigpath_\tau\!\left(\frac{\dot\beta_\tau}{\beta_\tau}\sigpath_\tau - \dot\sigpath_\tau\right)
-%     = \frac{\sigpath_\tau(\dot\beta_\tau\sigpath_\tau - \dot\sigpath_\tau\beta_\tau)}{\beta_\tau},
-% \end{align}
-% the velocity is an affine function of the state with the score entering linearly,
-% \begin{align}\label{eq:general_velocity_of_score}
-%     \fmvel_\tau(\bx)
-%     = \frac{\dot\beta_\tau}{\beta_\tau}\bx
-%     + \left(\dot\alpha_\tau - \frac{\dot\beta_\tau\alpha_\tau}{\beta_\tau}\right)\bm a_0
-%     + \vscoef_\tau\,\genscore_\tau(\bx),
-% \end{align}
-% which inverts to
+% Thus, samples from $\conddist{\bx_1}{\bx_0}$ can be generated by solving the probability-flow ODE $\rd\bX_\tau = \fmvel_\tau(\bX_\tau,\bx_0)\,\rd\tau$ \cite{lipman_flow_2023, albergo_stochastic_2023}. The \emph{score} is $\genscore_\tau(\bx,\bx_0) = \nabla_{\bx}\log p_\tau(\bx\mid\bx_0)$ and can be derived in terms of the velocity:
 % \begin{align}\label{eq:general_score_velocity}
 %     \genscore_\tau(\bx)
-%     = \frac{\beta_\tau\,\fmvel_\tau(\bx) - \dot\beta_\tau\,\bx - (\dot\alpha_\tau\beta_\tau - \dot\beta_\tau\alpha_\tau)\,\bm a_0}
+%     = \frac{\beta_\tau\,\fmvel(\bx,\bx_0,\tau) - \dot\beta_\tau\,\bx - (\dot\alpha_\tau\beta_\tau - \dot\beta_\tau\alpha_\tau)\,\bx_0}
 %            {\beta_\tau\,\vscoef_\tau},
 % \end{align}
-% derived in Appendix~\ref{appendix:score_velocity}, so either object determines the other: the score is available in closed form from a velocity-trained model and vice versa. The coefficient $\vscoef_\tau$ is the only further ingredient the deterministic posterior sampler of Section~\ref{sec:methodology} requires.
+% where the \emph{velocity--score coefficient} is:
+% \begin{align}\label{eq:vscoef_def}
+%     \vscoef_\tau := \sigpath_\tau\!\left(\frac{\dot\beta_\tau}{\beta_\tau}\sigpath_\tau - \dot\sigpath_\tau\right)
+%     = \frac{\sigpath_\tau(\dot\beta_\tau\sigpath_\tau - \dot\sigpath_\tau\beta_\tau)}{\beta_\tau}.
+% \end{align}
+
+% We build the prior $\conddist{\state^{n}}{\state^{n-1}}$ with a stochastic interpolant, the single object our method operates on, general enough that flow matching (Section~\ref{subsec:fm}) and denoising diffusion arise as special cases \cite{albergo_stochastic_2023, lipman_flow_2023, ma_sit_2024, holderrieth_generator_2024}. The goal is a generative model that samples from a target conditional density $\conddist{\bx_1}{\bx_0}$; in forecasting we set $\bx_0 = \state^{n-1}$, $\bx_1 = \state^{n}$ to recover the prior in Eq.~\eqref{eq:posterior_distribution}. Sampling proceeds over a pseudo-time $\tau\in[0,1]$, unrelated to physical time, that transports a tractable source distribution to the target.
+
+% \paragraph{Stochastic interpolants.}
+% \label{subsec:si}
+% The stochastic interpolant (SI) framework \cite{albergo_stochastic_2023, chen_probabilistic_2024} takes the anchor to be the previous state $\bx_0=\state^{n-1}$ and embeds noise as a Brownian motion $\gamma_\tau\bW_\tau$, $\bW_\tau=\sqrt{\tau}\,\bz$, $\bz\sim\mathcal{N}(0,\bI)$:
+% \begin{align}\label{eq:stochastic_interpolant}
+%     \bx_\tau = \alpha_\tau\bx_0 + \beta_\tau\bx_1 + \gamma_\tau\bW_\tau,
+% \end{align}
+% with $\alpha_0=\beta_1=1$ and $\alpha_1=\beta_0=\gamma_1=0$, so that $\bx_{\tau=0}=\bx_0$ and $\bx_{\tau=1}\sim\conddist{\bx_1}{\bx_0}$. The model is an SDE
+% \begin{align}\label{eq:SI_SDE}
+%     \rd\bX_\tau = \drift_\theta(\bX_\tau,\bx_0,\tau)\,\rd\tau + \gamma_\tau\,\rd\bW_\tau, \qquad \bX_0=\bx_0,
+% \end{align}
+% whose drift is trained to match $\drift_\theta(\bx,\bx_0,\tau) = \E[\dot\alpha_\tau\bx_0 + \dot\beta_\tau\bx_1 + \dot\gamma_\tau\bW_\tau\mid\bX_\tau=\bx]$, a regression requiring no SDE solves during training.
+
+% \paragraph{Flow matching.}
+% \label{subsec:fm}
+
+% Flow matching (FM) is the special case obtained by \emph{removing the Wiener process from training}: the interpolant stays deterministic and the model learns the marginal velocity rather than an SDE drift. FM \cite{lipman_flow_2023, liu_rectified_2022} takes a Gaussian source, $\latent\sim\mathcal{N}(0,\bI)$, with $\state^{n-1}$ entering only as a conditioning input. The interpolant is the deterministic path
+% \begin{align}\label{eq:fm_interpolant}
+%     \bx_\tau = \alpha_\tau\latent + \beta_\tau\bx_1, \qquad \alpha_0=\beta_1=1,\quad \alpha_1=\beta_0=0,
+% \end{align}
+% e.g.\ $\alpha_\tau=1-\tau$, $\beta_\tau=\tau$ for rectified flow. The model is the ODE
+% \begin{align}\label{eq:fm_ode}
+%     \rd\bX_\tau = \fmvel_\theta(\bX_\tau,\state^{n-1},\tau)\,\rd\tau, \qquad \bX_0\sim\mathcal{N}(0,\bI),
+% \end{align}
+% whose velocity is trained to match $\fmvel_\tau(\bx) = \E[\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1\mid\bX_\tau=\bx]$. As with SI, no ODE solve is needed and the per-sample target equals the marginal velocity in expectation \cite{lipman_flow_2023}.
+
+% \paragraph{Diffusion models.}
+% FM trains a deterministic generator (Eq.~\eqref{eq:fm_ode}), but sampling need not be deterministic: the probability-flow ODE is one member of a one-parameter family with identical marginals \cite{song_score-based_2021, ma_sit_2024}. For any diffusion schedule $\gdiff_\tau\ge 0$, the SDE
+% \begin{align}\label{eq:general_sde_family}
+%     \rd\bX_\tau
+%     = \underbrace{\left[\fmvel_\theta(\bX_\tau,\bx_0) + \tfrac{1}{2}\gdiff_\tau^2\,\genscore_\tau(\bX_\tau,\bx_0)\right]}_{=:\drift_\theta^{g}(\bX_\tau,\bx_0,\tau)}\rd\tau
+%     + \gdiff_\tau\,\rd\bW_\tau, \qquad \bX_0\sim p_0,
+% \end{align}
+% shares the ODE's marginals for every $\gdiff_\tau$ (Appendix~\ref{appendix:score_velocity}). The score follows from the trained velocity,
+% \begin{align}\label{eq:fm_score}
+%     \genscore_\tau(\bx) = \frac{\beta_\tau\,\fmvel_\theta(\bx,\state^{n-1},\tau) - \dot\beta_\tau\,\bx}{\alpha_\tau\,(\dot\beta_\tau\alpha_\tau - \dot\alpha_\tau\beta_\tau)},
+% \end{align}
+% which for rectified flow reduces to $\genscore_\tau(\bx) = (\tau\,\fmvel_\theta - \bx)/(1-\tau)$. Setting $\gdiff_\tau=0$ recovers the deterministic FM ODE; $\gdiff_\tau>0$ injects noise at sampling time, with the score supplied in closed form by Eq.~\eqref{eq:fm_score}, so no additional network is required.
+
+% The resulting \emph{DM-SDE} drives the FM-trained marginals with a Wiener process -- exactly the structure of a denoising-diffusion / score-SDE sampler \cite{song_score-based_2021, ho_denoising_2020}, with $\fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau$ the reverse-time diffusion drift and $\gdiff_\tau$ the noise schedule. Thus one trained FM model yields both a deterministic probability-flow ODE and a diffusion-model SDE; for SI this lifting is automatic, its drift already including the score with $\gdiff_\tau=\gamma_\tau$. In all cases the model provides a velocity (equivalently a score) for an affine Gaussian path, and Eq.~\eqref{eq:general_sde_family} turns it into an SDE with a chosen diffusion -- the common interface on which Section~\ref{sec:methodology} operates.
+
 
 % \paragraph{The stochastic interpolant instance.}
 % The stochastic interpolant (SI) framework \cite{albergo_stochastic_2023, chen_probabilistic_2024} takes the anchor to be the previous state $\bm{a}_0=\bx_0=\state^{n-1}$ and embeds the noise as a Brownian motion $\sigpath_\tau\latentnoise = \gamma_\tau\bW_\tau$, $\bW_\tau=\sqrt{\tau}\,\bz$, $\bz\sim\mathcal{N}(0,\bI)$:
@@ -135,3 +157,23 @@ which for rectified flow reduces to $\genscore_\tau(\bx) = (\tau\,\fmvel_\theta 
 %     \mathcal{L}(\theta) = \int_0^1 \E\!\left[\norm{\drift_\theta(\bx_\tau,\bx_0,\tau) - \bR_\tau}_2^2\right]\rd\tau,
 % \end{align}
 % with expectation over $\bx_0,\bx_1\sim\dist{\bx_0,\bx_1}$, $\bz$, and $\tau\sim\mathcal{U}[0,1]$; no SDE solve is needed in training.
+
+
+
+% by minimizing
+% \begin{align}\label{eq:SI_drift_loss}
+%     \mathcal{L}(\theta) = \int_0^1 \E\!\left[\norm{\drift_\theta(\bx_\tau,\bx_0,\tau) - (\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1 + \dot\gamma_\tau\bW_\tau)}_2^2\right]\rd\tau,
+% \end{align}
+% with expectation over $\bx_0,\bx_1\sim\dist{\bx_0,\bx_1}$, $\bW_\tau$, and $\tau\sim\mathcal{U}[0,1]$; no SDE solve is needed in training.  
+
+% The SDE drift already includes the score contribution, $\drift_\theta = \fmvel_\tau + \tfrac12\gamma_\tau^2\genscore_\tau$ with $\gdiff_\tau=\gamma_\tau$ in Eq.~\eqref{eq:general_sde_family}, and the score is recovered as \cite{chen_probabilistic_2024}
+% \begin{align}\label{eq:SI_score}
+%     \genscore_\tau(\bx,\bx_0) = A_\tau\!\left[\beta_\tau\drift_\theta(\bx,\bx_0,\tau) - c_\tau(\bx,\bx_0)\right],
+% \end{align}
+% with $A_\tau = \left[\tau\gamma_\tau(\dot\beta_\tau\gamma_\tau - \beta_\tau\dot\gamma_\tau)\right]^{-1}$ and $c_\tau(\bx,\bx_0)=\dot\beta_\tau\bx + (\beta_\tau\dot\alpha_\tau - \dot\beta_\tau\alpha_\tau)\bx_0$.
+
+% through the conditional flow matching loss
+% \begin{align}\label{eq:fm_loss}
+%     \mathcal{L}(\theta) = \int_0^1 \E\!\left[\norm{\fmvel_\theta(\bx_\tau,\state^{n-1},\tau) - (\dot\alpha_\tau\latent + \dot\beta_\tau\bx_1)}_2^2\right]\rd\tau,
+% \end{align}
+% with expectation over $\bx_1\sim\conddist{\bx_1}{\state^{n-1}}$ and $\latent$; as with SI, no ODE solve is needed and the per-sample target equals the marginal velocity in expectation \cite{lipman_flow_2023}. 

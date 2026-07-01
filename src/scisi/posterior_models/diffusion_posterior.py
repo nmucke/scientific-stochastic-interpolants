@@ -18,10 +18,13 @@ class DiffusionPosterior(BasePosterior):
 
     This is a guided reverse-diffusion sampler kept as a DPS-style baseline. It
     is **not** a member of the paper's unified observation-interpolant family:
-    its likelihood term is scaled by an ad-hoc ``1/2 g_tau**2 sqrt(t)`` factor
-    rather than the paper's guidance weight ``w_tau = a_tau + 1/2 g_tau**2``
-    times the multiplicative gain ``G_tau``. It is intentionally excluded from
-    the unified-family claims; use ``StochasticInterpolantPosterior`` /
+    its likelihood term is scaled either by an ad-hoc ``1/2 g_tau**2 sqrt(t)``
+    factor (default DPS branch) or, for SDA (``guidance_weight = "g_squared"``),
+    by the classifier-guidance / h-transform weight ``g_tau**2`` that puts the
+    likelihood score on the same ``-g^2`` footing as the prior score. Neither is
+    the paper's own guidance weight ``w_tau = a_tau + 1/2 g_tau**2`` times the
+    multiplicative gain ``G_tau``; this class is intentionally excluded from the
+    unified-family claims. Use ``StochasticInterpolantPosterior`` /
     ``FlowMatchingPosterior`` for the paper samplers.
     """
 
@@ -90,15 +93,14 @@ class DiffusionPosterior(BasePosterior):
         base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
         # Likelihood score step. Default (legacy DPS-style) weight is
-        # ``0.5 g^2 sqrt(t)``. A likelihood may instead request the FM
-        # score->state coefficient ``a_tau + 0.5 g^2`` by setting
-        # ``guidance_weight = "fm_coeff"`` (FIX 3, used by SDALikelihood): this
-        # avoids both the SDA under-powering and a fold that diverges as t -> 0.
+        # ``0.5 g^2 sqrt(t)``. A likelihood may instead request the SDA / classifier-
+        # guidance injection weight ``g^2`` by setting ``guidance_weight =
+        # "g_squared"`` (used by SDALikelihood): this is the exact h-transform
+        # footing, putting the likelihood score on the same ``-g^2`` footing as the
+        # prior score (``s = s_prior + s_lik``), matching Rozet & Louppe.
         g_t = self.diffusion_term(t)
-        if getattr(self.likelihood_model, "guidance_weight", None) == "fm_coeff":
-            a_tau = self.model.interpolation.velocity_score_coeff(t)
-            weight = a_tau + 0.5 * g_t**2
-            base = base + weight * likelihood_score * dt
+        if getattr(self.likelihood_model, "guidance_weight", None) == "g_squared":
+            base = base + g_t**2 * likelihood_score * dt
         else:
             base = base + 0.5 * g_t**2 * likelihood_score * dt * t.sqrt()
 

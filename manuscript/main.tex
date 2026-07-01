@@ -17,6 +17,7 @@
 \usepackage{nicefrac}       % compact symbols for 1/2, etc.
 \usepackage{microtype}      % microtypography
 \usepackage{xcolor}         % colors
+\usepackage{wrapfig}        % text-wrapped floats
 
 \title{A General Observation-Interpolant Method for Data Assimilation with Flow-Based Generative Models}
 
@@ -54,7 +55,7 @@
 
 
 \begin{abstract}
-Data assimilation combines models with observational data to estimate the state of complex dynamical systems, where efficiently sampling high-dimensional nonlinear posteriors remains a major challenge. We show that a single observation-interpolant mechanism turns \emph{any} pre-trained flow-based generative model -- a stochastic interpolant sampled as a stochastic differential equation (SDE), or a flow matching model sampled as an SDE or ordinary differential equation (ODE) -- into a posterior sampler, without retraining. The unifying object is the affine Gaussian probability path: conditioning it on an observation tilts the target to the posterior while preserving the path structure, so the conditional score and velocity differ from their prior counterparts by the same likelihood-score term, scaled by one and by the velocity--score duality coefficient respectively. The marginal-preserving SDE family on this conditioned path yields a one-parameter family of posterior samplers indexed by a diffusion coefficient, whose three members of interest -- the stochastic-interpolant SDE (native diffusion), the flow matching SDE (lifted diffusion), and a deterministic guided probability-flow ODE (zero diffusion) -- share a single guidance weight splitting into a duality term and a diffusion term. The intractable likelihood is replaced by a tractable interpolated-observation likelihood whose conditional moments we derive in closed form, yielding a closed-form likelihood score whose covariance is inflated ($\Pi$GDM-style) by the model's source covariance; this inflation is what makes the guidance accurate on sparse observations. We give pseudo-code for all three samplers, relate the construction to Doob's $h$-transform, and demonstrate it on a series of test cases.
+Data assimilation estimates the state of dynamical systems by combining models with observations, where sampling high-dimensional nonlinear posteriors remains a major challenge. We show that a single observation-interpolant mechanism turns \emph{any} pre-trained flow-based generative model -- a stochastic interpolant or a flow matching model -- into a posterior sampler without retraining. Conditioning the interpolant path on an observation tilts the target to the posterior while preserving the path structure, so the conditional score and velocity differ from their prior counterparts by one shared likelihood-score term. The marginal-preserving SDE family on this conditioned path gives a one-parameter family of posterior samplers indexed by a diffusion coefficient, with three members of interest: the stochastic-interpolant SDE, the flow matching SDE, and a deterministic guided probability-flow ODE. The intractable likelihood is replaced by a tractable interpolated-observation likelihood whose conditional moments we derive in closed form, giving a closed-form likelihood score with a $\Pi$GDM-style inflated covariance; this inflation is what makes the guidance accurate on sparse observations. We give pseudo-code for all three samplers, relate the construction to Doob's $h$-transform, and demonstrate it on a series of test cases.
 \end{abstract}
 
 
@@ -70,8 +71,8 @@ Data assimilation combines models with observational data to estimate the state 
 \section{Methodology}\label{sec:methodology}
 \input{sections/methodology}
 
-\section{Comparison to alternative methods}\label{sec:comparison}
-\input{sections/comparison}
+% \section{Comparison to alternative methods}\label{sec:comparison}
+% \input{sections/comparison}
 
 \section{Implementation}\label{sec:implementation}
 \input{sections/implementation}
@@ -92,7 +93,7 @@ Data assimilation combines models with observational data to estimate the state 
 \appendix
 
 \input{sections/appendix_methods}
-\input{sections/appendix_score_velocity_duality}
+% \input{sections/appendix_score_velocity_duality}
 \input{sections/appendix_proof_conditioning}
 \input{sections/appendix_proof_posterior}
 \input{sections/appendix_proof_interpolant_likelihood_covariance}

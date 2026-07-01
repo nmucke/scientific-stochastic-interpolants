@@ -305,7 +305,9 @@ Baselines: FlowDAS, Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD
 Posterior sampling produces an ensemble of trajectories, enabling uncertainty quantification via ensemble spread.
 
 > The full paper-experiment harness, method lineup, and run status live in
-> `paper_experiments/` (see `PROJECT_HANDOFF.md` and `paper_experiments/RUN_STATUS.md`).
+> `paper_experiments/` (see `paper_experiments/results/README.md` for the layout,
+> `paper_experiments/RUN_STATUS.md` for status, and `paper_experiments/DESIGN_NOTES.md`
+> for the code↔math mapping and design rationale).
 
 ## Evaluation Metrics
 

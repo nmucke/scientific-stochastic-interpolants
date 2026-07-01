@@ -15,7 +15,17 @@ stepper: sde
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgePosterior
-  # lambda: guidance strength on the DPS gradient (paper's guidance scale).
-  guidance_scale: 1.0
+  # lambda: guidance strength on the RAW DPS score grad_x log p(y|x_t) (paper's
+  # guidance scale). The gradient is unnormalised, so this needs tuning per
+  # experiment (like FlowDAS's zeta); start small at NS scale if it blows up.
+  # Scalar OR a [scenario][num_sde_steps M] table with a `default:` key (resolved
+  # per run by resolve_scheduled_hparams; null cell -> default).
+  guidance_scale:
+    default: 1.0
+    #             M=50    M=100   M=250   M=500
+    superres_16: { 50: null, 100: null, 250: null, 500: null }
+    superres_32: { 50: null, 100: null, 250: null, 500: null }
+    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
+    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
   # Resample when effective sample size / N drops below this fraction.
   ess_threshold: 0.5
