@@ -59,9 +59,12 @@ run_cell() {
   if [ -f "$outfile" ]; then echo "[urbangrid] SKIP (exists) $outfile" | tee -a "$LOG"; return; fi
   local psfile="$PS/$(basename "${outfile%.csv}").csv"
   echo "[urbangrid] RUN  $tag -> $(basename "$outfile") $(date +%T)" | tee -a "$LOG"
+  # Trajectory N -> test sample N (test_sample_indices=[1..5]); WITHOUT this every
+  # traj would rerun the default sample and the trajectory aggregation is a no-op.
   $PY -u paper_experiments/run.py case=urban seeds=[0] \
       ensemble_size=$E case.num_physical_steps=$NP \
       case.require_weights=$REQUIRE_W case.device=$DEVICE \
+      +test_index=$N \
       +save_per_step=true "+per_step_file=$psfile" \
       results_file="$outfile" "$@" >> "$LOG" 2>&1 \
     && echo "[urbangrid] OK   $tag $(basename "$outfile") $(date +%T)" | tee -a "$LOG" \

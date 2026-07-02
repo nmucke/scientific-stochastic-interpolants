@@ -368,6 +368,9 @@ class NavierStokesRunner(ExperimentRunner):
             variance=extra["variance"],
             likelihood_ensemble_size=extra["likelihood_ensemble_size"],
             likelihood_mode=self._cfg_get("likelihood_mode", None),
+            # Shared-Jacobian refresh cadence (Ours + inflated_shared only);
+            # override with jacobian_refresh_every=k, default 1 (every step).
+            jacobian_refresh_every=self._cfg_get("jacobian_refresh_every", None),
             # Select the per-cell guidance scale (e.g. FlowDAS zeta) from the
             # method config's [case][scenario][M] table.
             case_key=self.case.value,

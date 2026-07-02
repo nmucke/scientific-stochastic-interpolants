@@ -25,7 +25,12 @@ _here = Path(__file__).resolve().parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
-from figure_common import load_metric_vs_M, make_vs_M_figure  # noqa: E402
+from figure_common import (  # noqa: E402
+    FIGURES_DIR,
+    load_metric_vs_M,
+    make_vs_M_figure,
+    mirror_to,
+)
 
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "analytical"
 CASE = "analytical"
@@ -58,6 +63,9 @@ def main() -> None:
         written += _panels.make_panels()
     except Exception as exc:  # pragma: no cover - panels are optional
         print(f"[analytical] panels skipped ({exc})")
+
+    # Mirror every figure into the in-repo paper_experiments/figures/ tree too.
+    written += mirror_to(written, FIGURES_DIR / CASE)
 
     for p in written:
         print(f"[fig] wrote {p}")

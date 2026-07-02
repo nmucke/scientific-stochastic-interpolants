@@ -207,7 +207,8 @@ class AttentionWithRotaryPositionalEmbeddings(nn.Module):
         q = self.rotary_emb_q(q)
         k = self.rotary_emb_k(k)
 
-        out = scaled_dot_product_attention(q, k, v, dropout_p=self.dropout_rate)
+        dropout_p = self.dropout_rate if self.training else 0.0
+        out = scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
 
         out = combine_heads(out, self.heads, self.dim_head)
 

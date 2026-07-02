@@ -36,7 +36,8 @@ likelihood_model:
   # pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
   # (case_key, scenario_key, num_steps). A missing case / scenario / M cell falls
   # back to `default` -- so urban / analytical use `default` until an `urban:`
-  # block is added.
+  # block is added. Env FIG_K / FIG_C override the resolved (k, c) (top precedence,
+  # so a tuning sweep needs no edit to this YAML).
   #
   # WHICH KNOBS, AND WHY:
   #   k = guidance_steps -- STRUCTURAL, set from the paper by task type, NOT an
@@ -80,7 +81,7 @@ likelihood_model:
       sparse_5:    { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
       sparse_1p5:  { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
+      analytical: { 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
     # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:

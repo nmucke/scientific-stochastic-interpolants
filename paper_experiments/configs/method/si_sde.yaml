@@ -15,6 +15,10 @@ likelihood_model:
   #   dps_full          -- paper's multiplicative-gain DPS surrogate (ablation).
   #   dps_jacobian_free -- Corollary cheap_drift (cheap ablation; inaccurate at mid-tau).
   likelihood_mode: inflated
+  # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
+  # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the
+  # schedule scalars kept exact at the current tau). CLI: jacobian_refresh_every=k.
+  jacobian_refresh_every: 1
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

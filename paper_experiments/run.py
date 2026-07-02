@@ -63,6 +63,17 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Method  : {cfg.method.name}")
     logger.info(f"Scenario: {cfg.get('scenario', {}).get('name', 'n/a')}")
 
+    # All cases run in single precision (fp32). Set the default BEFORE any model /
+    # tensor is built so every case (analytical closed-form, NS/urban samplers) is
+    # fp32 regardless of a stray default or a checkpoint's stored dtype. Matches the
+    # training scripts (src/scisi/bin/*). Metric internals may still upcast to fp64
+    # locally for numerical accuracy (src/scisi/metrics/*) -- that is deliberate and
+    # unaffected. Torch is imported here (not at module top) so the table-only
+    # pipeline never pays the torch import.
+    import torch
+
+    torch.set_default_dtype(torch.float32)
+
     seeds = list(cfg.get("seeds", SEED_LIST))
     runner_cls = _resolve_runner(cfg.case.name)
     runner = runner_cls(cfg, seeds=seeds)

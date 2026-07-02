@@ -575,6 +575,7 @@ def build_posterior(
     case_key: Optional[str] = None,
     scenario_key: Optional[str] = None,
     num_steps: Optional[int] = None,
+    jacobian_refresh_every: Optional[int] = None,
 ) -> tuple[torch.nn.Module, torch.nn.Module, Callable]:
     """Instantiate (likelihood, posterior, stepper) for one method.
 
@@ -583,7 +584,10 @@ def build_posterior(
     the ablation sweep). ``case_key`` (e.g. ``"navier_stokes"``), ``scenario_key``
     (e.g. ``"superres_16"``) and ``num_steps`` (M) select the per-cell guidance
     scale from a config table (a case without a filled block falls back to
-    ``default``).
+    ``default``). ``jacobian_refresh_every`` (Ours + ``inflated_shared`` only)
+    recomputes the shared Jacobian every k-th pseudo-step; ``None`` falls back
+    to the method config's ``likelihood_model.jacobian_refresh_every``, else 1
+    (every step).
     """
     stepper = _STEPPERS[method_cfg.stepper]
 
@@ -645,24 +649,29 @@ def build_posterior(
         # post-flow state toward y_t = t_next * y by k gradient-descent steps with
         # scale c * (1 - t) / t (paper Algorithm 1). Config targets
         # FlowMatchingPosterior with stepper=ode (g=0, deterministic).
+        import os
+
         model = prior.fm_model
         lik_cfg = method_cfg.get("likelihood_model", {}) or {}
         # Resolve any per-(case, scenario, M) scheduled hyperparameters (k =
         # guidance_steps, c = guidance_scale are tables) to scalars; scalars pass
         # through unchanged. Reading them raw would TypeError on the DictConfig.
         hp = resolve_scheduled_hparams(lik_cfg, case_key, scenario_key, num_steps)
+        # Env FIG_K / FIG_C override the resolved (k, c) table (top precedence, so a
+        # tuning sweep needs no YAML edit -- same convention as FLOWDAS_ZETA etc.).
+        _k = os.environ.get("FIG_K", hp.get("guidance_steps", 2))
+        _c = os.environ.get("FIG_C", hp.get("guidance_scale", 10.0))
         logger.info(
             "Guided FM (FIG) k=%s c=%s (scenario=%s, M=%s)",
-            hp.get("guidance_steps"), hp.get("guidance_scale"),
-            scenario_key, num_steps,
+            _k, _c, scenario_key, num_steps,
         )
         likelihood = FIGGaussianLikelihood(
             model=model,
             obs_operator=obs_operator,
             variance=variance,
             ensemble_size=likelihood_ensemble_size,
-            guidance_steps=int(hp.get("guidance_steps", 2)),
-            guidance_scale=float(hp.get("guidance_scale", 10.0)),
+            guidance_steps=int(_k),
+            guidance_scale=float(_c),
             interpolant_noise=float(hp.get("interpolant_noise", 0.0)),
         )
         posterior = FlowMatchingPosterior(
@@ -1006,6 +1015,18 @@ def build_posterior(
     )
     model_class = "si" if is_si else "fm"
 
+    # Shared-Jacobian refresh cadence (inflated_shared only; inert otherwise):
+    # explicit arg -> method config -> 1 (recompute every pseudo-step, exact).
+    jac_every = int(
+        jacobian_refresh_every
+        if jacobian_refresh_every is not None
+        else method_cfg.likelihood_model.get("jacobian_refresh_every", 1)
+    )
+    if mode == "inflated_shared" and jac_every != 1:
+        logger.info(
+            "%s: shared Jacobian refreshed every %d pseudo-steps", method_name, jac_every
+        )
+
     likelihood = InterpolantGaussianLikelihood(
         model=model,
         obs_operator=obs_operator,
@@ -1013,6 +1034,7 @@ def build_posterior(
         ensemble_size=likelihood_ensemble_size,
         likelihood_mode=mode,
         model_class=model_class,
+        jacobian_refresh_every=jac_every,
     )
 
     if is_si:

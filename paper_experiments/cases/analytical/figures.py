@@ -43,13 +43,16 @@ _SAMPLERS = ("si_sde", "dm_sde", "fm_ode")
 _SAMPLER_LABEL = {"si_sde": "SI-SDE", "dm_sde": "DM-SDE", "fm_ode": "FM-ODE"}
 
 
-def _save(fig: plt.Figure, name: str) -> Path:
+def _save(fig: plt.Figure, name: str) -> list[Path]:
+    """Save the figure as PNG and PDF; return BOTH paths (so callers can track /
+    mirror every written file)."""
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     png = FIG_DIR / f"{name}.png"
+    pdf = FIG_DIR / f"{name}.pdf"
     fig.savefig(png, dpi=180, bbox_inches="tight")
-    fig.savefig(FIG_DIR / f"{name}.pdf", bbox_inches="tight")
+    fig.savefig(pdf, bbox_inches="tight")
     plt.close(fig)
-    return png
+    return [png, pdf]
 
 
 def _hist2d(ax, samples: np.ndarray, title: str, rng) -> None:
@@ -87,7 +90,7 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     ):
         fig, ax = plt.subplots(figsize=(3.0, 3.0))
         _hist2d(ax, np.asarray(data), title, rng)
-        written.append(_save(fig, key))
+        written.extend(_save(fig, key))
 
     # (e) KL vs diffusion strength g_tau (SDE samplers SI-SDE, DM-SDE).
     g_list = [0.25, 0.5, 1.0, 1.5, 2.0, 3.0]
@@ -107,7 +110,7 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     ax.set_title("(e) KL vs.\\ diffusion strength")
     ax.legend(fontsize=7)
     ax.grid(True, which="both", alpha=0.3)
-    written.append(_save(fig, "an_kl_diff"))
+    written.extend(_save(fig, "an_kl_diff"))
 
     # (f) KL vs number of steps M (all three samplers).
     M_list = [10, 25, 50, 100, 200, 400]
@@ -128,7 +131,7 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     ax.set_title("(f) KL vs.\\ steps $M$")
     ax.legend(fontsize=7)
     ax.grid(True, which="both", alpha=0.3)
-    written.append(_save(fig, "an_kl_steps"))
+    written.extend(_save(fig, "an_kl_steps"))
 
     # (g) 1-D density slices (first coordinate): sampled vs exact.
     fig, ax = plt.subplots(figsize=(3.6, 3.0))
@@ -149,7 +152,7 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     ax.set_ylabel("density")
     ax.set_title("(g) 1-D density slices")
     ax.legend(fontsize=7)
-    written.append(_save(fig, "an_slices"))
+    written.extend(_save(fig, "an_slices"))
 
     return written
 

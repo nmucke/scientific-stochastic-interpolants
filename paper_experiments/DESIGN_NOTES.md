@@ -131,7 +131,41 @@ These are the `results/navier_stokes/reference/traj<N>/gt/` files (see `results/
 
 ---
 
-## 5. Gotchas (still true)
+## 5. Results pipeline (run → aggregate → figures)
+
+Per case, three stages, all keyed off `results/<case>/` (full layout:
+`results/README.md`):
+
+1. **Run** — `run_<case>_grid.sh` loops over `(scenario, M, trajectory, group)` and
+   calls `run.py` once per cell, writing per-cell tidy files:
+   `metrics/` (scalar, already time-averaged in-run), `per_step/` (per-assimilation
+   -step curves), and `states/traj1/` (raw posterior+truth ensembles, first
+   trajectory only). NS/urban pass `+test_index=$N` so trajectory `N` is test sample
+   `N` (`test_sample_indices=[1..5]`) — **without this every trajectory reruns the
+   same sample** and step 2's averaging is a no-op.
+2. **Aggregate** — `aggregate_analytical.py` / `aggregate_ns.py` / `aggregate_urban.py`
+   (thin wrappers over `common/aggregate_lib.py`; they replaced the retired
+   `aggregate_grid.py` + `aggregate_multitraj.py`). Reduce the per-cell files ACROSS
+   trajectories (trajectory = the `traj<N>` filename token, NOT any in-file
+   `test_index`) →
+   * `aggregated/all.csv` — scalar metrics, mean ± std over trajectories + `n_traj`;
+     the canonical `results_schema` file for `make_tables.py` and the vs-M figures.
+   * `aggregated/per_step.csv` — (NS/urban) per-step curves, mean ± std over
+     trajectories at each step; for the vs-step figures. Analytical has no time axis
+     → no per_step file, and its `all.csv` is a single-bucket concat (`n_traj=1`).
+   The reduction is metric-agnostic, so each case's differing metric set flows
+   through with no per-case wiring.
+3. **Figures** — `make_<case>_figures.py` (+ shared `figure_common.py`) emit
+   metric-vs-M (from `all.csv`), metric-vs-step (from `per_step.csv`), and traj1
+   state field maps (truth / posterior mean / |error| / spread, read straight from
+   `states/traj1/*.npz`). Each figure is written to `manuscript/figures/<case>/` and
+   mirrored into `paper_experiments/figures/<case>/` (`figure_common.mirror_to`);
+   both trees are git-ignored regenerated artifacts.
+
+`make_tables.py` is independent of the make-figure scripts: point it at a case's
+`all.csv` (`--results results/<case>/aggregated/all.csv`) to emit the LaTeX tables.
+
+## 6. Gotchas (still true)
 
 - Always `.venv/bin/python` (bare python has no torch).
 - Full-Σ_s JVPs must run under the math SDPA backend on CUDA (handled by `_math_sdpa`).

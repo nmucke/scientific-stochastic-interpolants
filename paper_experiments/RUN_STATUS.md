@@ -30,10 +30,12 @@ setsid nohup bash paper_experiments/run_ns_grid.sh      >run_ns_grid.log      2>
 # urban grid (GPU):
 setsid nohup bash paper_experiments/run_urban_grid.sh   >run_urban_grid.log   2>&1 & disown
 ```
-**Track / aggregate:**
+**Track / aggregate:** (per-case; run → aggregate → make figures)
 ```bash
 .venv/bin/python paper_experiments/status.py                 # -> results/STATUS.md
-.venv/bin/python paper_experiments/aggregate_grid.py         # -> results/<case>/aggregated/all.csv
+.venv/bin/python paper_experiments/aggregate_analytical.py   # -> results/analytical/aggregated/all.csv
+.venv/bin/python paper_experiments/aggregate_ns.py           # -> results/navier_stokes/aggregated/{all,per_step}.csv
+.venv/bin/python paper_experiments/aggregate_urban.py        # -> results/urban/aggregated/{all,per_step}.csv
 ```
 
 **Reduced-grid smoke-test (CPU, no GPU/weights) — proven operational 2026-07-01:**

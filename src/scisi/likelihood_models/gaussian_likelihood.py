@@ -13,12 +13,12 @@ from scisi.likelihood_models.observation_operators import LinearObservationOpera
 def _math_sdpa():
     """Force the math scaled-dot-product-attention backend.
 
-    ``torch.autograd.functional.jvp`` uses the double-backward trick, but on
-    CUDA the flash / mem-efficient SDPA kernels have no double-backward
-    (``derivative for aten::_scaled_dot_product_efficient_attention_backward is
-    not implemented``). The math backend supports double-backward (it is what the
-    CPU path already used), so the full-Sigma_s JVP through a UNet with attention
-    must run under it. Numerically identical to the other backends.
+    The full-Sigma_s Jacobian-vector products differentiate through the UNet's
+    attention, but on CUDA the flash / mem-efficient SDPA kernels implement
+    neither forward-mode AD (``torch.func.jvp``) nor double-backward. The math
+    backend supports both (it is what the CPU path already used), so every JVP
+    through a UNet with attention must run under it. Numerically identical to
+    the other backends.
     """
     try:
         from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -88,6 +88,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         anchor: Optional[str] = None,
         gain: Optional[str] = None,
         correct_likelihood_score: Optional[bool] = None,
+        jacobian_refresh_every: int = 1,
     ) -> None:
         """Initialize the interpolant Gaussian likelihood.
 
@@ -125,6 +126,14 @@ class InterpolantGaussianLikelihood(nn.Module):
             correct_likelihood_score: **Deprecated** legacy key. ``False`` forces
                 the uncorrected DPS score (``dps_jacobian_free``); ``True`` is a
                 no-op. Prefer ``likelihood_mode``.
+            jacobian_refresh_every: ``inflated_shared`` only -- recompute the
+                shared network Jacobian every k-th pseudo-time step (default 1 =
+                every step, no approximation). Between refreshes the cached
+                ``H J H^T`` and frozen-state JVP are reused; the schedule
+                scalars (rho, beta, ...) stay EXACT at the current tau -- only
+                the Jacobian factor J is lagged. The cache resets whenever
+                pseudo-time restarts (a new SDE/ODE pass, i.e. the next
+                assimilation step).
         """
         super(InterpolantGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -181,8 +190,24 @@ class InterpolantGaussianLikelihood(nn.Module):
         # Jacobian evaluations per pseudo-step, which is intractable at NS scale).
         # It collapses EXACTLY to ``inflated`` when the ensemble members coincide.
         self.share_sigma_s = likelihood_mode == "inflated_shared"
-        # Column chunk for the shared H Sigma_s H^T build (memory vs launches).
+        # Column chunk for the shared H J H^T build (memory vs launches).
         self.shared_sigma_chunk = 64
+        # Shared-Jacobian refresh cadence (inflated_shared): k = 1 recomputes
+        # J at the ensemble mean on every pseudo-time step; k > 1 reuses the
+        # cached H J H^T / frozen JVP for k - 1 subsequent steps (schedule
+        # scalars stay exact; only J is lagged).
+        self.jacobian_refresh_every = int(jacobian_refresh_every)
+        if self.jacobian_refresh_every < 1:
+            raise ValueError(
+                f"jacobian_refresh_every must be >= 1, got {jacobian_refresh_every!r}."
+            )
+        # (t_last, steps_since, jvp_fn, HJHt) of the current shared Jacobian.
+        # ``t_last`` tracks the last pseudo-time seen so repeated calls at the
+        # same tau (extra ensemble batches) reuse the cache, and a tau DECREASE
+        # (pseudo-time restarted -> next assimilation window) forces a refresh.
+        self._shared_jac_cache: Dict[str, Any] = {
+            "t_last": None, "steps_since": 0, "jvp_fn": None, "HJHt": None,
+        }
 
         if model_class not in ("si", "fm"):
             raise ValueError(
@@ -338,36 +363,38 @@ class InterpolantGaussianLikelihood(nn.Module):
             HSHt[:, :, j] = self.obs_operator(sigma_s_apply(v))  # [B, N_y]
         return HSHt
 
-    def _build_HSHt_shared(
-        self, ref: torch.Tensor, sigma_s_apply: Callable
+    def _build_HJHt_shared(
+        self, ref: torch.Tensor, jvp_fn: Callable
     ) -> torch.Tensor:
-        """Form a single ``H Sigma_s H^T`` (shape ``[N_y, N_y]``).
+        """Form the Jacobian-only ``H J H^T`` (shape ``[N_y, N_y]``).
 
-        The ``inflated_shared`` approximation evaluates ``Sigma_s`` once at the
-        ensemble-mean state, so a single matrix is built and reused for every
-        member's RHS (vs the per-member ``[B, N_y, N_y]`` of :meth:`_build_HSHt`).
-        Columns are processed in chunks: ``sigma_s_apply`` broadcasts the captured
-        mean state to the chunk's batch, turning ``N_y`` single-column JVPs into
-        ``ceil(N_y / chunk)`` batched ones. Column ``j`` is
-        ``H Sigma_s (H^T e_j)``.
+        The ``inflated_shared`` approximation evaluates the network Jacobian
+        ``J`` once at the ensemble-mean state, so a single matrix is built and
+        reused for every member's RHS (vs the per-member ``[B, N_y, N_y]`` of
+        :meth:`_build_HSHt`). Columns are processed in chunks: ``jvp_fn``
+        broadcasts the captured mean state to the chunk's batch, turning
+        ``N_y`` single-column JVPs into ``ceil(N_y / chunk)`` batched ones.
+        Column ``j`` is ``H J (H^T e_j)``.
+
+        The schedule scalars are NOT baked in: the caller assembles
+        ``H Sigma_s H^T = c_iso H H^T + c_jac H J H^T`` per pseudo-step, so
+        this matrix can be cached across steps (``jacobian_refresh_every > 1``)
+        with the scalars staying exact -- only ``J`` is lagged.
         """
         H = self._get_obs_matrix(ref)  # [N_y, N_u]
         N_y = H.shape[0]
         cols = self._get_adjoint_basis(ref)  # [N_y, C, H, W]
 
-        HSHt = torch.empty(N_y, N_y, device=H.device, dtype=H.dtype)
+        HJHt = torch.empty(N_y, N_y, device=H.device, dtype=H.dtype)
         chunk = max(1, int(self.shared_sigma_chunk))
         for start in range(0, N_y, chunk):
             block = cols[start : start + chunk]  # [k, C, H, W]
-            # obs_operator(Sigma_s block) is [k, N_y]; its row i is the
-            # (start+i)-th COLUMN of H Sigma_s H^T. All full chunks share one
-            # prebuilt JVP graph (same tangent batch); a trailing partial chunk
-            # rebuilds once at its own size, keeping every network call at the
-            # exact batch size of the unbatched-JVP reference (bitwise equal).
-            HSHt[:, start : start + block.shape[0]] = self.obs_operator(
-                sigma_s_apply(block)
+            # obs_operator(J block) is [k, N_y]; its row i is the (start+i)-th
+            # COLUMN of H J H^T.
+            HJHt[:, start : start + block.shape[0]] = self.obs_operator(
+                jvp_fn(block)
             ).transpose(0, 1)
-        return HSHt
+        return HJHt
 
     def _interpolant_score(
         self,
@@ -377,6 +404,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         sigma_tau_sq: torch.Tensor,
         beta: torch.Tensor,
         sigma_s_apply: Optional[Callable] = None,
+        HSHt_shared: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Closed-form Sbar = grad_xbar_mu^T Sigma_bar^{-1} (ybar - mu_bar).
 
@@ -402,6 +430,10 @@ class InterpolantGaussianLikelihood(nn.Module):
             beta: beta_tau (scalar tensor).
             sigma_s_apply: Operator ``v -> Sigma_s v`` on grid tensors (full
                 modes); ``None`` -> isotropic ``Sigma_s = rho I``.
+            HSHt_shared: ``inflated_shared`` only -- the assembled
+                ``H Sigma_s H^T`` (``[N_y, N_y]``, fresh tensor) built by the
+                caller from the cached ``H J H^T`` and the current schedule
+                scalars.
 
         Returns:
             Sbar as a full-grid tensor [B, C, H, W].
@@ -430,9 +462,10 @@ class InterpolantGaussianLikelihood(nn.Module):
 
         if self.share_sigma_s:
             # Shared Sigma_s (inflated_shared): one Sigma_bar for the whole
-            # ensemble, factorised once and solved for every member's RHS.
-            HSHt = self._build_HSHt_shared(x, sigma_s_apply)  # [N_y, N_y]
-            Sigma_bar = HSHt  # [N_y, N_y] (fresh tensor; safe to modify)
+            # ensemble, factorised once and solved for every member's RHS. The
+            # caller assembled it from the (possibly cached) H J H^T and the
+            # CURRENT schedule scalars.
+            Sigma_bar = HSHt_shared  # [N_y, N_y] (fresh tensor; safe to modify)
             Sigma_bar.diagonal().add_(beta_sq_R)
             sol = torch.linalg.solve(
                 Sigma_bar, residual_obs.transpose(0, 1)
@@ -571,39 +604,53 @@ class InterpolantGaussianLikelihood(nn.Module):
 
         # --- full Sigma_s operator (inflated / dps_full modes) --------------
         # The same Sigma_s is used in the covariance solve, the front factor and
-        # the gain; the isotropic mode (dps_jacobian_free) leaves it None.
+        # the gain; the isotropic mode (dps_jacobian_free) leaves it None. Both
+        # full modes use the unified split Sigma_s = c_iso I + c_jac J with the
+        # network Jacobian J applied by a forward-mode JVP.
         sigma_s_apply = None
+        hsht_shared = None
         if self.use_full_sigma_s:
             if self.share_sigma_s:
                 # inflated_shared: evaluate the Jacobian ONCE at the ensemble
                 # mean (pseudo-time tau is identical across members, so the
-                # schedule scalars are unchanged; only the state is averaged).
-                def _mean0(z):
-                    return None if z is None else z.mean(dim=0, keepdim=True)
-
-                sigma_s_apply = self._build_full_sigma_s_apply(
-                    x=_mean0(x),
-                    t=t_grid[:1],
-                    t_net=t_net[:1],
-                    field_history=_mean0(field_history),
-                    field_cond=_mean0(field_cond),
-                    pars_cond=_mean0(pars_cond),
-                    drift=None,
-                    score=None,
-                    rho=rho[:1] if rho.dim() > 0 else rho,
+                # schedule scalars are unchanged; only the state is averaged),
+                # refreshed every ``jacobian_refresh_every``-th pseudo-step.
+                c_iso, c_jac = self._sigma_s_coeffs(
+                    t_grid[:1], rho[:1] if rho.dim() > 0 else rho
                 )
-            else:
-                sigma_s_apply = self._build_full_sigma_s_apply(
+                jvp_fn = self._refresh_shared_jacobian(
                     x=x,
-                    t=t_grid,
+                    t_clamped=t_clamped,
                     t_net=t_net,
                     field_history=field_history,
                     field_cond=field_cond,
                     pars_cond=pars_cond,
-                    drift=drift,
-                    score=score,
-                    rho=rho,
                 )
+                cache = self._shared_jac_cache
+                if cache["HJHt"] is None:
+                    cache["HJHt"] = self._build_HJHt_shared(x, jvp_fn)
+                # Assemble H Sigma_s H^T with the CURRENT schedule scalars; the
+                # cached H J H^T is the only lagged factor (and is exact for
+                # jacobian_refresh_every = 1). Scalar multiplication creates a
+                # fresh tensor, so neither cache is mutated downstream.
+                hsht_shared = (
+                    float(c_iso.reshape(-1)[0]) * self._get_HHt(x)
+                    + float(c_jac.reshape(-1)[0]) * cache["HJHt"]
+                )
+            else:
+                c_iso, c_jac = self._sigma_s_coeffs(t_grid, rho)
+                jvp_fn = self._build_jvp_fn(
+                    x=x,
+                    t_net=t_net,
+                    field_history=field_history,
+                    field_cond=field_cond,
+                    pars_cond=pars_cond,
+                )
+
+            def sigma_s_apply(
+                v: torch.Tensor, _ci=c_iso, _cj=c_jac, _jvp=jvp_fn
+            ) -> torch.Tensor:
+                return _ci * v + _cj * _jvp(v)
 
         # --- interpolant score Sbar (closed form) ---------------------------
         # The isotropic source scale rho_tau coincides with the source variance
@@ -617,6 +664,7 @@ class InterpolantGaussianLikelihood(nn.Module):
             sigma_tau_sq=sigma_tau_sq,
             beta=beta,
             sigma_s_apply=sigma_s_apply,
+            HSHt_shared=hsht_shared,
         )
 
         # --- multiplicative gain G_tau @ Sbar (dps_full only) ---------------
@@ -641,126 +689,141 @@ class InterpolantGaussianLikelihood(nn.Module):
     # ------------------------------------------------------------------
     # Full source covariance (Jacobian) operator
     # ------------------------------------------------------------------
-    def _build_full_sigma_s_apply(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        field_history: torch.Tensor,
-        field_cond: Optional[torch.Tensor],
-        pars_cond: Optional[torch.Tensor],
-        drift: Optional[torch.Tensor],
-        score: Optional[torch.Tensor],
-        rho: torch.Tensor,
-        t_net: Optional[torch.Tensor] = None,
-    ) -> Callable:
-        """Build an operator ``v -> Sigma_s v`` for the *full* source covariance.
+    def _sigma_s_coeffs(
+        self, t: torch.Tensor, rho: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Coefficients of the unified split ``Sigma_s = c_iso I + c_jac J``.
 
-        - SI: ``Sigma_s = gamma^2 t I + gamma^4 t^2 A_tau (beta J_b - bdot I)``,
-          with ``J_b = grad_x b_theta`` applied as a Jacobian-vector product.
-        - FM: ``Sigma_s = alpha^2 I + alpha^4 grad_x s``, with ``grad_x s``
-          applied as a JVP.
+        - SI: ``Sigma_s = gamma^2 t I + gamma^4 t^2 A_tau (beta J_b - bdot I)``
+          -> ``c_iso = rho - jac_scale * beta_diff``, ``c_jac = jac_scale *
+          beta`` with ``jac_scale = gamma^4 t^2 A_tau``.
+        - FM: ``Sigma_s = alpha^2 I + alpha^4 grad_x s`` -> ``c_iso = rho``,
+          ``c_jac = alpha^4``.
 
-        The Jacobian term is computed via a single ``torch.autograd`` JVP and
-        detached from the outer graph, so no autograd flows through the network
-        into the posterior drift.
-
-        EFFICIENCY. The JVP uses the standard double-backward construction
-        (identical to ``torch.autograd.functional.jvp``): with ``y = f(x)``,
-        ``u = 0``-cotangent requiring grad, ``w = (dy/dx)^T u`` built with
-        ``create_graph=True``, the product ``J v`` is ``d(w . v)/du``. The
-        forward pass and the first backward (building ``w``) depend only on the
-        evaluation point ``x`` -- NOT on the tangent ``v`` -- so they are done
-        ONCE per tangent-batch size and reused for every subsequent tangent
-        (each ``H Sigma_s H^T`` column / chunk, the mean-Jacobian front factor,
-        the gain). ``functional.jvp`` redoes all three stages per call; hoisting
-        the first two cuts the network passes per JVP from three to one with
-        bit-identical operations.
+        ``J`` is the network Jacobian (``grad_x b_theta`` for SI, ``grad_x s``
+        for FM), applied via :meth:`_build_jvp_fn`. Splitting the scalars from
+        ``J`` lets the shared mode cache ``H J H^T`` across pseudo-steps while
+        keeping the schedule scalars exact at the current ``tau``.
         """
-        # Schedule math uses the rank-expanded ``t``; the network is fed the
-        # ``[B, 1]`` ``t_net`` (defaults to ``t`` when not supplied).
-        if t_net is None:
-            t_net = t
-        beta = self.interpolant.beta(t)
-        beta_diff = self.interpolant.beta_diff(t)
-
-        def _bcast(tensor: Optional[torch.Tensor], k: int) -> Optional[torch.Tensor]:
-            """Broadcast a captured ``[B0, ...]`` tensor to leading batch ``k``.
-
-            The JVP is evaluated at the captured state ``x`` against a tangent
-            ``v`` whose leading dim may differ: it equals ``B`` on the per-member
-            path (no-op) but is the column-chunk / member count on the
-            shared-state path, where ``x`` and the conditioning are captured at
-            batch 1 (the ensemble mean). ``expand`` keeps it a view (no copy).
-            """
-            if tensor is None or tensor.shape[0] == k:
-                return tensor
-            if tensor.shape[0] == 1:
-                return tensor.expand(k, *tensor.shape[1:])
-            raise ValueError(
-                f"cannot broadcast batch {tensor.shape[0]} to {k}."
-            )
-
-        # Reusable double-backward JVP. ``graph_state`` holds the (u, w) pair of
-        # the current tangent-batch size k; requesting a different k frees the
-        # old graph FIRST (so two network graphs never coexist) and rebuilds.
-        # The closure -- and with it the retained graph -- dies with the
-        # enclosing ``score()`` call, so nothing outlives the step.
-        graph_state: Dict[str, Any] = {"k": None, "u": None, "w": None}
-
         if self.source_type == "si":
-            net_fn = self.model.drift  # J_b @ v, with b_theta = model.drift
-        else:
-            net_fn = self.model.score  # grad_x s @ v, with s = model.score
-
-        def _build_graph(k: int) -> None:
-            xk = _bcast(x, k).detach().requires_grad_(True)
-            tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
-            fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
-            with _math_sdpa(), torch.enable_grad():
-                y = net_fn(xk, tk, fhk, fck, pck)
-                u = torch.zeros_like(y, requires_grad=True)
-                (w,) = torch.autograd.grad(
-                    y, xk, grad_outputs=u, create_graph=True
-                )
-            graph_state.update(k=k, u=u, w=w)
-
-        def jvp_fn(v: torch.Tensor) -> torch.Tensor:
-            # State and conditioning are broadcast to v's batch (shared-state
-            # path); tangents of equal batch reuse the prebuilt graph.
-            k = v.shape[0]
-            if graph_state["k"] != k:
-                graph_state.update(k=None, u=None, w=None)  # free old graph
-                _build_graph(k)
-            with _math_sdpa(), torch.enable_grad():
-                (jv,) = torch.autograd.grad(
-                    graph_state["w"],
-                    graph_state["u"],
-                    grad_outputs=v,
-                    retain_graph=True,
-                )
-            return jv.detach()
-
-        if self.source_type == "si":
+            beta = self.interpolant.beta(t)
+            beta_diff = self.interpolant.beta_diff(t)
             gamma = self.interpolant.gamma(t)
             gamma_diff = self.interpolant.gamma_diff(t)
             A = t * gamma * (beta_diff * gamma - beta * gamma_diff)
             A = 1.0 / A
             jac_scale = gamma**4 * t**2 * A
-
-            def sigma_s_apply(v: torch.Tensor) -> torch.Tensor:
-                jac_term = jac_scale * (beta * jvp_fn(v) - beta_diff * v)
-                return rho * v + jac_term
-
-            return sigma_s_apply
+            return rho - jac_scale * beta_diff, jac_scale * beta
 
         # FM
         alpha = self.interpolant.alpha(t)
-        jac_scale = alpha**4
+        return rho, alpha**4
 
-        def sigma_s_apply_fm(v: torch.Tensor) -> torch.Tensor:
-            return rho * v + jac_scale * jvp_fn(v)
+    def _build_jvp_fn(
+        self,
+        x: torch.Tensor,
+        t_net: torch.Tensor,
+        field_history: Optional[torch.Tensor],
+        field_cond: Optional[torch.Tensor],
+        pars_cond: Optional[torch.Tensor],
+    ) -> Callable:
+        """Build a forward-mode operator ``v -> J v`` at the captured state.
 
-        return sigma_s_apply_fm
+        ``J`` is the network Jacobian (``grad_x b_theta`` for SI, ``grad_x s``
+        for FM), applied via ``torch.func.jvp`` (forward-mode AD): one dual
+        forward per tangent batch, vs the ~7x slower double-backward
+        construction this replaced (measured ~21-32 ms/tangent double-backward
+        vs ~4 ms/tangent forward-mode on the NS UNet; identical values to
+        5e-16 rel. in fp64). Run under ``no_grad`` it builds no backward graph,
+        so nothing flows into the posterior drift.
+
+        The captured state and conditioning broadcast to the tangent's batch:
+        it equals ``B`` on the per-member path (no-op) but is the column chunk
+        / member count on the shared path, where the state is captured at
+        batch 1 (the ensemble mean). Broadcasts are materialised
+        (``contiguous``) because forward-mode AD rejects writes into stride-0
+        expanded views inside the network.
+        """
+        if self.source_type == "si":
+            net_fn = self.model.drift  # J_b @ v, with b_theta = model.drift
+        else:
+            net_fn = self.model.score  # grad_x s @ v, with s = model.score
+
+        x = x.detach()
+
+        def _bcast(tensor: Optional[torch.Tensor], k: int) -> Optional[torch.Tensor]:
+            if tensor is None or tensor.shape[0] == k:
+                return tensor
+            if tensor.shape[0] == 1:
+                return tensor.expand(k, *tensor.shape[1:]).contiguous()
+            raise ValueError(
+                f"cannot broadcast batch {tensor.shape[0]} to {k}."
+            )
+
+        def jvp_fn(v: torch.Tensor) -> torch.Tensor:
+            k = v.shape[0]
+            xk = _bcast(x, k)
+            tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
+            fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
+            # The tangent must be materialised too: the per-member H Sigma_s H^T
+            # build hands over expanded basis columns (stride-0 batch).
+            v = v.detach().contiguous()
+            with torch.no_grad(), _math_sdpa():
+                _, jv = torch.func.jvp(
+                    lambda z: net_fn(z, tk, fhk, fck, pck), (xk,), (v,)
+                )
+            return jv
+
+        return jvp_fn
+
+    def _refresh_shared_jacobian(
+        self,
+        x: torch.Tensor,
+        t_clamped: torch.Tensor,
+        t_net: torch.Tensor,
+        field_history: Optional[torch.Tensor],
+        field_cond: Optional[torch.Tensor],
+        pars_cond: Optional[torch.Tensor],
+    ) -> Callable:
+        """Return the shared-state JVP, refreshed every k-th pseudo-step.
+
+        The shared Jacobian is evaluated at the ensemble-mean state and kept
+        for ``jacobian_refresh_every`` distinct pseudo-time values (k = 1, the
+        default, refreshes on every step -- no approximation). Bookkeeping is
+        by the clamped pseudo-time: an UNCHANGED tau (another ensemble batch of
+        the same step, or a solver re-evaluation) reuses the cache without
+        counting; a DECREASED tau means the pseudo-time loop restarted (next
+        assimilation window), which always forces a refresh. Refreshing also
+        drops the cached ``H J H^T`` so it is lazily rebuilt from the new
+        Jacobian.
+        """
+        cache = self._shared_jac_cache
+        t_s = float(t_clamped.reshape(-1)[0])
+
+        refresh = cache["jvp_fn"] is None
+        if not refresh and t_s != cache["t_last"]:
+            if t_s < cache["t_last"]:
+                refresh = True  # pseudo-time restarted -> new SDE/ODE pass
+            else:
+                cache["steps_since"] += 1
+                refresh = cache["steps_since"] >= self.jacobian_refresh_every
+        cache["t_last"] = t_s
+
+        if refresh:
+            def _mean0(z: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+                return None if z is None else z.mean(dim=0, keepdim=True)
+
+            cache["jvp_fn"] = self._build_jvp_fn(
+                x=_mean0(x),
+                t_net=t_net[:1],
+                field_history=_mean0(field_history),
+                field_cond=_mean0(field_cond),
+                pars_cond=_mean0(pars_cond),
+            )
+            cache["HJHt"] = None
+            cache["steps_since"] = 0
+
+        return cache["jvp_fn"]
 
 
 class FlowdasGaussianLikelihood(nn.Module):

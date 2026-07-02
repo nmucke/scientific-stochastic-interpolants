@@ -23,6 +23,12 @@ num_steps: 50       # M
 # inflated | dps_full | dps_jacobian_free to force one mode across all methods.
 likelihood_mode: null
 
+# Shared-Jacobian refresh cadence (Ours + inflated_shared only; top-level so
+# `jacobian_refresh_every=k` works on the CLI). null -> the method config's
+# `likelihood_model.jacobian_refresh_every` (default 1 = recompute every
+# pseudo-step, exact). k > 1 reuses the cached H J H^T for k - 1 steps.
+jacobian_refresh_every: null
+
 # Override at the CLI, e.g.:
 #   python paper_experiments/run.py case=navier_stokes method=dm_sde scenario=sparse_5
 #   python paper_experiments/run.py --multirun method=si_sde,dm_sde,fm_ode

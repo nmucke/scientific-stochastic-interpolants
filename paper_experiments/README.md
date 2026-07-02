@@ -185,6 +185,51 @@ python paper_experiments/make_tables.py \
 # 3. in results.tex, \input the snippet inside the matching tabular.
 ```
 
+### Current per-case pipeline (reduced grid)
+
+Each case is **run → aggregate → make figures**, all reading/writing
+`results/<case>/`:
+
+```bash
+# analytical
+bash    paper_experiments/run_analytical_grid.sh
+python  paper_experiments/aggregate_analytical.py   # -> aggregated/all.csv
+python  paper_experiments/make_analytical_figures.py
+
+# navier_stokes  (per-cell metrics/ + per_step/, states for traj1)
+bash    paper_experiments/run_ns_grid.sh
+python  paper_experiments/aggregate_ns.py           # -> aggregated/{all,per_step}.csv
+python  paper_experiments/make_ns_figures.py        # vs-M, vs-step, state maps
+
+# urban
+bash    paper_experiments/run_urban_grid.sh
+python  paper_experiments/aggregate_urban.py        # -> aggregated/{all,per_step}.csv
+python  paper_experiments/make_urban_figures.py
+```
+
+`aggregate_<case>.py` reduces the per-cell files ACROSS trajectories (trajectory
+keyed by the `traj<N>` filename token): `all.csv` holds the scalar metrics (mean ±
+std over trajectories, time already averaged in-run) and, for NS/urban,
+`per_step.csv` holds the per-assimilation-step curves (mean ± std over trajectories
+at each step). `make_tables.py` consumes `all.csv` via `--results`. Shared reduction
+lives in `common/aggregate_lib.py`; the three per-case scripts are thin wrappers
+(they replaced the retired `aggregate_grid.py` / `aggregate_multitraj.py`).
+
+`make_<case>_figures.py` produces, from those aggregates + the traj1 states:
+
+* **metric-vs-M** (`<case>_<metric>_vs_M`) — from `all.csv`;
+* **metric-vs-step** (`<case>_<metric>_vs_step`, NS/urban) — from `per_step.csv`;
+* **state field maps** (`<case>_states_<scenario>`, traj1) — truth / posterior mean
+  / |error| / spread at the final step, read straight from `states/traj1/*.npz`.
+
+Every figure (`.pdf` + `.png`) is written to `manuscript/figures/<case>/` **and**
+mirrored into `paper_experiments/figures/<case>/` (via `figure_common.mirror_to`).
+Both figure trees are git-ignored regenerated artifacts.
+
+> **Trajectory note:** `run_{ns,urban}_grid.sh` pass `+test_index=$N` so trajectory
+> `N` uses test sample `N` (`test_sample_indices=[1..5]`); without it every "traj"
+> would rerun the same sample and the trajectory averaging would be a no-op.
+
 Run `python paper_experiments/run.py` with `.venv/bin/python` or `uv run python`.
 
 ---
