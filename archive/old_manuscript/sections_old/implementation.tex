@@ -1,0 +1,24 @@
+
+The method requires only a pre-trained flow-based model and an ODE/SDE solver. The three samplers of Section~\ref{subsec:supplying_diffusion} share one loop, differing only in $\gdiff_\tau$, the weight $\gweight_\tau=\vscoef_\tau+\tfrac12\gdiff_\tau^2$, the source, and whether a Brownian increment is added. Algorithm~\ref{alg:unified} states the shared loop for one assimilation step, i.e.\ drawing a posterior sample $\state^{n}\sim\conddist{\state^{n}}{\obs^{n},\state^{n-1}}$. The per-sampler specializations (Algorithms~\ref{alg:si_sde}--\ref{alg:fm_ode}) differ only in the boxed lines and are given in Appendix~\ref{appendix:algorithms}.
+
+\begin{algorithm}[ht]
+\caption{Unified posterior assimilation step (shared loop for all three samplers)}
+\label{alg:unified}
+\begin{algorithmic}[1]
+\STATE \textbf{Input:} previous state $\bx_0=\state^{n-1}$; observation $\obs=\obs^{n}$; trained model (SI drift $\drift_\theta$ or FM velocity $\fmvel_\theta$); schedules $\alpha_\tau,\beta_\tau,\sigpath_\tau$; diffusion $\gdiff_\tau$; steps $M$
+\STATE \textbf{Sampler-specific:} set source/anchor, the diffusion $\gdiff_\tau$, and weight $\gweight_\tau=\vscoef_\tau+\tfrac12\gdiff_\tau^2$ as in Alg.~\ref{alg:si_sde}, \ref{alg:fm_sde}, or \ref{alg:fm_ode}
+\STATE Initialise $\bXstar$ from the (reweighted) source; set $\Delta\tau = 1/M$
+\FOR{$\tau = 0,\ \Delta\tau,\ \ldots,\ 1-\Delta\tau$}
+    \STATE Evaluate velocity $\fmvel_\tau$ and score $\genscore_\tau$ from the model \hfill // Eq.~\eqref{eq:SI_score} (SI) or \eqref{eq:fm_score} (FM)
+    \STATE Form prior drift $\drift^{\gdiff}_\tau = \fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau$ \hfill // $=\drift_\theta$ for SI with $\gdiff_\tau=\gamma_\tau$
+    \STATE Compute observation interpolant $\interpolantobs_\tau = \alpha_\tau\obsmatrix\bm a_0 + \beta_\tau\obs$
+    \STATE Source moments $\srcmean_\tau,\srccov_\tau$; likelihood mean $\bar\mu_\tau=\obsmatrix\bXstar-\obsmatrix\srcmean_\tau$ \hfill // Lemma~\ref{lem:source_moments}
+    \STATE Inflated covariance $\bar\Sigma_\tau=\beta_\tau^2\obscov+\obsmatrix\srccov_\tau\obsmatrix^\top$; score $\bar S_\tau = (\nabla_{\bx}\bar\mu_\tau)^\top\bar\Sigma_\tau^{-1}(\interpolantobs_\tau-\bar\mu_\tau)$ \hfill // Eq.~\eqref{eq:interpolant_score_closed}; $\nabla_{\bx}\bar\mu_\tau\approx\obsmatrix$ Jacobian-free
+    \STATE Posterior drift $\postdrift_\tau = \drift^{\gdiff}_\tau + \boxed{\gweight_\tau}\, \bar S_\tau$
+    \STATE Update $\bXstar \leftarrow \bXstar + \postdrift_\tau\,\Delta\tau + \boxed{\gdiff_\tau\sqrt{\Delta\tau}\,\bz},\ \ \bz\sim\mathcal{N}(0,\bI)$ \hfill // noise term omitted when $\gdiff_\tau=0$
+\ENDFOR
+\STATE \textbf{Return:} $\state^{n} = \bXstar$
+\end{algorithmic}
+\end{algorithm}
+
+Several points are worth noting. \emph{Closed-form likelihood.} The loop solves no inner integral: the likelihood score is read off the observation interpolant, with the inflated covariance $\bar\Sigma_\tau$ supplied by the source moments. \emph{Jacobian-free cost.} With Corollary~\ref{cor:cheap_drift}, $\bar\Sigma_\tau\approx\beta_\tau^2\obscov+\rho_\tau\obsmatrix\obsmatrix^\top$ is precomputed once and each step costs one model evaluation plus a cheap $N_y\times N_y$ solve, identically for all three samplers. \emph{Pseudo-time clamping.} The coefficients degenerate at $\tau=0$ ($\beta_0=0$ makes $\gweight_\tau$ singular), so the correction is applied from $\tau=\Delta\tau$ onwards. \emph{Ensemble draws.} An ensemble follows from independent draws (Brownian paths for SDE, initial latents for FM); a full trajectory feeds each posterior sample back as $\state^{n}$ and assimilates $\obs^{n+1}$. \emph{Solver choice.} The dynamics are continuous in pseudo-time, so the solver and $M$ may be chosen after training: the guided ODE admits higher-order deterministic solvers (Heun, RK4), the SDE samplers use Euler--Maruyama. \emph{Exact FM initialisation.} The FM samplers initialise from $\mathcal{N}(0,\bI)$, exact since $\Phi_0^{\obs}$ is constant (Appendix~\ref{appendix:proof_conditioning}); the guided ODE relies entirely on this source randomness.

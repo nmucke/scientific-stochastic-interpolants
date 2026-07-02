@@ -1,0 +1,95 @@
+\section{Proofs for the multiplicative correction}
+\label{appendix:proof_multiplicative}
+
+We establish a tractable form of the true-likelihood mean, then a residual identity relating the two Gaussian likelihoods, and finally prove Theorem~\ref{thm:multiplicative_correction}. All statements are for the general affine Gaussian path with source process $\src_\tau$ and path scale $\sigpath_\tau$, so they cover both the stochastic interpolant ($\src_\tau=\gamma_\tau\bW_\tau$, effective scale $\sigpath_\tau=\gamma_\tau\sqrt{\tau}$) and flow matching ($\src_\tau=\alpha_\tau\latent$, $\sigpath_\tau=\alpha_\tau$) by substituting the corresponding moments of Lemma~\ref{lem:source_moments}. Throughout, gradients of Gaussian log-densities are taken with the covariances held fixed with respect to $\bx_\tau$, consistent with Section~\ref{sec:multiplicative_correction}, and we use that $\srccov_\tau$ is symmetric, being a conditional covariance. We repeatedly use the source identity
+\begin{align}\label{eq:source_identity}
+    \srccov_\tau = \sigpath_\tau^2\!\left(\bI - \nabla_{\bx_\tau}\srcmean_\tau\right),
+\end{align}
+which follows from $\srcmean_\tau = -\sigpath_\tau^2\genscore_\tau$ and $\srccov_\tau = \sigpath_\tau^2(\bI + \sigpath_\tau^2\nabla_{\bx_\tau}\genscore_\tau)$ (Lemma~\ref{lem:tweedie} and the second-order Tweedie identity).
+
+\begin{lemma}[Tractable true-likelihood mean]\label{lem:true_mean}
+With $\obsoperator$ linear with matrix $\obsmatrix$ and $\beta_\tau>0$,
+\begin{align}\label{eq:cond_mean_x1}
+    \E[\bx_1 \mid \bx_\tau, \bx_0]
+    = \frac{1}{\beta_\tau}\!\left(\bx_\tau - \alpha_\tau \bm a_0 - \srcmean_\tau(\bx_\tau,\bx_0)\right),
+    \qquad
+    \mu_\tau(\bx_\tau,\bx_0) = \obsmatrix\,\E[\bx_1\mid\bx_\tau,\bx_0],
+\end{align}
+which depends on the trained model only through the conditional source mean $\srcmean_\tau$.
+\end{lemma}
+\begin{proof}
+Solving the state interpolant $\bx_\tau=\alpha_\tau\bm a_0+\beta_\tau\bx_1+\src_\tau$ for $\bx_1$ and taking conditional expectation with respect to $(\bx_\tau,\bx_0)$ gives \eqref{eq:cond_mean_x1} upon identifying $\E[\src_\tau\mid\bx_\tau,\bx_0]=\srcmean_\tau$. Applying $\obsmatrix$ yields $\mu_\tau$.
+\end{proof}
+
+\begin{lemma}[Residual identity]\label{lem:residual_identity}
+Under the assumptions of Lemma~\ref{lem:interpolated_likelihood} and with $\mu_\tau$ from \eqref{eq:cond_mean_x1},
+\begin{align}\label{eq:residual_identity}
+    \interpolantobs_\tau - \bar{\mu}_\tau = \beta_\tau (\obs - \mu_\tau),
+\end{align}
+and the gradients of the two means satisfy
+\begin{align}\label{eq:grad_mu}
+    \nabla_{\bx_\tau} \bar{\mu}_\tau = \beta_\tau \nabla_{\bx_\tau} \mu_\tau,
+    \qquad
+    \nabla_{\bx_\tau} \mu_\tau
+    = \frac{\obsmatrix}{\beta_\tau\,\sigpath_\tau^2}\,\srccov_\tau(\bx_\tau, \bx_0).
+\end{align}
+\end{lemma}
+\begin{proof}
+By Lemma~\ref{lem:interpolated_likelihood}, $\bar{\mu}_\tau = \obsmatrix \bx_\tau - \obsmatrix \srcmean_\tau$, and by \eqref{eq:interpolated_observation}, $\interpolantobs_\tau = \alpha_\tau \obsmatrix \bm a_0 + \beta_\tau \obs$. Subtracting and using $\beta_\tau\mu_\tau = \obsmatrix(\bx_\tau-\alpha_\tau\bm a_0-\srcmean_\tau)$ from \eqref{eq:cond_mean_x1} gives \eqref{eq:residual_identity}. Differentiating \eqref{eq:residual_identity} in $\bx_\tau$ gives the first equality in \eqref{eq:grad_mu}. For the second, differentiate \eqref{eq:cond_mean_x1},
+\begin{align}
+    \nabla_{\bx_\tau} \mu_\tau
+    = \frac{\obsmatrix}{\beta_\tau}\!\left(\bI - \nabla_{\bx_\tau}\srcmean_\tau\right)
+    = \frac{\obsmatrix}{\beta_\tau\,\sigpath_\tau^2}\,\srccov_\tau,
+\end{align}
+where the last equality is the source identity \eqref{eq:source_identity}.
+\end{proof}
+
+\begin{proof}[Proof of Theorem~\ref{thm:multiplicative_correction}]
+Under \eqref{eq:interpolant_likelihood_gaussian} and using Lemma~\ref{lem:residual_identity},
+\begin{align}\label{eq:Sbar_explicit}
+    \bar{S}_\tau
+    = (\nabla_{\bx_\tau} \bar{\mu}_\tau)^\top \bar{\Sigma}_\tau^{-1}
+      (\interpolantobs_\tau - \bar{\mu}_\tau)
+    = \frac{\beta_\tau}{\sigpath_\tau^2}\,\srccov_\tau\,\obsmatrix^\top
+      \bar{\Sigma}_\tau^{-1}\,(\obs - \mu_\tau),
+\end{align}
+and under \eqref{eq:true_likelihood_gaussian},
+\begin{align}\label{eq:S_explicit}
+    S_\tau
+    = (\nabla_{\bx_\tau} \mu_\tau)^\top \obscov^{-1}\,(\obs - \mu_\tau)
+    = \frac{1}{\beta_\tau \sigpath_\tau^2}\,\srccov_\tau\,\obsmatrix^\top \obscov^{-1}\,
+      (\obs - \mu_\tau).
+\end{align}
+By Lemma~\ref{lem:interpolated_likelihood}, $\bar{\Sigma}_\tau = \beta_\tau^2 \obscov + \obsmatrix \srccov_\tau \obsmatrix^\top$, and the Woodbury identity gives
+\begin{align}
+    \bar{\Sigma}_\tau^{-1}
+    = \tfrac{1}{\beta_\tau^2}\,\obscov^{-1}
+    - \tfrac{1}{\beta_\tau^4}\,\obscov^{-1} \obsmatrix\, T_\tau\,
+      \obsmatrix^\top \obscov^{-1},
+    \qquad
+    T_\tau := \left(\srccov_\tau^{-1}
+    + \beta_\tau^{-2}\,\obsmatrix^\top \obscov^{-1} \obsmatrix\right)^{-1}.
+\end{align}
+Left-multiplying by $\obsmatrix^\top$ and using $T_\tau^{-1} - \beta_\tau^{-2}\,\obsmatrix^\top \obscov^{-1} \obsmatrix = \srccov_\tau^{-1}$,
+\begin{align}\label{eq:Htop_Sbar_inv}
+    \obsmatrix^\top \bar{\Sigma}_\tau^{-1}
+    = \tfrac{1}{\beta_\tau^2}\,\srccov_\tau^{-1}\, T_\tau\,
+      \obsmatrix^\top \obscov^{-1}.
+\end{align}
+Substituting \eqref{eq:Htop_Sbar_inv} into \eqref{eq:Sbar_explicit},
+\begin{align}\label{eq:Sbar_compact}
+    \bar{S}_\tau
+    = \tfrac{1}{\beta_\tau \sigpath_\tau^2}\, T_\tau\,\obsmatrix^\top \obscov^{-1}\,
+      (\obs - \mu_\tau).
+\end{align}
+Comparing \eqref{eq:S_explicit} and \eqref{eq:Sbar_compact}, the multiplicative factor relating them is
+\begin{align}
+    G_\tau
+    = \srccov_\tau\, T_\tau^{-1}
+    = \srccov_\tau\!\left(\srccov_\tau^{-1}
+      + \beta_\tau^{-2}\,\obsmatrix^\top \obscov^{-1} \obsmatrix\right)
+    = \bI + \tfrac{1}{\beta_\tau^2}\,\srccov_\tau\,
+      \obsmatrix^\top \obscov^{-1} \obsmatrix,
+\end{align}
+and indeed $G_\tau \bar{S}_\tau = S_\tau$. Finally $\operatorname{rank}(G_\tau - \bI) \leq \operatorname{rank}(\obsmatrix) \leq N_y$, and $(G_\tau - \bI) v = 0$ for $v \in \ker \obsmatrix$. Specializing $\srccov_\tau$ to the stochastic interpolant ($\gamma_\tau^2\Sigma^{\bW}_\tau$) and to flow matching ($\alpha_\tau^2(\bI+\alpha_\tau^2\nabla\genscore_\tau)$) gives the two entries of Table~\ref{tab:si_vs_fm}.
+\end{proof}

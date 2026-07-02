@@ -1,0 +1,270 @@
+\section{Method descriptions}\label{appendix:methods}
+
+Each subsection states (i)~the evolution equation for $\bXstar_\tau$, $\tau:0\!\to\!1$, (ii)~how the likelihood/observation term is approximated, and (iii)~the key assumption or simplification.
+Shared notation: $\state^0$ conditioning history, $\obs$ observation, $\obsmatrix$ linear observation operator,
+$\obscov=\sigma^2 I$ measurement-noise covariance, $\alpha_\tau,\beta_\tau,\sigpath_\tau$ path schedules,
+$\vscoef_\tau$ velocity--score duality coefficient, $\genscore_\tau$ prior score, $\fmvel_\tau$ prior velocity,
+$\hat{\state}_\tau^1 = \E[\bx_1\mid\bXstar_\tau,\state^0]$ one-step denoiser,
+and $\bar{S}_\tau = \nabla_{\bXstar_\tau}\log\bar\Phi_\tau^{\interpolantobs_\tau}$ the interpolant-likelihood score.
+
+% -------------------------------------------------------------------
+\subsection{Ours (SI-SDE)}\label{appendix:method:si_sde}
+
+\textbf{SDE.}
+\begin{align}
+  \rd\bXstar_\tau
+  = \underbrace{\bigl[\fmvel_\tau + \tfrac12\gamma_\tau^2\genscore_\tau\bigr]}_{\text{SI prior drift}}\rd\tau
+  + \underbrace{\bigl(\vscoef_\tau + \tfrac12\gamma_\tau^2\bigr)}_{=\,\gweight_\tau}\bar{S}_\tau\,\rd\tau
+  + \gamma_\tau\,\rd\bW_\tau,
+  \qquad \bXstar_0 = \state^0.
+\end{align}
+Source is a delta mass at $\state^0$ ($p_0=\delta_{\state^0}$); $\gamma_\tau$ is the native SI diffusion.
+
+\textbf{Likelihood approximation.}
+The interpolant $\interpolantobs_\tau = \alpha_\tau\obsmatrix\state^0 + \beta_\tau\obs$ replaces the intractable tilt $\Phi_\tau^{\obs}$.
+Assuming Gaussianity of the interpolated-observation likelihood,
+\begin{align}
+  \bar\Phi_\tau^{\interpolantobs_\tau}(\bXstar_\tau)
+  = \mathcal{N}\!\bigl(\interpolantobs_\tau;\,\obsmatrix\bXstar_\tau - \obsmatrix\srcmean_\tau,\;
+    \beta_\tau^2\obscov + \obsmatrix\srccov_\tau\obsmatrix^\top\bigr),
+\end{align}
+with SI source moments $\srcmean_\tau,\srccov_\tau$ from Lemma~\ref{lem:source_moments} (Jacobian-free approximation: $\srccov_\tau\approx\gamma_\tau^2\tau\,I$).
+
+\textbf{Key approximation.}
+Gaussian surrogate for $\Phi_\tau^{\obs}$; inflated covariance $\beta_\tau^2\obscov+\gamma_\tau^2\tau\,\obsmatrix\obsmatrix^\top$ encodes source uncertainty ($\Pi$GDM-style). Exact for Gaussian prior with linear $\obsmatrix$.
+
+% -------------------------------------------------------------------
+\subsection{Ours (FM-ODE)}\label{appendix:method:fm_ode}
+
+\textbf{ODE.}
+\begin{align}
+  \frac{\rd\bXstar_\tau}{\rd\tau}
+  = \fmvel_\tau(\bXstar_\tau,\state^0)
+  + \vscoef_\tau\,\bar{S}_\tau,
+  \qquad \bXstar_0\sim\mathcal{N}(0,I).
+\end{align}
+Deterministic ($\gdiff_\tau=0$); all randomness from the $\mathcal{N}(0,I)$ source.
+
+\textbf{Likelihood approximation.}
+Same interpolant-likelihood as SI-SDE with FM anchor $\bm a_0=0$:
+$\interpolantobs_\tau = \beta_\tau\obs$, and FM source moments $\srcmean_\tau=-\alpha_\tau^2\genscore_\tau$,
+$\srccov_\tau\approx\alpha_\tau^2 I$ (Jacobian-free). The guidance weight reduces to $\gweight_\tau=\vscoef_\tau$ (no diffusion term).
+
+\textbf{Key approximation.}
+Gaussian surrogate for $\Phi_\tau^{\obs}$; inflated covariance $\beta_\tau^2\obscov+\alpha_\tau^2\obsmatrix\obsmatrix^\top$.
+Deterministic path means less exploration; calibration depends on source diversity alone.
+
+% -------------------------------------------------------------------
+\subsection{Ours (FM-SDE)}\label{appendix:method:fm_sde}
+
+\textbf{SDE.}
+With endpoint-vanishing diffusion $\gdiff_\tau\propto\sqrt{\alpha_\tau\beta_\tau}$ and lifted drift $\fmvel_\tau+\tfrac12\gdiff_\tau^2\genscore_\tau$:
+\begin{align}
+  \rd\bXstar_\tau
+  = \bigl[\fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau\bigr]\rd\tau
+  + \bigl(\vscoef_\tau + \tfrac12\gdiff_\tau^2\bigr)\bar{S}_\tau\,\rd\tau
+  + \gdiff_\tau\,\rd\bW_\tau,
+  \qquad \bXstar_0\sim\mathcal{N}(0,I).
+\end{align}
+Score $\genscore_\tau$ recovered from FM velocity via the velocity--score identity (Appendix~\ref{appendix:score_velocity}).
+This is the SDE counterpart of FM-ODE; it coincides with a diffusion-model sampler built on the FM prior (hence ``DM'').
+
+\textbf{Likelihood approximation.}
+Identical to FM-ODE: $\interpolantobs_\tau=\beta_\tau\obs$, inflated covariance $\beta_\tau^2\obscov+\alpha_\tau^2\obsmatrix\obsmatrix^\top$.
+
+\textbf{Key approximation.}
+Same Gaussian surrogate as FM-ODE; differs from SI-SDE only in interpolant choice (FM deterministic path vs.\ SI stochastic path) and source ($\mathcal{N}(0,I)$ vs.\ $\delta_{\state^0}$).
+
+% -------------------------------------------------------------------
+\subsection{FlowDAS}\label{appendix:method:flowdas}
+
+\cite{chen_flowdas_2025}. SI-SDE with a Monte-Carlo estimate of the likelihood score.
+
+\textbf{SDE.}
+Same SI prior SDE as above; the guidance replaces $\bar S_\tau$ with
+\begin{align}
+  \bar S_\tau^{\mathrm{MC}}
+  = \frac{1}{J}\sum_{j=1}^{J}
+    \frac{\obsmatrix^\top(\obs - \obsmatrix\hat{\state}^{1,j}_\tau)}
+         {\|\obs - \obsmatrix\hat{\state}^{1,j}_\tau\|},
+\end{align}
+using $J=16$ sampled one-step predictions $\hat{\state}^{1,j}_\tau$ from the denoiser.
+
+\textbf{Likelihood approximation.}
+MC estimate of the denoiser-based score; residual-normalised (step-norm) for numerical stability.
+No closed-form covariance inflation; the normalisation discards magnitude information.
+
+\textbf{Key approximation.}
+MC score estimate introduces variance; step-normalisation scales poorly with dimension.
+Lacks the inflated source covariance of our method and the multiplicative gain $\gweight_\tau$.
+
+% -------------------------------------------------------------------
+\subsection{Guided FM -- FIG}\label{appendix:method:fig}
+
+\cite{yan_fig_2025}. FM-ODE with inner gradient-ascent corrector steps on the observation residual.
+
+\textbf{ODE + corrector.}
+At each pseudo-time step $\tau_i$, first advance with the prior velocity, then apply $k$ inner corrections:
+\begin{align}
+  \bXstar_\tau &\leftarrow \bXstar_\tau + \fmvel_\tau(\bXstar_\tau,\state^0)\,\Delta\tau, \\
+  \bXstar_\tau &\leftarrow \bXstar_\tau
+    + c\,\frac{1-\tau}{\tau}\,\obsmatrix^\top
+      \frac{\obs - \obsmatrix\hat{\state}^1_\tau}{\|\obs - \obsmatrix\hat{\state}^1_\tau\|}
+  \quad (k=1,\; c=80).
+\end{align}
+
+\textbf{Likelihood approximation.}
+Differentiates the residual norm $\|\obs-\obsmatrix\bx_\tau\|$ (not the log-likelihood); treats $\bx_\tau\approx\bx_1$ for the likelihood.
+The corrector uses a measurement interpolant $\obs_\tau=\tau\obs$ equivalent to ours.
+
+\textbf{Key approximation.}
+Treats $\bx_\tau\approx\bx_1$; the corrector keeps iterates on the data manifold but is not derived from a probability path.
+No covariance inflation; guidance magnitude set by $c(1-\tau)/\tau$ (monotone in $\tau$, not data-adaptive).
+
+% -------------------------------------------------------------------
+\subsection{Guided FM -- OT-ODE}\label{appendix:method:ot_ode}
+
+\cite{pokle_training-free_2024}. FM-ODE with a Tweedie-preconditioned guidance weight.
+
+\textbf{ODE.}
+\begin{align}
+  \frac{\rd\bXstar_\tau}{\rd\tau}
+  = \fmvel_\tau(\bXstar_\tau,\state^0)
+  + \left(\frac{\partial\hat{\state}^1_\tau}{\partial\bXstar_\tau}\right)^{\!\top}
+    \obsmatrix^\top
+    \bigl(r_\tau^2\,\obsmatrix\obsmatrix^\top + \sigma_y^2 I\bigr)^{-1}
+    (\obs - \obsmatrix\hat{\state}^1_\tau),
+\end{align}
+with posterior-variance proxy $r_\tau^2 = (1-\tau)^2/((1-\tau)^2+\tau^2)$ and
+one-step denoiser $\hat{\state}^1_\tau = \bXstar_\tau + (1-\tau)\fmvel_\tau$. We use $\sigma_y^2=0$, $\gamma=4$.
+
+\textbf{Likelihood approximation.}
+Scalar Gaussian approximation to $p(\bx_1|\bXstar_\tau)$ via the one-step denoiser; isotropic prior-marginal variance $r_\tau^2 I$ (no prior-covariance information from the model).
+
+\textbf{Key approximation.}
+Isotropic approximation to $\cov(\bx_1|\bXstar_\tau)$; does not use model-specific source covariance.
+The Jacobian $\partial\hat{\state}^1_\tau/\partial\bXstar_\tau$ requires one vector-Jacobian product per step.
+
+% -------------------------------------------------------------------
+\subsection{D-Flow SGLD}\label{appendix:method:dflow}
+
+\cite{parikh_d-flow_2026,ben-hamu_d-flow_2024}. Source-space sampling: runs an SGLD chain over the FM source latent $\bx_0\sim\mathcal{N}(0,I)$ such that $\Phi(\bx_0)=\bx_1$.
+
+\textbf{Langevin chain (source space).}
+For each of $K$ steps ($K=20$ for Navier--Stokes, $K=200$ for analytical):
+\begin{align}
+  \bx_0 \leftarrow \bx_0
+  + \eta\,\nabla_{\bx_0}\!\left[\log\mathcal{N}(\obs;\,\obsmatrix\Phi(\bx_0),\obscov)
+    + \log\mathcal{N}(\bx_0;0,I)\right]
+  + \sqrt{2\eta}\,\boldsymbol\varepsilon,
+  \quad \boldsymbol\varepsilon\sim\mathcal{N}(0,I),
+\end{align}
+where $\Phi(\bx_0)$ is the full ODE rollout from $\bx_0$. The chain is reinitialised from $\mathcal{N}(0,I)$ at $\tau=0$ for each assimilation window; does not use $\drift^{\gdiff}_\tau$ between observation windows.
+
+\textbf{Likelihood approximation.}
+Exact Gaussian likelihood $\mathcal{N}(\obs;\obsmatrix\Phi(\bx_0),\obscov)$ evaluated at the ODE endpoint.
+No intermediate-time approximation; but each gradient step backpropagates through the \emph{entire} ODE rollout.
+
+\textbf{Key approximation.}
+SGLD chain may not converge in $K$ steps; gradient checkpointing bounds memory. Most expensive baseline (full trajectory backprop per step).
+
+% -------------------------------------------------------------------
+\subsection{SDA}\label{appendix:method:sda}
+
+\cite{rozet_score-based_2023}. DPS-style observation guidance on a diffusion-model prior.
+
+\textbf{SDE.}
+Using the DM prior (from FM velocity via velocity--score identity, Appendix~\ref{appendix:score_velocity}),
+with endpoint-vanishing $\gdiff_\tau$:
+\begin{align}
+  \rd\bXstar_\tau
+  = \bigl[\fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau\bigr]\rd\tau
+  + \gdiff_\tau^2\,\nabla_{\bXstar_\tau}\log\mathcal{N}\!\bigl(\obs;\,\obsmatrix\hat{\state}^1_\tau,\,
+    \sigma^2 I + \gdiff_\tau^2\,\obsmatrix\obsmatrix^\top\bigr)\,\rd\tau
+  + \gdiff_\tau\,\rd\bW_\tau.
+\end{align}
+Tweedie denoiser: $\hat{\state}^1_\tau = \bXstar_\tau - \gdiff_\tau^2\genscore_\tau(\bXstar_\tau)/\gdiff_\tau^2\beta_\tau$ (from the prior marginal).
+
+\textbf{Likelihood approximation.}
+Approximates $p(\bx_1|\bXstar_\tau)\approx\mathcal{N}(\hat{\state}^1_\tau,\,\sigma^2 I)$ via Tweedie (diagonal-plus-low-rank covariance $\sigma^2 I + \gdiff_\tau^2\obsmatrix\obsmatrix^\top$). Guidance weight is $\gdiff_\tau^2$ (Doob $h$-transform), not the marginal-path weight $\gweight_\tau$.
+
+\textbf{Key approximation.}
+Uses Doob $h$-transform weight $\gdiff_\tau^2$ rather than $\gweight_\tau=\vscoef_\tau+\tfrac12\gdiff_\tau^2$; intermediate marginals are not $p_\tau^{\obs}$.
+Isotropic Tweedie covariance; no source-covariance inflation from the model.
+
+% -------------------------------------------------------------------
+\subsection{SURGE}\label{appendix:method:surge}
+
+\cite{wei_surge_2026}. Sequential Monte-Carlo on the DM prior: reweight particles with $p(\obs|\bXstar_\tau)$ and resample, then continue with the prior SDE.
+
+\textbf{Algorithm.}
+Denote particle $i$ at pseudo-time $\tau$ by $\bx_\tau^{(i)}$.
+At each $\tau$-step for each particle $i\in\{1,\ldots,N\}$:
+\begin{enumerate}
+  \item Advance with prior SDE: $\bx_\tau^{(i)} \leftarrow \bx_{\tau-\Delta\tau}^{(i)}
+        + \bigl[\fmvel_\tau+\tfrac12\gdiff_\tau^2\genscore_\tau\bigr]\Delta\tau
+        + \gdiff_\tau\,\sqrt{\Delta\tau}\,\boldsymbol\varepsilon^{(i)}$.
+  \item Compute importance weights $\tilde{w}^{(i)} \propto p\!\bigl(\obs\mid\bx_\tau^{(i)}\bigr)$.
+  \item If $\mathrm{ESS} = \bigl(\sum_i (\tilde{w}^{(i)})^{2}\bigr)^{-1} < 0.5N$: resample particles.
+\end{enumerate}
+No gradient of the likelihood required.
+
+\textbf{Likelihood approximation.}
+Importance weights use the \emph{marginal} $p(\obs|\bXstar_\tau)$, not the intermediate tilt $\Phi_\tau^{\obs}$.
+In practice approximated by a Gaussian at $\hat{\state}^1_\tau$ (DPS-style guidance is used to improve the proposal).
+
+\textbf{Key approximation.}
+Particle resampling causes degeneracy in high dimension; ESS threshold $=0.5N$.
+Does not use the observation interpolant or source-covariance inflation.
+
+% -------------------------------------------------------------------
+\subsection{Ensemble Kalman filter (EnKF)}\label{appendix:method:enkf}
+
+\cite{evensen_data_2022}. Classical ensemble Kalman filter; no generative prior.
+
+\textbf{Analysis step} (applied once at $\tau=1$, i.e.\ at the observation time).
+Denote ensemble member $i$ by $\bx^{(i)}$:
+\begin{align}
+  \bx^{(i)} \leftarrow \bx^{(i)}
+  + \priorcov\obsmatrix^\top\!\bigl(\obsmatrix\priorcov\obsmatrix^\top+\obscov\bigr)^{-1}
+    \bigl(\obs + \boldsymbol\varepsilon^{(i)} - \obsmatrix\bx^{(i)}\bigr),
+  \quad \boldsymbol\varepsilon^{(i)}\sim\mathcal{N}(0,\obscov),
+\end{align}
+where $\priorcov$ is the ensemble sample covariance. Forecast step uses the genuine forward solver (Navier--Stokes / urban solver); no path integration from $\tau=0$ to $\tau=1$.
+
+\textbf{Likelihood approximation.}
+Exact Gaussian update under the ensemble covariance $\priorcov$; optimal for linear-Gaussian problems.
+
+\textbf{Key approximation.}
+Gaussian analysis: cannot represent non-Gaussian posteriors.
+Large ensemble ($E=1000$) reported as reference; localised $E=64$ as matched-cost baseline.
+
+% -------------------------------------------------------------------
+\subsection{Localised ETKF (LETKF)}\label{appendix:method:letkf}
+
+\cite{hunt_efficient_2007}. Deterministic square-root EnKF with spatial localisation.
+
+\textbf{Analysis step.}
+Identical Kalman update as EnKF but performed independently in local patches around each grid point, with covariance localised by a distance-based taper.
+Ensemble-space transform is computed per grid point; intractable at $E=1000$, so reported only where feasible.
+
+\textbf{Key approximation.}
+Gaussian analysis + localisation; ignores long-range prior correlations.
+
+% -------------------------------------------------------------------
+\subsection{Bootstrap particle filter}\label{appendix:method:pf}
+
+\cite{carrassi_data_2018}. Sequential importance resampling with the prior forecast as proposal.
+
+\textbf{Algorithm.}
+Forecast $N$ particles with the true solver, assign weights $w^{(i)}\propto p(\obs|\bx_1^{(i)})
+= \mathcal{N}(\obs;\obsmatrix\bx_1^{(i)},\obscov)$, resample.
+
+\textbf{Key approximation.}
+Prior as proposal: weights degenerate (effective sample size $\approx 1$) in high dimension.
+Included as the canonical non-Gaussian baseline.
+
+\paragraph{Diffusion prior for DM-based methods.}
+SDA, SURGE, and FM-SDE require a diffusion prior.
+We construct it from the trained FM velocity via the velocity--score identity (Appendix~\ref{appendix:score_velocity}),
+so all generative methods use the same network.

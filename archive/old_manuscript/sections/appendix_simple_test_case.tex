@@ -1,0 +1,28 @@
+\section{Simple test case} \label{appendix:simple_test_case}
+The analytical test case is the linear-Gaussian system
+\begin{align}
+    \conddist{\state^1}{\state^0} = \mathcal{N}(\state^0, \bI),
+    \qquad
+    \conddist{\obs^1}{\state^1} = \mathcal{N}(\obsmatrix\state^1, \obscov),
+    \qquad \obsmatrix = \bI,\ \obscov = \bI,
+\end{align}
+i.e.\ Eq.~\eqref{eq:data_assimilation_problem} with identity forward and observation operators and unit Gaussian noise.
+
+For a Gaussian conditional target $\conddist{\bx_1}{\bx_0}=\mathcal{N}(\mean_1(\bx_0), \covmatrix_1)$, the SI drift is available in closed form (Proposition B.9 of \cite{chen_probabilistic_2024}). Specialised to $\mean_1(\bx_0)=\bx_0$ and $\covmatrix_1=\bI$, it reads
+\begin{align}
+    \drift(\bx, \bx_0, \tau) &= \dot{\alpha}_\tau \bx_0 + \dot{\beta}_\tau\mean_1(\bx_0)  + (\beta_\tau \dot{\beta}_\tau + \tau \gamma_\tau \dot{\gamma}_\tau)\, \bar{\covmatrix}_\tau^{-1}(\bx - \bar{\mean}_\tau(\bx_0)),
+\end{align}
+where
+\begin{align}
+    \bar{\mean}_\tau(\bx_0) = \alpha_\tau \bx_0 + \beta_\tau \mean_1(\bx_0), \quad \bar{\covmatrix}_\tau = (\beta_\tau^2 + \tau \gamma_\tau^2)\,\bI,
+\end{align}
+are the mean and covariance of the interpolant $\bx_\tau$ conditioned on $\bx_0$. Note that the second drift term involves the prior mean $\mean_1(\bx_0)=\bx_0$, not $\bar\mean_\tau(\bx_0)$; the two coincide only for schedules with $\alpha_\tau+\beta_\tau=1$.
+
+The true posterior is
+\begin{align}
+    \conddist{\state^1}{\obs^1, \state^0} = \mathcal{N}\left(\state^0 + K (\obs^1 - \obsmatrix\state^0),\, \bI - K\obsmatrix \right),
+\end{align}
+where
+\begin{align}
+    K = \obsmatrix^\top (\obsmatrix\obsmatrix^\top + \obscov)^{-1} = \tfrac12\,\bI .
+\end{align}

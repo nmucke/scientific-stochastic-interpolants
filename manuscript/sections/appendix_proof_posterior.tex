@@ -94,16 +94,16 @@ Now, define $h(\bx) = \conddist{\obs}{\bx}$, so that $\Phi_{\tau}^{\obs}(\bx, \b
 Initialising from the reweighted source distribution $p_0^{\obs}(\rd\bx) = \Phi_0^{\obs}(\bx,\bx_0)\,p_0(\rd\bx)/Z$, the normalising constant is
 \begin{align}
     Z = \int \Phi_0^{\obs}(\bx, \bx_0)\, p_0(\rd\bx)
-      = \iint h(\bx')\, \dist[0,1]{\bx,\bx'}\, \rd\bx'\, p_0(\rd\bx)
-      = \int \conddist{\obs}{\bx'} \conddist{\bx'}{\bx_0}\, \rd\bx'
+      &= \iint h(\bx')\, \dist[0,1]{\bx,\bx'}\, \rd\bx'\, p_0(\rd\bx) \nonumber\\
+      &= \int \conddist{\obs}{\bx'} \conddist{\bx'}{\bx_0}\, \rd\bx'
       = \conddist{\obs}{\bx_0},
 \end{align}
 using \eqref{eq:terminal_marginal}. The terminal law of the controlled process is therefore
 \begin{align}
     \dist{\bXstar_1 = \bx'}
     = \int \dist[0, 1][\bu]{\bx, \bx'}\, p_0^{\obs}(\rd\bx)
-    = \frac{h(\bx')}{Z} \int \dist[0,1]{\bx, \bx'}\, p_0(\rd\bx)
-    = \frac{\conddist{\obs}{\bx'}\,\conddist{\bx'}{\bx_0}}{\conddist{\obs}{\bx_0}}
+    &= \frac{h(\bx')}{Z} \int \dist[0,1]{\bx, \bx'}\, p_0(\rd\bx) \nonumber\\
+    &= \frac{\conddist{\obs}{\bx'}\,\conddist{\bx'}{\bx_0}}{\conddist{\obs}{\bx_0}}
     = \conddist{\bx'}{\obs, \bx_0},
 \end{align}
 which was what we wanted to show. Note that the factors $\Phi_0^{\obs}$ cancel between the kernel and the reweighted initial distribution; without the reweighting, the terminal law would instead be $h(\bx')\int \dist[0,1]{\bx,\bx'}\,\Phi_0^{\obs}(\bx,\bx_0)^{-1} p_0(\rd\bx)$, which differs from the posterior whenever $\Phi_0^{\obs}$ is non-constant on the support of $p_0$.

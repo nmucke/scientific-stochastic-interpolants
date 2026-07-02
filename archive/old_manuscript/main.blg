@@ -1,0 +1,53 @@
+This is BibTeX, Version 0.99d (TeX Live 2023/Fedora 40)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: main.aux
+The style file: iclr2026_conference.bst
+Database file #1: library_NTM.bib
+Warning--empty publisher in evensen_data_2022
+Warning--empty booktitle in rozet_score-based_2023
+Warning--empty booktitle in yan_fig_2024
+Warning--empty booktitle in zhang_sampling_nodate
+Warning--empty year in zhang_sampling_nodate
+Warning--empty year in zhang_sampling_nodate
+You've used 43 entries,
+            2773 wiz_defined-function locations,
+            869 strings with 16119 characters,
+and the built_in function-call counts, 21825 in all, are:
+= -- 1811
+> -- 1792
+< -- 7
++ -- 598
+- -- 555
+* -- 1955
+:= -- 3461
+add.period$ -- 186
+call.type$ -- 43
+change.case$ -- 312
+chr.to.int$ -- 43
+cite$ -- 92
+duplicate$ -- 766
+empty$ -- 1494
+format.name$ -- 610
+if$ -- 4461
+int.to.chr$ -- 1
+int.to.str$ -- 1
+missing$ -- 16
+newline$ -- 279
+num.names$ -- 172
+pop$ -- 706
+preamble$ -- 1
+purify$ -- 271
+quote$ -- 0
+skip$ -- 678
+stack$ -- 0
+substring$ -- 193
+swap$ -- 76
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 463
+warning$ -- 6
+while$ -- 137
+width$ -- 0
+write$ -- 639
+(There were 6 warnings)

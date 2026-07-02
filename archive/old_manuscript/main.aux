@@ -1,0 +1,338 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyperFirstAtBeginDocument{\AtBeginDocument}
+\HyperFirstAtBeginDocument{\ifx\hyper@anchor\@undefined
+\global\let\oldnewlabel\newlabel
+\gdef\newlabel#1#2{\newlabelxx{#1}#2}
+\gdef\newlabelxx#1#2#3#4#5#6{\oldnewlabel{#1}{{#2}{#3}}}
+\AtEndDocument{\ifx\hyper@anchor\@undefined
+\let\newlabel\oldnewlabel
+\fi}
+\fi}
+\global\let\hyper@last\relax 
+\gdef\HyperFirstAtBeginDocument#1{#1}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{evensen_data_2022}
+\citation{mucke_deep_2024,cheng_generalised_2022,zhong_reduced-order_2023,chen_reduced-order_2023}
+\citation{albergo_stochastic_2023,albergo_building_2023,chen_probabilistic_2024}
+\citation{lipman_flow_2023}
+\citation{albergo_stochastic_2023,lipman_flow_2023,ma_sit_2024,holderrieth_generator_2024}
+\citation{albergo_stochastic_2023,holderrieth_generator_2024}
+\citation{albergo_stochastic_2023,ma_sit_2024}
+\citation{song_score-based_2021}
+\citation{yan_fig_2024,pokle_training-free_2024}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
+\@writefile{toc}{\contentsline {paragraph}{A unified view.}{1}{section*.1}\protected@file@percent }
+\citation{chung_diffusion_2023,song_pseudoinverse_2023}
+\citation{lippe_pde-refiner_2023}
+\citation{gao_generative_2024}
+\citation{kohl_benchmarking_2024}
+\citation{fotiadis_stochastic_2024}
+\citation{chen_probabilistic_2024}
+\citation{mucke_physics-aware_2025}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces \textbf  {Posterior sampling as conditioned transport along an affine Gaussian probability path.} A trained flow-based prior (stochastic interpolant or flow matching) defines an affine Gaussian path that transports a tractable source $p_0$ to the forecast $\conddist {\bm  {u}^{n}}{\bm  {u}^{n-1}}$ over a pseudo-time $\tau $. Conditioning the path on the observation $\bm  {y}^{n}$ tilts its target to the posterior while keeping the path affine Gaussian: the conditional drift is the prior drift plus a single likelihood-score correction $w_\tau \,\bar  S_\tau $, built in closed form from the observation interpolant $\bar  {\bm  {y}}_\tau $ with an inflated covariance. The equal-marginal SDE family yields three samplers that share this correction and differ only in the diffusion $g_\tau $ and the weight $w_\tau $: the stochastic-interpolant SDE (native noise), the flow matching SDE (lifted noise, a denoising-diffusion sampler), and the deterministic guided probability-flow ODE.\relax }}{2}{figure.caption.2}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:visual_abstract}{{1}{2}{\textbf {Posterior sampling as conditioned transport along an affine Gaussian probability path.} A trained flow-based prior (stochastic interpolant or flow matching) defines an affine Gaussian path that transports a tractable source $p_0$ to the forecast $\conddist {\state ^{n}}{\state ^{n-1}}$ over a pseudo-time $\tau $. Conditioning the path on the observation $\obs ^{n}$ tilts its target to the posterior while keeping the path affine Gaussian: the conditional drift is the prior drift plus a single likelihood-score correction $\gweight _\tau \,\bar S_\tau $, built in closed form from the observation interpolant $\interpolantobs _\tau $ with an inflated covariance. The equal-marginal SDE family yields three samplers that share this correction and differ only in the diffusion $\gdiff _\tau $ and the weight $\gweight _\tau $: the stochastic-interpolant SDE (native noise), the flow matching SDE (lifted noise, a denoising-diffusion sampler), and the deterministic guided probability-flow ODE.\relax }{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Contributions.}{2}{section*.3}\protected@file@percent }
+\citation{daras_survey_2024}
+\citation{zhang_flow_2025}
+\citation{ahamed_dawn-si_2024}
+\citation{negrel_multitask_2025}
+\citation{song_score-based_2021}
+\citation{pokle_training-free_2024}
+\citation{yan_fig_2024}
+\citation{zhang_flow_2025}
+\citation{martin_pnp-flow_2025}
+\citation{chung_diffusion_2023}
+\citation{song_pseudoinverse_2023}
+\citation{albergo_stochastic_2023,ma_sit_2024}
+\citation{rozet_score-based_2023}
+\citation{bao_ensemble_2024}
+\citation{si_latent-ensf_2024}
+\citation{qu_deep_2024}
+\citation{chen_flowdas_2025}
+\citation{carrassi_data_2018,evensen_data_2022}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related work}{3}{section.2}\protected@file@percent }
+\newlabel{sec:related_work}{{2}{3}{Related work}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Flow-based generative models in physics applications}{3}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Posterior sampling with flow-based generative models}{3}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Data assimilation with generative models}{3}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Preliminaries}{3}{section.3}\protected@file@percent }
+\newlabel{sec:preliminaries}{{3}{3}{Preliminaries}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Bayesian inverse problems and data assimilation}{3}{subsection.3.1}\protected@file@percent }
+\newlabel{eq:data_assimilation_problem}{{1}{3}{Bayesian inverse problems and data assimilation}{equation.3.1}{}}
+\newlabel{eq:forward}{{1a}{3}{Bayesian inverse problems and data assimilation}{equation.3.1a}{}}
+\newlabel{eq:observation}{{1b}{3}{Bayesian inverse problems and data assimilation}{equation.3.1b}{}}
+\citation{lipman_flow_2023,albergo_stochastic_2023}
+\citation{lipman_flow_2023,liu_rectified_2022}
+\citation{albergo_stochastic_2023,chen_probabilistic_2024}
+\citation{song_score-based_2021,ma_sit_2024}
+\newlabel{eq:posterior_distribution}{{2}{4}{Bayesian inverse problems and data assimilation}{equation.3.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Interpolation-based generative modelling}{4}{subsection.3.2}\protected@file@percent }
+\newlabel{subsec:flow_models}{{3.2}{4}{Interpolation-based generative modelling}{subsection.3.2}{}}
+\newlabel{eq:general_interpolant}{{3}{4}{Interpolation-based generative modelling}{equation.3.3}{}}
+\newlabel{eq:general_velocity}{{4}{4}{Interpolation-based generative modelling}{equation.3.4}{}}
+\newlabel{eq:general_score_velocity}{{5}{4}{Interpolation-based generative modelling}{equation.3.5}{}}
+\@writefile{toc}{\contentsline {paragraph}{Flow matching.}{4}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Stochastic interpolants.}{4}{section*.5}\protected@file@percent }
+\newlabel{eq:stochastic_interpolant}{{6}{4}{Stochastic interpolants}{equation.3.6}{}}
+\newlabel{eq:SI_SDE}{{7}{4}{Stochastic interpolants}{equation.3.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{Diffusion models.}{5}{section*.6}\protected@file@percent }
+\newlabel{eq:general_sde_family}{{8}{5}{Diffusion models}{equation.3.8}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Methodology}{5}{section.4}\protected@file@percent }
+\newlabel{sec:methodology}{{4}{5}{Methodology}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Posterior sampling: SDE and ODE}{5}{subsection.4.1}\protected@file@percent }
+\newlabel{subsec:posterior_dynamics}{{4.1}{5}{Posterior sampling: SDE and ODE}{subsection.4.1}{}}
+\newlabel{eq:likelihood_tilt}{{9}{5}{Posterior sampling: SDE and ODE}{equation.4.9}{}}
+\newlabel{theorem:unified_posterior}{{4.1}{5}{Unified posterior sampler}{theorem.4.1}{}}
+\newlabel{eq:unified_posterior_drift}{{10}{5}{Unified posterior sampler}{equation.4.10}{}}
+\newlabel{eq:three_drifts}{{11}{5}{Posterior sampling: SDE and ODE}{equation.4.11}{}}
+\citation{song_pseudoinverse_2023}
+\citation{chung_diffusion_2023,chung_improving_2024,song_score-based_2021}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Approximating the likelihood score}{6}{subsection.4.2}\protected@file@percent }
+\newlabel{subsec:obs_interpolation}{{4.2}{6}{Approximating the likelihood score}{subsection.4.2}{}}
+\newlabel{eq:phi_integral}{{12}{6}{Approximating the likelihood score}{equation.4.12}{}}
+\newlabel{eq:interpolated_observation}{{13}{6}{Approximating the likelihood score}{equation.4.13}{}}
+\newlabel{eq:interpolant_posterior_drift}{{14}{6}{Approximating the likelihood score}{equation.4.14}{}}
+\newlabel{lem:interpolated_likelihood}{{4.2}{6}{Interpolated observation likelihood}{theorem.4.2}{}}
+\newlabel{eq:ybar_decomp}{{15}{6}{Interpolated observation likelihood}{equation.4.15}{}}
+\newlabel{lem:source_moments}{{4.3}{6}{Source conditional moments}{theorem.4.3}{}}
+\newlabel{eq:fm_source_moments}{{18}{6}{Source conditional moments}{equation.4.18}{}}
+\newlabel{eq:interpolant_likelihood_gaussian}{{19}{6}{Approximating the likelihood score}{equation.4.19}{}}
+\newlabel{eq:interpolant_score_closed}{{20}{6}{Approximating the likelihood score}{equation.4.20}{}}
+\citation{yan_fig_2024,pokle_training-free_2024}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Covariance approximation.}{7}{subsection.4.3}\protected@file@percent }
+\newlabel{subsec:covariance_approximation}{{4.3}{7}{Covariance approximation}{subsection.4.3}{}}
+\newlabel{eq:cov_cheap}{{21}{7}{Covariance approximation}{equation.4.21}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Comparison of posterior samplers}{7}{subsection.4.4}\protected@file@percent }
+\newlabel{subsec:summary_table}{{4.4}{7}{Comparison of posterior samplers}{subsection.4.4}{}}
+\newlabel{subsec:supplying_diffusion}{{4.4}{7}{Comparison of posterior samplers}{subsection.4.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces The three posterior samplers as members of the unified family \eqref  {eq:unified_posterior_drift}. All share the prior drift $\bm  {b}^{g}_\tau =\bm  {v}_\tau +\tfrac  12g_\tau ^2\bm  {s}_\tau $, the likelihood-score correction $w_\tau \,\bar  S_\tau $, and the observation-interpolant machinery; they differ only in $g_\tau $, the weight $w_\tau =\kappa _\tau +\tfrac  12g_\tau ^2$, and the source.\relax }}{7}{table.caption.7}\protected@file@percent }
+\newlabel{tab:samplers}{{1}{7}{The three posterior samplers as members of the unified family \eqref {eq:unified_posterior_drift}. All share the prior drift $\drift ^{\gdiff }_\tau =\fmvel _\tau +\tfrac 12\gdiff _\tau ^2\genscore _\tau $, the likelihood-score correction $\gweight _\tau \,\bar S_\tau $, and the observation-interpolant machinery; they differ only in $\gdiff _\tau $, the weight $\gweight _\tau =\vscoef _\tau +\tfrac 12\gdiff _\tau ^2$, and the source.\relax }{table.caption.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Implementation}{7}{section.5}\protected@file@percent }
+\newlabel{sec:implementation}{{5}{7}{Implementation}{section.5}{}}
+\citation{chen_flowdas_2025}
+\citation{rozet_score-based_2023}
+\citation{parikh_d-flow_2026,ben-hamu_d-flow_2024}
+\citation{wei_surge_2026}
+\citation{evensen_data_2022}
+\citation{carrassi_data_2018}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Unified posterior assimilation step (shared loop for all three samplers)\relax }}{8}{algorithm.1}\protected@file@percent }
+\newlabel{alg:unified}{{1}{8}{Unified posterior assimilation step (shared loop for all three samplers)\relax }{algorithm.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{8}{section.6}\protected@file@percent }
+\newlabel{sec:results}{{6}{8}{Results}{section.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Baselines.}{8}{section*.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Metrics.}{8}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Observation scenarios.}{8}{section*.10}\protected@file@percent }
+\citation{chen_probabilistic_2024}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}Simple analytical test case}{9}{subsection.6.1}\protected@file@percent }
+\newlabel{subsec:results_analytical}{{6.1}{9}{Simple analytical test case}{subsection.6.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces KL to the exact posterior vs.\ sampler steps $M$.\relax }}{9}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:analytical}{{2}{9}{KL to the exact posterior vs.\ sampler steps $M$.\relax }{figure.caption.11}{}}
+\newlabel{eq:analytical_system}{{22}{9}{Simple analytical test case}{equation.6.22}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Stochastic incompressible Navier--Stokes}{9}{subsection.6.2}\protected@file@percent }
+\newlabel{subsec:results_ns}{{6.2}{9}{Stochastic incompressible Navier--Stokes}{subsection.6.2}{}}
+\newlabel{eq:ns_equation}{{23}{9}{Stochastic incompressible Navier--Stokes}{equation.6.23}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Urban airflow over a building array}{9}{subsection.6.3}\protected@file@percent }
+\newlabel{subsec:results_urban}{{6.3}{9}{Urban airflow over a building array}{subsection.6.3}{}}
+\bibdata{library_NTM}
+\bibcite{ahamed_dawn-si_2024}{{1}{2024}{{Ahamed \& Haber}}{{Ahamed and Haber}}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Navier--Stokes: ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm  {spread}/\mathrm  {skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to \!128^2$, $32^2\!\to \!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix\nobreakspace  {}\ref {appendix:additional_results}, Table\nobreakspace  {}\ref {tab:ns_accuracy_jacfree}); the solver-free baselines share the prior, the conventional filters use the true solver. \textsc  {tbd}{} cells pending the reduced-grid run.\relax }}{10}{table.caption.12}\protected@file@percent }
+\newlabel{tab:ns_accuracy}{{2}{10}{Navier--Stokes: ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm {spread}/\mathrm {skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to \!128^2$, $32^2\!\to \!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix~\ref {appendix:additional_results}, Table~\ref {tab:ns_accuracy_jacfree}); the solver-free baselines share the prior, the conventional filters use the true solver. \tbd {} cells pending the reduced-grid run.\relax }{table.caption.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Urban airflow: per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta _\ell $, fluid cells only), CRPS, and spread--skill ($|1-\mathrm  {spread}/\mathrm  {skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix\nobreakspace  {}\ref {appendix:additional_results}, Table\nobreakspace  {}\ref {tab:urban_accuracy_jacfree}); generative-only (no true-solver EnKF/PF). \textsc  {tbd}{} cells pending the reduced-grid run.\relax }}{10}{table.caption.13}\protected@file@percent }
+\newlabel{tab:urban_accuracy}{{3}{10}{Urban airflow: per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta _\ell $, fluid cells only), CRPS, and spread--skill ($|1-\mathrm {spread}/\mathrm {skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix~\ref {appendix:additional_results}, Table~\ref {tab:urban_accuracy_jacfree}); generative-only (no true-solver EnKF/PF). \tbd {} cells pending the reduced-grid run.\relax }{table.caption.13}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion}{10}{section.7}\protected@file@percent }
+\newlabel{sec:conclusion}{{7}{10}{Conclusion}{section.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{10}{section*.14}\protected@file@percent }
+\bibcite{albergo_building_2023}{{2}{2023}{{Albergo \& Vanden-Eijnden}}{{Albergo and Vanden-Eijnden}}}
+\bibcite{albergo_stochastic_2023}{{3}{2023}{{Albergo et~al.}}{{Albergo, Boffi, and Vanden-Eijnden}}}
+\bibcite{bao_ensemble_2024}{{4}{2024}{{Bao et~al.}}{{Bao, Zhang, and Zhang}}}
+\bibcite{ben-hamu_d-flow_2024}{{5}{2024}{{Ben-Hamu et~al.}}{{Ben-Hamu, Puny, Gat, Karrer, Singer, and Lipman}}}
+\bibcite{carrassi_data_2018}{{6}{2018}{{Carrassi et~al.}}{{Carrassi, Bocquet, Bertino, and Evensen}}}
+\bibcite{chen_flowdas_2025}{{7}{2025}{{Chen et~al.}}{{Chen, Jia, Qu, Sun, and Fessler}}}
+\bibcite{chen_probabilistic_2024}{{8}{2024}{{Chen et~al.}}{{Chen, Goldstein, Hua, Albergo, Boffi, and Vanden-Eijnden}}}
+\bibcite{chen_reduced-order_2023}{{9}{2023}{{Chen et~al.}}{{Chen, Sanz-Alonso, and Willett}}}
+\bibcite{cheng_generalised_2022}{{10}{2022}{{Cheng et~al.}}{{Cheng, Chen, Anastasiou, Angeli, Matar, Guo, Pain, and Arcucci}}}
+\bibcite{chung_diffusion_2023}{{11}{2023}{{Chung et~al.}}{{Chung, Kim, Mccann, Klasky, and Ye}}}
+\bibcite{chung_improving_2024}{{12}{2024}{{Chung et~al.}}{{Chung, Sim, Ryu, and Ye}}}
+\bibcite{daras_survey_2024}{{13}{2024}{{Daras et~al.}}{{Daras, Chung, Lai, Mitsufuji, Ye, Milanfar, Dimakis, and Delbracio}}}
+\bibcite{denker_deft_2024}{{14}{2024}{{Denker et~al.}}{{Denker, Vargas, Padhy, Didi, Mathis, Dutordoir, Barbano, Mathieu, Komorowska, and Lio}}}
+\bibcite{evensen_data_2022}{{15}{2022}{{Evensen et~al.}}{{Evensen, Vossepoel, and van Leeuwen}}}
+\bibcite{fotiadis_stochastic_2024}{{16}{2024}{{Fotiadis et~al.}}{{Fotiadis, Brenowitz, Geffner, Cohen, Pritchard, Vahdat, and Mardani}}}
+\bibcite{gao_generative_2024}{{17}{2024}{{Gao et~al.}}{{Gao, Kaltenbach, and Koumoutsakos}}}
+\bibcite{holderrieth_generator_2024}{{18}{2024}{{Holderrieth et~al.}}{{Holderrieth, Havasi, Yim, Shaul, Gat, Jaakkola, Karrer, Chen, and Lipman}}}
+\bibcite{hunt_efficient_2007}{{19}{2007}{{Hunt et~al.}}{{Hunt, Kostelich, and Szunyogh}}}
+\bibcite{kohl_benchmarking_2024}{{20}{2024}{{Kohl et~al.}}{{Kohl, Chen, and Thuerey}}}
+\bibcite{lipman_flow_2023}{{21}{2023}{{Lipman et~al.}}{{Lipman, Chen, Ben-Hamu, Nickel, and Le}}}
+\bibcite{lippe_pde-refiner_2023}{{22}{2023}{{Lippe et~al.}}{{Lippe, Veeling, Perdikaris, Turner, and Brandstetter}}}
+\bibcite{liu_rectified_2022}{{23}{2022}{{Liu}}{{}}}
+\bibcite{ma_sit_2024}{{24}{2024}{{Ma et~al.}}{{Ma, Goldstein, Albergo, Boffi, Vanden-Eijnden, and Xie}}}
+\bibcite{martin_pnp-flow_2025}{{25}{2025}{{Martin et~al.}}{{Martin, Gagneux, Hagemann, and Steidl}}}
+\bibcite{mucke_physics-aware_2025}{{26}{2025}{{Mücke \& Sanderse}}{{Mücke and Sanderse}}}
+\bibcite{mucke_deep_2024}{{27}{2024}{{Mücke et~al.}}{{Mücke, Bohté, and Oosterlee}}}
+\bibcite{negrel_multitask_2025}{{28}{2025}{{Negrel et~al.}}{{Negrel, Coeurdoux, Albergo, and Vanden-Eijnden}}}
+\bibcite{parikh_d-flow_2026}{{29}{2026}{{Parikh et~al.}}{{Parikh, Chen, and Wang}}}
+\bibcite{pokle_training-free_2024}{{30}{2024}{{Pokle et~al.}}{{Pokle, Muckley, Chen, and Karrer}}}
+\bibcite{qu_deep_2024}{{31}{2024}{{Qu et~al.}}{{Qu, Nathaniel, Li, and Gentine}}}
+\bibcite{rozet_score-based_2023}{{32}{2023}{{Rozet \& Louppe}}{{Rozet and Louppe}}}
+\bibcite{si_latent-ensf_2024}{{33}{2024}{{Si \& Chen}}{{Si and Chen}}}
+\bibcite{song_pseudoinverse_2023}{{34}{2023}{{Song et~al.}}{{Song, Vahdat, Mardani, and Kautz}}}
+\bibcite{song_score-based_2021}{{35}{2021}{{Song et~al.}}{{Song, Sohl-Dickstein, Kingma, Kumar, Ermon, and Poole}}}
+\bibcite{sarkka_applied_2019}{{36}{2019}{{Särkkä \& Solin}}{{Särkkä and Solin}}}
+\bibcite{wei_surge_2026}{{37}{2026}{{Wei et~al.}}{{Wei, Ren, Shi, and Lu}}}
+\bibcite{wu_practical_2023}{{38}{2023}{{Wu et~al.}}{{Wu, Trippe, Naesseth, Blei, and Cunningham}}}
+\bibcite{yan_fig_2025}{{39}{2025}{{Yan et~al.}}{{Yan, Zhang, Meng, and Zhao}}}
+\bibcite{yan_fig_2024}{{40}{2024}{{Yan et~al.}}{{Yan, Zhang, Meng, and Zhao}}}
+\bibcite{zhang_sampling_nodate}{{41}{}{{Zhang et~al.}}{{Zhang, Sahai, and Marzouk}}}
+\bibcite{zhang_flow_2025}{{42}{2025}{{Zhang et~al.}}{{Zhang, Yu, Zhu, Chang, Gao, Wu, and Leong}}}
+\bibcite{zhong_reduced-order_2023}{{43}{2023}{{Zhong et~al.}}{{Zhong, Cheng, Kasoar, and Arcucci}}}
+\bibstyle{iclr2026_conference}
+\citation{chen_flowdas_2025}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Method descriptions}{14}{appendix.A}\protected@file@percent }
+\newlabel{appendix:methods}{{A}{14}{Method descriptions}{appendix.A}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Ours (SI-SDE)}{14}{subsection.A.1}\protected@file@percent }
+\newlabel{appendix:method:si_sde}{{A.1}{14}{Ours (SI-SDE)}{subsection.A.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Ours (FM-ODE)}{14}{subsection.A.2}\protected@file@percent }
+\newlabel{appendix:method:fm_ode}{{A.2}{14}{Ours (FM-ODE)}{subsection.A.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}Ours (DM-SDE)}{14}{subsection.A.3}\protected@file@percent }
+\newlabel{appendix:method:fm_sde}{{A.3}{14}{Ours (DM-SDE)}{subsection.A.3}{}}
+\citation{yan_fig_2025}
+\citation{pokle_training-free_2024}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.4}FlowDAS}{15}{subsection.A.4}\protected@file@percent }
+\newlabel{appendix:method:flowdas}{{A.4}{15}{FlowDAS}{subsection.A.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.5}Guided FM -- FIG}{15}{subsection.A.5}\protected@file@percent }
+\newlabel{appendix:method:fig}{{A.5}{15}{Guided FM -- FIG}{subsection.A.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.6}Guided FM -- OT-ODE}{15}{subsection.A.6}\protected@file@percent }
+\newlabel{appendix:method:ot_ode}{{A.6}{15}{Guided FM -- OT-ODE}{subsection.A.6}{}}
+\citation{parikh_d-flow_2026,ben-hamu_d-flow_2024}
+\citation{parikh_d-flow_2026}
+\citation{rozet_score-based_2023}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.7}D-Flow SGLD}{16}{subsection.A.7}\protected@file@percent }
+\newlabel{appendix:method:dflow}{{A.7}{16}{D-Flow SGLD}{subsection.A.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.8}SDA}{16}{subsection.A.8}\protected@file@percent }
+\newlabel{appendix:method:sda}{{A.8}{16}{SDA}{subsection.A.8}{}}
+\citation{wei_surge_2026}
+\citation{evensen_data_2022}
+\citation{hunt_efficient_2007}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.9}SURGE}{17}{subsection.A.9}\protected@file@percent }
+\newlabel{appendix:method:surge}{{A.9}{17}{SURGE}{subsection.A.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.10}Ensemble Kalman filter (EnKF)}{17}{subsection.A.10}\protected@file@percent }
+\newlabel{appendix:method:enkf}{{A.10}{17}{Ensemble Kalman filter (EnKF)}{subsection.A.10}{}}
+\citation{carrassi_data_2018}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.11}Localised ETKF (LETKF)}{18}{subsection.A.11}\protected@file@percent }
+\newlabel{appendix:method:letkf}{{A.11}{18}{Localised ETKF (LETKF)}{subsection.A.11}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {A.12}Bootstrap particle filter}{18}{subsection.A.12}\protected@file@percent }
+\newlabel{appendix:method:pf}{{A.12}{18}{Bootstrap particle filter}{subsection.A.12}{}}
+\@writefile{toc}{\contentsline {paragraph}{Diffusion prior for DM-based methods.}{18}{section*.16}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {B}Conditioning the interpolant path: proofs}{18}{appendix.B}\protected@file@percent }
+\newlabel{appendix:proof_conditioning}{{B}{18}{Conditioning the interpolant path: proofs}{appendix.B}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.1}Posterior path}{18}{subsection.B.1}\protected@file@percent }
+\newlabel{prop:conditional_path}{{B.1}{18}{Posterior path}{theorem.B.1}{}}
+\newlabel{eq:conditional_path}{{37}{18}{Posterior path}{equation.B.37}{}}
+\newlabel{eq:conditional_score}{{38}{18}{Posterior path}{equation.B.38}{}}
+\newlabel{eq:conditional_velocity}{{39}{18}{Posterior path}{equation.B.39}{}}
+\citation{zhang_sampling_nodate,sarkka_applied_2019}
+\newlabel{eq:posterior_marginal}{{41}{19}{Posterior path}{equation.B.41}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {B.2}Proof of Theorem\nobreakspace  {}\ref {theorem:unified_posterior}}{19}{subsection.B.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {C}Doob's $h$-transform: the path-space posterior SDE}{19}{appendix.C}\protected@file@percent }
+\newlabel{appendix:proof_posterior}{{C}{19}{Doob's $h$-transform: the path-space posterior SDE}{appendix.C}{}}
+\newlabel{theorem:posterior_sde}{{C.1}{19}{Path-space posterior SDE}{theorem.C.1}{}}
+\newlabel{eq:prior_sde}{{45}{19}{Path-space posterior SDE}{equation.C.45}{}}
+\newlabel{eq:twisted_init}{{47}{19}{Path-space posterior SDE}{equation.C.47}{}}
+\newlabel{eq:uncontrolled_SDE}{{49}{20}{Doob's $h$-transform}{equation.C.49}{}}
+\newlabel{eq:controlled_SDE}{{50}{20}{Doob's $h$-transform}{equation.C.50}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.1}Proof of Theorem\nobreakspace  {}\ref {theorem:posterior_sde}}{20}{subsection.C.1}\protected@file@percent }
+\newlabel{eq:terminal_marginal}{{54}{20}{Proof of Theorem~\ref {theorem:posterior_sde}}{equation.C.54}{}}
+\citation{wu_practical_2023,denker_deft_2024}
+\citation{albergo_stochastic_2023,chen_probabilistic_2024}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.2}Path conditioning versus marginal conditioning}{21}{subsection.C.2}\protected@file@percent }
+\newlabel{subsec:doob_vs_marginal}{{C.2}{21}{Path conditioning versus marginal conditioning}{subsection.C.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma\nobreakspace  {}\ref {lem:source_moments}}{21}{appendix.D}\protected@file@percent }
+\newlabel{appendix:proof_interpolant_likelihood}{{D}{21}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{appendix.D}{}}
+\newlabel{eq:pf_state_interp}{{60}{21}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{equation.D.60}{}}
+\newlabel{eq:pf_obs_interp}{{61}{21}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{equation.D.61}{}}
+\newlabel{eq:pf_ybar_decomp}{{63}{21}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{equation.D.63}{}}
+\citation{chen_probabilistic_2024}
+\newlabel{eq:stein_first}{{67}{22}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{equation.D.67}{}}
+\newlabel{eq:cov_W_from_hessian}{{68}{22}{Proof of Lemma \ref {lem:interpolated_likelihood} and Lemma~\ref {lem:source_moments}}{equation.D.68}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {E}Simple test case}{22}{appendix.E}\protected@file@percent }
+\newlabel{appendix:simple_test_case}{{E}{22}{Simple test case}{appendix.E}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {F}Per-sampler algorithms}{22}{appendix.F}\protected@file@percent }
+\newlabel{appendix:algorithms}{{F}{22}{Per-sampler algorithms}{appendix.F}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Sampler 1 -- Stochastic interpolant SDE (native diffusion)\relax }}{23}{algorithm.2}\protected@file@percent }
+\newlabel{alg:si_sde}{{2}{23}{Sampler 1 -- Stochastic interpolant SDE (native diffusion)\relax }{algorithm.2}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {3}{\ignorespaces Sampler 2 -- Diffusion-model SDE (lifted diffusion)\relax }}{23}{algorithm.3}\protected@file@percent }
+\newlabel{alg:fm_sde}{{3}{23}{Sampler 2 -- Diffusion-model SDE (lifted diffusion)\relax }{algorithm.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {G}Model-specific bookkeeping}{23}{appendix.G}\protected@file@percent }
+\newlabel{appendix:bookkeeping}{{G}{23}{Model-specific bookkeeping}{appendix.G}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Model-specific quantities for the observation-interpolant method, instantiated for stochastic interpolants and flow matching. The general framework (left column) treats both as affine Gaussian probability paths; the model-specific quantities differ only in the source process ${\bm  {\xi }^{\mathrm  {s}}}_\tau $ and how the velocity and score are obtained. The guided ODE and DM-SDE share the flow matching column; the SI-SDE uses the stochastic interpolant column.\relax }}{23}{table.caption.18}\protected@file@percent }
+\newlabel{tab:si_vs_fm}{{4}{23}{Model-specific quantities for the observation-interpolant method, instantiated for stochastic interpolants and flow matching. The general framework (left column) treats both as affine Gaussian probability paths; the model-specific quantities differ only in the source process $\src _\tau $ and how the velocity and score are obtained. The guided ODE and DM-SDE share the flow matching column; the SI-SDE uses the stochastic interpolant column.\relax }{table.caption.18}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {H}Additional results}{23}{appendix.H}\protected@file@percent }
+\newlabel{appendix:additional_results}{{H}{23}{Additional results}{appendix.H}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {4}{\ignorespaces Sampler 3 -- Guided probability-flow ODE (flow matching, deterministic)\relax }}{24}{algorithm.4}\protected@file@percent }
+\newlabel{alg:fm_ode}{{4}{24}{Sampler 3 -- Guided probability-flow ODE (flow matching, deterministic)\relax }{algorithm.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Approximations and simplifications of the observation-interpolant method, grouped by where they enter the pipeline. ``Exact when'' states the regime in which the approximation incurs no error. All schedule-derived quantities are kept general in $(\alpha _\tau ,\beta _\tau ,\gamma _\tau )$.\relax }}{24}{table.caption.19}\protected@file@percent }
+\newlabel{tab:approximations}{{5}{24}{Approximations and simplifications of the observation-interpolant method, grouped by where they enter the pipeline. ``Exact when'' states the regime in which the approximation incurs no error. All schedule-derived quantities are kept general in $(\alpha _\tau ,\beta _\tau ,\gamma _\tau )$.\relax }{table.caption.19}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {H.1}Urban airflow}{24}{subsection.H.1}\protected@file@percent }
+\newlabel{subsec:results_urban}{{H.1}{24}{Urban airflow}{subsection.H.1}{}}
+\newlabel{fig:an_prior}{{3a}{25}{Prior conditional.\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_prior}{{a}{25}{Prior conditional.\relax }{figure.caption.20}{}}
+\newlabel{fig:an_like}{{3b}{25}{Likelihood.\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_like}{{b}{25}{Likelihood.\relax }{figure.caption.20}{}}
+\newlabel{fig:an_true}{{3c}{25}{Exact posterior.\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_true}{{c}{25}{Exact posterior.\relax }{figure.caption.20}{}}
+\newlabel{fig:an_sampled}{{3d}{25}{Sampled posterior (one sampler).\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_sampled}{{d}{25}{Sampled posterior (one sampler).\relax }{figure.caption.20}{}}
+\newlabel{fig:an_kl_diff}{{3e}{25}{KL to exact posterior vs.\ diffusion strength $\gdiff _\tau $ (SDE samplers).\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_kl_diff}{{e}{25}{KL to exact posterior vs.\ diffusion strength $\gdiff _\tau $ (SDE samplers).\relax }{figure.caption.20}{}}
+\newlabel{fig:an_kl_steps}{{3f}{25}{KL to exact posterior vs.\ number of integration steps $M$, per sampler.\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_kl_steps}{{f}{25}{KL to exact posterior vs.\ number of integration steps $M$, per sampler.\relax }{figure.caption.20}{}}
+\newlabel{fig:an_slices}{{3g}{25}{1-D slices of sampled vs.\ exact posterior densities.\relax }{figure.caption.20}{}}
+\newlabel{sub@fig:an_slices}{{g}{25}{1-D slices of sampled vs.\ exact posterior densities.\relax }{figure.caption.20}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Analytical linear--Gaussian case. Top row: prior conditional, likelihood, exact posterior, and a sampled posterior. Bottom row: convergence of the KL divergence to the exact posterior with respect to the diffusion strength and the number of integration steps, and one-dimensional density slices. \textbf  {TODO: insert generated figures.}\relax }}{25}{figure.caption.20}\protected@file@percent }
+\newlabel{fig:analytical_panels}{{3}{25}{Analytical linear--Gaussian case. Top row: prior conditional, likelihood, exact posterior, and a sampled posterior. Bottom row: convergence of the KL divergence to the exact posterior with respect to the diffusion strength and the number of integration steps, and one-dimensional density slices. \textbf {TODO: insert generated figures.}\relax }{figure.caption.20}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Source-covariance approximation ablation for our three samplers on the analytical linear--Gaussian case: KL to the exact posterior versus the number of sampler steps $M$, for the per-member (exact) Jacobian, the shared ensemble-mean Jacobian, and the isotropic Jacobian-free covariance (Corollary\nobreakspace  {}\ref {cor:cheap_drift}). In this linear--Gaussian case the source covariance is state-independent, so the per-member and shared Jacobians \emph  {coincide exactly}; the per-member-vs-shared distinction only matters for a nonlinear prior (the Navier--Stokes and urban cases).\relax }}{25}{figure.caption.21}\protected@file@percent }
+\newlabel{fig:analytical_covariance}{{4}{25}{Source-covariance approximation ablation for our three samplers on the analytical linear--Gaussian case: KL to the exact posterior versus the number of sampler steps $M$, for the per-member (exact) Jacobian, the shared ensemble-mean Jacobian, and the isotropic Jacobian-free covariance (Corollary~\ref {cor:cheap_drift}). In this linear--Gaussian case the source covariance is state-independent, so the per-member and shared Jacobians \emph {coincide exactly}; the per-member-vs-shared distinction only matters for a nonlinear prior (the Navier--Stokes and urban cases).\relax }{figure.caption.21}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {H.2}Ablations}{25}{subsection.H.2}\protected@file@percent }
+\newlabel{subsec:results_ablations}{{H.2}{25}{Ablations}{subsection.H.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Analytical: covariance approximation vs.\ the exact posterior.}{25}{section*.30}\protected@file@percent }
+\newlabel{fig:ns_true}{{5a}{26}{Ground-truth vorticity over time.\relax }{figure.caption.22}{}}
+\newlabel{sub@fig:ns_true}{{a}{26}{Ground-truth vorticity over time.\relax }{figure.caption.22}{}}
+\newlabel{fig:ns_prior}{{5b}{26}{Prior forecast (no assimilation).\relax }{figure.caption.22}{}}
+\newlabel{sub@fig:ns_prior}{{b}{26}{Prior forecast (no assimilation).\relax }{figure.caption.22}{}}
+\newlabel{fig:ns_post}{{5c}{26}{Assimilated posterior (ours).\relax }{figure.caption.22}{}}
+\newlabel{sub@fig:ns_post}{{c}{26}{Assimilated posterior (ours).\relax }{figure.caption.22}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Navier--Stokes case, one observation scenario. Rows: ground truth, prior forecast, and assimilated posterior. \textbf  {TODO: insert generated figures; state observation operator and noise level in caption.}\relax }}{26}{figure.caption.22}\protected@file@percent }
+\newlabel{fig:ns_trajectories}{{5}{26}{Navier--Stokes case, one observation scenario. Rows: ground truth, prior forecast, and assimilated posterior. \textbf {TODO: insert generated figures; state observation operator and noise level in caption.}\relax }{figure.caption.22}{}}
+\newlabel{fig:ns_rmse}{{6a}{26}{Ensemble-mean RMSE over a trajectory.\relax }{figure.caption.23}{}}
+\newlabel{sub@fig:ns_rmse}{{a}{26}{Ensemble-mean RMSE over a trajectory.\relax }{figure.caption.23}{}}
+\newlabel{fig:ns_spectrum}{{6b}{26}{Energy spectra: truth, prior, posterior.\relax }{figure.caption.23}{}}
+\newlabel{sub@fig:ns_spectrum}{{b}{26}{Energy spectra: truth, prior, posterior.\relax }{figure.caption.23}{}}
+\newlabel{fig:ns_rank}{{6c}{26}{Rank histogram (calibration).\relax }{figure.caption.23}{}}
+\newlabel{sub@fig:ns_rank}{{c}{26}{Rank histogram (calibration).\relax }{figure.caption.23}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Navier--Stokes diagnostics. \textbf  {TODO: insert generated figures.}\relax }}{26}{figure.caption.23}\protected@file@percent }
+\newlabel{fig:ns_diagnostics}{{6}{26}{Navier--Stokes diagnostics. \textbf {TODO: insert generated figures.}\relax }{figure.caption.23}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Navier--Stokes, \emph  {Jacobian-free} isotropic covariance (Corollary\nobreakspace  {}\ref {cor:cheap_drift}, \texttt  {dps\_jacobian\_free}): ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm  {spread}/\mathrm  {skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to \!128^2$, $32^2\!\to \!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Companion to the shared-inflated results in Table\nobreakspace  {}\ref {tab:ns_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \textsc  {tbd}{} cells pending the reduced-grid run.\relax }}{27}{table.caption.24}\protected@file@percent }
+\newlabel{tab:ns_accuracy_jacfree}{{6}{27}{Navier--Stokes, \emph {Jacobian-free} isotropic covariance (Corollary~\ref {cor:cheap_drift}, \texttt {dps\_jacobian\_free}): ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm {spread}/\mathrm {skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to \!128^2$, $32^2\!\to \!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Companion to the shared-inflated results in Table~\ref {tab:ns_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \tbd {} cells pending the reduced-grid run.\relax }{table.caption.24}{}}
+\newlabel{fig:urban_vel}{{7a}{27}{Velocity field.\relax }{figure.caption.25}{}}
+\newlabel{sub@fig:urban_vel}{{a}{27}{Velocity field.\relax }{figure.caption.25}{}}
+\newlabel{fig:urban_temp}{{7b}{27}{Temperature field.\relax }{figure.caption.25}{}}
+\newlabel{sub@fig:urban_temp}{{b}{27}{Temperature field.\relax }{figure.caption.25}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Urban airflow case: geometry and reconstructed fields (truth, prior forecast, assimilated posterior) for velocity and temperature. \textbf  {TODO: insert generated figures; mark building footprints and sensor locations.}\relax }}{27}{figure.caption.25}\protected@file@percent }
+\newlabel{fig:urban_fields}{{7}{27}{Urban airflow case: geometry and reconstructed fields (truth, prior forecast, assimilated posterior) for velocity and temperature. \textbf {TODO: insert generated figures; mark building footprints and sensor locations.}\relax }{figure.caption.25}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces Urban airflow, \emph  {Jacobian-free} isotropic covariance (Corollary\nobreakspace  {}\ref {cor:cheap_drift}, \texttt  {dps\_jacobian\_free}): per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta _\ell $, fluid cells only), CRPS, and spread--skill ($|1-\mathrm  {spread}/\mathrm  {skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Companion to the shared-inflated results in Table\nobreakspace  {}\ref {tab:urban_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \textsc  {tbd}{} cells pending the reduced-grid run.\relax }}{27}{table.caption.26}\protected@file@percent }
+\newlabel{tab:urban_accuracy_jacfree}{{7}{27}{Urban airflow, \emph {Jacobian-free} isotropic covariance (Corollary~\ref {cor:cheap_drift}, \texttt {dps\_jacobian\_free}): per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta _\ell $, fluid cells only), CRPS, and spread--skill ($|1-\mathrm {spread}/\mathrm {skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Companion to the shared-inflated results in Table~\ref {tab:urban_accuracy}; same setup (five held-out trajectories at $E=64$, $M=50$). \tbd {} cells pending the reduced-grid run.\relax }{table.caption.26}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Urban airflow: point accuracy per variable, per observation scenario. Lower is better. \emph  {Data pending}; all cells (\texttt  {--}) are placeholders. There is no ground-truth posterior for the urban case (only a ground-truth state), so KL-at-points is not reported; calibration is assessed by spread--skill and CRPS in Table\nobreakspace  {}\ref {tab:urban_calibration_cost}.\relax }}{27}{table.caption.27}\protected@file@percent }
+\newlabel{tab:urban_accuracy}{{8}{27}{Urban airflow: point accuracy per variable, per observation scenario. Lower is better. \emph {Data pending}; all cells (\texttt {--}) are placeholders. There is no ground-truth posterior for the urban case (only a ground-truth state), so KL-at-points is not reported; calibration is assessed by spread--skill and CRPS in Table~\ref {tab:urban_calibration_cost}.\relax }{table.caption.27}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Urban airflow: probabilistic calibration and cost (aggregated over variables unless noted). \emph  {Data pending}; all cells (\texttt  {--}) are placeholders. No classical (EnKF/PF) baseline: the urban CFD has no true forward solver to propagate the ensemble, so the comparison is generative-only.\relax }}{28}{table.caption.28}\protected@file@percent }
+\newlabel{tab:urban_calibration_cost}{{9}{28}{Urban airflow: probabilistic calibration and cost (aggregated over variables unless noted). \emph {Data pending}; all cells (\texttt {--}) are placeholders. No classical (EnKF/PF) baseline: the urban CFD has no true forward solver to propagate the ensemble, so the comparison is generative-only.\relax }{table.caption.28}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Ablations on the Navier--Stokes case (one observation scenario). Covariance axis (Jacobian-free / inflated-shared) and $g_\tau $/$M$/$E$ sweeps. \emph  {Run in progress}; cells (\texttt  {--}) are placeholders, see the expected narrative in the text.\relax }}{28}{table.caption.29}\protected@file@percent }
+\newlabel{tab:ablation}{{10}{28}{Ablations on the Navier--Stokes case (one observation scenario). Covariance axis (Jacobian-free / inflated-shared) and $\gdiff _\tau $/$M$/$E$ sweeps. \emph {Run in progress}; cells (\texttt {--}) are placeholders, see the expected narrative in the text.\relax }{table.caption.29}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Analytical covariance-approximation ablation: KL divergence to the exact posterior (lower is better), averaged over seeds, per sampler, for the three likelihood-covariance modes. \textsc  {tbd}{} cells pending the reduced-grid run.\relax }}{28}{table.caption.31}\protected@file@percent }
+\newlabel{tab:analytical_ablation}{{11}{28}{Analytical covariance-approximation ablation: KL divergence to the exact posterior (lower is better), averaged over seeds, per sampler, for the three likelihood-covariance modes. \tbd {} cells pending the reduced-grid run.\relax }{table.caption.31}{}}
+\newlabel{LastPage}{{}{28}{}{page.28}{}}
+\xdef\lastpage@lastpage{28}
+\xdef\lastpage@lastpageHy{28}
+\gdef \@abspage@last{28}

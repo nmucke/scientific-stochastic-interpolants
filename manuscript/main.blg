@@ -9,45 +9,45 @@ Warning--empty booktitle in yan_fig_2024
 Warning--empty booktitle in zhang_sampling_nodate
 Warning--empty year in zhang_sampling_nodate
 Warning--empty year in zhang_sampling_nodate
-You've used 43 entries,
+You've used 44 entries,
             2773 wiz_defined-function locations,
-            869 strings with 16119 characters,
-and the built_in function-call counts, 21825 in all, are:
-= -- 1811
-> -- 1792
+            876 strings with 16309 characters,
+and the built_in function-call counts, 22248 in all, are:
+= -- 1847
+> -- 1822
 < -- 7
-+ -- 598
-- -- 555
-* -- 1955
-:= -- 3461
-add.period$ -- 186
-call.type$ -- 43
-change.case$ -- 312
-chr.to.int$ -- 43
-cite$ -- 92
-duplicate$ -- 766
-empty$ -- 1494
-format.name$ -- 610
-if$ -- 4461
++ -- 608
+- -- 564
+* -- 1991
+:= -- 3526
+add.period$ -- 190
+call.type$ -- 44
+change.case$ -- 318
+chr.to.int$ -- 44
+cite$ -- 94
+duplicate$ -- 782
+empty$ -- 1527
+format.name$ -- 620
+if$ -- 4549
 int.to.chr$ -- 1
 int.to.str$ -- 1
 missing$ -- 16
-newline$ -- 279
-num.names$ -- 172
-pop$ -- 706
+newline$ -- 285
+num.names$ -- 176
+pop$ -- 721
 preamble$ -- 1
-purify$ -- 271
+purify$ -- 276
 quote$ -- 0
-skip$ -- 678
+skip$ -- 692
 stack$ -- 0
-substring$ -- 193
-swap$ -- 76
+substring$ -- 195
+swap$ -- 78
 text.length$ -- 0
 text.prefix$ -- 0
 top$ -- 0
-type$ -- 463
+type$ -- 474
 warning$ -- 6
-while$ -- 137
+while$ -- 140
 width$ -- 0
-write$ -- 639
+write$ -- 653
 (There were 6 warnings)

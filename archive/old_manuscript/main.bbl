@@ -1,0 +1,365 @@
+\begin{thebibliography}{43}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Ahamed \& Haber(2024)Ahamed and Haber]{ahamed_dawn-si_2024}
+Shadab Ahamed and Eldad Haber.
+\newblock {DAWN}-{SI}: {Data}-{Aware} and {Noise}-{Informed} {Stochastic}
+  {Interpolation} for {Solving} {Inverse} {Problems}, December 2024.
+\newblock URL \url{http://arxiv.org/abs/2412.04766}.
+\newblock arXiv:2412.04766 [eess].
+
+\bibitem[Albergo \& Vanden-Eijnden(2023)Albergo and
+  Vanden-Eijnden]{albergo_building_2023}
+Michael~S. Albergo and Eric Vanden-Eijnden.
+\newblock Building {Normalizing} {Flows} with {Stochastic} {Interpolants},
+  March 2023.
+\newblock URL \url{http://arxiv.org/abs/2209.15571}.
+\newblock arXiv:2209.15571 [cs].
+
+\bibitem[Albergo et~al.(2023)Albergo, Boffi, and
+  Vanden-Eijnden]{albergo_stochastic_2023}
+Michael~S. Albergo, Nicholas~M. Boffi, and Eric Vanden-Eijnden.
+\newblock Stochastic {Interpolants}: {A} {Unifying} {Framework} for {Flows} and
+  {Diffusions}, November 2023.
+\newblock URL \url{http://arxiv.org/abs/2303.08797}.
+\newblock arXiv:2303.08797 [cs].
+
+\bibitem[Bao et~al.(2024)Bao, Zhang, and Zhang]{bao_ensemble_2024}
+Feng Bao, Zezhong Zhang, and Guannan Zhang.
+\newblock An {Ensemble} {Score} {Filter} for {Tracking} {High}-{Dimensional}
+  {Nonlinear} {Dynamical} {Systems}, August 2024.
+\newblock URL \url{http://arxiv.org/abs/2309.00983}.
+\newblock arXiv:2309.00983 [stat].
+
+\bibitem[Ben-Hamu et~al.(2024)Ben-Hamu, Puny, Gat, Karrer, Singer, and
+  Lipman]{ben-hamu_d-flow_2024}
+Heli Ben-Hamu, Omri Puny, Itai Gat, Brian Karrer, Uriel Singer, and Yaron
+  Lipman.
+\newblock D-{Flow}: {Differentiating} through {Flows} for {Controlled}
+  {Generation}, 2024.
+\newblock URL \url{http://arxiv.org/abs/2402.14017}.
+\newblock International Conference on Machine Learning (ICML);
+  arXiv:2402.14017.
+
+\bibitem[Carrassi et~al.(2018)Carrassi, Bocquet, Bertino, and
+  Evensen]{carrassi_data_2018}
+Alberto Carrassi, Marc Bocquet, Laurent Bertino, and Geir Evensen.
+\newblock Data {Assimilation} in the {Geosciences} - {An} overview on methods,
+  issues and perspectives, June 2018.
+\newblock URL \url{http://arxiv.org/abs/1709.02798}.
+\newblock arXiv:1709.02798 [physics].
+
+\bibitem[Chen et~al.(2025)Chen, Jia, Qu, Sun, and Fessler]{chen_flowdas_2025}
+Siyi Chen, Yixuan Jia, Qing Qu, He~Sun, and Jeffrey~A. Fessler.
+\newblock {FlowDAS}: {A} {Stochastic} {Interpolant}-based {Framework} for
+  {Data} {Assimilation}, June 2025.
+\newblock URL \url{http://arxiv.org/abs/2501.16642}.
+\newblock arXiv:2501.16642 [eess].
+
+\bibitem[Chen et~al.(2024)Chen, Goldstein, Hua, Albergo, Boffi, and
+  Vanden-Eijnden]{chen_probabilistic_2024}
+Yifan Chen, Mark Goldstein, Mengjian Hua, Michael~S. Albergo, Nicholas~M.
+  Boffi, and Eric Vanden-Eijnden.
+\newblock Probabilistic {Forecasting} with {Stochastic} {Interpolants} and
+  {Föllmer} {Processes}, August 2024.
+\newblock URL \url{http://arxiv.org/abs/2403.13724}.
+\newblock arXiv:2403.13724 [cs].
+
+\bibitem[Chen et~al.(2023)Chen, Sanz-Alonso, and
+  Willett]{chen_reduced-order_2023}
+Yuming Chen, Daniel Sanz-Alonso, and Rebecca Willett.
+\newblock Reduced-order autodifferentiable ensemble {Kalman} filters.
+\newblock \emph{Inverse Problems}, 39\penalty0 (12):\penalty0 124001, October
+  2023.
+\newblock ISSN 0266-5611.
+\newblock \doi{10.1088/1361-6420/acff14}.
+\newblock URL \url{https://dx.doi.org/10.1088/1361-6420/acff14}.
+
+\bibitem[Cheng et~al.(2022)Cheng, Chen, Anastasiou, Angeli, Matar, Guo, Pain,
+  and Arcucci]{cheng_generalised_2022}
+Sibo Cheng, Jianhua Chen, Charitos Anastasiou, Panagiota Angeli, Omar~K. Matar,
+  Yi-Ke Guo, Christopher~C. Pain, and Rossella Arcucci.
+\newblock Generalised {Latent} {Assimilation} in {Heterogeneous} {Reduced}
+  {Spaces} with {Machine} {Learning} {Surrogate} {Models}.
+\newblock \emph{Journal of Scientific Computing}, 94\penalty0 (1):\penalty0 11,
+  December 2022.
+\newblock ISSN 1573-7691.
+\newblock \doi{10.1007/s10915-022-02059-4}.
+\newblock URL \url{https://doi.org/10.1007/s10915-022-02059-4}.
+
+\bibitem[Chung et~al.(2023)Chung, Kim, Mccann, Klasky, and
+  Ye]{chung_diffusion_2023}
+Hyungjin Chung, Jeongsol Kim, Michael~T. Mccann, Marc~L. Klasky, and Jong~Chul
+  Ye.
+\newblock Diffusion {Posterior} {Sampling} for {General} {Noisy} {Inverse}
+  {Problems}.
+\newblock In \emph{International {Conference} on {Learning} {Representations}
+  ({ICLR})}, 2023.
+\newblock URL \url{http://arxiv.org/abs/2209.14687}.
+\newblock arXiv:2209.14687 [stat.ML].
+
+\bibitem[Chung et~al.(2024)Chung, Sim, Ryu, and Ye]{chung_improving_2024}
+Hyungjin Chung, Byeongsu Sim, Dohoon Ryu, and Jong~Chul Ye.
+\newblock Improving {Diffusion} {Models} for {Inverse} {Problems} using
+  {Manifold} {Constraints}, May 2024.
+\newblock URL \url{http://arxiv.org/abs/2206.00941}.
+\newblock arXiv:2206.00941 [cs].
+
+\bibitem[Daras et~al.(2024)Daras, Chung, Lai, Mitsufuji, Ye, Milanfar, Dimakis,
+  and Delbracio]{daras_survey_2024}
+Giannis Daras, Hyungjin Chung, Chieh-Hsin Lai, Yuki Mitsufuji, Jong~Chul Ye,
+  Peyman Milanfar, Alexandros~G. Dimakis, and Mauricio Delbracio.
+\newblock A {Survey} on {Diffusion} {Models} for {Inverse} {Problems},
+  September 2024.
+\newblock URL \url{http://arxiv.org/abs/2410.00083}.
+\newblock arXiv:2410.00083 [cs].
+
+\bibitem[Denker et~al.(2024)Denker, Vargas, Padhy, Didi, Mathis, Dutordoir,
+  Barbano, Mathieu, Komorowska, and Lio]{denker_deft_2024}
+Alexander Denker, Francisco Vargas, Shreyas Padhy, Kieran Didi, Simon~V.
+  Mathis, Vincent Dutordoir, Riccardo Barbano, Emile Mathieu, Urszula~Julia
+  Komorowska, and Pietro Lio.
+\newblock {DEFT}: {Efficient} {Fine}-tuning of {Diffusion} {Models} by
+  {Learning} the {Generalised} \$h\$-transform, 2024.
+\newblock URL \url{http://arxiv.org/abs/2406.01781}.
+\newblock arXiv:2406.01781 [cs.LG].
+
+\bibitem[Evensen et~al.(2022)Evensen, Vossepoel, and van
+  Leeuwen]{evensen_data_2022}
+Geir Evensen, Femke~C. Vossepoel, and Peter~Jan van Leeuwen.
+\newblock \emph{Data {Assimilation} {Fundamentals}}.
+\newblock 2022.
+\newblock URL \url{https://library.oapen.org/handle/20.500.12657/54434}.
+
+\bibitem[Fotiadis et~al.(2024)Fotiadis, Brenowitz, Geffner, Cohen, Pritchard,
+  Vahdat, and Mardani]{fotiadis_stochastic_2024}
+Stathi Fotiadis, Noah Brenowitz, Tomas Geffner, Yair Cohen, Michael Pritchard,
+  Arash Vahdat, and Morteza Mardani.
+\newblock Stochastic {Flow} {Matching} for {Resolving} {Small}-{Scale}
+  {Physics}, October 2024.
+\newblock URL \url{http://arxiv.org/abs/2410.19814}.
+\newblock arXiv:2410.19814 [cs].
+
+\bibitem[Gao et~al.(2024)Gao, Kaltenbach, and
+  Koumoutsakos]{gao_generative_2024}
+Han Gao, Sebastian Kaltenbach, and Petros Koumoutsakos.
+\newblock Generative learning for forecasting the dynamics of high-dimensional
+  complex systems.
+\newblock \emph{Nature Communications}, 15\penalty0 (1):\penalty0 8904, October
+  2024.
+\newblock ISSN 2041-1723.
+\newblock \doi{10.1038/s41467-024-53165-w}.
+\newblock URL \url{https://www.nature.com/articles/s41467-024-53165-w}.
+
+\bibitem[Holderrieth et~al.(2024)Holderrieth, Havasi, Yim, Shaul, Gat,
+  Jaakkola, Karrer, Chen, and Lipman]{holderrieth_generator_2024}
+Peter Holderrieth, Marton Havasi, Jason Yim, Neta Shaul, Itai Gat, Tommi
+  Jaakkola, Brian Karrer, Ricky T.~Q. Chen, and Yaron Lipman.
+\newblock Generator {Matching}: {Generative} modeling with arbitrary {Markov}
+  processes, 2024.
+\newblock URL \url{http://arxiv.org/abs/2410.20587}.
+\newblock arXiv:2410.20587 [cs.LG].
+
+\bibitem[Hunt et~al.(2007)Hunt, Kostelich, and Szunyogh]{hunt_efficient_2007}
+Brian~R. Hunt, Eric~J. Kostelich, and Istvan Szunyogh.
+\newblock Efficient data assimilation for spatiotemporal chaos: {A} local
+  ensemble transform {K}alman filter.
+\newblock \emph{Physica D: Nonlinear Phenomena}, 230\penalty0 (1--2):\penalty0
+  112--126, 2007.
+
+\bibitem[Kohl et~al.(2024)Kohl, Chen, and Thuerey]{kohl_benchmarking_2024}
+Georg Kohl, Li-Wei Chen, and Nils Thuerey.
+\newblock Benchmarking {Autoregressive} {Conditional} {Diffusion} {Models} for
+  {Turbulent} {Flow} {Simulation}, January 2024.
+\newblock URL \url{http://arxiv.org/abs/2309.01745}.
+\newblock arXiv:2309.01745 [cs] version: 2.
+
+\bibitem[Lipman et~al.(2023)Lipman, Chen, Ben-Hamu, Nickel, and
+  Le]{lipman_flow_2023}
+Yaron Lipman, Ricky T.~Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+\newblock Flow {Matching} for {Generative} {Modeling}, February 2023.
+\newblock URL \url{http://arxiv.org/abs/2210.02747}.
+\newblock arXiv:2210.02747 [cs].
+
+\bibitem[Lippe et~al.(2023)Lippe, Veeling, Perdikaris, Turner, and
+  Brandstetter]{lippe_pde-refiner_2023}
+Phillip Lippe, Bastiaan~S. Veeling, Paris Perdikaris, Richard~E. Turner, and
+  Johannes Brandstetter.
+\newblock {PDE}-{Refiner}: {Achieving} {Accurate} {Long} {Rollouts} with
+  {Neural} {PDE} {Solvers}, October 2023.
+\newblock URL \url{http://arxiv.org/abs/2308.05732}.
+\newblock arXiv:2308.05732 [cs].
+
+\bibitem[Liu(2022)]{liu_rectified_2022}
+Qiang Liu.
+\newblock Rectified {Flow}: {A} {Marginal} {Preserving} {Approach} to {Optimal}
+  {Transport}, September 2022.
+\newblock URL \url{http://arxiv.org/abs/2209.14577}.
+\newblock arXiv:2209.14577 [stat].
+
+\bibitem[Ma et~al.(2024)Ma, Goldstein, Albergo, Boffi, Vanden-Eijnden, and
+  Xie]{ma_sit_2024}
+Nanye Ma, Mark Goldstein, Michael~S. Albergo, Nicholas~M. Boffi, Eric
+  Vanden-Eijnden, and Saining Xie.
+\newblock {SiT}: {Exploring} {Flow} and {Diffusion}-based {Generative} {Models}
+  with {Scalable} {Interpolant} {Transformers}, September 2024.
+\newblock URL \url{http://arxiv.org/abs/2401.08740}.
+\newblock arXiv:2401.08740 [cs].
+
+\bibitem[Martin et~al.(2025)Martin, Gagneux, Hagemann, and
+  Steidl]{martin_pnp-flow_2025}
+Ségolène Martin, Anne Gagneux, Paul Hagemann, and Gabriele Steidl.
+\newblock {PnP}-{Flow}: {Plug}-and-{Play} {Image} {Restoration} with {Flow}
+  {Matching}, March 2025.
+\newblock URL \url{http://arxiv.org/abs/2410.02423}.
+\newblock arXiv:2410.02423 [cs].
+
+\bibitem[Mücke \& Sanderse(2025)Mücke and Sanderse]{mucke_physics-aware_2025}
+Nikolaj~T. Mücke and Benjamin Sanderse.
+\newblock Physics-aware generative models for turbulent fluid flows through
+  energy-consistent stochastic interpolants, April 2025.
+\newblock URL \url{http://arxiv.org/abs/2504.05852}.
+\newblock arXiv:2504.05852 [cs].
+
+\bibitem[Mücke et~al.(2024)Mücke, Bohté, and Oosterlee]{mucke_deep_2024}
+Nikolaj~T. Mücke, Sander~M. Bohté, and Cornelis~W. Oosterlee.
+\newblock The deep latent space particle filter for real-time data assimilation
+  with uncertainty quantification.
+\newblock \emph{Scientific Reports}, 14\penalty0 (1):\penalty0 19447, August
+  2024.
+\newblock ISSN 2045-2322.
+\newblock \doi{10.1038/s41598-024-69901-7}.
+\newblock URL \url{https://www.nature.com/articles/s41598-024-69901-7}.
+\newblock Publisher: Nature Publishing Group.
+
+\bibitem[Negrel et~al.(2025)Negrel, Coeurdoux, Albergo, and
+  Vanden-Eijnden]{negrel_multitask_2025}
+Hugo Negrel, Florentin Coeurdoux, Michael~S. Albergo, and Eric Vanden-Eijnden.
+\newblock Multitask {Learning} with {Stochastic} {Interpolants}, August 2025.
+\newblock URL \url{http://arxiv.org/abs/2508.04605}.
+\newblock arXiv:2508.04605 [cs] version: 1.
+
+\bibitem[Parikh et~al.(2026)Parikh, Chen, and Wang]{parikh_d-flow_2026}
+Meet~Hemant Parikh, Yaqin Chen, and Jian-Xun Wang.
+\newblock D-{Flow} {SGLD}: {Source}-{Space} {Posterior} {Sampling} for
+  {Scientific} {Inverse} {Problems} with {Flow} {Matching}, 2026.
+\newblock URL \url{http://arxiv.org/abs/2602.21469}.
+\newblock arXiv:2602.21469.
+
+\bibitem[Pokle et~al.(2024)Pokle, Muckley, Chen, and
+  Karrer]{pokle_training-free_2024}
+Ashwini Pokle, Matthew~J. Muckley, Ricky T.~Q. Chen, and Brian Karrer.
+\newblock Training-free {Linear} {Image} {Inverses} via {Flows}, March 2024.
+\newblock URL \url{http://arxiv.org/abs/2310.04432}.
+\newblock arXiv:2310.04432 [cs].
+
+\bibitem[Qu et~al.(2024)Qu, Nathaniel, Li, and Gentine]{qu_deep_2024}
+Yongquan Qu, Juan Nathaniel, Shuolin Li, and Pierre Gentine.
+\newblock Deep {Generative} {Data} {Assimilation} in {Multimodal} {Setting},
+  June 2024.
+\newblock URL \url{http://arxiv.org/abs/2404.06665}.
+\newblock arXiv:2404.06665 [cs].
+
+\bibitem[Rozet \& Louppe(2023)Rozet and Louppe]{rozet_score-based_2023}
+François Rozet and Gilles Louppe.
+\newblock Score-based {Data} {Assimilation}.
+\newblock November 2023.
+\newblock URL \url{https://openreview.net/forum?id=VUvLSnMZdX}.
+
+\bibitem[Si \& Chen(2024)Si and Chen]{si_latent-ensf_2024}
+Phillip Si and Peng Chen.
+\newblock Latent-{EnSF}: {A} {Latent} {Ensemble} {Score} {Filter} for
+  {High}-{Dimensional} {Data} {Assimilation} with {Sparse} {Observation}
+  {Data}, September 2024.
+\newblock URL \url{http://arxiv.org/abs/2409.00127}.
+\newblock arXiv:2409.00127 [cs].
+
+\bibitem[Song et~al.(2023)Song, Vahdat, Mardani, and
+  Kautz]{song_pseudoinverse_2023}
+Jiaming Song, Arash Vahdat, Morteza Mardani, and Jan Kautz.
+\newblock Pseudoinverse-{Guided} {Diffusion} {Models} for {Inverse} {Problems}.
+\newblock In \emph{International {Conference} on {Learning} {Representations}
+  ({ICLR})}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=9_gsMA8MRKQ}.
+
+\bibitem[Song et~al.(2021)Song, Sohl-Dickstein, Kingma, Kumar, Ermon, and
+  Poole]{song_score-based_2021}
+Yang Song, Jascha Sohl-Dickstein, Diederik~P. Kingma, Abhishek Kumar, Stefano
+  Ermon, and Ben Poole.
+\newblock Score-{Based} {Generative} {Modeling} through {Stochastic}
+  {Differential} {Equations}, February 2021.
+\newblock URL \url{http://arxiv.org/abs/2011.13456}.
+\newblock arXiv:2011.13456 [cs].
+
+\bibitem[Särkkä \& Solin(2019)Särkkä and Solin]{sarkka_applied_2019}
+Simo Särkkä and Arno Solin.
+\newblock \emph{Applied {Stochastic} {Differential} {Equations}}.
+\newblock Institute of {Mathematical} {Statistics} {Textbooks}. Cambridge
+  University Press, Cambridge, 2019.
+\newblock ISBN 9781316510087.
+\newblock \doi{10.1017/9781108186735}.
+\newblock URL
+  \url{https://www.cambridge.org/core/books/applied-stochastic-differential-equations/6BB1B8B0819F8C12616E4A0C78C29EAA}.
+
+\bibitem[Wei et~al.(2026)Wei, Ren, Shi, and Lu]{wei_surge_2026}
+Wei, Ren, Shi, and Lu.
+\newblock {SURGE}: {Approximation} and {Training} {Free} {Particle} {Filter}
+  for {Diffusion} {Surrogate}, 2026.
+\newblock URL \url{http://arxiv.org/abs/2605.18745}.
+\newblock arXiv:2605.18745.
+
+\bibitem[Wu et~al.(2023)Wu, Trippe, Naesseth, Blei, and
+  Cunningham]{wu_practical_2023}
+Luhuan Wu, Brian~L. Trippe, Christian~A. Naesseth, David~M. Blei, and John~P.
+  Cunningham.
+\newblock Practical and {Asymptotically} {Exact} {Conditional} {Sampling} in
+  {Diffusion} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems}
+  ({NeurIPS})}, 2023.
+\newblock URL \url{http://arxiv.org/abs/2306.17775}.
+\newblock arXiv:2306.17775 [stat.ML].
+
+\bibitem[Yan et~al.(2025)Yan, Zhang, Meng, and Zhao]{yan_fig_2025}
+Hanyu Yan, Hao Zhang, Tao Meng, and Yan Zhao.
+\newblock {FIG}: {Flow} with {Interpolant} {Guidance} for {Linear} {Inverse}
+  {Problems}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=fs2Z2z3GRx}.
+\newblock International Conference on Learning Representations (ICLR).
+
+\bibitem[Yan et~al.(2024)Yan, Zhang, Meng, and Zhao]{yan_fig_2024}
+Yici Yan, Yichi Zhang, Xiangming Meng, and Zhizhen Zhao.
+\newblock {FIG}: {Flow} with {Interpolant} {Guidance} for {Linear} {Inverse}
+  {Problems}.
+\newblock October 2024.
+\newblock URL \url{https://openreview.net/forum?id=fs2Z2z3GRx}.
+
+\bibitem[Zhang et~al.()Zhang, Sahai, and Marzouk]{zhang_sampling_nodate}
+Benjamin Zhang, Tuhin Sahai, and Youssef Marzouk.
+\newblock Sampling via {Controlled} {Stochastic} {Dynamical} {Systems}.
+\newblock URL \url{https://openreview.net/forum?id=dHruzYDH719}.
+
+\bibitem[Zhang et~al.(2025)Zhang, Yu, Zhu, Chang, Gao, Wu, and
+  Leong]{zhang_flow_2025}
+Yasi Zhang, Peiyu Yu, Yaxuan Zhu, Yingshan Chang, Feng Gao, Ying~Nian Wu, and
+  Oscar Leong.
+\newblock Flow {Priors} for {Linear} {Inverse} {Problems} via {Iterative}
+  {Corrupted} {Trajectory} {Matching}, January 2025.
+\newblock URL \url{http://arxiv.org/abs/2405.18816}.
+\newblock arXiv:2405.18816 [cs].
+
+\bibitem[Zhong et~al.(2023)Zhong, Cheng, Kasoar, and
+  Arcucci]{zhong_reduced-order_2023}
+Caili Zhong, Sibo Cheng, Matthew Kasoar, and Rossella Arcucci.
+\newblock Reduced-order digital twin and latent data assimilation for global
+  wildfire prediction.
+\newblock \emph{Natural Hazards and Earth System Sciences}, 23\penalty0
+  (5):\penalty0 1755--1768, May 2023.
+\newblock ISSN 1561-8633.
+\newblock \doi{10.5194/nhess-23-1755-2023}.
+\newblock URL \url{https://nhess.copernicus.org/articles/23/1755/2023/}.
+
+\end{thebibliography}

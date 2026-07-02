@@ -55,7 +55,7 @@
 
 
 \begin{abstract}
-Data assimilation estimates the state of dynamical systems by combining models with observations, where sampling high-dimensional nonlinear posteriors remains a major challenge. We show that a single observation-interpolant mechanism turns \emph{any} pre-trained flow-based generative model -- a stochastic interpolant or a flow matching model -- into a posterior sampler without retraining. Conditioning the interpolant path on an observation tilts the target to the posterior while preserving the path structure, so the conditional score and velocity differ from their prior counterparts by one shared likelihood-score term. The marginal-preserving SDE family on this conditioned path gives a one-parameter family of posterior samplers indexed by a diffusion coefficient, with three members of interest: the stochastic-interpolant SDE, the flow matching SDE, and a deterministic guided probability-flow ODE. The intractable likelihood is replaced by a tractable interpolated-observation likelihood whose conditional moments we derive in closed form, giving a closed-form likelihood score with a $\Pi$GDM-style inflated covariance; this inflation is what makes the guidance accurate on sparse observations. We give pseudo-code for all three samplers, relate the construction to Doob's $h$-transform, and demonstrate it on a series of test cases.
+Data assimilation estimates the state of dynamical systems by combining model forecasts with noisy observations; sampling the resulting high-dimensional, non-Gaussian posteriors remains a major challenge. We show that a single observation-interpolant mechanism turns \emph{any} pre-trained flow-based generative model -- stochastic interpolant, flow matching, or diffusion model -- into a posterior sampler, without retraining. Conditioning the model's interpolant path on an observation retargets it to the posterior while preserving its structure, so the conditional score and velocity differ from their prior counterparts by one shared likelihood-score term, and the marginal-preserving SDE family on the conditioned path yields provably exact posterior samplers for \emph{every} diffusion coefficient -- unifying the stochastic-interpolant SDE, a denoising-diffusion SDE lifted from a flow-matching prior, and a deterministic guided flow ODE. The intractable likelihood score is replaced by a closed-form interpolated-observation likelihood whose covariance is inflated, $\Pi$GDM-style, by the model's own source covariance -- the inflation that drives accuracy on sparse observations. A Jacobian-free simplification and an ensemble-shared Jacobian approximation reduce the cost of this inflation from $\mathcal{O}(E\,N_y)$ network Jacobians per step to a single one, making the method feasible at field scale. We provide pseudo-code for all three samplers and evaluate them on linear--Gaussian, stochastic Navier--Stokes, and urban-airflow benchmarks.
 \end{abstract}
 
 
@@ -92,12 +92,13 @@ Data assimilation estimates the state of dynamical systems by combining models w
 
 \appendix
 
-\input{sections/appendix_methods}
-% \input{sections/appendix_score_velocity_duality}
+\input{sections/appendix_score_velocity_duality}
 \input{sections/appendix_proof_conditioning}
 \input{sections/appendix_proof_posterior}
 \input{sections/appendix_proof_interpolant_likelihood_covariance}
 \input{sections/appendix_simple_test_case}
+\input{sections/comparison}
+\input{sections/appendix_methods}
 \input{sections/appendix_extra}
 
 

@@ -1,7 +1,6 @@
 % =====================================================================
-%  RESULTS SECTION -- placeholder version
-%  Numbers, figures and tables to be filled in after experiments.
-%  Search for "TODO" to find every slot that needs a result.
+%  RESULTS SECTION -- prepared skeleton; numbers pending.
+%  Every pending slot is marked \tbd (tables) or [figure placeholder].
 % =====================================================================
 
 % Lightweight placeholder box for figures not yet generated.
@@ -15,99 +14,56 @@
       [figure placeholder]\\[2pt]#3}}%
 }
 
-We evaluate the method on a linear--Gaussian system with closed-form posterior (isolating the posterior-sampling machinery from model error, no network trained) and a stochastic, chaotic, high-dimensional fluid system (2D incompressible Navier--Stokes with random forcing) on a learned prior; a third urban-CFD case is in Appendix~\ref{appendix:additional_results}. We instantiate the three samplers of Section~\ref{subsec:supplying_diffusion}, reported as \emph{Ours (SI-SDE/DM-SDE/FM-ODE)}.
+We evaluate the method on three cases of increasing realism: a linear--Gaussian system with closed-form posterior (no network trained, isolating the sampler from model error), stochastically forced 2D Navier--Stokes on a learned prior, and a multi-variable urban airflow. We instantiate the three samplers of Section~\ref{subsec:summary_table}, reported as \emph{Ours (SI-SDE/DM-SDE/FM-ODE)}.
 
 \paragraph{Baselines.}
-We compare against (i) generative posterior samplers sharing our trained prior -- FlowDAS \cite{chen_flowdas_2025}, SDA \cite{rozet_score-based_2023}, and D-Flow SGLD \cite{parikh_d-flow_2026,ben-hamu_d-flow_2024}; (ii) the SURGE sequential-Monte-Carlo particle filter \cite{wei_surge_2026}, which wraps a guided-sampler proposal with Girsanov-corrected importance reweighting, evaluated on top of the FlowDAS and SDA guidance (denoted \emph{FlowDAS\,+\,SURGE} and \emph{SDA\,+\,SURGE}); and (iii) conventional filters operating on the \emph{true} forward solver (Navier--Stokes only) -- the ensemble Kalman filter \cite{evensen_data_2022} and the bootstrap particle filter \cite{carrassi_data_2018}. Each method is described in Appendix~\ref{appendix:methods}.
+We compare against (i) generative posterior samplers sharing our trained prior -- FlowDAS \cite{chen_flowdas_2025}, SDA \cite{rozet_score-based_2023}, and D-Flow SGLD \cite{parikh_d-flow_2026,ben-hamu_d-flow_2024}; (ii) the SURGE sequential-Monte-Carlo particle filter \cite{wei_surge_2026}, which wraps a guided proposal with Girsanov-corrected importance reweighting, evaluated on top of the FlowDAS and SDA guidance; and (iii) conventional filters on the \emph{true} forward solver (Navier--Stokes only) -- the ensemble Kalman filter \cite{evensen_data_2022} and the bootstrap particle filter \cite{carrassi_data_2018}. Each method is described in Appendix~\ref{appendix:methods}.
 
-\paragraph{Metrics.}
-We report, over an ensemble and averaged over steps and trajectories: \emph{(a) point accuracy} -- ensemble-mean RMSE and an energy-spectrum RMSE (recovery of small-scale structure); \emph{(b) calibration} -- CRPS, spread--skill ratio (near one when calibrated), and rank histograms; \emph{(c) distributional fidelity} -- KL divergence to the reference marginal posteriors at observed and unobserved points (the exact Gaussian posterior in the analytical case, with an additional sliced-Wasserstein distance to the joint); \emph{(d) cost} -- network evaluations per step (NFE) and wall-clock, at matched ensemble size.
-
-\paragraph{Observation scenarios.}
-Two linear operators structure the field-valued comparisons (matching Section~\ref{subsec:obs_interpolation}): \emph{super-resolution} ($32^2\!\to\!128^2$, $16^2\!\to\!128^2$ down-sampling) and \emph{sparse sensors} (random subsets at $5\%$ and $1.5625\%$). Observation noise is additive Gaussian with per-case standard deviations.
+\paragraph{Metrics and scenarios.}
+We report, over an ensemble and averaged over steps and trajectories: \emph{(a) point accuracy} -- ensemble-mean RMSE and an energy-spectrum RMSE; \emph{(b) calibration} -- CRPS, spread--skill ratio, and rank histograms; \emph{(c) distributional fidelity} -- KL divergence to the reference marginal posteriors at observed and unobserved points (exact in the analytical case); \emph{(d) cost} -- network evaluations per step (NFE) and wall-clock, at matched ensemble size. Two linear observation operators structure the field-valued comparisons: \emph{super-resolution} ($32^2\!\to\!128^2$, $16^2\!\to\!128^2$ down-sampling) and \emph{sparse sensors} (random subsets at $5\%$ and $1.5625\%$), with additive Gaussian observation noise.
 
 % =====================================================================
 \subsection{Simple analytical test case}
 \label{subsec:results_analytical}
 % =====================================================================
-\begin{wrapfigure}[12]{r}{0.33\linewidth}
+\begin{wrapfigure}[11]{r}{0.46\linewidth}
     \centering
-    \includegraphics[width=\linewidth]{figures/analytical/analytical_kl_vs_steps.pdf}
+    \includegraphics[width=\linewidth]{figures/analytical/analytical_kl_vs_M.pdf}
+    \vspace{-20pt}
     \caption{KL to the exact posterior vs.\ sampler steps $M$.}
     \label{fig:analytical}
 \end{wrapfigure}
 
-The first case is the linear--Gaussian system of Appendix~\ref{appendix:simple_test_case}:
+The first case is the linear--Gaussian system of Appendix~\ref{appendix:simple_test_case}: $\state^1 = \state^{0} + \modelnoise$, $\obs^1 = \obsmatrix\state^1 + \obsnoise$ with standard-normal noises and $\obsmatrix=\obscov=\bI$, so the exact Gaussian posterior is available and the SI drift is known in closed form (Prop.~B.9 of \cite{chen_probabilistic_2024}); no network is trained, isolating the sampler from model error.
 
-\begin{subequations}\label{eq:analytical_system}
-\noindent\begin{minipage}{0.64\linewidth}
-\begin{align}
-    \state^1 &= \state^{0} + \modelnoise,\ \ \modelnoise \sim \mathcal{N}(0,\bI),\\
-    \obs^1 &= \obsmatrix\state^1 + \obsnoise,\ \ \obsnoise \sim \mathcal{N}(0,\obscov),
-\end{align}
-\end{minipage}
-\end{subequations}
-
-Here $\obsmatrix=\bI$, $\obscov=\bI$. The posterior is $\mathcal{N}\!\big(\state^0+K(\obs^1-\obsmatrix\state^0),\,\bI-K\obsmatrix\big)$ with $K=\tfrac12\bI$, and the SI drift is known in closed form (Prop.~B.9 of \cite{chen_probabilistic_2024}). With no network trained, this case isolates the posterior-sampling construction from model error.
-
-% Analytical results table commented out for now; reintroduce by removing the \iffalse ... \fi wrapper.
-\iffalse
-\begin{wraptable}{r}{0.5\linewidth}
-    \centering
-    \small
-    \vspace{-\baselineskip}
-    \caption{Analytical case: distance to the exact posterior ($M=50$, lower is better).}
-    \label{tab:analytical_results}
-    \begin{tabular}{l|cc}
-        \toprule
-        Method & KL$(\,\hat p\,\|\,p^\star)$ & Sliced-$W_2$ \\
-        \midrule
-        \multicolumn{3}{l}{\textit{Ours -- Jacobian-free covariance}} \\
-        Ours (SI-SDE)        & 0.068 & 0.149 \\
-        Ours (DM-SDE)        & 0.078 & 0.158 \\
-        Ours (FM-ODE)        & 0.103 & 0.187 \\
-        \midrule
-        \multicolumn{3}{l}{\textit{Ours -- shared inflated covariance}} \\
-        Ours (SI-SDE)        & \textbf{0.001} & \textbf{0.021} \\
-        Ours (DM-SDE)        & 0.002 & 0.023 \\
-        Ours (FM-ODE)        & \textbf{0.001} & \textbf{0.021} \\
-        \midrule
-        FlowDAS              & \tbd  & \tbd  \\
-        FlowDAS + SURGE      & \tbd  & \tbd  \\
-        SDA                  & \tbd  & \tbd  \\
-        SDA + SURGE          & \tbd  & \tbd  \\
-        D-Flow SGLD          & \tbd  & \tbd  \\
-        EnKF                 & \textbf{0.001} & \textbf{0.021} \\
-        Particle filter      & 0.003 & 0.028 \\
-        \bottomrule
-    \end{tabular}
-\end{wraptable}
-\fi
-
-% Sentence below introduces the commented-out analytical table; reintroduce together with it.
-% Table~\ref{tab:analytical_results} reports the KL divergence and sliced-Wasserstein distance to the exact posterior for all samplers and baselines, at a matched ensemble size and step count; supporting panels (prior, likelihood, exact and sampled posteriors, and KL convergence) are in Figure~\ref{fig:analytical_panels} (Appendix~\ref{appendix:additional_results}).
 The KL divergence to the exact posterior versus the number of sampler steps is shown in Figure~\ref{fig:analytical}; the prior, likelihood, exact and sampled posteriors, and KL convergence are in Figure~\ref{fig:analytical_panels} (Appendix~\ref{appendix:additional_results}).
 
+% TODO(results): 2-3 sentences on the analytical findings once final numbers
+% are in (inflated covariance vs. DPS-surrogate baselines; agreement across
+% the three samplers; EnKF/PF as the linear-Gaussian reference).
+
 % =====================================================================
-\subsection{Stochastic incompressible Navier--Stokes}
+\subsection{Stochastic Navier--Stokes}
 \label{subsec:results_ns}
 % =====================================================================
-The second case is an incompressible fluid on the torus $\mathcal{T}^2=[0,2\pi]^2$, governed by the vorticity form of the two-dimensional Navier--Stokes equations with stochastic forcing,
+The second case is an incompressible fluid on the torus $\mathcal{T}^2=[0,2\pi]^2$, governed by the stochastically forced two-dimensional vorticity equation,
 \begin{align}\label{eq:ns_equation}
     \rd\vorticity + \velocity\cdot\nabla\vorticity\,\rd t
     = \nu\Delta\vorticity\,\rd t - \alpha\vorticity\,\rd t + \varepsilon\,\rd\xi,
 \end{align}
-where $\velocity=\nabla^\perp\psi$ derives from the stream function $\psi$ solving $-\Delta\psi=\vorticity$, and $\rd\xi$ is temporally white forcing on selected Fourier modes. The stochastic forcing makes the transition density non-deterministic, so the prior $\conddist{\vorticity^{n}}{\vorticity^{n-1}}$ is a distribution the generative model must capture. We observe vorticity through $\obs=\obsoperator(\vorticity)+\obsnoise$, $\obsnoise\sim\mathcal{N}(0,\sigma^2\bI)$, $\sigma=0.05$, under both scenarios.
+where $\velocity=\nabla^\perp\psi$ derives from the stream function $\psi$ solving $-\Delta\psi=\vorticity$, and $\rd\xi$ is temporally white forcing on selected Fourier modes. The stochastic forcing makes the transition density non-deterministic, so the prior $\conddist{\vorticity^{n}}{\vorticity^{n-1}}$ is a distribution the generative model must capture. We observe vorticity through $\obs=\obsoperator(\vorticity)+\obsnoise$, $\obsnoise\sim\mathcal{N}(0,0.05^2\bI)$.
 
-Table~\ref{tab:ns_accuracy} reports accuracy, calibration, and cost across methods and all four scenarios; trajectory snapshots and diagnostics (RMSE over steps, energy spectra, rank histograms, and the divergence to the reference posterior) are in Figures~\ref{fig:ns_trajectories}--\ref{fig:ns_diagnostics} (Appendix~\ref{appendix:additional_results}). Our samplers use the shared inflated source covariance (\texttt{inflated\_shared}; the Jacobian-free variant, Corollary~\ref{cor:cheap_drift}, \texttt{dps\_jacobian\_free}, is in Appendix~\ref{appendix:additional_results}), at $E=64$, $M=50$, averaged over five held-out trajectories (one seed each).
+Table~\ref{tab:ns_accuracy} reports accuracy, calibration, and cost across methods and all four scenarios; trajectory snapshots and diagnostics (RMSE over steps, energy spectra, rank histograms, and the divergence to the reference posterior -- a large-ensemble EnKF on the true solver) are in Figures~\ref{fig:ns_trajectories}--\ref{fig:ns_diagnostics} (Appendix~\ref{appendix:additional_results}).
 
-A large-ensemble ($E=1000$) non-localized EnKF on the true solver serves as the reference posterior for the divergence diagnostic; the ablation over covariance, diffusion, step count, and ensemble size is in Appendix~\ref{appendix:additional_results}.
+% TODO(results): headline findings paragraph once the grid finishes
+% (dense vs. sparse regimes; Jacobian-free vs. ensemble-shared inflated;
+% sampler agreement; cost comparison).
 
 \begin{table*}[ht]
     \centering
     \scriptsize
     \setlength{\tabcolsep}{3.5pt}
-    \caption{Navier--Stokes: ensemble-mean vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated) across the four scenarios (super-resolution $16^2\!\to\!128^2$, $32^2\!\to\!128^2$; sparse $5\%$, $1.5625\%$), with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix~\ref{appendix:additional_results}, Table~\ref{tab:ns_accuracy_jacfree}); the solver-free baselines share the prior, the conventional filters use the true solver. \tbd{} cells pending the reduced-grid run.}
+    \caption{Navier--Stokes: vorticity RMSE, CRPS, and spread--skill ($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated) across the four scenarios, with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$; ensemble-shared inflated covariance (Jacobian-free variant in Table~\ref{tab:ns_accuracy_jacfree}). The solver-free baselines share the prior; the conventional filters use the true solver. \tbd{} cells pending.}
     \label{tab:ns_accuracy}
     \begin{tabular}{l|cccc|cccc|cccc|c}
         \toprule
@@ -117,7 +73,7 @@ A large-ensemble ($E=1000$) non-localized EnKF on the true solver serves as the 
         & \textbf{Cost} \\
         & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & $16^2$ & $32^2$ & $5\%$ & $\tfrac{1}{64}$ & s/step \\
         \midrule
-        \multicolumn{14}{l}{\textit{Ours -- shared inflated covariance}} \\
+        \multicolumn{14}{l}{\textit{Ours -- ensemble-shared inflated covariance}} \\
         Ours (SI-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
         Ours (DM-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
         Ours (FM-ODE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
@@ -138,35 +94,6 @@ A large-ensemble ($E=1000$) non-localized EnKF on the true solver serves as the 
 \subsection{Urban airflow over a building array}
 \label{subsec:results_urban}
 % =====================================================================
-The third case is a multi-variable urban computational-fluid-dynamics flow (uDALES) over a building array: coupled velocity ($u,v,w$) and potential-temperature ($\theta_\ell$) fields on a domain with solid obstacles, where wakes and thermal plumes make the statistics strongly anisotropic. Solid cells are excluded from every metric and from the sensor pool. This case is \emph{generative-only} -- there is no in-repo forward solver, so the conventional filters are not available -- and \emph{sparse-only}, at the same two sensor densities ($5\%$, $1.5625\%$). Table~\ref{tab:urban_accuracy} reports per-variable RMSE, CRPS, spread--skill, and cost for the same reduced method set.
+The third case is a multi-variable urban computational-fluid-dynamics flow (uDALES) over a building array: coupled velocity ($u,v,w$) and potential-temperature ($\theta_\ell$) fields on a domain with solid obstacles, whose wakes and plumes make the statistics strongly anisotropic; solid cells are excluded from all metrics and sensors. The case is \emph{generative-only} (no true forward solver, so no conventional filters) and \emph{sparse-only}; Table~\ref{tab:urban_accuracy} (Appendix~\ref{appendix:additional_results}) reports per-variable RMSE, CRPS, spread--skill, and cost. An ablation isolating the covariance, diffusion-strength, step-count, and ensemble-size axes, with trajectory figures for all three cases, is also in Appendix~\ref{appendix:additional_results}.
 
-\begin{table*}[ht]
-    \centering
-    \scriptsize
-    \setlength{\tabcolsep}{4pt}
-    \caption{Urban airflow: per-variable ensemble-mean RMSE (velocity $u,v,w$; temperature $\theta_\ell$, fluid cells only), CRPS, and spread--skill ($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated) at the two sparse densities, with per-step cost (lower is better). Five held-out trajectories at $E=64$, $M=50$. Our samplers use the shared inflated source covariance (the Jacobian-free variant is in Appendix~\ref{appendix:additional_results}, Table~\ref{tab:urban_accuracy_jacfree}); generative-only (no true-solver EnKF/PF). \tbd{} cells pending the reduced-grid run.}
-    \label{tab:urban_accuracy}
-    \begin{tabular}{l|cc|cc|cc|cc|c}
-        \toprule
-        & \multicolumn{2}{c|}{\textbf{Velocity RMSE}}
-        & \multicolumn{2}{c|}{\textbf{Temp.\ RMSE}}
-        & \multicolumn{2}{c|}{\textbf{CRPS}}
-        & \multicolumn{2}{c|}{\textbf{Spread--skill}}
-        & \textbf{Cost} \\
-        & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & $5\%$ & $\tfrac{1}{64}$ & s/step \\
-        \midrule
-        \multicolumn{10}{l}{\textit{Ours -- shared inflated covariance}} \\
-        Ours (SI-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        Ours (DM-SDE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        Ours (FM-ODE) & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        \midrule
-        FlowDAS            & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        FlowDAS + SURGE    & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        SDA                & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        SDA + SURGE        & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        D-Flow SGLD        & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd & \tbd \\
-        \bottomrule
-    \end{tabular}
-\end{table*}
-
-An ablation study isolating the covariance, diffusion-strength, step-count, and ensemble-size axes, together with the trajectory figures for all three cases, is reported in Appendix~\ref{appendix:additional_results}.
+% TODO(results): 2-3 sentences on the urban findings once numbers are in.
