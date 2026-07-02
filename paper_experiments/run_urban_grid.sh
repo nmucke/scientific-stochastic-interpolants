@@ -45,7 +45,7 @@ else SCEN_ARR=("sparse 5%" "sparse 1.5625%"); fi
 GRPS="${GRPS:-ours_jacfree ours_shared baselines}"
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
-BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD"]'
+BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD","Guided FM (FIG)"]'
 
 slug() { echo "$1" | sed -E 's/[^A-Za-z0-9]+/_/g; s/^_+//; s/_+$//'; }
 has_group() { echo " $GRPS " | grep -q " $1 "; }

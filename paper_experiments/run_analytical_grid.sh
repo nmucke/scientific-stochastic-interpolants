@@ -16,6 +16,11 @@
 #               Ours (SI-SDE/DM-SDE/FM-ODE) x {jacfree, shared} (variant column),
 #               FlowDAS, SURGE (FlowDAS), SDA, SURGE (SDA), D-Flow SGLD, EnKF, PF.
 #   E (n_eval): the driver's fixed 4096-sample estimate (KL / sliced-W2).
+#   hparams   : each baseline's per-M hyperparameters come from the `analytical:`
+#               matrix in configs/method/*.yaml (single joint scenario "analytical",
+#               columns 50/100/250/500). Cells ship all-null -> the config `default:`
+#               is used (a "not tuned yet" warning is logged) until they are filled;
+#               fill the YAML cells to tune per M (no code change, no edit here).
 #
 # Timings (seconds + NFE) are recorded per method/variant row.
 #

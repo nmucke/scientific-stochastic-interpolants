@@ -26,16 +26,21 @@ likelihood_model:
   # uncapped; same as flowdas.yaml). Env FLOWDAS_MAX_GRAD_NORM overrides.
   max_grad_norm: null
   # guidance_scale = FlowDAS zeta on the raw likelihood score. Scalar OR a
-  # [scenario][num_sde_steps M] table with a `default:` key (resolved per run by
-  # resolve_scheduled_hparams; null cell -> default). SAME table as flowdas.yaml.
-  # Env FLOWDAS_ZETA overrides.
+  # [case][scenario][num_sde_steps M] table with a `default:` key; scenario rows
+  # live under the case name (`navier_stokes:`), resolved per run by
+  # resolve_scheduled_hparams (missing case/scenario/M cell -> default). SAME table
+  # as flowdas.yaml. Env FLOWDAS_ZETA overrides.
   guidance_scale:
     default: 1.0
-    #             M=50   M=100  M=250  M=500
-    superres_16: { 50: null, 100: null, 250: null, 500: 2.0  }
-    superres_32: { 50: null, 100: null, 250: null, 500: 1.0  }
-    sparse_5:    { 50: null, 100: null, 250: null, 500: 1.0  }
-    sparse_1p5:  { 50: null, 100: null, 250: null, 500: 1.75 }
+    navier_stokes:
+      #             M=50   M=100  M=250  M=500
+      superres_16: { 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
+      superres_32: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+      sparse_5:    { 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
+      sparse_1p5:  { 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+    # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgeStochasticInterpolantPosterior

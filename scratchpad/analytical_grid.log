@@ -1,0 +1,8 @@
+[angrid] START Wed Jul  1 12:01:31 PM CEST 2026 | seeds=[0,1,2,3,4] steps=[50 100 250 500]
+[angrid] SKIP (exists) paper_experiments/results/analytical/metrics/analytical__M50.csv
+[angrid] SKIP (exists) paper_experiments/results/analytical/metrics/analytical__M100.csv
+[angrid] RUN  M=250 12:01:31
+[angrid] OK   M=250 12:02:25
+[angrid] RUN  M=500 12:02:25
+[angrid] OK   M=500 12:03:36
+[angrid] ALL DONE Wed Jul  1 12:03:36 PM CEST 2026

@@ -18,15 +18,21 @@ likelihood_model:
   # SDA hyperparameters: SAME setup as the standalone SDA config
   # (configs/method/sda.yaml). gamma_sda = SDA's spectral factor in
   # Gamma_tau = R + gamma (sigma/mu)^2 H H^T (Eq. 15). Scalar OR a
-  # [scenario][num_sde_steps M] table with a `default:` key (resolved per run by
-  # resolve_scheduled_hparams; null cell -> default). Env SDA_GAMMA overrides.
+  # [case][scenario][num_sde_steps M] table with a `default:` key; scenario rows
+  # live under the case name (`navier_stokes:`), resolved per run by
+  # resolve_scheduled_hparams (missing case/scenario/M cell -> default). Env
+  # SDA_GAMMA overrides.
   gamma_sda:
     default: 0.01
-    #             M=50    M=100   M=250   M=500
-    superres_16: { 50: null, 100: null, 250: null, 500: null }
-    superres_32: { 50: null, 100: null, 250: null, 500: null }
-    sparse_5:    { 50: null, 100: null, 250: null, 500: null }
-    sparse_1p5:  { 50: null, 100: null, 250: null, 500: null }
+    navier_stokes:
+      #             M=50    M=100   M=250   M=500
+      superres_16: { 50: 0.001,  100: 0.0001, 250: 0.0001, 500: 0.0001 }
+      superres_32: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+      sparse_5:    { 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
+      sparse_1p5:  { 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+    # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgeFlowMatchingPosterior

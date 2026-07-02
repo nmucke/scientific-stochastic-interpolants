@@ -81,6 +81,7 @@ class SDALikelihood(nn.Module):
         self.anchor = "x0" if model_class == "si" else "zeros"
         self.interpolant = self.model.interpolation
         self._HHt: Optional[torch.Tensor] = None
+        self._HHt_eig: Optional[tuple[torch.Tensor, torch.Tensor]] = None
         # SDA's tunable spectral factor gamma in Gamma_tau = R + gamma (sigma/mu)^2 HH^T
         # (Rozet & Louppe Eq. 15; released-code default 1e-2).
         self.gamma_sda = float(gamma_sda)
@@ -104,6 +105,28 @@ class SDALikelihood(nn.Module):
             H = self.obs_operator.obs_matrix.to(device=ref.device, dtype=ref.dtype)
             self._HHt = H @ H.transpose(0, 1)
         return self._HHt
+
+    def _get_HHt_eig(
+        self, ref: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return the (cached) eigendecomposition ``H H^T = Q diag(lambda) Q^T``.
+
+        ``H H^T`` is symmetric PSD and time-independent, so its eigendecomposition
+        is computed ONCE. It lets ``Gamma_tau^{-1} = (sigma^2 I + rho H H^T)^{-1}``
+        -- in which only the scalar ``rho`` varies with ``tau`` -- be applied per
+        step as pure matmuls (``Q diag(1/(sigma^2 + rho lambda)) Q^T``), avoiding a
+        per-step ``torch.linalg.solve`` whose CUDA info-check synchronises the
+        stream every step (a severe stall on a shared GPU).
+        """
+        if (
+            self._HHt_eig is None
+            or self._HHt_eig[0].device != ref.device
+            or self._HHt_eig[0].dtype != ref.dtype
+        ):
+            HHt = self._get_HHt(ref)
+            eigvals, eigvecs = torch.linalg.eigh(HHt)
+            self._HHt_eig = (eigvals.detach(), eigvecs.detach())
+        return self._HHt_eig
 
     def _denoise(
         self,
@@ -168,18 +191,19 @@ class SDALikelihood(nn.Module):
             residual = observations - self.obs_operator(xhat1)  # [B, N_y]
 
             # Gamma_tau = sigma^2 I + gamma_sda (sigma/mu)^2 H H^T (SDA Eq. 15;
-            # rho already carries gamma_sda * (sigma_tau/beta)^2).
-            HHt = self._get_HHt(x_g)  # [N_y, N_y]
-            N_y = HHt.shape[0]
-            eye = torch.eye(N_y, device=HHt.device, dtype=HHt.dtype)
-            gamma = self.original_variance * eye + float(rho) * HHt
-            # Gamma is held fixed w.r.t. x (detached); the gradient flows only
-            # through the residual (xhat_1). Writing the quadratic form with the
-            # solve INSIDE the graph makes autograd return the correct
-            # grad = Gamma^{-1} (y - H xhat_1) (Gamma symmetric).
-            sol = torch.linalg.solve(
-                gamma.detach(), residual.transpose(0, 1)
-            ).transpose(0, 1)  # [B, N_y]
+            # rho already carries gamma_sda * (sigma_tau/beta)^2). Apply
+            # Gamma_tau^{-1} via the cached eigendecomposition H H^T = Q diag(l) Q^T:
+            #   Gamma^{-1} = Q diag(1/(sigma^2 + rho l)) Q^T,
+            # since only the scalar rho varies with tau. This is pure matmuls +
+            # elementwise (fully async) -- NO per-step torch.linalg.solve, whose
+            # CUDA info-check synchronises the stream every step and stalls badly
+            # on a shared GPU (unlike e.g. FlowDAS, which has no solve). Q, l are
+            # detached, so the gradient still flows linearly through the residual
+            # and grad = Gamma^{-1}(y - H xhat_1) is exact (Gamma symmetric PSD;
+            # denom = sigma^2 + rho l >= sigma^2 > 0, so the inverse is well posed).
+            eigvals, Q = self._get_HHt_eig(x_g)  # l [N_y], Q [N_y, N_y]
+            denom = self.original_variance + rho * eigvals  # [N_y]
+            sol = ((residual @ Q) / denom) @ Q.transpose(0, 1)  # [B, N_y] = Gamma^-1 r
             weighted = 0.5 * (residual * sol).sum(dim=1)  # [B] = 1/2 ||r||^2_{Gamma^-1}
 
             grad = torch.autograd.grad(outputs=weighted.sum(), inputs=x_g)[0]

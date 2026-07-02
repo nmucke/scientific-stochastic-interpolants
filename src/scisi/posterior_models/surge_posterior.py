@@ -173,8 +173,14 @@ class SurgePosteriorBase(BasePosterior):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
+        velocity: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Tweedie denoiser ``xhat_1 = E[x_1 | x_t]`` (subclass: FM or SI)."""
+        """Tweedie denoiser ``xhat_1 = E[x_1 | x_t]`` (subclass: FM or SI).
+
+        ``velocity``: optional network output ``model.drift(x, t, ...)`` already
+        computed by the caller at the SAME ``(x, t)``; when given, the denoiser
+        derives the score from it instead of re-running the network.
+        """
         raise NotImplementedError
 
     def _reward(
@@ -185,10 +191,13 @@ class SurgePosteriorBase(BasePosterior):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
+        velocity: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """True observation log-likelihood ``R = -1/(2 sigma^2) ||y - H xhat_1||^2``."""
         with torch.no_grad():
-            xhat1 = self._denoise(x, t, field_history, field_cond, pars_cond)
+            xhat1 = self._denoise(
+                x, t, field_history, field_cond, pars_cond, velocity=velocity
+            )
             residual = observations - self.obs_operator(xhat1)  # [E, N_y]
             return (-0.5 / self.variance) * (residual**2).sum(dim=1)  # [E]
 
@@ -323,8 +332,18 @@ class SurgePosteriorBase(BasePosterior):
             base, t, observations, field_history, field_cond, pars_cond, dt, prior_drift
         )
         if reward_k is None:
+            # The reward denoiser needs the network output at (x_k, t) -- exactly
+            # what ``prior_drift`` already holds. Reuse it (skipping one full
+            # network forward per step) whenever the denoiser's internal clamp
+            # leaves ``t`` unchanged, so the reused output is evaluated at the
+            # identical time; at the clamped endpoints fall back to a fresh eval.
+            t_f = float(t.reshape(-1)[0])
+            vel_reuse = (
+                prior_drift if MIN_TIME <= t_f <= 1.0 - MIN_TIME else None
+            )
             reward_k = self._reward(
-                base, t, observations, field_history, field_cond, pars_cond
+                base, t, observations, field_history, field_cond, pars_cond,
+                velocity=vel_reuse,
             )
 
         # g(t) = Sigma^{1/2}(t), the reverse-SDE diffusion coefficient (scalar per
@@ -436,8 +455,11 @@ class SurgePosteriorBase(BasePosterior):
         if not force and float(ess) >= self.ess_threshold * E:
             return base, field_history
 
-        # Systematic resampling (low-variance).
-        u0 = torch.rand(1, device=base.device) / E
+        # Systematic resampling (low-variance). u0 is drawn on the CPU generator
+        # (as it was when ``base`` lived on the host between steps) so seeded
+        # runs keep the identical resampling stream regardless of where the
+        # state now resides.
+        u0 = (torch.rand(1) / E).to(base.device)
         positions = u0 + torch.arange(E, device=base.device) / E
         cumsum = torch.cumsum(w, dim=0)
         cumsum[-1] = 1.0
@@ -489,6 +511,7 @@ class SurgeFlowMatchingPosterior(SurgePosteriorBase):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
+        velocity: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """FM Tweedie denoiser xhat_1 = (x + sigma^2 s) / beta (anchor a0 = 0)."""
         # Clamp t off the endpoints: beta = t -> 0 makes xhat_1 singular (the
@@ -497,7 +520,14 @@ class SurgeFlowMatchingPosterior(SurgePosteriorBase):
         t_grid = t.reshape(t.shape[0], *([1] * (x.dim() - 1))) if t.dim() < x.dim() else t
         beta = self.interpolation.beta(t_grid)
         sigma = self.interpolation.sigma(t_grid)
-        score = self.model.score(x, t, field_history, field_cond, pars_cond)
+        if velocity is not None:
+            # Same identity ``model.score`` applies to its own (redundant)
+            # network forward, on the caller's already-computed velocity.
+            score = self.interpolation.score_from_velocity(
+                x=x, v=velocity, t=t_grid, a0=torch.zeros_like(x)
+            )
+        else:
+            score = self.model.score(x, t, field_history, field_cond, pars_cond)
         return (x + sigma**2 * score) / beta
 
     def _lik_kwargs(self, x, t, field_history, field_cond, pars_cond, prior_drift) -> dict:
@@ -546,6 +576,7 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor],
         pars_cond: Optional[torch.Tensor],
+        velocity: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """SI Tweedie denoiser xhat_1 = (x + sigma^2 s - alpha x0) / beta."""
         t = torch.clamp(t, min=MIN_TIME, max=1.0 - MIN_TIME)
@@ -554,7 +585,11 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
         beta = self.interpolation.beta(t_grid)
         sigma = self.interpolation.sigma(t_grid)
         a0 = field_history[..., -1]  # SI anchor x0
-        v = self.model.drift(x, t, field_history, field_cond, pars_cond)
+        v = (
+            velocity
+            if velocity is not None
+            else self.model.drift(x, t, field_history, field_cond, pars_cond)
+        )
         score = self.interpolation.score_from_velocity(x=x, v=v, t=t_grid, a0=a0)
         return (x + sigma**2 * score - alpha * a0) / beta
 

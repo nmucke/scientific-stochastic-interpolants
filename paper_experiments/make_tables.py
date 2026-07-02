@@ -71,24 +71,31 @@ _OURS: tuple[Method, ...] = (
     Method.OURS_FM_ODE,
     Method.OURS_DM_SDE,
 )
-# Generative baselines, grouped: SI+SDE, then FM+ODE, then DM+SDE.
+# The two Ours likelihood-covariance modes (tidy ``variant`` column), rendered as
+# labelled sub-blocks in every method-row table.
+_OURS_VARIANT_BLOCKS: tuple[tuple[str, str], ...] = (
+    ("jacfree", "Ours -- Jacobian-free covariance"),
+    ("shared", "Ours -- shared inflated covariance"),
+)
+# Generative baselines (reduced lineup, 2026-07-01): FlowDAS (+SURGE), SDA
+# (+SURGE), D-Flow SGLD, FIG. Dropped: Guided FM (OT-ODE), standalone SURGE.
 _GENERATIVE_BASELINES: tuple[Method, ...] = (
     Method.FLOWDAS,
-    Method.GUIDED_FM_OTODE,
-    Method.D_FLOW_SGLD,
+    Method.SURGE_FLOWDAS,
     Method.SDA,
-    Method.SURGE,
+    Method.SURGE_SDA,
+    Method.D_FLOW_SGLD,
+    Method.GUIDED_FM_FIG,
 )
 _ANALYTICAL_BASELINES: tuple[Method, ...] = _GENERATIVE_BASELINES + (
     Method.ENKF,
     Method.PARTICLE_FILTER,
 )
+# Classical true-solver baselines for the field cases (NS): EnKF + particle filter
+# (LETKF / ensemble score filter were dropped from the reduced lineup).
 _FIELD_BASELINES: tuple[Method, ...] = _GENERATIVE_BASELINES + (
-    # Classical / true-solver baselines (EnSF is now a true-solver method too).
     Method.ENKF,
-    Method.LETKF,
     Method.PARTICLE_FILTER,
-    Method.ENSEMBLE_SCORE_FILTER,
 )
 
 # Map a method to the exact LaTeX row label (with \cite) used in results.tex.
@@ -102,8 +109,8 @@ METHOD_LATEX_LABEL: dict[Method, str] = {
     Method.D_FLOW_SGLD: r"D-Flow SGLD \cite{ben-hamu_d-flow_2024}",
     Method.SDA: r"SDA \cite{rozet_score-based_2023}",
     Method.SURGE: r"SURGE",
-    Method.SURGE_SDA: r"SURGE + SDA",
-    Method.SURGE_FLOWDAS: r"SURGE + FlowDAS",
+    Method.SURGE_SDA: r"SDA + SURGE",
+    Method.SURGE_FLOWDAS: r"FlowDAS + SURGE",
     Method.ENSEMBLE_SCORE_FILTER: r"Ensemble score filter \cite{bao_ensemble_2024}",
     Method.ENKF: r"EnKF \cite{evensen_data_2022}",
     Method.LETKF: r"LETKF \cite{hunt_efficient_2007}",
@@ -117,12 +124,23 @@ METHOD_LATEX_LABEL: dict[Method, str] = {
 
 
 def format_cell(value: float | None, std: float | None, *, fmt: str = "{:.3f}") -> str:
-    """Render one cell as ``mean`` or ``mean $\\pm$ std`` (or the missing dash)."""
-    if value is None:
+    """Render one cell as ``mean`` or ``mean $\\pm$ std`` (or the missing dash).
+
+    A very large magnitude (>= 1e4, e.g. a collapsed sampler like FIG whose KL
+    blows up) is rendered in compact scientific notation instead of the default
+    fixed-point ``fmt`` so the cell stays readable.
+    """
+    import math
+
+    if value is None or (isinstance(value, float) and math.isnan(value)):
         return MISSING_CELL
+
+    def _fmt(x: float) -> str:
+        return f"{x:.1e}" if abs(x) >= 1e4 else fmt.format(x)
+
     if std is None:
-        return fmt.format(value)
-    return f"{fmt.format(value)} $\\pm$ {fmt.format(std)}"
+        return _fmt(value)
+    return f"{_fmt(value)} $\\pm$ {_fmt(std)}"
 
 
 # --------------------------------------------------------------------------- #
@@ -142,16 +160,17 @@ class RecordIndex:
     """
 
     def __init__(self, records: list[ResultRecord]) -> None:
-        self._by_key: dict[tuple[str, str, str, str], list[ResultRecord]] = (
+        self._by_key: dict[tuple[str, str, str, str, str | None], list[ResultRecord]] = (
             defaultdict(list)
         )
         for r in records:
-            self._by_key[(r.case, r.method, r.scenario, r.metric)].append(r)
+            self._by_key[(r.case, r.method, r.scenario, r.metric, r.variant)].append(r)
 
     def get(
-        self, case: str, method: str, scenario: str, metric: str
+        self, case: str, method: str, scenario: str, metric: str,
+        variant: str | None = None,
     ) -> tuple[float | None, float | None]:
-        rows = self._by_key.get((case, method, scenario, metric))
+        rows = self._by_key.get((case, method, scenario, metric, variant))
         if not rows:
             return None, None
         if len(rows) == 1:
@@ -196,6 +215,11 @@ class TableSpec:
     n_ours: int
     columns: tuple[Column, ...]
     fmt: str = "{:.3f}"
+    # When set, the first ``n_ours`` methods are rendered ONCE PER variant block:
+    # each ``(variant, sub_header)`` pair emits a ``\multicolumn`` sub-header row
+    # followed by the ``n_ours`` Ours rows looked up at that ``variant`` (the two
+    # likelihood-covariance modes jacfree/shared). Empty -> plain single-mode rows.
+    ours_variant_blocks: tuple[tuple[str, str], ...] = ()
 
 
 # tab:analytical_results -- KL and sliced-W2 to the exact posterior.
@@ -204,6 +228,7 @@ SPEC_ANALYTICAL = TableSpec(
     case=Case.ANALYTICAL,
     methods=_OURS + _ANALYTICAL_BASELINES,
     n_ours=len(_OURS),
+    ours_variant_blocks=_OURS_VARIANT_BLOCKS,
     columns=(
         Column(Metric.KL_POINTS, Scenario.ANALYTICAL),
         Column(Metric.SLICED_W2, Scenario.ANALYTICAL),
@@ -216,6 +241,7 @@ SPEC_NS_ACCURACY = TableSpec(
     case=Case.NAVIER_STOKES,
     methods=_OURS + _FIELD_BASELINES,
     n_ours=len(_OURS),
+    ours_variant_blocks=_OURS_VARIANT_BLOCKS,
     columns=(
         Column(Metric.RMSE, Scenario.SUPERRES_32),
         Column(Metric.RMSE, Scenario.SPARSE_5),
@@ -234,6 +260,7 @@ SPEC_NS_CALIBRATION_COST = TableSpec(
     case=Case.NAVIER_STOKES,
     methods=_OURS + _FIELD_BASELINES,
     n_ours=len(_OURS),
+    ours_variant_blocks=_OURS_VARIANT_BLOCKS,
     columns=(
         Column(Metric.CRPS, Scenario.SUPERRES_32),
         Column(Metric.CRPS, Scenario.SPARSE_5),
@@ -256,6 +283,7 @@ SPEC_URBAN_ACCURACY = TableSpec(
     case=Case.URBAN,
     methods=_URBAN_METHODS,
     n_ours=len(_OURS),
+    ours_variant_blocks=_OURS_VARIANT_BLOCKS,
     columns=(
         Column(Metric.RMSE_VELOCITY, Scenario.SUPERRES_32),
         Column(Metric.RMSE_VELOCITY, Scenario.SPARSE_5),
@@ -270,6 +298,7 @@ SPEC_URBAN_CALIBRATION_COST = TableSpec(
     case=Case.URBAN,
     methods=_URBAN_METHODS,
     n_ours=len(_OURS),
+    ours_variant_blocks=_OURS_VARIANT_BLOCKS,
     columns=(
         Column(Metric.CRPS, Scenario.SUPERRES_32),
         Column(Metric.CRPS, Scenario.SPARSE_5),
@@ -295,20 +324,45 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
 # --------------------------------------------------------------------------- #
 
 
+def _row_cells(spec: TableSpec, index: RecordIndex, method: Method,
+               variant: str | None) -> str:
+    """The ``method & c1 & c2 ... \\`` line for one (method, variant)."""
+    cells = []
+    for col in spec.columns:
+        value, std = index.get(
+            spec.case.value, method.value, col.scenario.value, col.metric.value,
+            variant,
+        )
+        cells.append(format_cell(value, std, fmt=spec.fmt))
+    return f"{METHOD_LATEX_LABEL[method]} & " + " & ".join(cells) + r" \\"
+
+
 def render_table_body(spec: TableSpec, index: RecordIndex) -> str:
     """Render the tabular body (rows + the ours/baselines \\midrule) for a spec."""
     lines: list[str] = []
-    for i, method in enumerate(spec.methods):
-        if i == spec.n_ours:
-            lines.append(r"\midrule")
-        label = METHOD_LATEX_LABEL[method]
-        cells = []
-        for col in spec.columns:
-            value, std = index.get(
-                spec.case.value, method.value, col.scenario.value, col.metric.value
+    ours = spec.methods[: spec.n_ours]
+    baselines = spec.methods[spec.n_ours:]
+    span = len(spec.columns) + 1  # method column + data columns
+
+    if spec.ours_variant_blocks:
+        # The Ours samplers rendered once per covariance mode, each as a labelled
+        # sub-block (both modes looked up via the tidy ``variant`` column).
+        for b, (variant, sub_header) in enumerate(spec.ours_variant_blocks):
+            if b > 0:
+                lines.append(r"\midrule")
+            lines.append(
+                rf"\multicolumn{{{span}}}{{l}}{{\textit{{{sub_header}}}}} \\"
             )
-            cells.append(format_cell(value, std, fmt=spec.fmt))
-        lines.append(f"{label} & " + " & ".join(cells) + r" \\")
+            for method in ours:
+                lines.append(_row_cells(spec, index, method, variant))
+    else:
+        for method in ours:
+            lines.append(_row_cells(spec, index, method, None))
+
+    if baselines:
+        lines.append(r"\midrule")
+        for method in baselines:
+            lines.append(_row_cells(spec, index, method, None))
     return "\n".join(lines)
 
 

@@ -209,9 +209,10 @@ class InterpolantGaussianLikelihood(nn.Module):
         else:
             self.interpolant = self.model.interpolation
 
-        # Cached H^T R^{-1} H (precomputed once; H, R time-independent).
-        self._HtRinvH: Optional[torch.Tensor] = None
-        self._obs_matrix: Optional[torch.Tensor] = None
+        # Cached H H^T and adjoint basis columns (H, R time-independent).
+        self._HHt: Optional[torch.Tensor] = None
+        self._cols: Optional[torch.Tensor] = None
+        self._cols_key: Optional[tuple] = None
 
     def forward(
         self, x: torch.Tensor, observations: torch.Tensor, variance: torch.Tensor
@@ -227,16 +228,36 @@ class InterpolantGaussianLikelihood(nn.Module):
         H = self.obs_operator.obs_matrix.to(device=ref.device, dtype=ref.dtype)
         return H
 
-    def _get_HtRinvH(self, ref: torch.Tensor) -> torch.Tensor:
-        """Return ``H^T R^{-1} H`` (cached), with ``R = sigma**2 I``."""
+    def _get_HHt(self, ref: torch.Tensor) -> torch.Tensor:
+        """Return ``H H^T`` (cached), shape ``[N_y, N_y]``.
+
+        Time-independent, so it is formed ONCE instead of re-running the
+        ``[N_y, N_u] @ [N_u, N_y]`` matmul on every pseudo-time step.
+        """
         if (
-            self._HtRinvH is None
-            or self._HtRinvH.device != ref.device
-            or self._HtRinvH.dtype != ref.dtype
+            self._HHt is None
+            or self._HHt.device != ref.device
+            or self._HHt.dtype != ref.dtype
         ):
             H = self._get_obs_matrix(ref)
-            self._HtRinvH = (H.transpose(0, 1) @ H) / self.original_variance
-        return self._HtRinvH
+            self._HHt = H @ H.transpose(0, 1)
+        return self._HHt
+
+    def _get_adjoint_basis(self, ref: torch.Tensor) -> torch.Tensor:
+        """Return the grid tensors ``H^T e_j`` for all obs rows, ``[N_y, C, H, W]``.
+
+        Time-independent (one grid tensor per observation basis vector), so it
+        is built ONCE per device/dtype instead of allocating an ``N_y x N_u``
+        block on every ``H Sigma_s H^T`` build. Keyed on the identity of
+        ``obs_matrix`` so ``load_mask`` invalidates it.
+        """
+        H = self._get_obs_matrix(ref)
+        key = (id(self.obs_operator.obs_matrix), H.device, H.dtype)
+        if self._cols is None or self._cols_key != key:
+            eye_y = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
+            self._cols = self.obs_operator.transpose(eye_y)
+            self._cols_key = key
+        return self._cols
 
     # ------------------------------------------------------------------
     # Observation interpolant ybar_tau
@@ -308,9 +329,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         H = self._get_obs_matrix(x)  # [N_y, N_u]
         N_y = H.shape[0]
         b = x.shape[0]
-        eye_y = torch.eye(N_y, device=H.device, dtype=H.dtype)
-        # H^T e_j on the grid, one per column.
-        cols = self.obs_operator.transpose(eye_y)  # [N_y, C, H, W]
+        # H^T e_j on the grid, one per column (cached; time-independent).
+        cols = self._get_adjoint_basis(x)  # [N_y, C, H, W]
 
         HSHt = torch.empty(b, N_y, N_y, device=H.device, dtype=H.dtype)
         for j in range(N_y):
@@ -333,16 +353,17 @@ class InterpolantGaussianLikelihood(nn.Module):
         """
         H = self._get_obs_matrix(ref)  # [N_y, N_u]
         N_y = H.shape[0]
-        cols = self.obs_operator.transpose(
-            torch.eye(N_y, device=H.device, dtype=H.dtype)
-        )  # [N_y, C, H, W]
+        cols = self._get_adjoint_basis(ref)  # [N_y, C, H, W]
 
         HSHt = torch.empty(N_y, N_y, device=H.device, dtype=H.dtype)
         chunk = max(1, int(self.shared_sigma_chunk))
         for start in range(0, N_y, chunk):
             block = cols[start : start + chunk]  # [k, C, H, W]
             # obs_operator(Sigma_s block) is [k, N_y]; its row i is the
-            # (start+i)-th COLUMN of H Sigma_s H^T.
+            # (start+i)-th COLUMN of H Sigma_s H^T. All full chunks share one
+            # prebuilt JVP graph (same tangent batch); a trailing partial chunk
+            # rebuilds once at its own size, keeping every network call at the
+            # exact batch size of the unbatched-JVP reference (bitwise equal).
             HSHt[:, start : start + block.shape[0]] = self.obs_operator(
                 sigma_s_apply(block)
             ).transpose(0, 1)
@@ -391,12 +412,14 @@ class InterpolantGaussianLikelihood(nn.Module):
         beta_sq_R = float((beta.reshape(-1)[0] ** 2)) * self.original_variance
         rho_s = float(rho.reshape(-1)[0])
         sigma_tau_sq_s = float(sigma_tau_sq.reshape(-1)[0])
-        eye = torch.eye(N_y, device=H.device, dtype=H.dtype)
 
         if sigma_s_apply is None:
             # Isotropic Sigma_s = rho I: Sigma_bar = beta^2 R + rho H H^T,
-            # shared across the ensemble.
-            Sigma_bar = beta_sq_R * eye + rho_s * (H @ H.transpose(0, 1))
+            # shared across the ensemble. H H^T is cached (time-independent);
+            # the beta^2 R term is added on the diagonal in place of forming
+            # beta^2 R * I explicitly (addition commutes, identical result).
+            Sigma_bar = rho_s * self._get_HHt(x)
+            Sigma_bar.diagonal().add_(beta_sq_R)
             sol = torch.linalg.solve(
                 Sigma_bar, residual_obs.transpose(0, 1)
             ).transpose(0, 1)  # [B, N_y]
@@ -409,7 +432,8 @@ class InterpolantGaussianLikelihood(nn.Module):
             # Shared Sigma_s (inflated_shared): one Sigma_bar for the whole
             # ensemble, factorised once and solved for every member's RHS.
             HSHt = self._build_HSHt_shared(x, sigma_s_apply)  # [N_y, N_y]
-            Sigma_bar = beta_sq_R * eye + HSHt  # [N_y, N_y]
+            Sigma_bar = HSHt  # [N_y, N_y] (fresh tensor; safe to modify)
+            Sigma_bar.diagonal().add_(beta_sq_R)
             sol = torch.linalg.solve(
                 Sigma_bar, residual_obs.transpose(0, 1)
             ).transpose(0, 1)  # [B, N_y]
@@ -419,7 +443,8 @@ class InterpolantGaussianLikelihood(nn.Module):
 
         # Full Sigma_s: Sigma_bar = beta^2 R + H Sigma_s H^T, per member.
         HSHt = self._build_HSHt(x, sigma_s_apply)  # [B, N_y, N_y]
-        Sigma_bar = beta_sq_R * eye.unsqueeze(0) + HSHt  # [B, N_y, N_y]
+        Sigma_bar = HSHt  # fresh tensor; add beta^2 R on the diagonals in place
+        Sigma_bar.diagonal(dim1=-2, dim2=-1).add_(beta_sq_R)
         sol = torch.linalg.solve(
             Sigma_bar, residual_obs.unsqueeze(-1)
         ).squeeze(-1)  # [B, N_y]
@@ -440,11 +465,15 @@ class InterpolantGaussianLikelihood(nn.Module):
         the SAME ``Sigma_s`` as the covariance solve: full via ``sigma_s_apply``
         for ``dps_full``; the isotropic branch (``rho I``) is kept for symmetry
         but is unused since only ``dps_full`` applies the gain.
+
+        ``H^T R^{-1} H`` is applied as ``H^T (H .) / sigma^2`` through the
+        observation operator rather than materialising the dense
+        ``[N_u, N_u]`` matrix (multi-GB at full scale).
         """
-        HtRinvH = self._get_HtRinvH(sbar)  # [N_u, N_u]
-        b = sbar.shape[0]
-        flat = sbar.reshape(b, -1)
-        corr = (flat @ HtRinvH.transpose(0, 1)).reshape_as(sbar)  # (H^T R^{-1} H) Sbar
+        corr = (
+            self.obs_operator.transpose(self.obs_operator(sbar))
+            / self.original_variance
+        )  # (H^T R^{-1} H) Sbar
 
         inv_beta_sq = 1.0 / (beta**2)
         if sigma_s_apply is None:
@@ -634,6 +663,18 @@ class InterpolantGaussianLikelihood(nn.Module):
         The Jacobian term is computed via a single ``torch.autograd`` JVP and
         detached from the outer graph, so no autograd flows through the network
         into the posterior drift.
+
+        EFFICIENCY. The JVP uses the standard double-backward construction
+        (identical to ``torch.autograd.functional.jvp``): with ``y = f(x)``,
+        ``u = 0``-cotangent requiring grad, ``w = (dy/dx)^T u`` built with
+        ``create_graph=True``, the product ``J v`` is ``d(w . v)/du``. The
+        forward pass and the first backward (building ``w``) depend only on the
+        evaluation point ``x`` -- NOT on the tangent ``v`` -- so they are done
+        ONCE per tangent-batch size and reused for every subsequent tangent
+        (each ``H Sigma_s H^T`` column / chunk, the mean-Jacobian front factor,
+        the gain). ``functional.jvp`` redoes all three stages per call; hoisting
+        the first two cuts the network passes per JVP from three to one with
+        bit-identical operations.
         """
         # Schedule math uses the rank-expanded ``t``; the network is fed the
         # ``[B, 1]`` ``t_net`` (defaults to ``t`` when not supplied).
@@ -659,29 +700,52 @@ class InterpolantGaussianLikelihood(nn.Module):
                 f"cannot broadcast batch {tensor.shape[0]} to {k}."
             )
 
+        # Reusable double-backward JVP. ``graph_state`` holds the (u, w) pair of
+        # the current tangent-batch size k; requesting a different k frees the
+        # old graph FIRST (so two network graphs never coexist) and rebuilds.
+        # The closure -- and with it the retained graph -- dies with the
+        # enclosing ``score()`` call, so nothing outlives the step.
+        graph_state: Dict[str, Any] = {"k": None, "u": None, "w": None}
+
+        if self.source_type == "si":
+            net_fn = self.model.drift  # J_b @ v, with b_theta = model.drift
+        else:
+            net_fn = self.model.score  # grad_x s @ v, with s = model.score
+
+        def _build_graph(k: int) -> None:
+            xk = _bcast(x, k).detach().requires_grad_(True)
+            tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
+            fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
+            with _math_sdpa(), torch.enable_grad():
+                y = net_fn(xk, tk, fhk, fck, pck)
+                u = torch.zeros_like(y, requires_grad=True)
+                (w,) = torch.autograd.grad(
+                    y, xk, grad_outputs=u, create_graph=True
+                )
+            graph_state.update(k=k, u=u, w=w)
+
+        def jvp_fn(v: torch.Tensor) -> torch.Tensor:
+            # State and conditioning are broadcast to v's batch (shared-state
+            # path); tangents of equal batch reuse the prebuilt graph.
+            k = v.shape[0]
+            if graph_state["k"] != k:
+                graph_state.update(k=None, u=None, w=None)  # free old graph
+                _build_graph(k)
+            with _math_sdpa(), torch.enable_grad():
+                (jv,) = torch.autograd.grad(
+                    graph_state["w"],
+                    graph_state["u"],
+                    grad_outputs=v,
+                    retain_graph=True,
+                )
+            return jv.detach()
+
         if self.source_type == "si":
             gamma = self.interpolant.gamma(t)
             gamma_diff = self.interpolant.gamma_diff(t)
             A = t * gamma * (beta_diff * gamma - beta * gamma_diff)
             A = 1.0 / A
             jac_scale = gamma**4 * t**2 * A
-
-            def jvp_fn(v: torch.Tensor) -> torch.Tensor:
-                # J_b @ v, with b_theta = model.drift(x, ...). State and
-                # conditioning are broadcast to v's batch (shared-state path).
-                k = v.shape[0]
-                xk = _bcast(x, k)
-                tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
-                fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
-
-                def fn(inp: torch.Tensor) -> torch.Tensor:
-                    return self.model.drift(inp, tk, fhk, fck, pck)
-
-                with _math_sdpa():
-                    _, jv = torch.autograd.functional.jvp(
-                        fn, (xk,), (v,), create_graph=False
-                    )
-                return jv.detach()
 
             def sigma_s_apply(v: torch.Tensor) -> torch.Tensor:
                 jac_term = jac_scale * (beta * jvp_fn(v) - beta_diff * v)
@@ -693,24 +757,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         alpha = self.interpolant.alpha(t)
         jac_scale = alpha**4
 
-        def jvp_fn_fm(v: torch.Tensor) -> torch.Tensor:
-            # grad_x s @ v with s = model.score(x, ...).
-            k = v.shape[0]
-            xk = _bcast(x, k)
-            tk, fhk = _bcast(t_net, k), _bcast(field_history, k)
-            fck, pck = _bcast(field_cond, k), _bcast(pars_cond, k)
-
-            def fn(inp: torch.Tensor) -> torch.Tensor:
-                return self.model.score(inp, tk, fhk, fck, pck)
-
-            with _math_sdpa():
-                _, jv = torch.autograd.functional.jvp(
-                    fn, (xk,), (v,), create_graph=False
-                )
-            return jv.detach()
-
         def sigma_s_apply_fm(v: torch.Tensor) -> torch.Tensor:
-            return rho * v + jac_scale * jvp_fn_fm(v)
+            return rho * v + jac_scale * jvp_fn(v)
 
         return sigma_s_apply_fm
 

@@ -134,9 +134,19 @@ class FlowMatchingPosterior(BasePosterior):
         apply_guidance = float(t.reshape(-1)[0]) >= MIN_TIME
 
         # FM score s_tau (Eq. fm_score) is needed for the SDE lift and for the
-        # FM source moments mu_s = -alpha^2 s in the guidance correction.
+        # FM source moments mu_s = -alpha^2 s in the guidance correction. It is
+        # recovered from the velocity ALREADY computed above via the shared
+        # velocity->score identity (exactly what ``model.score`` does internally,
+        # minus its redundant second UNet forward at the same ``(x, t)``).
         if (not self.is_ode) or apply_guidance:
-            score = self.model.score(base, t, field_history, field_cond, pars_cond)
+            t_expanded = (
+                t.reshape(t.shape[0], *([1] * (base.dim() - 1)))
+                if t.dim() < base.dim()
+                else t
+            )
+            score = self.model.interpolation.score_from_velocity(
+                x=base, v=velocity, t=t_expanded, a0=torch.zeros_like(base)
+            )
         else:
             score = None
 

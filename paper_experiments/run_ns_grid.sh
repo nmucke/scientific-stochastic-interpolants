@@ -58,7 +58,7 @@ else SCEN_ARR=("16^2->128^2" "32^2->128^2" "sparse 5%" "sparse 1.5625%"); fi
 GRPS="${GRPS:-ours_jacfree ours_shared baselines classical}"
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
-BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD"]'
+BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD","Guided FM (FIG)"]'
 CLASSICAL='["EnKF","Particle filter"]'
 # -----------------------------------------------------------------------------
 

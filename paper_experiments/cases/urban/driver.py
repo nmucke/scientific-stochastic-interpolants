@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 # REDUCED paper lineup (2026-07-01), generative-only (no true solver -> no
 # EnKF/PF). The two "Ours" likelihood-covariance modes (jacfree/shared) are the
 # same three samplers under two ``likelihood_mode`` settings, tagged apart by the
-# tidy ``variant`` column. Dropped from the earlier lineup: Guided FM (FIG),
-# Guided FM (OT-ODE), standalone SURGE.
+# tidy ``variant`` column. Dropped from the earlier lineup: Guided FM (OT-ODE),
+# standalone SURGE.
 URBAN_METHODS: tuple[Method, ...] = (
     # Ours (unified family) -- run twice (jacfree + shared) by the master script.
     Method.OURS_SI_SDE,
@@ -71,6 +71,7 @@ URBAN_METHODS: tuple[Method, ...] = (
     Method.SURGE_SDA,  # SDA + SURGE
     # Flow matching + ODE.
     Method.D_FLOW_SGLD,
+    Method.GUIDED_FM_FIG,  # FIG measurement-interpolant corrector
 )
 
 # The three "Ours" samplers carry a ``variant`` tag (their likelihood-covariance
@@ -115,6 +116,7 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.D_FLOW_SGLD: "dflow_sgld",
     Method.SDA: "sda",
     Method.SURGE_SDA: "surge_sda",
+    Method.GUIDED_FM_FIG: "guided_fm_fig",
 }
 
 # Maps a Scenario to its scenario-config name under configs/scenario/.
@@ -291,9 +293,14 @@ class UrbanRunner(ExperimentRunner):
             likelihood_ensemble_size=extra["likelihood_ensemble_size"],
             likelihood_mode=self._cfg_get("likelihood_mode", None),
             # num_steps (M) is passed so D-Flow SGLD maps M -> num_optim_steps
-            # (its ODE rollout is fixed at ode_steps=6). scenario_key is left unset
-            # (as before) so the other baselines keep their default guidance scales
-            # on urban rather than picking up the NS-tuned per-scenario cells.
+            # (its ODE rollout is fixed at ode_steps=6). case_key gates the
+            # per-case [case][scenario][M] tables: with case_key="urban" and no
+            # `urban:` block in any config yet, every baseline resolves to the
+            # table `default` (NOT the NS-tuned cells), so urban keeps its default
+            # guidance scales until its `urban:` blocks are filled. scenario_key is
+            # now safe to pass (symmetric with NS, ready for urban tuning).
+            case_key=self.case.value,
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario],
             num_steps=ctx.num_steps,
         )
 

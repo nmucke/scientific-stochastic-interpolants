@@ -325,11 +325,14 @@ class GuidanceGaussianLikelihood(nn.Module):
         _OT_CHUNK = 8  # members per backward pass; lower if still OOM
         B = x.shape[0]
 
-        # Build the shared preconditioner M once (independent of x).
+        # Build the shared preconditioner M once (independent of x) and LU-
+        # factorise it once; the per-chunk solves below reuse the factors
+        # (``linalg.solve`` = ``lu_factor`` + ``lu_solve``, so this is the same
+        # computation done once instead of once per chunk).
         HHt = self._get_HHt(x)  # [N_y, N_y]
-        N_y = HHt.shape[0]
-        eye = torch.eye(N_y, device=HHt.device, dtype=HHt.dtype)
-        M = r2_scalar * HHt + self.obs_variance * eye
+        M = r2_scalar * HHt
+        M.diagonal().add_(self.obs_variance)
+        M_lu, M_piv = torch.linalg.lu_factor(M)
 
         grad_chunks: list[torch.Tensor] = []
         residual_chunks: list[torch.Tensor] = []
@@ -354,9 +357,9 @@ class GuidanceGaussianLikelihood(nn.Module):
                 )
                 xhat1_chunk = x_chunk + (1.0 - tg_chunk) * vel_chunk
                 res_chunk = obs_chunk - self.obs_operator(xhat1_chunk)  # [n, N_y]
-                # M is held fixed (detached); gradient flows only through residual.
-                sol_chunk = torch.linalg.solve(
-                    M.detach(), res_chunk.transpose(0, 1)
+                # M is held fixed (no grad); gradient flows only through residual.
+                sol_chunk = torch.linalg.lu_solve(
+                    M_lu, M_piv, res_chunk.transpose(0, 1)
                 ).transpose(0, 1)  # [n, N_y]
                 quad_chunk = 0.5 * (res_chunk * sol_chunk).sum(dim=1)  # [n]
                 g_chunk = torch.autograd.grad(
@@ -563,17 +566,16 @@ class FIGGaussianLikelihood(nn.Module):
             for _ in range(max(self.guidance_steps, 1)):
                 x_g = x_next.detach().requires_grad_(True)
                 residual = y_t - self.obs_operator(x_g)
-                # FIG differentiates the residual NORM (not the squared,
-                # noise-scaled log-likelihood) -> intrinsically bounded.
-                norm = torch.linalg.norm(residual.reshape(residual.shape[0], -1), dim=1)
-                grad = torch.autograd.grad(outputs=norm.sum(), inputs=x_g)[0]
-                # FIX 1a: cap the per-iteration move magnitude at the residual
-                # norm so a single inner step lands at most ON y_t (no overshoot
-                # /collapse). grad is the unit residual direction, so the move is
-                # eff_step * grad with eff_step = min(step, ||residual||).
-                res_norm = norm.reshape(-1, *([1] * (grad.dim() - 1)))  # [B,1,..]
-                eff_step = torch.minimum(step, res_norm)
-                x_next = (x_g - eff_step * grad).detach()
+                # FIG differentiates the GLOBAL residual NORM -- a single scalar
+                # over the WHOLE batch, exactly as FIG_flow/sampler.py:
+                # ``norm = torch.linalg.norm(yt - H(x_next))`` (no per-sample
+                # reduction). H is linear, so grad is the residual-direction
+                # gradient (no network Jacobian) and is intrinsically bounded.
+                norm = torch.linalg.norm(residual)
+                grad = torch.autograd.grad(outputs=norm, inputs=x_g)[0]
+                # Official FIG corrector step (paper Eq. 10 / sampler.py):
+                # x_next -= c * (1 - t) / t * grad. No cap -- faithful.
+                x_next = (x_g - step * grad).detach()
 
         # Total FIG displacement on the post-flow state.
         delta = x_next - x_next_init

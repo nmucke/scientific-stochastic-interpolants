@@ -1,25 +1,87 @@
 # FIG baseline (yan_fig_2025): "Flow with Interpolant Guidance for Linear Inverse
 # Problems" (Yan, Zhang, Meng & Zhao, ICLR 2025). Faithful re-implementation of
-# the official FIG_flow/sampler.py corrector: a guided probability-flow ODE that,
-# after each prior Euler flow step, pulls the proposed state toward the
-# measurement interpolant y_t = t_next * y by k gradient-descent corrections with
-# step size c * (1 - t) / t (paper Algorithm 1 / Eqs. 9-10). Shares the trained
-# FM prior; routed through FlowMatchingPosterior with stepper=ode (g=0).
+# the official FIG_flow/sampler.py ``FIG.update`` corrector: a guided
+# probability-flow ODE that, after each prior Euler flow step, pulls the proposed
+# state toward the measurement interpolant y_t = t_next * y by k gradient-descent
+# corrections with step size c * (1 - t) / t (paper Algorithm 1 / Eqs. 9-10),
+# differentiating the GLOBAL residual norm ||y_t - H x_next|| (no cap). Shares the
+# trained FM prior; routed through FlowMatchingPosterior with stepper=ode (g=0).
 #
-# Distinct from the legacy ``guided_fm`` baseline (GuidanceGaussianLikelihood),
-# which is a one-step DPS-style guidance, NOT FIG's measurement interpolant.
+# NOTE ON THE POSTERIOR WEIGHT: the FM-ODE posterior generically applies
+# b_post = b_prior + w_tau * guidance with w_tau = a_tau = velocity_score_coeff(t).
+# FIG has NO such weight, so FIGGaussianLikelihood pre-divides its corrector
+# displacement by exactly a_tau * dt (guidance = Delta / (a_tau * dt)); the two
+# cancel and the net per-step correction is FIG's raw displacement -- matching the
+# paper, independent of the FM posterior's schedule.
 name: Guided FM (FIG)
 stepper: ode
 diffusion_term: null
 
 likelihood_model:
   _target_: scisi.likelihood_models.guidance.FIGGaussianLikelihood
-  # FIG hyper-parameters. LOCKED from the traj1/sparse-5% sweep (vs the E=1000
-  # EnKF posterior): k=1 (more inner steps hurt: k=1 >> k=2,4), c=80 (best RMSE
-  # 0.515 / KL 16.0; c sweep 40->80->160 gave RMSE 0.525/0.515/0.532), w=0.
-  guidance_steps: 1     # FIG's k -- inner corrector iterations per flow step
-  guidance_scale: 80.0  # FIG's c -- corrector step-size scale
-  interpolant_noise: 0.0  # FIG's w -- noise weight in the measurement interpolant
+
+  # ---------------------------------------------------------------------------
+  # FIXED (not tuned). Paper sets w = 0 for EVERY linear-inverse task
+  # (super-resolution, inpainting, and both deblurs; configs/algo/fig.py). The
+  # noise term in the measurement interpolant is an optional stochastic-
+  # interpolant feature FIG never enables for these deterministic operators, so
+  # it stays a hard 0 -- it is not a knob.
+  # ---------------------------------------------------------------------------
+  interpolant_noise: 0.0     # FIG's w
+
+  # ---------------------------------------------------------------------------
+  # Per-cell tables (same schema as flowdas.yaml): a hyperparameter may be a
+  # scalar OR a [case][scenario][num_steps M] table marked by a `default:` key,
+  # with the scenario rows nested under the case name (`navier_stokes:`); the
+  # pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
+  # (case_key, scenario_key, num_steps). A missing case / scenario / M cell falls
+  # back to `default` -- so urban / analytical use `default` until an `urban:`
+  # block is added.
+  #
+  # WHICH KNOBS, AND WHY:
+  #   k = guidance_steps -- STRUCTURAL, set from the paper by task type, NOT an
+  #     RMSE sweep. FIG assigns k by observation operator (k=1 super-resolution,
+  #     k=2 inpainting; k=14/25 for the deblurs). It does not depend on M, so
+  #     each scenario row is constant across the M columns. Our super-resolution
+  #     scenarios map to FIG SR (k=1); our sparse random-subsampling scenarios
+  #     map to FIG inpainting (k=2).
+  #   c = guidance_scale -- the primary NUMERICAL knob, TUNED per cell (paper
+  #     c in {10, 20, 25}; sensitive to both task and step count M).
+  #
+  # ALL 16 cells below are the sweep WINNERS (min RMSE) from run_ns_fig_sweep_full.sh
+  # (E=8, 1 traj, 2 assim steps, KL off). Findings vs the paper analogy:
+  #   * super-res: k=1 confirmed best; the best c DECREASES with M (M=50 -> ~20,
+  #     M>=250 -> ~5), consistent with more integration steps needing a smaller
+  #     per-step corrector. (superres_16 stays higher, c~20, as it is the harder,
+  #     more ill-posed operator.)
+  #   * sparse: k=3 beats k=1 beats k=2 uniformly -- the paper's inpainting k=2 is
+  #     the WORST here -- with c=10 flat across M.
+  # The old locked c=80 (fit to the capped/per-sample corrector) is the worst in
+  # every row after the faithfulness fix, as expected. NOTE: tuned at E=8/1 traj;
+  # re-validate the headline cells at E=64 before the final table.
+  guidance_steps:            # FIG's k -- inner corrector iterations per flow step
+    default: 1
+    navier_stokes:
+      #             M=50   M=100  M=250  M=500
+      superres_16: { 50: 1, 100: 1, 250: 1, 500: 1 }
+      superres_32: { 50: 1, 100: 1, 250: 1, 500: 1 }
+      sparse_5:    { 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_1p5:  { 50: 3, 100: 3, 250: 3, 500: 3 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 1, 100: 1, 250: 1, 500: 1 }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+  guidance_scale:            # FIG's c -- corrector step-size scale
+    default: 10.0
+    navier_stokes:
+      #             M=50     M=100    M=250   M=500
+      superres_16: { 50: 20.0, 100: 20.0, 250: 20.0, 500: 10.0 }
+      superres_32: { 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
+      sparse_5:    { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+      sparse_1p5:  { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
+    # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:
   _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

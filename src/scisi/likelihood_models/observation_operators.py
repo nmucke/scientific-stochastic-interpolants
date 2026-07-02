@@ -323,12 +323,43 @@ class LinearObservationOperator(nn.Module):
             self._obs_matrix_cache = cache
         return cache["matrix"]
 
+    def _selection_index_on(self, ref: torch.Tensor) -> Optional[torch.Tensor]:
+        """Flat DOF index per observation row for pure-selection operators.
+
+        For ``grid``/``random`` operators row ``j`` of ``obs_matrix`` is the
+        single 1.0 at ``obs_indices[j]`` (rows are built in ascending-index
+        order, and ``load_mask`` rebuilds them the same way), so ``H @ x`` is a
+        gather and ``H^T @ y`` a scatter -- bitwise identical to the dense
+        matmul (the dropped terms are exact ``0.0 * x`` products) at a tiny
+        fraction of its cost. Returns ``None`` for the block-average operator,
+        which keeps the dense path. Cached per device, keyed on the identity of
+        ``obs_indices`` so ``load_mask`` invalidates it.
+        """
+        if self.type not in ("grid", "random"):
+            return None
+        cache = getattr(self, "_sel_idx_cache", None)
+        src = self.obs_indices
+        if (
+            cache is None
+            or cache["src_id"] != id(src)
+            or cache["idx"].device != ref.device
+        ):
+            idx = src.reshape(-1).to(dtype=torch.long)
+            # One-time sanity check of the row <-> index correspondence.
+            assert idx.numel() == self.num_obs
+            cache = {"src_id": id(src), "idx": idx.to(ref.device)}
+            self._sel_idx_cache = cache
+        return cache["idx"]
+
     def forward(
         self,
         x: torch.Tensor,
     ) -> torch.Tensor:
         """
         Forward pass: apply ``H`` (``H @ x``).
+
+        Selection operators (``grid``/``random``) use a gather instead of the
+        dense matmul (identical result, see :meth:`_selection_index_on`).
 
         Args:
             x: Input tensor. [B, C, H, W]
@@ -338,6 +369,10 @@ class LinearObservationOperator(nn.Module):
         """
 
         b = x.shape[0]
+
+        idx = self._selection_index_on(x)
+        if idx is not None:
+            return x.reshape(b, -1).index_select(1, idx)
 
         return x.reshape(b, -1) @ self._matrix_on(x).T
 
@@ -349,7 +384,8 @@ class LinearObservationOperator(nn.Module):
         Adjoint pass: apply ``H^T`` (``H^T @ y``).
 
         For selection operators this scatters observed values back to their grid
-        locations; for the block-average super-resolution operator it spreads
+        locations (done directly via ``index_copy``; identical to the dense
+        matmul); for the block-average super-resolution operator it spreads
         each low-res cell value equally over its ``factor x factor`` block with
         the ``1 / factor**2`` weighting, so that ``<H x, y> == <x, H^T y>``.
 
@@ -361,6 +397,11 @@ class LinearObservationOperator(nn.Module):
         """
 
         b = y.shape[0]
+
+        idx = self._selection_index_on(y)
+        if idx is not None:
+            out = y.new_zeros(b, self.num_dofs).index_copy(1, idx, y)
+            return out.view(b, self.C, self.H, self.W)
 
         out = y @ self._matrix_on(y)
 

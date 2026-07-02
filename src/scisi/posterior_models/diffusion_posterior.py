@@ -64,19 +64,21 @@ class DiffusionPosterior(BasePosterior):
         # Fresh grad-enabled leaf (not an in-place mutation of the caller's tensor,
         # which can corrupt the autoregressive feedback / fail on a non-leaf base).
         base = base.detach().requires_grad_(True)
-        # Compute the drift
+        # Prior drift (one U-Net forward). NOTE: we do NOT also compute
+        # ``model.score`` / ``_get_velocity_from_score`` here -- that was a second,
+        # redundant full U-Net forward whose result was passed as ``drift=`` and
+        # then ignored by both consumers of this posterior (SDALikelihood and
+        # DPSGaussianLikelihood recompute their own denoiser). Dropping it removes
+        # one of the three forwards per step (~30% fewer net evals) with no change
+        # to the output. Guidance likelihoods that actually need the prior velocity
+        # run on the FM/SI posteriors, not here.
         drift = self.model.drift(base, t, field_history, field_cond, pars_cond).detach()
 
-        score = self.model.score(base, t, field_history, field_cond, pars_cond)
-        velocity = self.model._get_velocity_from_score(base, t, score)
-
-        # Compute the likelihood score
-        # The DPS likelihood returns (guidance_score, log_likelihood); unpack it.
+        # Compute the likelihood (guidance) score. Returns (guidance, log_lik).
         likelihood_out = self.likelihood_model.score(
             observations=observations,
             x=base,
             t=t,
-            drift=velocity,
             field_history=field_history,
             field_cond=field_cond,
             pars_cond=pars_cond,

@@ -62,6 +62,7 @@ NS_METHODS: tuple[Method, ...] = (
     Method.SURGE_SDA,  # SDA + SURGE
     # Flow matching + ODE.
     Method.D_FLOW_SGLD,
+    Method.GUIDED_FM_FIG,  # FIG measurement-interpolant corrector
     # Classical (ground-truth EnKF + conventional baseline).
     Method.ENKF,
     Method.PARTICLE_FILTER,
@@ -76,10 +77,8 @@ WIRED_METHODS: tuple[Method, ...] = (
     Method.OURS_FM_ODE,
     Method.FLOWDAS,
     Method.GUIDED_FM_FIG,
-    Method.GUIDED_FM_OTODE,
     Method.D_FLOW_SGLD,
     Method.SDA,
-    Method.SURGE,
     Method.SURGE_SDA,
     Method.SURGE_FLOWDAS,
 )
@@ -118,10 +117,8 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.OURS_FM_ODE: "fm_ode",
     Method.FLOWDAS: "flowdas",
     Method.GUIDED_FM_FIG: "guided_fm_fig",
-    Method.GUIDED_FM_OTODE: "guided_fm_otode",
     Method.D_FLOW_SGLD: "dflow_sgld",
     Method.SDA: "sda",
-    Method.SURGE: "surge",
     Method.SURGE_SDA: "surge_sda",
     Method.SURGE_FLOWDAS: "surge_flowdas",
 }
@@ -372,7 +369,8 @@ class NavierStokesRunner(ExperimentRunner):
             likelihood_ensemble_size=extra["likelihood_ensemble_size"],
             likelihood_mode=self._cfg_get("likelihood_mode", None),
             # Select the per-cell guidance scale (e.g. FlowDAS zeta) from the
-            # method config's [scenario][M] table.
+            # method config's [case][scenario][M] table.
+            case_key=self.case.value,
             scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario],
             num_steps=ctx.num_steps,
         )
@@ -736,6 +734,7 @@ class NavierStokesRunner(ExperimentRunner):
                 likelihood_ensemble_size=extra["likelihood_ensemble_size"],
                 likelihood_mode=mode,
                 g_multiplier=g_mult,
+                case_key=self.case.value,
             )
             nfe = _ns_pipeline.attach_nfe_counter(model)
             result = _ns_pipeline.run_assimilation(

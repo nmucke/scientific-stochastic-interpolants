@@ -28,8 +28,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from .driver import gaussian_kl_to_exact  # noqa: E402
-from .samplers import GaussianSystem, sample_posterior  # noqa: E402
+from .classical_baselines import GaussianSystem  # noqa: E402
+from .driver import draw_interpolant_posterior, gaussian_kl_to_exact  # noqa: E402
 
 FIG_DIR = Path(__file__).resolve().parents[2] / "figures" / "results" / "analytical"
 
@@ -74,9 +74,9 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     # (c) exact posterior.
     exact = sys2.exact_posterior_samples(_X0, _Y, _N, g)
     # (d) sampled posterior (SI-SDE, the canonical sampler).
-    sampled = sample_posterior(
+    sampled = draw_interpolant_posterior(
         sys2, _X0, _Y, sampler="si_sde", likelihood_mode="inflated",
-        ensemble_size=ensemble_size, num_steps=num_steps, g0=_G0, generator=g,
+        ensemble_size=ensemble_size, num_steps=num_steps, g0=_G0, seed=0,
     )
 
     for key, data, title in (
@@ -95,10 +95,9 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     for sampler in ("si_sde", "dm_sde"):
         kls = []
         for gv in g_list:
-            gg = torch.Generator().manual_seed(0)
-            s = sample_posterior(
+            s = draw_interpolant_posterior(
                 sys2, _X0, _Y, sampler=sampler, likelihood_mode="inflated",
-                ensemble_size=_N, num_steps=num_steps, g0=gv, generator=gg,
+                ensemble_size=_N, num_steps=num_steps, g0=gv, seed=0,
             )
             kls.append(gaussian_kl_to_exact(sys2, _X0, _Y, s))
         ax.plot(g_list, kls, "-o", label=_SAMPLER_LABEL[sampler])
@@ -116,10 +115,9 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     for sampler in _SAMPLERS:
         kls = []
         for M in M_list:
-            gg = torch.Generator().manual_seed(0)
-            s = sample_posterior(
+            s = draw_interpolant_posterior(
                 sys2, _X0, _Y, sampler=sampler, likelihood_mode="inflated",
-                ensemble_size=_N, num_steps=M, g0=_G0, generator=gg,
+                ensemble_size=_N, num_steps=M, g0=_G0, seed=0,
             )
             kls.append(gaussian_kl_to_exact(sys2, _X0, _Y, s))
         ax.plot(M_list, kls, "-o", label=_SAMPLER_LABEL[sampler])
@@ -141,10 +139,9 @@ def make_panels(num_steps: int = 50, ensemble_size: int = _N) -> list[Path]:
     )
     ax.plot(grid, exact_pdf, "k-", lw=2, label="exact")
     for sampler in _SAMPLERS:
-        gg = torch.Generator().manual_seed(0)
-        s = sample_posterior(
+        s = draw_interpolant_posterior(
             sys2, _X0, _Y, sampler=sampler, likelihood_mode="inflated",
-            ensemble_size=_N, num_steps=num_steps, g0=_G0, generator=gg,
+            ensemble_size=_N, num_steps=num_steps, g0=_G0, seed=0,
         ).numpy()[:, 0]
         ax.hist(s, bins=60, range=(-1, 7), density=True, histtype="step",
                 label=_SAMPLER_LABEL[sampler])
