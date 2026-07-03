@@ -637,9 +637,8 @@ class NavierStokesRunner(ExperimentRunner):
             ``render_ablation_body`` keys off (one row per axis).
 
         Axes:
-        * gain: ``dps_full`` (full G_tau) / ``dps_jacobian_free`` (Jacobian-free)
-          / ``inflated`` (no correction, G=I) -> gain_full / gain_jacfree /
-          gain_none.
+        * covariance: ``inflated`` / ``inflated_shared`` (full Sigma_s) vs
+          ``dps_jacobian_free`` (isotropic).
         * g_tau: includes g=0 (== FM-ODE) -> gdiff_sweep.
         * M and E sweeps -> steps_sweep / ensemble_sweep.
         For the smoke run a cheaper subset (2 points/axis, isotropic gain) runs.
@@ -703,8 +702,8 @@ class NavierStokesRunner(ExperimentRunner):
             # + 10/50/100 steps, 16/64/256 ensemble. The inflated covariance uses
             # `inflated_shared` (ensemble-shared Jacobian; exact `inflated` is
             # O(B*N_y) net-Jacobians/step, days/cell at NS scale). The multiplicative
-            # gain (`dps_full`) is retained as a code option but excluded here: it did
-            # not improve accuracy (inflated covariance ~0.16 vs gain/cheap on sparse;
+            # gain (former `dps_full` mode) was removed from the code: it did not
+            # improve accuracy (inflated covariance ~0.16 vs gain/cheap on sparse;
             # analytical KL 0.001 inflated vs 0.174 gain), so it was dropped from the
             # paper and the runs. All points use the inflated covariance unless noted.
             cov_points = [

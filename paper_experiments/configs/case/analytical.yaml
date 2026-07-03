@@ -25,6 +25,6 @@ n_eval_samples: 4096       # samples drawn per (method, seed) for the metric est
 
 # Likelihood modes are config-selectable (GAP Section 6); the three "Ours" rows
 # run `inflated` (exact for this Gaussian case). The mode ablation
-# (inflated / dps_full / dps_jacobian_free) is produced by
+# (inflated / inflated_shared / dps_jacobian_free) is produced by
 # cases/analytical/convergence_study.py.
 likelihood_mode: inflated

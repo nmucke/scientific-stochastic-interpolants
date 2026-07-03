@@ -20,7 +20,7 @@ num_steps: 50       # M
 # Likelihood mode override (top-level so `likelihood_mode=...` works on the CLI,
 # e.g. in run_gpu_ns.sh). null -> use each method config's own default
 # (`method.likelihood_model.likelihood_mode`, normally `inflated`). Set to
-# inflated | dps_full | dps_jacobian_free to force one mode across all methods.
+# inflated | inflated_shared | dps_jacobian_free to force one mode across all methods.
 likelihood_mode: null
 
 # Shared-Jacobian refresh cadence (Ours + inflated_shared only; top-level so

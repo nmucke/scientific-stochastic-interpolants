@@ -7,7 +7,7 @@ diffusion_term: null   # g_tau = 0 => probability-flow ODE.
 
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
-  # likelihood_mode: inflated (exact, default) | dps_full | dps_jacobian_free.
+  # likelihood_mode: inflated (exact, default) | inflated_shared | dps_jacobian_free.
   likelihood_mode: inflated
   # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
   # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the

@@ -46,30 +46,30 @@ REF=$ROOT/reference
 mkdir -p "$MET" "$PS" "$ROOT/states"
 
 # ---- knobs (env-overridable) ------------------------------------------------
-# TRAJ="${TRAJ:-1 2 3 4 5}"
-# STEPS="${STEPS:-50 100 250 500}"
-# E="${E:-64}"
-# NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
-# DEVICE="${DEVICE:-cuda}"
-# REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
-
-
-TRAJ="${TRAJ:-1 2}"
-STEPS="${STEPS:-100}"
-E="${E:-8}"
-NP="${NP:-7}"                       # num_physical_steps (5 history + 15 DA)
+TRAJ="${TRAJ:-1 2 3 4 5}"
+STEPS="${STEPS:-50 100 250 500}"
+E="${E:-64}"
+NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
 
+
+# TRAJ="${TRAJ:-1 2}"
+# STEPS="${STEPS:-100}"
+# E="${E:-8}"
+# NP="${NP:-7}"                       # num_physical_steps (5 history + 15 DA)
+# DEVICE="${DEVICE:-cuda}"
+# REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
+
 # Scenarios as a bash array (canonical labels).
-# if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
-# else SCEN_ARR=("16^2->128^2" "32^2->128^2" "sparse 5%" "sparse 1.5625%"); fi
-
 if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
-else SCEN_ARR=("16^2->128^2"); fi
+else SCEN_ARR=("16^2->128^2" "32^2->128^2" "sparse 5%" "sparse 1.5625%"); fi
 
-# GRPS="${GRPS:-ours_jacfree ours_shared baselines classical}"
-GRPS="${GRPS:-ours_jacfree baselines}"
+# if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
+# else SCEN_ARR=("16^2->128^2"); fi
+
+GRPS="${GRPS:-ours_jacfree ours_shared baselines classical}"
+# GRPS="${GRPS:-ours_jacfree baselines}"
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD","Guided FM (FIG)"]'

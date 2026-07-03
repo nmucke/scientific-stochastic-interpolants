@@ -38,9 +38,9 @@ The dynamics split into the prior drift and one likelihood-score correction with
 \end{align}
 At $\gdiff_\tau=0$ the noise and the prior-drift score term vanish, leaving the deterministic guided ODE; $\gdiff_\tau=\gamma_\tau$ recovers the native SI-SDE; any other $\gdiff_\tau>0$ on an FM prior is a guided denoising-diffusion sampler. Stochastic interpolants, denoising diffusion, and guided flows are one family, differing only in a scalar schedule.
 
-\begin{remark}[Relation to Doob's $h$-transform]\label{rem:doob}
-An alternative posterior SDE applies Doob's $h$-transform to a fixed prior diffusion, giving the correction weight $\gdiff_\tau^2$ instead of $\gweight_\tau$. It conditions trajectories rather than marginals -- its intermediate marginals are not $p_\tau^{\obs}$ -- and has no deterministic member; the marginal construction \eqref{eq:unified_posterior_drift} is also the one consistent with the likelihood surrogate below (Appendix~\ref{appendix:proof_posterior}).
-\end{remark}
+% \begin{remark}[Relation to Doob's $h$-transform]\label{rem:doob}
+% An alternative posterior SDE applies Doob's $h$-transform to a fixed prior diffusion, giving the correction weight $\gdiff_\tau^2$ instead of $\gweight_\tau$. It conditions trajectories rather than marginals -- its intermediate marginals are not $p_\tau^{\obs}$ -- and has no deterministic member; the marginal construction \eqref{eq:unified_posterior_drift} is also the one consistent with the likelihood surrogate below (Appendix~\ref{appendix:proof_posterior}).
+% \end{remark}
 
 \subsection{A closed-form likelihood score from observation interpolation}
 \label{subsec:obs_interpolation}

@@ -2,9 +2,9 @@
 
 Closed-form posterior, no network trained. The correctness probe: every sampler
 must reproduce the exact mean/cov as ``M`` grows in the ``inflated`` likelihood
-mode, and the multiplicative-correction ablation (``inflated`` vs ``dps_full`` vs
-``dps_jacobian_free``) must show the inflated mode is exact while the DPS
-surrogates plateau away from it.
+mode, and the covariance ablation (``inflated`` vs ``dps_jacobian_free``) must
+show the inflated mode is exact while the Jacobian-free surrogate plateaus away
+from it.
 
 Produces:
 * Table ``tab:analytical_results`` -- KL and sliced-W2 to the exact posterior, for

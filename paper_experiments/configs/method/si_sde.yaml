@@ -9,10 +9,11 @@ diffusion_term:
 # w_tau = a_tau + 0.5 g_tau^2 (GAP P1; replaces the legacy correction_multiplier).
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
-  # likelihood_mode: inflated | dps_full | dps_jacobian_free.
-  #   inflated          -- PiGDM-style full Sigma_s, G=I; exact for the Gaussian case
+  # likelihood_mode: inflated | inflated_shared | dps_jacobian_free.
+  #   inflated          -- PiGDM-style full Sigma_s; exact for the Gaussian case
   #                        (analytical gate ~0.005). PROVISIONAL DEFAULT / headline rows.
-  #   dps_full          -- paper's multiplicative-gain DPS surrogate (ablation).
+  #   inflated_shared   -- inflated with the Jacobian shared at the ensemble mean
+  #                        (tractable at NS scale).
   #   dps_jacobian_free -- Corollary cheap_drift (cheap ablation; inaccurate at mid-tau).
   likelihood_mode: inflated
   # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
