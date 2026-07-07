@@ -292,6 +292,16 @@ class UrbanRunner(ExperimentRunner):
             variance=extra["variance"],
             likelihood_ensemble_size=extra["likelihood_ensemble_size"],
             likelihood_mode=self._cfg_get("likelihood_mode", None),
+            # Inflated-mode stabilisation knobs (Ours + inflated / inflated_shared
+            # only); defaults reproduce current behaviour. jacobian_damping<1 tames
+            # the shared-Jacobian overshoot (P0 fix). drift_time_shift offsets the
+            # FM/DM drift-evaluation time (0=left default, 1=right endpoint).
+            jacobian_refresh_every=self._cfg_get("jacobian_refresh_every", None),
+            jacobian_damping=self._cfg_get("jacobian_damping", None),
+            sigma_bar_eig_floor=self._cfg_get("sigma_bar_eig_floor", None),
+            isotropic_front_factor=self._cfg_get("isotropic_front_factor", None),
+            residual_step_cap=self._cfg_get("residual_step_cap", None),
+            drift_time_shift=self._cfg_get("drift_time_shift", None),
             # num_steps (M) is passed so D-Flow SGLD maps M -> num_optim_steps
             # (its ODE rollout is fixed at ode_steps=6). case_key gates the
             # per-case [case][scenario][M] tables: with case_key="urban" and no
@@ -320,6 +330,10 @@ class UrbanRunner(ExperimentRunner):
             # (SI-SDE, FlowDAS, SURGE (FlowDAS)) use the x0 point-mass init.
             gaussian_base=ctx.method
             not in (Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS),
+            # Early-abort divergence guard (opt-in; None = off, unchanged runs).
+            divergence_rmse_threshold=self._cfg_get(
+                "divergence_rmse_threshold", None
+            ),
         )
 
         metrics = _urban_pipeline.compute_metrics(

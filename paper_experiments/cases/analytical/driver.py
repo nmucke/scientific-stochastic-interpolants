@@ -85,14 +85,17 @@ ANALYTICAL_METHODS: tuple[Method, ...] = (
     Method.OURS_DM_SDE,
     Method.OURS_FM_ODE,
     Method.FLOWDAS,
-    # Method.SURGE_FLOWDAS,
+    Method.SURGE_FLOWDAS,
     Method.SDA,
-    # Method.SURGE_SDA,
+    Method.SURGE_SDA,
     Method.D_FLOW_SGLD,
-    Method.GUIDED_FM_FIG,
     Method.ENKF,
     Method.PARTICLE_FILTER,
 )
+# GUIDED_FM_FIG (Guided FM / FIG) is intentionally OUT of the analytical lineup:
+# it is not part of the reduced paper lineup (results/README.md, 13 rows) and it
+# diverges on the untuned analytical cells (kl ~1e11). It remains available for
+# the NS/urban cases where it is tuned.
 
 # The three "Ours" samplers dispatched through ``draw_interpolant_posterior``; each runs
 # under BOTH likelihood-covariance modes below, emitted as distinct ``variant``
@@ -120,6 +123,7 @@ def draw_interpolant_posterior(
     num_steps: int,
     g0: float = 1.0,
     seed: int = 0,
+    drift_time_shift: float = 0.0,
 ) -> torch.Tensor:
     """Draw an Ours-sampler posterior ensemble via the canonical ``src/scisi`` models.
 
@@ -165,6 +169,7 @@ def draw_interpolant_posterior(
         )
         posterior = FlowMatchingPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=diffusion_term,
+            drift_time_shift=drift_time_shift,
         )
         base = None
     else:
@@ -318,6 +323,9 @@ class AnalyticalRunner(ExperimentRunner):
                 samp = draw_interpolant_posterior(
                     sys_, x0, y, sampler=sampler, likelihood_mode=mode,
                     ensemble_size=_N_EVAL, num_steps=M, seed=seed,
+                    # FM/DM drift-evaluation time offset (P1 probe); 0 = current
+                    # left-endpoint Euler, 1 = bespoke right endpoint, 0.5 = midpoint.
+                    drift_time_shift=float(self._cfg_get("drift_time_shift", 0.0)),
                 )
                 yield from _emit(samp, M, time.perf_counter() - t0, variant)
         else:

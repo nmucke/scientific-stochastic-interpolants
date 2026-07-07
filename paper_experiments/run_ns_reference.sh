@@ -8,9 +8,14 @@
 #   results/navier_stokes/reference/traj<N>/gt/
 # so run_ns_grid.sh can point +kl_reference_states at that dir.
 #
-# EXPENSIVE (E=1000 true jax-cfd solver, 5000 sub-steps/forecast). Run this FIRST
-# (or in parallel on a spare GPU) before/with run_ns_grid.sh; without it the KL
-# column is NaN but every other metric still lands.
+# EXPENSIVE (E=1000 true jax-cfd solver, 5000 sub-steps/forecast; ~30 min/cell).
+# Run this FIRST (or in parallel on a spare GPU) before/with run_ns_grid.sh;
+# without it the KL column is NaN but every other metric still lands.
+#
+# skip_kl_reference: this run PRODUCES the KL reference, so the driver's own
+# KL-reference draw (an SI-SDE sample that defaults to the hours-per-cell
+# ``inflated`` likelihood mode) is skipped; kl_points is NaN in ref_*.csv by
+# design.
 #
 # Launch detached:
 #   setsid nohup bash paper_experiments/run_ns_reference.sh >run_ns_reference.log 2>&1 & disown
@@ -18,6 +23,9 @@
 set -u
 cd /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants
 PY=.venv/bin/python
+# Persistent XLA compile cache: the 5000-sub-step forecast scan jits once ever
+# instead of ~2-3 min in each of the 20 per-cell processes.
+export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$PWD/.jax_cache}"
 ROOT=paper_experiments/results/navier_stokes
 REF=$ROOT/reference
 mkdir -p "$REF"
@@ -47,6 +55,7 @@ for N in $TRAJ; do
         '+ns_methods=["EnKF"]' "+ns_scenarios=[\"$SCEN\"]" \
         ensemble_size=$E_REF num_steps=50 case.num_physical_steps=$NP \
         case.reference_ensemble_size=8 \
+        +skip_kl_reference=true \
         +save_states=true "+states_root=$GTDIR" \
         case.require_weights=true case.device=$DEVICE \
         results_file=$ROOT/metrics/ref_${SS}__traj${N}.csv >> "$LOG" 2>&1 \

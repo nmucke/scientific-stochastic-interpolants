@@ -88,6 +88,10 @@ class InterpolantGaussianLikelihood(nn.Module):
         likelihood_mode: str = "inflated",
         model_class: str = "si",
         jacobian_refresh_every: int = 1,
+        jacobian_damping: float = 1.0,
+        sigma_bar_eig_floor: bool = False,
+        isotropic_front_factor: bool = False,
+        residual_step_cap: Optional[float] = None,
     ) -> None:
         """Initialize the interpolant Gaussian likelihood.
 
@@ -116,6 +120,35 @@ class InterpolantGaussianLikelihood(nn.Module):
                 the Jacobian factor J is lagged. The cache resets whenever
                 pseudo-time restarts (a new SDE/ODE pass, i.e. the next
                 assimilation step).
+            jacobian_damping: Jacobian-term damping ``lambda in [0, 1]`` for the
+                full modes (``inflated`` / ``inflated_shared``). Replaces
+                ``Sigma_s = c_iso I + c_jac J`` with ``c_iso I + lambda c_jac J``
+                in BOTH the covariance solve and the mean front factor, so the
+                whole non-normal ``J`` contribution is scaled consistently.
+                ``1.0`` (default) reproduces the current full ``Sigma_s``; ``0.0``
+                collapses to the isotropic (jacfree) ``Sigma_s`` while still
+                paying the JVP cost. Prior art: SDA's ``gamma_sda`` tames its
+                ``H H^T`` term the same way. Inert for ``dps_jacobian_free``.
+            sigma_bar_eig_floor: ``inflated_shared`` only. When ``True``, the
+                assembled ``Sigma_bar = beta^2 R + c_iso H H^T + c_jac H J H^T``
+                is symmetrised and its eigenvalues are floored at the
+                jacfree-equivalent value ``beta^2 R + c_iso lambda_min(H H^T)``
+                before the solve, so the non-symmetric / shrinking ``H J H^T``
+                term can never make ``Sigma_bar^{-1}`` larger than the isotropic
+                covariance would. ``False`` (default) solves the raw assembled
+                ``Sigma_bar`` (current behaviour). ``N_y`` is small (<= 1024) so
+                the ``eigh`` is negligible next to the JVPs.
+            isotropic_front_factor: full modes. When ``True``, the inflated
+                ``Sigma_s`` is used only inside the covariance solve; the mean
+                front factor is the isotropic ``H`` (PiGDM-style inflation
+                without a second application of ``J``), halving the ``J``
+                amplification path. ``False`` (default) uses the matching full
+                ``Sigma_s / rho`` front factor.
+            residual_step_cap: full modes. Optional relative cap ``kappa`` on the
+                guidance magnitude: each member's returned ``Sbar`` is clamped so
+                ``||H Sbar|| <= kappa ||ybar - mu_bar||`` (schedule-consistent,
+                inactive in the healthy regime). ``None`` (default) applies no
+                cap.
         """
         super(InterpolantGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -142,6 +175,23 @@ class InterpolantGaussianLikelihood(nn.Module):
         if self.jacobian_refresh_every < 1:
             raise ValueError(
                 f"jacobian_refresh_every must be >= 1, got {jacobian_refresh_every!r}."
+            )
+        # --- inflated-mode stabilisation knobs (defaults reproduce current
+        # behaviour: lambda=1 full Sigma_s, no eig floor, full front factor,
+        # no step cap). All are inert for dps_jacobian_free.
+        self.jacobian_damping = float(jacobian_damping)
+        if not 0.0 <= self.jacobian_damping <= 1.0:
+            raise ValueError(
+                f"jacobian_damping must be in [0, 1], got {jacobian_damping!r}."
+            )
+        self.sigma_bar_eig_floor = bool(sigma_bar_eig_floor)
+        self.isotropic_front_factor = bool(isotropic_front_factor)
+        self.residual_step_cap = (
+            float(residual_step_cap) if residual_step_cap is not None else None
+        )
+        if self.residual_step_cap is not None and self.residual_step_cap <= 0.0:
+            raise ValueError(
+                f"residual_step_cap must be > 0 or None, got {residual_step_cap!r}."
             )
         # (t_last, steps_since, jvp_fn, HJHt) of the current shared Jacobian.
         # ``t_last`` tracks the last pseudo-time seen so repeated calls at the
@@ -386,8 +436,14 @@ class InterpolantGaussianLikelihood(nn.Module):
                 Sigma_bar, residual_obs.unsqueeze(-1)
             ).squeeze(-1)  # [B, N_y]
             Ht_sol = self.obs_operator.transpose(sol)  # [B, C, H, W]
-            # grad_xbar_mu front factor: (Sigma_s / rho_tau) applied on grid.
-            return sigma_s_apply(Ht_sol) / rho_s
+            # grad_xbar_mu front factor: (Sigma_s / rho_tau) applied on grid, or
+            # the isotropic H (Sbar = Ht_sol) when the front factor is damped.
+            sbar = (
+                Ht_sol
+                if self.isotropic_front_factor
+                else sigma_s_apply(Ht_sol) / rho_s
+            )
+            return self._cap_step(sbar, residual_obs)
 
         # Shared covariance (dps_jacobian_free / inflated_shared): one
         # [N_y, N_y] Sigma_bar for the whole ensemble, factorised once and
@@ -395,9 +451,15 @@ class InterpolantGaussianLikelihood(nn.Module):
         # the diagonal add mutates neither cache.
         if HSHt_shared is not None:
             Sigma_bar = HSHt_shared
+            Sigma_bar.diagonal().add_(beta_sq_R)
+            if self.sigma_bar_eig_floor:
+                # Symmetrise + floor eigenvalues at the jacfree-equivalent value
+                # so the non-symmetric / shrinking H J H^T term can never make
+                # Sigma_bar^{-1} larger than the isotropic covariance would.
+                Sigma_bar = self._floor_sigma_bar(Sigma_bar, x, rho_s, beta_sq_R)
         else:
             Sigma_bar = rho_s * self._get_HHt(x)
-        Sigma_bar.diagonal().add_(beta_sq_R)
+            Sigma_bar.diagonal().add_(beta_sq_R)
         sol = torch.linalg.solve(
             Sigma_bar, residual_obs.transpose(0, 1)
         ).transpose(0, 1)  # [B, N_y]
@@ -405,8 +467,62 @@ class InterpolantGaussianLikelihood(nn.Module):
         if sigma_s_apply is None:
             # Isotropic front factor rho/rho_tau = 1: Sbar is exactly H^T sol.
             return Ht_sol
-        # Shared Sigma_s front factor (broadcast over members).
-        return sigma_s_apply(Ht_sol) / rho_s
+        # Shared Sigma_s front factor (broadcast over members), or the isotropic
+        # H front factor (Sbar = Ht_sol) when the front factor is damped.
+        sbar = (
+            Ht_sol
+            if self.isotropic_front_factor
+            else sigma_s_apply(Ht_sol) / rho_s
+        )
+        return self._cap_step(sbar, residual_obs)
+
+    def _floor_sigma_bar(
+        self,
+        Sigma_bar: torch.Tensor,
+        x: torch.Tensor,
+        rho_s: float,
+        beta_sq_R: float,
+    ) -> torch.Tensor:
+        """Symmetrise ``Sigma_bar`` and floor its eigenvalues (shared mode).
+
+        The assembled ``Sigma_bar`` (already carrying ``beta^2 R`` on its
+        diagonal) is replaced by ``V clamp(Lambda, floor) V^T`` where
+        ``(Lambda, V) = eigh(1/2 (Sigma_bar + Sigma_bar^T))`` and
+        ``floor = beta^2 R + rho_tau lambda_min(H H^T)`` -- the smallest
+        eigenvalue the isotropic (jacfree) ``rho H H^T + beta^2 R`` would have.
+        This both drops the non-normal part of the once-evaluated ``H J H^T``
+        (theory has a symmetric ``Sigma_s``) and caps ``||Sigma_bar^{-1}||`` at
+        the jacfree level, so a shrunk / indefinite Jacobian term can no longer
+        blow the guidance up. ``N_y <= 1024`` -> the ``eigh`` is negligible.
+        """
+        HHt = self._get_HHt(x)
+        floor = beta_sq_R + rho_s * float(torch.linalg.eigvalsh(HHt)[0])
+        sym = 0.5 * (Sigma_bar + Sigma_bar.transpose(-2, -1))
+        evals, evecs = torch.linalg.eigh(sym)
+        evals = evals.clamp_min(floor)
+        return (evecs * evals.unsqueeze(-2)) @ evecs.transpose(-2, -1)
+
+    def _cap_step(
+        self, sbar: torch.Tensor, residual_obs: torch.Tensor
+    ) -> torch.Tensor:
+        """Relative per-member cap on the guidance (full modes; no-op if unset).
+
+        Clamps each member so ``||H Sbar|| <= kappa ||ybar - mu_bar||`` with
+        ``kappa = self.residual_step_cap``: one guidance step can move the state
+        at most ``kappa`` times the current observation-space residual. The cap
+        is schedule-consistent (it scales with the residual, not a fixed
+        constant) so it is inactive in the healthy regime and only bites the
+        blow-ups. Directions and the relative magnitude of sub-cap members are
+        untouched.
+        """
+        if self.residual_step_cap is None:
+            return sbar
+        b = sbar.shape[0]
+        hs_norm = self.obs_operator(sbar).reshape(b, -1).norm(dim=1)  # ||H Sbar||
+        res_norm = residual_obs.reshape(b, -1).norm(dim=1)
+        cap = self.residual_step_cap * res_norm
+        scale = (cap / (hs_norm + 1e-12)).clamp(max=1.0)
+        return sbar * scale.reshape(b, *([1] * (sbar.dim() - 1)))
 
     # ------------------------------------------------------------------
     # Public score interface
@@ -502,6 +618,7 @@ class InterpolantGaussianLikelihood(nn.Module):
                 c_iso, c_jac = self._sigma_s_coeffs(
                     t_grid[:1], rho[:1] if rho.dim() > 0 else rho
                 )
+                c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
                 jvp_fn = self._refresh_shared_jacobian(
                     x=x,
                     t_clamped=t_clamped,
@@ -523,6 +640,7 @@ class InterpolantGaussianLikelihood(nn.Module):
                 )
             else:
                 c_iso, c_jac = self._sigma_s_coeffs(t_grid, rho)
+                c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
                 jvp_fn = self._build_jvp_fn(
                     x=x,
                     t_net=t_net,

@@ -26,6 +26,7 @@ class BasePosterior(nn.Module):
         likelihood_model: nn.Module,
         diffusion_term: Optional[Callable] = None,
         gaussian_base: bool = False,
+        drift_time_shift: float = 0.0,
     ) -> None:
         """
         Initialize base posterior.
@@ -36,11 +37,20 @@ class BasePosterior(nn.Module):
             diffusion_term: Diffusion term.
             resample: Whether to resample the base.
             gaussian_base: Whether to sample the base from a Gaussian distribution.
+            drift_time_shift: Fraction of ``dt`` by which the per-step drift/guidance
+                is evaluated ahead of the left node. ``0.0`` (default) is the
+                left-endpoint Euler scheme (unchanged); ``1.0`` evaluates at the
+                right endpoint ``tau=(i+1)dt`` (the bespoke analytical FM/DM
+                convention); ``0.5`` is the interval midpoint. The step size ``dt``
+                and the node grid are unchanged -- only the drift-evaluation
+                pseudo-time is offset (the likelihood clamps ``tau`` away from the
+                endpoints, so the terminal ``tau=1`` evaluation is guarded).
         """
         super(BasePosterior, self).__init__()
 
         self.model = model
         self.likelihood_model = likelihood_model
+        self.drift_time_shift = float(drift_time_shift)
 
         if diffusion_term is None:
             self.default_diffusion_term = True
@@ -218,6 +228,10 @@ class BasePosterior(nn.Module):
             for i in range(start_time, num_steps):
                 t = t_vec[:, i : i + 1]
                 dt = t_vec[0, i + 1] - t_vec[0, i]
+                # Drift/guidance evaluation pseudo-time: left node (shift=0,
+                # default, bitwise-unchanged), right endpoint (shift=1) or midpoint
+                # (shift=0.5). ``dt`` and the node grid are untouched.
+                t_eval = t + self.drift_time_shift * dt
 
                 base = self._pre_step(base=base, observations=observations, t=t)
 
@@ -228,7 +242,7 @@ class BasePosterior(nn.Module):
                     base[sl] = self._one_step(
                         base=base[sl],
                         observations=observations,
-                        t=t,
+                        t=t_eval,
                         dt=dt,
                         **fixed_input(sl),
                     )
@@ -272,8 +286,18 @@ class BasePosterior(nn.Module):
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         stepper: Callable = euler_maruyama_step,
+        step_callback: Callable[[int, torch.Tensor], bool] | None = None,
     ) -> torch.Tensor:
-        """Sample a trajectory from the diffusion model with posterior drift."""
+        """Sample a trajectory from the diffusion model with posterior drift.
+
+        ``step_callback`` (optional) is invoked after each assimilated physical
+        step with ``(absolute_physical_index, ensemble_state)``; returning
+        ``True`` aborts the rollout early (e.g. an ensemble-divergence guard).
+        The remaining physical steps are then padded with NaN so the returned
+        trajectory keeps its full ``num_physical_steps`` length and the diverged
+        cell surfaces as NaN metrics instead of burning further compute. ``None``
+        (default) leaves the rollout unchanged.
+        """
 
         len_field_history = field_history.shape[-1]
 
@@ -316,5 +340,16 @@ class BasePosterior(nn.Module):
                 **fixed_input,  # type: ignore[arg-type]
             )
             trajectory.append(base.cpu().clone())
+
+            if step_callback is not None and step_callback(
+                len_field_history + t_idx, base
+            ):
+                # Divergence guard tripped: stop this cell and pad the remaining
+                # physical steps with NaN so the trajectory keeps its full length
+                # (metrics mark the cell diverged) without integrating further.
+                remaining = (num_physical_steps - len_field_history) - (t_idx + 1)
+                nan_frame = torch.full_like(base.cpu(), float("nan"))
+                trajectory.extend(nan_frame.clone() for _ in range(remaining))
+                break
 
         return torch.stack(trajectory, dim=-1)

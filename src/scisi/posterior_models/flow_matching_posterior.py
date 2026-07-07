@@ -70,6 +70,7 @@ class FlowMatchingPosterior(BasePosterior):
         model: nn.Module,
         likelihood_model: nn.Module,
         diffusion_term: Optional[Callable] = None,
+        drift_time_shift: float = 0.0,
     ) -> None:
         """
         Initialize the flow-matching posterior.
@@ -81,6 +82,10 @@ class FlowMatchingPosterior(BasePosterior):
                 moments and ``anchor='zeros'``).
             diffusion_term: ``None`` -> FM-ODE (deterministic); a callable
                 ``t -> g_tau`` -> FM-SDE (e.g. ``endpoint_vanishing_diffusion``).
+            drift_time_shift: Drift-evaluation pseudo-time offset in units of
+                ``dt`` (see :class:`BasePosterior`). ``0.0`` (default) is the
+                current left-endpoint Euler; ``1.0`` recovers the bespoke FM/DM
+                right-endpoint convention, ``0.5`` the midpoint.
         """
         # The base class would try ``model.interpolation.gamma`` /
         # ``model.diffusion_term`` for a None diffusion, neither of which exists
@@ -97,6 +102,7 @@ class FlowMatchingPosterior(BasePosterior):
             likelihood_model=likelihood_model,
             diffusion_term=resolved_diffusion,
             gaussian_base=True,
+            drift_time_shift=drift_time_shift,
         )
 
         # SPEC assert (a): FM init needs no Phi_0^obs reweighting; the source

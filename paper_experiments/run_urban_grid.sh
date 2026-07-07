@@ -40,6 +40,11 @@ E="${E:-64}"
 NP="${NP:-20}"
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"
+# Shared-mode Jacobian damping (P0 fix; lambda=1 diverges, 0=jacfree). Only
+# affects likelihood_mode=inflated_shared. See run_ns_grid.sh for the rationale.
+LAMBDA="${LAMBDA:-0.7}"
+# Divergence safety net (well above healthy RMSE, so healthy cells are unchanged).
+DIV_GUARD="${DIV_GUARD:-10.0}"
 if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
 else SCEN_ARR=("sparse 5%" "sparse 1.5625%"); fi
 GRPS="${GRPS:-ours_jacfree ours_shared baselines}"
@@ -66,6 +71,7 @@ run_cell() {
       case.require_weights=$REQUIRE_W case.device=$DEVICE \
       +test_index=$N \
       +save_per_step=true "+per_step_file=$psfile" \
+      +divergence_rmse_threshold=$DIV_GUARD \
       results_file="$outfile" "$@" >> "$LOG" 2>&1 \
     && echo "[urbangrid] OK   $tag $(basename "$outfile") $(date +%T)" | tee -a "$LOG" \
     || echo "[urbangrid] FAIL $tag $(basename "$outfile") $(date +%T)" | tee -a "$LOG"
@@ -87,7 +93,7 @@ for N in $TRAJ; do
       if has_group ours_shared; then
         run_cell "$MET/${SS}__M${M}__traj${N}__ours_shared.csv" "ours_shared/$SS/M$M/traj$N" \
           "+urban_methods=$OURS" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
-          likelihood_mode=inflated_shared \
+          likelihood_mode=inflated_shared +jacobian_damping=$LAMBDA \
           +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
       fi
       if has_group baselines; then

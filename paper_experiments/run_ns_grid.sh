@@ -52,6 +52,14 @@ E="${E:-64}"
 NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
+# Shared-mode Jacobian damping (P0 fix): the ensemble-mean UNet Jacobian term in
+# Sigma_bar overshoots at NS scale; lambda<1 tames it while keeping the inflation
+# benefit (lambda=1 diverges, lambda=0 == jacfree). 0.7 confirmed at E=64/NP=20/M=100
+# (shared ~0.21 vs jacfree ~0.33, stable). Only affects likelihood_mode=inflated_shared.
+LAMBDA="${LAMBDA:-0.7}"
+# Divergence safety net: abort a cell whose ensemble RMSE exceeds this (well above
+# any healthy value ~0.5, so healthy cells are byte-unchanged) and NaN-pad the rest.
+DIV_GUARD="${DIV_GUARD:-10.0}"
 
 
 # TRAJ="${TRAJ:-1 2}"
@@ -96,6 +104,7 @@ run_cell() {
       case.require_weights=$REQUIRE_W case.device=$DEVICE \
       +test_index=$N \
       +save_per_step=true "+per_step_file=$psfile" \
+      +divergence_rmse_threshold=$DIV_GUARD \
       results_file="$outfile" "$@" >> "$LOG" 2>&1 \
     && echo "[nsgrid] OK   $tag $(basename "$outfile") $(date +%T)" | tee -a "$LOG" \
     || echo "[nsgrid] FAIL $tag $(basename "$outfile") $(date +%T)" | tee -a "$LOG"
@@ -123,7 +132,8 @@ for N in $TRAJ; do
       if has_group ours_shared; then
         run_cell "$MET/${SS}__M${M}__traj${N}__ours_shared.csv" "ours_shared/$SS/M$M/traj$N" \
           "+ns_methods=$OURS" "+ns_scenarios=[\"$SCEN\"]" num_steps=$M \
-          likelihood_mode=inflated_shared "+kl_reference_states=$KLREF" \
+          likelihood_mode=inflated_shared +jacobian_damping=$LAMBDA \
+          "+kl_reference_states=$KLREF" \
           +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
       fi
       # baselines (ignore likelihood_mode; run once per M)

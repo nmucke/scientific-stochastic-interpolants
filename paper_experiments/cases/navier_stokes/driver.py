@@ -228,6 +228,15 @@ class NavierStokesRunner(ExperimentRunner):
         if key in self._ref_cache:
             return self._ref_cache[key]
 
+        # Reference-GENERATION runs (run_ns_reference.sh) set skip_kl_reference:
+        # their output IS the KL reference, so drawing a separate SI-SDE reference
+        # here is pointless -- and in the config-default ``inflated`` likelihood
+        # mode it costs hours per cell (O(E_ref * N_y) JVPs/pseudo-step). KL is
+        # then NaN in the reference run's own CSV, which is correct.
+        if self._cfg_get("skip_kl_reference", False):
+            self._ref_cache[key] = None
+            return None
+
         # Ground-truth posterior reference: when ``kl_reference_states`` is set,
         # load the large-E true-solver EnKF ensemble (saved by a prior E=1000
         # non-localized EnKF run) for THIS (scenario, seed) and use it as the
@@ -371,6 +380,14 @@ class NavierStokesRunner(ExperimentRunner):
             # Shared-Jacobian refresh cadence (Ours + inflated_shared only);
             # override with jacobian_refresh_every=k, default 1 (every step).
             jacobian_refresh_every=self._cfg_get("jacobian_refresh_every", None),
+            # Inflated-mode stabilisation knobs (Ours + inflated / inflated_shared
+            # only); defaults reproduce current behaviour.
+            jacobian_damping=self._cfg_get("jacobian_damping", None),
+            sigma_bar_eig_floor=self._cfg_get("sigma_bar_eig_floor", None),
+            isotropic_front_factor=self._cfg_get("isotropic_front_factor", None),
+            residual_step_cap=self._cfg_get("residual_step_cap", None),
+            # FM/DM drift-evaluation time offset (0=left default, 1=right endpoint).
+            drift_time_shift=self._cfg_get("drift_time_shift", None),
             # Select the per-cell guidance scale (e.g. FlowDAS zeta) from the
             # method config's [case][scenario][M] table.
             case_key=self.case.value,
@@ -395,6 +412,10 @@ class NavierStokesRunner(ExperimentRunner):
             # point-mass init.
             gaussian_base=ctx.method
             not in (Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS),
+            # Early-abort divergence guard (opt-in; None = off, unchanged runs).
+            divergence_rmse_threshold=self._cfg_get(
+                "divergence_rmse_threshold", None
+            ),
         )
 
         # Large-E reference ensemble for KL-at-points (cached per scenario+seed).

@@ -28,6 +28,7 @@ trained ``model.pth`` (see the driver's ``require_weights`` switch).
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -576,6 +577,11 @@ def build_posterior(
     scenario_key: Optional[str] = None,
     num_steps: Optional[int] = None,
     jacobian_refresh_every: Optional[int] = None,
+    jacobian_damping: Optional[float] = None,
+    sigma_bar_eig_floor: Optional[bool] = None,
+    isotropic_front_factor: Optional[bool] = None,
+    residual_step_cap: Optional[float] = None,
+    drift_time_shift: Optional[float] = None,
 ) -> tuple[torch.nn.Module, torch.nn.Module, Callable]:
     """Instantiate (likelihood, posterior, stepper) for one method.
 
@@ -1027,6 +1033,32 @@ def build_posterior(
             "%s: shared Jacobian refreshed every %d pseudo-steps", method_name, jac_every
         )
 
+    # Inflated-mode stabilisation knobs (explicit CLI override -> method config
+    # -> constructor default that reproduces current behaviour). Inert for
+    # dps_jacobian_free / non-Ours methods.
+    lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+
+    def _resolve(name, override, default):
+        if override is not None:
+            return override
+        return lik_cfg.get(name, default)
+
+    jac_damping = float(_resolve("jacobian_damping", jacobian_damping, 1.0))
+    eig_floor = bool(_resolve("sigma_bar_eig_floor", sigma_bar_eig_floor, False))
+    iso_front = bool(
+        _resolve("isotropic_front_factor", isotropic_front_factor, False)
+    )
+    step_cap = _resolve("residual_step_cap", residual_step_cap, None)
+    step_cap = float(step_cap) if step_cap is not None else None
+    if mode in ("inflated", "inflated_shared") and (
+        jac_damping != 1.0 or eig_floor or iso_front or step_cap is not None
+    ):
+        logger.info(
+            "%s: inflated-mode stabilisation lambda=%.3g eig_floor=%s "
+            "iso_front=%s step_cap=%s",
+            method_name, jac_damping, eig_floor, iso_front, step_cap,
+        )
+
     likelihood = InterpolantGaussianLikelihood(
         model=model,
         obs_operator=obs_operator,
@@ -1035,6 +1067,10 @@ def build_posterior(
         likelihood_mode=mode,
         model_class=model_class,
         jacobian_refresh_every=jac_every,
+        jacobian_damping=jac_damping,
+        sigma_bar_eig_floor=eig_floor,
+        isotropic_front_factor=iso_front,
+        residual_step_cap=step_cap,
     )
 
     if is_si:
@@ -1050,8 +1086,15 @@ def build_posterior(
                 method_cfg.diffusion_term.get("multiplier", 1.0)
             )
             diffusion_term = endpoint_vanishing_diffusion(model.interpolation, scale)
+        # FM/DM drift-evaluation time offset (P1): 0 = left-endpoint Euler
+        # (default, unchanged), 1 = right endpoint, 0.5 = midpoint. Right-endpoint
+        # tightens the shared FM/DM posterior toward the exact marginal.
+        fm_time_shift = float(
+            _resolve("drift_time_shift", drift_time_shift, 0.0)
+        )
         posterior = FlowMatchingPosterior(
-            model=model, likelihood_model=likelihood, diffusion_term=diffusion_term
+            model=model, likelihood_model=likelihood, diffusion_term=diffusion_term,
+            drift_time_shift=fm_time_shift,
         )
 
     return model, posterior, stepper
@@ -1070,6 +1113,7 @@ class AssimResult:
     true_trajectory: torch.Tensor  # [1, C, H, W, T] (normalised)
     nfe_per_step: float
     seconds_per_step: float
+    diverged: bool = False  # set by the divergence guard (early-aborted cell)
 
 
 def run_assimilation(
@@ -1082,6 +1126,7 @@ def run_assimilation(
     stepper: Callable,
     nfe_counter: NFECounter,
     gaussian_base: bool,
+    divergence_rmse_threshold: Optional[float] = None,
 ) -> AssimResult:
     """Run one autoregressive assimilation and record NFE + wall-clock.
 
@@ -1089,6 +1134,12 @@ def run_assimilation(
     ``sample_trajectory`` (it already threads the field history). NFE is the
     counter delta divided by the number of assimilation steps; seconds is the
     wall-clock divided by the same.
+
+    ``divergence_rmse_threshold`` (optional) arms an early-abort guard: after
+    each assimilated physical step the ensemble-mean RMSE against the truth is
+    checked, and a cell whose RMSE exceeds the threshold is stopped, its
+    remaining steps NaN-padded, and ``AssimResult.diverged`` set. ``None``
+    (default) leaves the rollout unchanged, so existing grid runs are unaffected.
     """
     L = truth_obs.field_history.shape[-1]
     n_assim = num_physical_steps - L
@@ -1103,6 +1154,27 @@ def run_assimilation(
         "observations": truth_obs.observations[:, :, L:],
     }
 
+    # Early-abort guard: ensemble-mean RMSE vs truth past the threshold (or a
+    # non-finite state) stops the cell. Only wired when a threshold is set, so
+    # the default path is byte-for-byte the previous behaviour.
+    diverged_flag = {"hit": False}
+    step_callback = None
+    if divergence_rmse_threshold is not None:
+        true_traj = truth_obs.true_trajectory  # [1, C, H, W, T]
+
+        def step_callback(phys_idx: int, base: torch.Tensor) -> bool:
+            true_t = true_traj[0, ..., phys_idx].to(base.device)
+            rmse = float(ensemble_mean_rmse(base, true_t))
+            if not math.isfinite(rmse) or rmse > divergence_rmse_threshold:
+                logger.warning(
+                    "Divergence guard: ensemble RMSE %.3g exceeds %.3g at "
+                    "physical step %d -- aborting cell.",
+                    rmse, divergence_rmse_threshold, phys_idx,
+                )
+                diverged_flag["hit"] = True
+                return True
+            return False
+
     nfe_counter.reset()
     timer = StepTimer()
     with timer:
@@ -1110,6 +1182,7 @@ def run_assimilation(
             **common_input,
             ensemble_size=ensemble_size,
             num_steps=num_steps,
+            step_callback=step_callback,
         )
 
     nfe_per_step = nfe_counter.count / max(n_assim, 1)
@@ -1120,6 +1193,7 @@ def run_assimilation(
         true_trajectory=truth_obs.true_trajectory,
         nfe_per_step=nfe_per_step,
         seconds_per_step=seconds_per_step,
+        diverged=diverged_flag["hit"],
     )
 
 
