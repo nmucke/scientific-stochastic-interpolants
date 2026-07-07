@@ -1,0 +1,50 @@
+# SURGE + FlowDAS -- SURGE particle filter combined with FlowDAS's guidance.
+#
+# Wei, Ren, Shi & Lu, "SURGE" (arXiv:2605.18745), combined with FlowDAS
+# (chen_flowdas_2025). SURGE is the SMC layer; FlowDAS supplies the guidance G
+# (its Monte-Carlo one-step likelihood score). FlowDAS is SI-based (uses the SI
+# drift + predictor spread), so this runs on the SI prior through the SI SURGE
+# variant (point-mass delta_{x0} init, anchor a0 = x0). The SMC reward
+# R = log p(y|x) is the TRUE Gaussian observation likelihood (computed by SURGE),
+# so the target is the exact posterior regardless of the guidance -- FlowDAS only
+# steers the proposal.
+name: SURGE (FlowDAS)
+stepper: sde
+diffusion_term: null
+
+likelihood_model:
+  # FlowDAS guidance (FlowdasGaussianLikelihood). Constructed directly by the NS
+  # driver. FlowDAS hyperparameters: SAME setup as the standalone FlowDAS config
+  # (configs/method/flowdas.yaml) -- FlowDAS's guidance strength `guidance_scale`
+  # (zeta) is a LIKELIHOOD knob, applied by SURGE via the likelihood's sde_weight
+  # (so the combo proposal b + zeta*s_lik IS FlowDAS's guided SDE, plus the SMC
+  # layer). It does NOT belong on the SURGE posterior.
+  _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
+  # J one-step x1 draws (same as flowdas.yaml).
+  num_mc_samples: 25
+  # Optional L2 cap on the per-member raw score to tame NS-scale blow-ups (null =
+  # uncapped; same as flowdas.yaml). Env FLOWDAS_MAX_GRAD_NORM overrides.
+  max_grad_norm: null
+  # guidance_scale = FlowDAS zeta on the raw likelihood score. Scalar OR a
+  # [case][scenario][num_sde_steps M] table with a `default:` key; scenario rows
+  # live under the case name (`navier_stokes:`), resolved per run by
+  # resolve_scheduled_hparams (missing case/scenario/M cell -> default). SAME table
+  # as flowdas.yaml. Env FLOWDAS_ZETA overrides.
+  guidance_scale:
+    default: 1.0
+    navier_stokes:
+      #             M=50   M=100  M=250  M=500
+      superres_16: { 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
+      superres_32: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+      sparse_5:    { 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
+      sparse_1p5:  { 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+posterior_model:
+  _target_: scisi.posterior_models.surge_posterior.SurgeStochasticInterpolantPosterior
+  # SURGE owns only the SMC layer here; the guidance strength is FlowDAS's zeta
+  # (likelihood_model.guidance_scale above), applied via sde_weight.
+  # Resample when effective sample size / N drops below this fraction.
+  ess_threshold: 0.5

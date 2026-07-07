@@ -1,0 +1,30 @@
+# Case 1 -- analytical linear-Gaussian (spec Section 4). No training; closed-form
+# SI drift (Prop. B.9) and exact Gaussian posterior. Correctness probe.
+name: analytical
+
+# x1 = x0 + w, w ~ N(0,I);  y = H x1 + e, e ~ N(0,R), H = I, R = I.
+# Exact posterior N(x0 + K(y - H x0), I - K H), K = 0.5 I.
+dimensions: [2, 10, 100]   # d=2 for density plots; d in {2,10,100} for convergence.
+plot_dimension: 2
+
+ensemble_size: 64          # E (matched across methods)
+num_steps: 50              # M
+
+# Single joint scenario; no observation-operator sweep.
+scenario_name: analytical
+
+# Reference for KL / sliced-W2 is the analytic Gaussian posterior.
+reference: analytic
+
+# Sampler / baseline settings used by cases/analytical/driver.py.
+obs_variance: 1.0          # R = obs_variance * I
+prior_variance: 1.0        # Cov(x1 | x0) = prior_variance * I (=1 in the spec)
+diffusion_base: 1.0        # g0 in gamma_tau = g0 (1 - tau); g_tau base for SDEs
+flowdas_J: 16              # Monte-Carlo likelihood samples for the FlowDAS baseline
+n_eval_samples: 4096       # samples drawn per (method, seed) for the metric estimates
+
+# Likelihood modes are config-selectable (GAP Section 6); the three "Ours" rows
+# run `inflated` (exact for this Gaussian case). The mode ablation
+# (inflated / inflated_shared / dps_jacobian_free) is produced by
+# cases/analytical/convergence_study.py.
+likelihood_mode: inflated

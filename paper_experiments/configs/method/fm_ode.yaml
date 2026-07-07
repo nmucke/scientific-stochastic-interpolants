@@ -1,0 +1,19 @@
+# Ours (FM-ODE) -- Sampler 3 of the unified family (spec Section 1.1).
+# a0 = 0, g_tau = 0, w_tau = a_tau. x ~ N(0,I) init (exact). Deterministic solver
+# (Heun/RK4 fine -- smooth). Randomness only through the initial latent.
+name: Ours (FM-ODE)
+stepper: ode
+diffusion_term: null   # g_tau = 0 => probability-flow ODE.
+
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  # likelihood_mode: inflated (exact, default) | inflated_shared | dps_jacobian_free.
+  likelihood_mode: inflated
+  # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
+  # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the
+  # schedule scalars kept exact at the current tau). CLI: jacobian_refresh_every=k.
+  jacobian_refresh_every: 1
+  model_class: fm
+
+posterior_model:
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

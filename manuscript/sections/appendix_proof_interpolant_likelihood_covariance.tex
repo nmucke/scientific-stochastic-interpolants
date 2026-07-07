@@ -1,0 +1,75 @@
+\section{Proof of Lemma \ref{lem:interpolated_likelihood} and Lemma~\ref{lem:source_moments}} \label{appendix:proof_interpolant_likelihood}
+
+\begin{proof}[Proof of Lemma~\ref{lem:interpolated_likelihood}]
+Recall the general state interpolant and the observation interpolant,
+\begin{align}
+  \bx_\tau &= \alpha_\tau \bx_0 + \beta_\tau \bx_1 + \src_\tau,
+     \qquad \src_\tau = \sigpath_\tau\latentnoise, \label{eq:pf_state_interp}\\
+  \interpolantobs_\tau &= \alpha_\tau \obsmatrix\bx_0 + \beta_\tau \obs, \label{eq:pf_obs_interp}
+\end{align}
+where $\obs = \obsmatrix\bx_1 + \obsnoise$ with $\obsnoise \sim \mathcal{N}(0,\obscov)$ independent of the source driver $\latentnoise$. Substituting $\obs = \obsmatrix\bx_1 + \obsnoise$ into \eqref{eq:pf_obs_interp},
+\begin{equation}
+  \interpolantobs_\tau
+  = \obsmatrix(\alpha_\tau\bx_0 + \beta_\tau\bx_1) + \beta_\tau\obsnoise .
+\end{equation}
+From~\eqref{eq:pf_state_interp}, $\alpha_\tau\bx_0 + \beta_\tau\bx_1 = \bx_\tau - \src_\tau$, giving
+\begin{equation}\label{eq:pf_ybar_decomp}
+  \interpolantobs_\tau
+  = \obsmatrix\bx_\tau
+    + \underbrace{\beta_\tau\obsnoise - \obsmatrix\src_\tau}_{=\,\interpolantobsnoise_\tau},
+\end{equation}
+which is Eq.~\eqref{eq:ybar_decomp}. Since $\obsnoise$ is independent of $\bx_1$ and of the source driver, $\obsnoise \perp (\src_\tau, \bx_\tau) \mid \bx_0$, so
+\begin{equation}
+  \E[\obsnoise \mid \bx_\tau, \bx_0] = 0,
+  \qquad
+  \cov(\obsnoise \mid \bx_\tau, \bx_0) = \obscov .
+\end{equation}
+Taking conditional expectation of \eqref{eq:pf_ybar_decomp},
+\begin{align}
+  \E[\interpolantobs_\tau \mid \bx_\tau, \bx_0]
+  = \obsmatrix\bx_\tau + \beta_\tau\,\E[\obsnoise \mid \bx_\tau, \bx_0]
+    - \obsmatrix\,\E[\src_\tau \mid \bx_\tau, \bx_0]
+  = \obsmatrix\bx_\tau - \obsmatrix\,\srcmean_\tau,
+\end{align}
+which is \eqref{eq:bias}. Because the cross terms between $\obsnoise$ and $\src_\tau$ vanish upon conditioning,
+\begin{align}
+  \cov(\interpolantobs_\tau \mid \bx_\tau, \bx_0)
+  = \beta_\tau^2\,\cov(\obsnoise \mid \bx_\tau, \bx_0)
+    + \obsmatrix\,\cov(\src_\tau \mid \bx_\tau, \bx_0)\,\obsmatrix^\top
+  = \beta_\tau^2\obscov + \obsmatrix\,\srccov_\tau\,\obsmatrix^\top,
+\end{align}
+which is \eqref{eq:cov_correction}.
+\end{proof}
+
+\begin{proof}[Proof of Lemma~\ref{lem:source_moments}]
+The source process is $\src_\tau = \sigpath_\tau\latentnoise$, so $\srcmean_\tau = \sigpath_\tau\,\E[\latentnoise\mid\bx_\tau,\bx_0]$ and $\srccov_\tau = \sigpath_\tau^2\,\cov(\latentnoise\mid\bx_\tau,\bx_0)$. The Tweedie identities of Lemma~\ref{lem:tweedie} give $\E[\latentnoise\mid\bx_\tau]=-\sigpath_\tau\genscore_\tau$ \eqref{eq:tweedie_eps} and $\cov(\latentnoise\mid\bx_\tau)=\bI+\sigpath_\tau^2\nabla_{\bx}\genscore_\tau$ \eqref{eq:tweedie_cov}, hence
+\begin{align}
+    \srcmean_\tau = -\sigpath_\tau^2\,\genscore_\tau(\bx,\bx_0),
+    \qquad
+    \srccov_\tau = \sigpath_\tau^2\,\bI + \sigpath_\tau^4\,\nabla_{\bx}\genscore_\tau(\bx,\bx_0),
+\end{align}
+which is Eq.~\eqref{eq:source_moments}.
+\end{proof}
+
+\begin{remark}[Model-class instantiation]\label{rem:source_moments_instantiation}
+The two model classes enter only through the noise scale $\sigpath_\tau$ and the score reading of Appendix~\ref{appendix:score_reading}:
+\begin{itemize}
+    \item \emph{Stochastic interpolants}, $\src_\tau=\gamma_\tau\bW_\tau$, $\sigpath_\tau=\gamma_\tau\sqrt\tau$: substituting the score \eqref{eq:SI_score} and its Jacobian $\nabla_{\bx}\genscore_\tau = A_\tau(\beta_\tau J_{\drift_\theta} - \dot\beta_\tau\bI)$ (using $\nabla_{\bx}c_\tau=\dot\beta_\tau\bI$, $J_{\drift_\theta}=\nabla_{\bx}\drift_\theta$) gives
+    \begin{align}
+        \srcmean_\tau = -\gamma_\tau^2\tau A_\tau\!\left(\beta_\tau\drift_\theta - c_\tau\right),
+        \qquad
+        \srccov_\tau = \gamma_\tau^2\tau\bI + \gamma_\tau^4\tau^2 A_\tau\!\left(\beta_\tau J_{\drift_\theta} - \dot\beta_\tau\bI\right),
+    \end{align}
+    equivalently obtainable from Stein's identity $\E[\bz\mid\bx,\bx_0]=-\gamma_\tau\sqrt\tau\,\genscore_\tau$ for the Brownian driver \cite{albergo_stochastic_2023, chen_probabilistic_2024}.
+    \item \emph{Flow matching and diffusion models}, $\src_\tau=\sigpath_\tau\latent$: Eq.~\eqref{eq:source_moments} applies directly with $\genscore_\tau$ in closed form from the trained velocity via \eqref{eq:fm_score}.
+\end{itemize}
+\end{remark}
+
+\begin{remark}
+In both cases the conditional mean of the interpolated observation equals the observation interpolant evaluated at the model denoiser: using $\beta_\tau\E[\bx_1\mid\bx_\tau,\bx_0] = \bx_\tau - \alpha_\tau\bx_0 - \srcmean_\tau$ from Lemma~\ref{lem:tweedie},
+\begin{align*}
+    \bar\mu_\tau = \obsmatrix\bx_\tau - \obsmatrix\srcmean_\tau
+    = \alpha_\tau\obsmatrix\bx_0 + \beta_\tau\obsmatrix\,\E[\bx_1\mid\bx_\tau,\bx_0],
+\end{align*}
+i.e.\ Eq.~\eqref{eq:interpolated_observation} with $\obs$ replaced by the predicted observation $\obsmatrix\,\E[\bx_1\mid\bx_\tau,\bx_0]$. This identifies Eq.~\eqref{eq:interpolant_posterior_drift} as a Tweedie-style guidance term for both model classes.
+\end{remark}

@@ -1,0 +1,65 @@
+# Case 2 -- stochastic incompressible Navier-Stokes (spec Section 5). Main
+# benchmark. Mirrors paper/configs/case/stochastic_navier_stokes.yaml conventions.
+name: navier_stokes
+project: stochastic_navier_stokes
+
+# Checkpoint run names under checkpoints/<project>/<name>/. Both priors are trained:
+# the SI prior (SI-SDE / FlowDAS) and a DEDICATED FM prior (DM-SDE / FM-ODE). The
+# loader builds the FM model from the FM checkpoint's OWN config.yaml and loads its
+# model.pth (it only falls back to reusing the SI drift when fm_run is null).
+#
+# ON THE GPU BOX the trained weights live at:
+#   checkpoints/stochastic_navier_stokes/stochastic_interpolant_small/model.pth
+#   checkpoints/stochastic_navier_stokes/flow_matching/model.pth
+# so set `require_weights: true` (or pass case.require_weights=true on the CLI) to
+# hard-fail if a dir / model.pth is missing instead of silently using random weights.
+#
+# IN THIS (laptop) REPO the run dirs carry no model.pth, so with
+# `require_weights: false` (the default) the loader runs with RANDOM weights and emits
+# a loud warning -- results are smoke-scale only.
+checkpoints:
+  si_run: stochastic_interpolant_small   # trained SI prior (has model.pth on the GPU box)
+  fm_run: flow_matching            # trained FM prior (has model.pth on the GPU box)
+  diffusion_run: diffusion_model   # dedicated diffusion checkpoint (used only if diffusion_from_fm=false)
+  # Build the Guided-diffusion baseline's prior FROM the (better-trained) FM model
+  # via DenoiseDiffusionModel.from_flow_matching, instead of loading diffusion_run.
+  # The dedicated diffusion checkpoint is poorly trained; set false to use it.
+  diffusion_from_fm: true
+
+# Hard-fail if the configured checkpoint dir / model.pth is missing. Keep false in
+# the repo so laptop smoke runs; the GPU runs override to true (run_gpu_ns.sh).
+require_weights: false
+
+# Inference device. CPU is the safe default (MPS lacks some linalg_solve / JVP
+# kernels used by the full-Sigma_s likelihood); set to mps/cuda when supported.
+device: cpu
+
+# Which test trajectories to run.
+test_sample_indices: [1, 2, 3, 4, 5]
+
+ensemble_size: 64
+# 5-step seeded history + 15 assimilation steps = 20 physical steps
+# (n_assim = num_physical_steps - len_field_history(5) = 15). Reduced-grid default.
+num_physical_steps: 20
+num_steps: 50          # M (spec default; swept over {50,100,250,500})
+
+# Observation noise variance R = sigma^2 I, sigma = 0.05 (vorticity) -> 0.0025.
+variance: 0.0025
+
+# Monte-Carlo samples inside the likelihood score estimator (FlowDAS).
+likelihood_ensemble_size: 25
+
+# Reference posterior for KL-at-points: a large-E reference ensemble drawn by the
+# headline SI-SDE sampler on the same truth+obs+mask (spec Sec 9). Override smaller
+# in the smoke run (e.g. reference_ensemble_size=8) to keep it cheap.
+reference: large_ensemble
+reference_ensemble_size: 1024
+
+# PDE params -- TODO(spec Section 5): confirm with codebase/user (cosmetic null block).
+pde:
+  grid: 128
+  viscosity: null        # nu
+  drag: null             # alpha
+  forcing_amplitude: null # epsilon
+  dt: null
+  assimilation_interval: null  # Delta t between observations

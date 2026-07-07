@@ -1,0 +1,125 @@
+\section{Doob's $h$-transform: the path-space posterior SDE}
+\label{appendix:proof_posterior}
+
+The unified sampler of Section~\ref{subsec:posterior_dynamics} conditions the \emph{marginals} of the affine Gaussian path. A classical alternative conditions its \emph{paths} through Doob's $h$-transform, fixing a prior diffusion $\gdiff_\tau>0$ and steering its trajectories towards the observation. We state and prove this construction, then contrast its guidance weight with that of Theorem~\ref{theorem:unified_posterior} (Remark~\ref{rem:doob}).
+
+\begin{theorem}[Path-space posterior SDE]\label{theorem:posterior_sde}
+Fix any diffusion schedule $\gdiff_\tau>0$ and let the prior model define the marginal-preserving SDE
+\begin{align}\label{eq:prior_sde}
+    \rd\bX_\tau = \drift^{\gdiff}_\tau(\bX_\tau,\bx_0)\,\rd\tau + \gdiff_\tau\,\rd\bW_\tau,
+    \qquad
+    \drift^{\gdiff}_\tau(\bx,\bx_0) := \fmvel_\tau(\bx,\bx_0) + \tfrac12\gdiff_\tau^2\,\genscore_\tau(\bx,\bx_0),
+\end{align}
+with source $\bX_0\sim p_0$, whose terminal law is $\conddist{\bx_1}{\bx_0}$. Given observations $\obs$, likelihood $\conddist{\obs}{\bx_1}$, and $\Phi_{\tau}^{\obs}(\bx, \bx_0)=\E[\conddist{\obs}{\bx_1} \mid \bX_\tau = \bx, \bX_0 = \bx_0 ]$ taken along \eqref{eq:prior_sde}, the SDE
+\begin{align}
+    \rd \bXstar_\tau = \drift^{\gdiff}_\tau(\bXstar_{\tau}, \bx_0) \rd \tau + \gdiff_\tau^2
+    \nabla_{\bXstar_\tau} \log \Phi_{\tau}^{\obs}(\bXstar_{\tau}, \bx_0) \rd \tau + \gdiff_\tau \rd \bW_\tau,
+\end{align}
+initialised from the reweighted source distribution
+\begin{align}\label{eq:twisted_init}
+    \bXstar_0 \sim p_0^{\obs}, \qquad p_0^{\obs}(\rd\bx) \propto \Phi_{0}^{\obs}(\bx, \bx_0)\, p_0(\rd\bx),
+\end{align}
+generates terminal states $\bXstar_1$ distributed according to the posterior $\conddist{\bx_1}{\obs, \bx_0}$.
+\end{theorem}
+
+
+% Before we prove Theorem \ref{theorem:posterior_sde}, we define the Kolmogorov Backward Equation and state Doob's $h$-transform:
+% \begin{definition}[Kolmogorov Backward Equation]
+% For an SDE:
+% \begin{align}\label{eq:generic_SDE}
+% \begin{split}
+%     \rd \bX_{\tau} = \drift(\bX_{\tau}) \rd \tau + \gdiff_\tau \rd \bW_\tau, \quad
+%     \tau \in [0,T], \quad \bX_0 = \bx_0,
+% \end{split}
+% \end{align}
+% with marginal density, $p_{\tau, \bx_0}$, at time $\tau$ with the initial condition $\bx_0$, let the operator, $A$, be defined by:
+% \begin{align}
+%     A_\tau\psi = \inner{\drift(\bx), \nabla \psi} + \frac{1}{2} \text{Tr}\left[ \gdiff_\tau^2 \nabla^2 \psi \right].
+% \end{align}
+% Then the Kolmogorov Backward Equation is:
+% \begin{align}
+%     \partial_\tau \Phi(\bx, \tau) + A_\tau \Phi(\bx, \tau) = 0, \quad \Phi(\bx, T) = h(\bx).
+% \end{align}
+% \end{definition}
+
+Before we prove Theorem \ref{theorem:posterior_sde}, we state Doob's $h$-transform \cite{zhang_sampling_nodate, sarkka_applied_2019}:
+\begin{proposition}[Doob's $h$-transform]
+Let $h\in C^2(\R^d)$ be strictly positive, and
+\begin{align}
+    \Phi_\tau(\bx) = \E\left[ h(\bX_T) | \bX_\tau = \bx \right],
+\end{align}
+be the solution to the Kolmogorov Backward Equation. Let $\dist[\tau, \tau']{\bx, \bx'}$ be the Markov transition kernel of the SDE:
+\begin{align}\label{eq:uncontrolled_SDE}
+\begin{split}
+    \rd \bX_{\tau} = \drift(\bX_{\tau}) \rd \tau + \gdiff_\tau \rd \bW_\tau, \quad  \tau \in [0,T], \quad \bX_0 = \bx_0.
+\end{split}
+\end{align}
+Furthermore, consider the controlled SDE:
+\begin{align}\label{eq:controlled_SDE}
+\begin{split}
+    \rd \bX_{\tau}^{\bu} = \left[\drift(\bX_{\tau}^{\bu}) + \gdiff_\tau\bu_{\tau}(\bX_{\tau}^{\bu})\right] \rd \tau + \gdiff_\tau \rd \bW_\tau, \quad   \tau \in [0,T], \quad \bX_0^{\bu} = \bx_0.
+\end{split}
+\end{align}
+Then, if $\bu_{\tau}(\bx) = \gdiff_\tau \nabla_{\bx}\log\Phi_\tau(\bx)$, the transition kernel is:
+\begin{align}
+    \dist[\tau, \tau'][\bu]{\bx, \bx'} = \frac{\Phi_{\tau'}(\bx')}{\Phi_\tau(\bx)} \dist[\tau, \tau']{\bx, \bx'}.
+\end{align}
+In particular, if $\tau=0$, $\tau'=1$, and $\bx=\bx_0$, we have:
+\begin{align}
+    \dist[0, 1][\bu]{\bx, \bx'} = \frac{h(\bx')\dist[1](\bx' | \bx_0=\bx)}{\Phi_0(\bx)},
+\end{align}
+Where $\dist[1](\bx' | \bx_0=\bx)$ is the marginal density of the process satisfying the uncontrolled SDE at time $\tau$ with initial condition $\bx_0$.
+\end{proposition}
+
+\subsection{Proof of Theorem~\ref{theorem:posterior_sde}}
+\begin{proof}
+Let
+\begin{align}
+\bu(\bx,\tau) = \gdiff_\tau \nabla_{\bx} \log \Phi_\tau^{\obs}(\bx, \bx_0).
+\end{align}
+Then the posterior SDE of Theorem~\ref{theorem:posterior_sde} is of the same form as the controlled SDE in Eq. \eqref{eq:controlled_SDE}, with uncontrolled drift $\drift^{\gdiff}_\tau(\bx,\bx_0)=\fmvel_\tau(\bx,\bx_0)+\tfrac12\gdiff_\tau^2\genscore_\tau(\bx,\bx_0)$ and diffusion $\gdiff_\tau$.
+
+By the marginal-preservation property (Proposition~\ref{prop:marginal_preservation}), for any $\gdiff_\tau\ge0$ the uncontrolled SDE \eqref{eq:uncontrolled_SDE}, started from the source distribution $p_0$, has the same marginals as the trained model; in particular its terminal marginal equals the prior,
+\begin{align}\label{eq:terminal_marginal}
+    \int \dist[0,1]{\bx, \bx'}\, p_0(\rd\bx) = \conddist{\bx'}{\bx_0}.
+\end{align}
+This is the only property used below, so the argument is identical for the stochastic interpolant (native $\gdiff_\tau=\gamma_\tau$) and for flow matching (lifted $\gdiff_\tau>0$).
+
+Now, define $h(\bx) = \conddist{\obs}{\bx}$, so that $\Phi_{\tau}^{\obs}(\bx, \bx_0) = \E[ \conddist{\obs}{\bX_1} \mid \bX_\tau = \bx ]$ along the uncontrolled SDE. By Doob's $h$-transform, the transition kernel of the controlled SDE is
+\begin{align}
+    \dist[0, 1][\bu]{\bx, \bx'}
+    =
+    \frac{h(\bx')\,\dist[0,1]{\bx, \bx'}}{\Phi_0^{\obs}(\bx, \bx_0)}.
+\end{align}
+Initialising from the reweighted source distribution $p_0^{\obs}(\rd\bx) = \Phi_0^{\obs}(\bx,\bx_0)\,p_0(\rd\bx)/Z$, the normalising constant is
+\begin{align}
+    Z = \int \Phi_0^{\obs}(\bx, \bx_0)\, p_0(\rd\bx)
+      = \iint h(\bx')\, \dist[0,1]{\bx,\bx'}\, \rd\bx'\, p_0(\rd\bx)
+      = \int \conddist{\obs}{\bx'} \conddist{\bx'}{\bx_0}\, \rd\bx'
+      = \conddist{\obs}{\bx_0},
+\end{align}
+using \eqref{eq:terminal_marginal}. The terminal law of the controlled process is therefore
+\begin{align}
+    \dist{\bXstar_1 = \bx'}
+    = \int \dist[0, 1][\bu]{\bx, \bx'}\, p_0^{\obs}(\rd\bx)
+    = \frac{h(\bx')}{Z} \int \dist[0,1]{\bx, \bx'}\, p_0(\rd\bx)
+    = \frac{\conddist{\obs}{\bx'}\,\conddist{\bx'}{\bx_0}}{\conddist{\obs}{\bx_0}}
+    = \conddist{\bx'}{\obs, \bx_0},
+\end{align}
+which was what we wanted to show. Note that the factors $\Phi_0^{\obs}$ cancel between the kernel and the reweighted initial distribution; without the reweighting, the terminal law would instead be $h(\bx')\int \dist[0,1]{\bx,\bx'}\,\Phi_0^{\obs}(\bx,\bx_0)^{-1} p_0(\rd\bx)$, which differs from the posterior whenever $\Phi_0^{\obs}$ is non-constant on the support of $p_0$.
+
+For the stochastic interpolant, $p_0 = \delta_{\bx_0}$ and the reweighting is vacuous: $p_0^{\obs} = \delta_{\bx_0}$ and the process is simply started at $\bx_0$. For flow matching, $p_0 = \mathcal{N}(0,\bI)$ and the reweighting is in general non-trivial; see the discussion in Section~\ref{subsec:supplying_diffusion}.
+\end{proof}
+
+
+\subsection{Path conditioning versus marginal conditioning}
+\label{subsec:doob_vs_marginal}
+Theorem~\ref{theorem:posterior_sde} and Theorem~\ref{theorem:unified_posterior} both produce the posterior terminal law $\conddist{\bx_1}{\obs,\bx_0}$, but they condition different objects, and the symbol $\Phi_\tau^{\obs}$ denotes a \emph{different} function in each. To avoid conflation we write
+\begin{align}
+    \Phi_\tau^{\mathrm{int}}(\bx) &:= \E[\conddist{\obs}{\bx_1}\mid\bx_\tau=\bx,\bx_0] \quad\text{(interpolant coupling $\conddist{\bx_1}{\bx_\tau,\bx_0}$)}, \\
+    \Phi_\tau^{\mathrm{sde}}(\bx) &:= \E[\conddist{\obs}{\bX_1}\mid\bX_\tau=\bx] \quad\text{(Markov diffusion \eqref{eq:prior_sde})}.
+\end{align}
+Theorem~\ref{theorem:unified_posterior} and the main text use $\Phi_\tau^{\mathrm{int}}$; Theorem~\ref{theorem:posterior_sde} uses $\Phi_\tau^{\mathrm{sde}}$. The marginal-preserving SDE matches every one-time marginal $p_\tau$, but its two-time joint $(\bX_\tau,\bX_1)$ is not the interpolant joint $(\bx_\tau,\bx_1)$, so the two tilts differ for $\tau<1$ and coincide only at $\tau=1$, where both equal $\conddist{\obs}{\bx}$. The marginal correction is exact in its own coupling: $\genscore_\tau^{\obs}-\genscore_\tau=\nabla\log\Phi_\tau^{\mathrm{int}}$ holds by Bayes on $p_\tau^{\obs}\propto\Phi_\tau^{\mathrm{int}}p_\tau$, and $\Phi_\tau^{\mathrm{int}}=\conddist{\obs}{\bx_\tau,\bx_0}$ is the true marginal likelihood.
+
+The two constructions therefore differ in \emph{both} the scalar weight and the score it multiplies: Theorem~\ref{theorem:unified_posterior} applies $\gweight_\tau=\vscoef_\tau+\tfrac12\gdiff_\tau^2$ to $\nabla\log\Phi_\tau^{\mathrm{int}}$, while Theorem~\ref{theorem:posterior_sde} applies $\gdiff_\tau^2$ to $\nabla\log\Phi_\tau^{\mathrm{sde}}$. The scalar difference $\gweight_\tau-\gdiff_\tau^2=\vscoef_\tau-\tfrac12\gdiff_\tau^2$ is only one part of the discrepancy; because the two weights act on different scores, the marginal-versus-path gap cannot be reduced to this scalar alone. The practical consequence is unambiguous: the observation-interpolant surrogate of Section~\ref{subsec:obs_interpolation} approximates $\Phi_\tau^{\mathrm{int}}$, so it must be paired with the marginal weight $\gweight_\tau$; pairing it with the path weight $\gdiff_\tau^2$ would be mismatched in both factors and would introduce a bias that does not vanish for $\tau<1$. For this reason the main text adopts the marginal construction \eqref{eq:unified_posterior_drift}, which additionally yields the deterministic $\gdiff_\tau=0$ sampler that has no Doob analogue (the Doob correction $\propto\gdiff_\tau^2$ vanishes with the noise). That guidance applied per step does not in general preserve the exact conditional marginals is well known and motivates twisted-SMC and learned $h$-transform correctors \cite{wu_practical_2023, denker_deft_2024}; here we instead identify the weight that is consistent with the interpolant surrogate. We retain Theorem~\ref{theorem:posterior_sde} as the path-space view that motivates the correction and recovers the same terminal law.
+

@@ -15,6 +15,7 @@ from sympy.integrals.laplace import I
 
 from scisi.metrics.lsim import LSiM_distance
 from scisi.metrics.spectral import compute_enstrophy_error, get_enstrophy_spectrum
+from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.models.flow_matching_model import FlowMatchingModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 from scisi.plotting.animation import create_animation_from_tensors
@@ -49,7 +50,13 @@ DEFAULT_NAME = "stochastic_interpolant_big_gamma1"  # Udales
 # DEFAULT_NAME = "stochastic_interpolant_small_original"  # Udales
 
 
-NUM_PHYSICAL_STEPS = 25
+# When testing a diffusion model, build it from the (better-trained) flow-matching
+# model via DenoiseDiffusionModel.from_flow_matching instead of loading the
+# diffusion checkpoint's own weights. FM_NAME_FOR_DIFFUSION is the FM run name.
+DIFFUSION_FROM_FM = True
+FM_NAME_FOR_DIFFUSION = "flow_matching"
+
+NUM_PHYSICAL_STEPS = 100
 NUM_STEPS = 50
 BATCH_SIZE = 5
 PLOTTING_TIMES = [5, NUM_PHYSICAL_STEPS // 2, NUM_PHYSICAL_STEPS - 1]
@@ -63,6 +70,22 @@ mixed_precision_context = (
     if MIXED_PRECISION
     else contextlib.nullcontext()
 )
+
+
+def _build_diffusion_from_fm(project: str, fm_name: str) -> DenoiseDiffusionModel:
+    """Build a diffusion prior from a trained flow-matching checkpoint.
+
+    Loads the FM run's own ``config.yaml`` / ``model.pth`` and wraps the trained
+    velocity net via ``DenoiseDiffusionModel.from_flow_matching`` (velocity
+    mode), so the score / reverse-SDE drift are reconstructed from the FM
+    velocity rather than the diffusion checkpoint's weights.
+    """
+    fm_cfg = OmegaConf.load(f"checkpoints/{project}/{fm_name}/config.yaml")
+    fm_model = hydra.utils.instantiate(fm_cfg.model)
+    fm_model.load_state_dict(
+        torch.load(f"checkpoints/{project}/{fm_name}/model.pth", map_location="cpu")
+    )
+    return DenoiseDiffusionModel.from_flow_matching(fm_model)
 
 
 def main(cfg: DictConfig, project: str, name: str) -> None:
@@ -79,10 +102,19 @@ def main(cfg: DictConfig, project: str, name: str) -> None:
 
     logger.info(f"Instantiating model...")
     model = hydra.utils.instantiate(cfg.model)
-    logger.info(f"Loading model from checkpoint...")
-    model.load_state_dict(
-        torch.load(f"checkpoints/{project}/{name}/model.pth", map_location="cpu")
-    )
+    if isinstance(model, DenoiseDiffusionModel) and DIFFUSION_FROM_FM:
+        # Build the diffusion model from the well-trained FM model rather than the
+        # diffusion checkpoint's own (worse) weights.
+        logger.info(
+            f"Building diffusion model from FM checkpoint "
+            f"'{FM_NAME_FOR_DIFFUSION}' (velocity mode)..."
+        )
+        model = _build_diffusion_from_fm(project, FM_NAME_FOR_DIFFUSION)
+    else:
+        logger.info(f"Loading model from checkpoint...")
+        model.load_state_dict(
+            torch.load(f"checkpoints/{project}/{name}/model.pth", map_location="cpu")
+        )
     model.eval()
     model.to(cfg.trainer.device)
 

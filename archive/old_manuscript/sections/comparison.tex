@@ -1,0 +1,18 @@
+% Comparison to alternative methods.
+
+Our method shares building blocks with existing approaches but differs in how it assembles them.
+
+\paragraph{FlowDAS.}
+FlowDAS \cite{chen_flowdas_2025}, the closest prior method, commits to a single SI-SDE and estimates the likelihood score by Monte-Carlo over sampled trajectories. We instead read it off the closed-form observation interpolant \eqref{eq:interpolated_observation} with the inflated covariance \eqref{eq:inflated_covariance}, removing both sampling variance and per-step trajectory backprop, and freeing $\gdiff_\tau$ so the SI-SDE becomes one member of a family also containing the DM-SDE and guided ODE. The trade-off: our likelihood is a Gaussian surrogate (Section~\ref{subsec:obs_interpolation}), its bias controlled by the covariance choice rather than the number of samples.
+
+\paragraph{FIG / OT-ODE.}
+FIG \cite{yan_fig_2024} and OT-ODE \cite{pokle_training-free_2024} guide a deterministic FM probability-flow ODE for static linear inverse problems, FIG using a measurement interpolant coinciding with ours \eqref{eq:interpolated_observation}. We recover this guided ODE as the $\gdiff_\tau=0$ member, with weight fixed by $\vscoef_\tau$, generalising from one-shot inversion to autoregressive DA and placing the ODE in one family with the SDE samplers; the price is less calibrated spread.
+
+\paragraph{DPS / $\Pi$GDM.}
+The Gaussian likelihood surrogate originates in diffusion guidance: DPS \cite{chung_diffusion_2023} uses the denoiser mean with uninflated covariance, $\Pi$GDM \cite{song_pseudoinverse_2023} inflates it. We adopt the inflated ($\Pi$GDM-style) covariance \eqref{eq:inflated_covariance} as our likelihood-score covariance, which DPS would leave uninflated: the inflation is markedly more accurate for sparse observations (Section~\ref{sec:results}), at the cost of an $N_y\times N_y$ solve, while the cheap Jacobian-free covariance (Corollary~\ref{cor:cheap_drift}) suffices when observations are dense.
+
+\paragraph{SDA.}
+SDA \cite{rozet_score-based_2023} learns an all-at-once score over the whole trajectory and conditions jointly. We are autoregressive -- one window per step, feeding each posterior sample forward -- keeping per-step cost and prior dimension fixed as the horizon grows, but not propagating cross-window correlations as a joint smoother would.
+
+\paragraph{Ensemble score filter / EnKF / particle filter.}
+The ensemble score filter \cite{bao_ensemble_2024}, EnKF, and particle filter operate on the \emph{true} forward solver, an advantage in their ideal linear--Gaussian regime (near-exact in the analytical case, Section~\ref{sec:results}), but rely on a Gaussian analysis update or many particles and require repeated solver calls. We replace the solver with a pre-trained prior and a closed-form posterior update, trading linear--Gaussian optimality for applicability to strongly non-Gaussian, high-dimensional fields.

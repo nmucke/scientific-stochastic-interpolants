@@ -65,3 +65,9 @@ multirun/
 
 # pdf
 *.pdf
+
+# Saved posterior/truth states from save_states=true (large .npz files)
+paper_experiments/results/states/
+
+# Persistent XLA compile cache (run_ns_reference.sh)
+.jax_cache/

@@ -1,0 +1,12 @@
+# Super-resolution 32^2 -> 128^2 (spec Section 2). H = 4x4 block average from the
+# 128^2 model grid to a 32^2 observed grid.
+name: 32^2->128^2
+type: superres
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: super_res
+  low_res: 32
+  high_res: 128
+  # data_size defaults to (1, 128, 128); the case config overrides for multi-variable
+  # (e.g. urban: data_size: [4, 128, 128]).

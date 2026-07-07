@@ -22,6 +22,122 @@ from jax import random
 # from jax_cfd_lib.ns_kalman import ObservationOperator
 
 
+# --------------------------------------------------------------------------- #
+# Correlation-based localization (Vossepoel, Evensen & van Leeuwen, 2025, MWR,
+# "Adaptive Correlation- and Distance-Based Localization for Iterative Ensemble
+# Smoothers").
+#
+# Unlike Gaspari-Cohn DISTANCE localization (taper by physical distance), this
+# selects and tapers observations by their ENSEMBLE CORRELATION to the updated
+# state variable, which is expected to help for sparse sensors. The two helpers
+# below are shared by the localized EnKF and (L)ETKF classes; they replace the
+# distance taper with a correlation-based selection + observation-error inflation
+# and are only invoked when ``localization_type == "correlation"`` (the default
+# remains the existing distance-based Gaspari-Cohn path -- see the classes).
+# --------------------------------------------------------------------------- #
+
+
+def correlation_state_obs(
+    X_pert: jnp.ndarray,
+    HX_pert: jnp.ndarray,
+    eps: float = 1e-12,
+) -> jnp.ndarray:
+    """Ensemble correlation rho(l, j) between every state var and measurement.
+
+    Parameters
+    ----------
+    X_pert : jnp.ndarray
+        State-anomaly matrix ``A`` (state perturbations about the ensemble mean),
+        shape ``(N, n_state)``.
+    HX_pert : jnp.ndarray
+        Predicted-measurement anomaly matrix ``Y`` (``H`` applied to the forecast
+        members, about their mean), shape ``(N, n_obs)``.
+    eps : float
+        Floor on the per-variable / per-measurement standard deviations to guard
+        the normalisation against zero-spread directions.
+
+    Returns
+    -------
+    jnp.ndarray
+        Correlation matrix ``rho``, shape ``(n_state, n_obs)``, entries in
+        ``[-1, 1]``. ``C_zy = A^T Y`` normalised by the per-row std of ``A`` and
+        per-col std of ``Y`` (Pearson correlation across ensemble members).
+    """
+    # Cross-covariance C_zy = A^T Y / (N - 1); the (N-1) cancels in the
+    # correlation normalisation, so we keep raw sums and normalise by stds.
+    cov_zy = X_pert.T @ HX_pert  # (n_state, n_obs), == sum over members
+    std_state = jnp.sqrt(jnp.sum(X_pert**2, axis=0))  # (n_state,)
+    std_obs = jnp.sqrt(jnp.sum(HX_pert**2, axis=0))  # (n_obs,)
+    denom = std_state[:, None] * std_obs[None, :] + eps
+    return cov_zy / denom
+
+
+def correlation_localization_weights(
+    rho: jnp.ndarray,
+    corr_threshold: float,
+    inflation_max: float = 4.0,
+    inflation_beta: float = 0.5,
+) -> jnp.ndarray:
+    """Correlation-based selection + obs-error-inflation taper (Eq. of the paper).
+
+    For state variable ``l`` and measurement ``j`` with correlation distance
+    ``d_c = 1 - |rho(l, j)|`` and truncation distance ``d_t = 1 - corr_threshold``:
+
+    * **Truncation.** Retain ``j`` only if ``|rho| >= corr_threshold`` (i.e.
+      ``d_c <= d_t``); truncated measurements get weight 0 so they do not enter
+      the update of ``l``.
+    * **Observation-error inflation.** A retained measurement's error variance is
+      inflated by ``E_inf = 1`` if ``d_c <= beta * d_t`` else
+      ``E_inf = exp( ((d_c - beta * d_t) / b)^2 )`` with
+      ``b = (1 - beta) * d_t / sqrt(ln(E_max))``; ``E_inf`` rises smoothly from 1
+      at ``d_c = beta * d_t`` toward ``E_max`` near ``d_c = d_t``.
+
+    The returned weight ``w = 1 / E_inf`` (0 for truncated obs) is the localization
+    weight in the SAME convention the distance-based path uses (it scales the
+    observation precision; the existing classes fold it into ``R`` exactly like
+    the Gaspari-Cohn weight, via ``sqrt(w)`` on the obs perturbations / innovation,
+    or a Schur product on the covariance). This makes the correlation path a
+    drop-in replacement for the GC taper inside the existing analysis math.
+
+    Parameters
+    ----------
+    rho : jnp.ndarray
+        Correlation matrix from :func:`correlation_state_obs`, shape
+        ``(n_state, n_obs)``.
+    corr_threshold : float
+        Truncation threshold ``r_t`` on ``|rho|``. First-guess ``3 / sqrt(N)``
+        (removes ~99.7% of spurious zero-correlation sampling noise); paper found
+        tuned values 0.3--0.4 work well.
+    inflation_max : float
+        Maximum observation-error inflation ``E_max`` reached near ``d_c = d_t``
+        (paper default 4--8).
+    inflation_beta : float
+        Fraction ``beta`` of ``d_t`` below which no inflation is applied
+        (``E_inf = 1``); paper default 0.5.
+
+    Returns
+    -------
+    jnp.ndarray
+        Localization weights ``w(l, j) = 1 / E_inf`` in ``[0, 1]`` (0 = truncated),
+        shape ``(n_state, n_obs)``.
+    """
+    d_t = 1.0 - corr_threshold
+    d_c = 1.0 - jnp.abs(rho)  # correlation distance in [0, 1]
+
+    # Inflation scale b so that E_inf -> E_max at d_c = d_t.
+    b = (1.0 - inflation_beta) * d_t / jnp.sqrt(jnp.log(inflation_max))
+    knee = inflation_beta * d_t
+
+    # E_inf = 1 for d_c <= beta*d_t, else exp(((d_c - beta*d_t)/b)^2).
+    excess = jnp.maximum(d_c - knee, 0.0)
+    E_inf = jnp.where(d_c <= knee, 1.0, jnp.exp((excess / b) ** 2))
+
+    weights = 1.0 / E_inf
+    # Truncation: drop obs whose |rho| is below the threshold (d_c > d_t).
+    retained = d_c <= d_t
+    return jnp.where(retained, weights, 0.0)
+
+
 class SpectralEnKF:
     """
     Ensemble Kalman Filter for PDEs in Fourier space.
@@ -239,6 +355,23 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         Minimum allowed localization radius (default: localization_radius / 4)
     max_radius : float, optional
         Maximum allowed localization radius (default: min(domain_size/2, 4*localization_radius))
+    localization_type : str
+        Localization scheme. ``"distance"`` (default) uses the existing
+        Gaspari-Cohn distance taper -- unchanged. ``"correlation"`` uses the
+        OPT-IN ensemble-correlation selection + observation-error inflation of
+        Vossepoel, Evensen & van Leeuwen (2025) (see
+        :func:`correlation_localization_weights`); it ignores
+        ``localization_radius`` and instead uses ``corr_threshold`` /
+        ``corr_inflation_max`` / ``corr_inflation_beta``.
+    corr_threshold : float, optional
+        Truncation threshold ``r_t`` on ``|rho|`` for correlation localization.
+        ``None`` (default) -> first-guess ``3 / sqrt(ensemble_size)``.
+    corr_inflation_max : float
+        Maximum obs-error inflation ``E_max`` for correlation localization
+        (default 4.0; paper 4--8).
+    corr_inflation_beta : float
+        Fraction ``beta`` of ``d_t`` below which no inflation is applied
+        (default 0.5).
     """
 
     def __init__(  # type: ignore[no-untyped-def]
@@ -254,6 +387,10 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         min_radius: Optional[float] = None,
         max_radius: Optional[float] = None,
         adaptation_method: str = "hybrid",
+        localization_type: str = "distance",
+        corr_threshold: Optional[float] = None,
+        corr_inflation_max: float = 4.0,
+        corr_inflation_beta: float = 0.5,
     ):
         super().__init__(
             grid_shape=grid_shape,
@@ -266,6 +403,22 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         self.localization_radius = localization_radius
         self.adaptive_localization = adaptive_localization
         self.adaptation_method = adaptation_method
+
+        # Correlation-based localization (opt-in; default is distance/GC).
+        if localization_type not in ("distance", "correlation"):
+            raise ValueError(
+                f"localization_type must be 'distance' or 'correlation', "
+                f"got {localization_type!r}"
+            )
+        self.localization_type = localization_type
+        # First-guess r_t = 3 / sqrt(N) removes ~99.7% of spurious sampling noise.
+        self.corr_threshold = (
+            float(corr_threshold)
+            if corr_threshold is not None
+            else 3.0 / (ensemble_size**0.5)
+        )
+        self.corr_inflation_max = corr_inflation_max
+        self.corr_inflation_beta = corr_inflation_beta
         # Set default min/max radius for adaptive localization
         if min_radius is None:
             self.min_radius = max(2.0, localization_radius / 4.0)
@@ -711,8 +864,44 @@ class LocalizedSpectralEnKF(SpectralEnKF):
         HX_mean = jnp.mean(HX, axis=0)
         HX_pert = HX - HX_mean
 
-        # Compute localization matrices
-        rho_state_obs, rho_obs_obs = self.compute_distance_matrix(periodic=periodic)
+        # Compute localization matrices.
+        if self.localization_type == "correlation":
+            # OPT-IN correlation-based localization (default path is unchanged
+            # distance/GC below). Taper P_xy by the ensemble-correlation weight
+            # w(l, j) = 1 / E_inf (0 = truncated) in place of the GC distance
+            # taper. The obs-obs covariance keeps a per-OBS error inflation
+            # E_inf_obs that is the minimum inflation any retained state variable
+            # applies to obs j (so a measurement that is far -- in correlation --
+            # from the WHOLE state has its global precision down-weighted).
+            #
+            # TODO(author): in the paper the obs-error inflation is PER STATE
+            # VARIABLE (local analysis), which the global-Schur EnKF cannot
+            # express exactly; here it is approximated by (a) the per-(l, j)
+            # Schur taper on P_xy and (b) a per-obs E_inf in P_yy reduced over l.
+            # The LETKF path (LocalizedSpectralETKF, localization_type=
+            # "correlation") implements the paper's per-variable local analysis
+            # faithfully and should be preferred for the headline result.
+            rho = correlation_state_obs(X_pert, HX_pert)  # (n_state, n_obs)
+            w_state_obs = correlation_localization_weights(
+                rho,
+                self.corr_threshold,
+                self.corr_inflation_max,
+                self.corr_inflation_beta,
+            )  # (n_state, n_obs) in [0, 1]
+            rho_state_obs = w_state_obs
+            # Per-obs inflation: smallest E_inf = 1 / max_l w(l, j) over retained
+            # state vars (1.0 if some var sees obs j with no inflation).
+            max_w_per_obs = jnp.max(w_state_obs, axis=0)  # (n_obs,)
+            E_inf_obs = jnp.where(max_w_per_obs > 0.0, 1.0 / max_w_per_obs, 1.0)
+            rho_obs_obs = jnp.eye(n_obs)
+            R_diag = (self.obs_noise_std**2) * E_inf_obs  # (n_obs,)
+            R = jnp.diag(R_diag)
+        else:
+            # DEFAULT: existing Gaspari-Cohn distance localization (unchanged).
+            rho_state_obs, rho_obs_obs = self.compute_distance_matrix(
+                periodic=periodic
+            )
+            R = (self.obs_noise_std**2) * jnp.eye(n_obs)
 
         # Compute localized covariances
         # P_xy = (X_pert^T @ HX_pert / (N-1)) ⊙ ρ_state_obs
@@ -721,7 +910,7 @@ class LocalizedSpectralEnKF(SpectralEnKF):
 
         # P_yy = (HX_pert^T @ HX_pert / (N-1)) ⊙ ρ_obs_obs + R
         Pyy = (HX_pert.T @ HX_pert) / (self.ensemble_size - 1)
-        Pyy_localized = Pyy * rho_obs_obs + (self.obs_noise_std**2) * jnp.eye(n_obs)
+        Pyy_localized = Pyy * rho_obs_obs + R
 
         # Kalman gain with localization
         Pyy_inv = jnp.linalg.inv(Pyy_localized)

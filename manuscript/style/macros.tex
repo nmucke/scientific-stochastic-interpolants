@@ -1,0 +1,193 @@
+\usepackage{xparse}
+\usepackage[most]{tcolorbox} 
+\usepackage{amsfonts}
+
+
+% Placeholder for table cells whose numbers are pending a (re-)run.
+\newcommand{\tbd}{\textsc{tbd}}
+
+% Common math symbols
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\rd}{\mathrm{d}}
+
+\NewDocumentCommand{\inner}{m m}{%
+  \ensuremath{
+    \langle #1, #2 \rangle
+  }
+}
+\NewDocumentCommand{\norm}{m}{%
+  \ensuremath{
+    \left\lVert #1 \right\rVert
+  }
+}
+
+% Variables
+\newcommand{\bz}{\boldsymbol{z}}
+\newcommand{\bW}{\boldsymbol{W}}
+\newcommand{\bx}{\boldsymbol{x}}
+\newcommand{\bX}{\boldsymbol{X}}
+\newcommand{\bXstar}{\bX^{*}}
+\newcommand{\var}{\text{Var}}
+\newcommand{\cov}{\text{Cov}}
+\newcommand{\mean}{\boldsymbol{\mu}}
+\newcommand{\covmatrix}{\boldsymbol{\Sigma}}
+
+\newcommand{\state}{\boldsymbol{u}}
+\newcommand{\forwardmodel}{\boldsymbol{F}}
+\newcommand{\modelnoise}{\boldsymbol{\xi}}
+\newcommand{\obs}{\boldsymbol{y}} % observations
+\newcommand{\obsoperator}{\boldsymbol{H}}
+\newcommand{\obsmatrix}{H}
+\newcommand{\obsnoise}{\boldsymbol{\eta}}
+\newcommand{\obsdim}{N_{\obs}}
+\newcommand{\obscov}{R}
+
+\newcommand{\priormean}{\state_b}
+\newcommand{\priorcov}{B}
+
+\newcommand{\statepost}{\state_a}
+\newcommand{\stateprior}{\state_b}
+
+% Score
+\newcommand{\score}[2]{\nabla_{#1}\log \dist{#2}}
+\newcommand{\scorefun}{\boldsymbol{S}}
+
+
+\newcommand{\bu}{\boldsymbol{u}}
+
+% SI variables
+\newcommand{\drift}{\bm{b}}
+\newcommand{\postdrift}{\bm{b}^*}
+\newcommand{\bI}{\bm{I}}
+\newcommand{\bR}{\bm{R}}
+
+\newcommand{\interpolantobs}{\bar{\obs}}
+\newcommand{\interpolantobsnoise}{\bar{\obsnoise}}
+\newcommand{\interpolantobscov}{\bar{\obscov}}
+
+% Flow-based generative model variables (general framework)
+\newcommand{\fmvel}{\bm{v}}            % flow-matching velocity field
+\newcommand{\latent}{\bm{z}_0}         % Gaussian source/latent of flow matching
+\newcommand{\latentnoise}{\bm{\varepsilon}} % generic standard normal driver
+\newcommand{\gdiff}{g}                  % lifted diffusion coefficient g_\tau
+\newcommand{\genscore}{\bm{s}}          % score field s_\tau = \nabla\log p_\tau
+\newcommand{\src}{{\bm{\xi}^{\mathrm{s}}}} % zero-mean source process along the path
+\newcommand{\srccov}{{\Sigma^{\mathrm{s}}}} % conditional covariance of source process
+\newcommand{\srcmean}{{\mu^{\mathrm{s}}}}   % conditional mean of source process
+\newcommand{\sigpath}{\sigma}           % path noise scale \sigma_\tau
+
+% --- Unified posterior-sampling framework (three samplers) ---
+\newcommand{\vscoef}{\kappa}            % velocity--score duality coefficient \kappa_\tau
+\newcommand{\gweight}{w}                % guidance weight w_\tau = \kappa_\tau + 1/2 g_\tau^2
+\newcommand{\fmvelpost}{\fmvel^{\obs}}  % conditional (posterior) velocity field
+\newcommand{\genscorepost}{\genscore^{\obs}} % conditional (posterior) score field
+\newcommand{\liketilt}{\Phi}            % likelihood tilt \Phi_\tau^{\obs}
+\newcommand{\Xpost}{\bX^{*}}            % posterior-sampler state (alias of \bXstar)
+
+% CFD variables
+\newcommand{\vorticity}{\omega}
+\newcommand{\velocity}{\boldsymbol{v}} % drift term in SDE
+
+% Neural networks
+\newcommand{\nnweights}{\theta}
+
+% Dimensions
+\newcommand{\statedim}{N_{\state}}
+
+% Distributions
+% \NewDocumentCommand{\dist}{o g}{%
+%   \ensuremath{
+%     % Subscript part: p_{sub} if [sub] is present, else just p
+%     p\IfValueT{#1}{_{#1}}%
+%     % Variable part: (x) if {x} is present, else nothing
+%     \IfValueT{#2}{(#2)}%
+%   }
+% }
+
+\NewDocumentCommand{\dist}{o o g}{%
+  \ensuremath{
+    % Base symbol
+    p%
+    % Subscript: p_{#1} if first [] is present
+    \IfValueT{#1}{_{#1}}%
+    % Superscript: p^{#2} if second [] is present
+    \IfValueT{#2}{^{#2}}%
+    % Variable: (x) if {} is present
+    \IfValueT{#3}{(#3)}%
+  }
+}
+
+
+\NewDocumentCommand{\distbar}{o o g}{%
+  \ensuremath{
+    % Base symbol
+    \bar{p}%
+    % Subscript: p_{#1} if first [] is present
+    \IfValueT{#1}{_{#1}}%
+    % Superscript: p^{#2} if second [] is present
+    \IfValueT{#2}{^{#2}}%
+    % Variable: (x) if {} is present
+    \IfValueT{#3}{(#3)}%
+  }
+}
+
+\NewDocumentCommand{\conddist}{o o m m}{%
+  \ensuremath{
+    p%
+    % Subscript part
+    \IfValueT{#1}{_{#1}}%
+    % Superscript part
+    \IfValueT{#2}{^{#2}}%
+    % Conditional part with auto-scaling delimiters
+    \!\left(#3 \,\middle|\, #4\right)%
+  }
+}
+\NewDocumentCommand{\conddistbar}{o o m m}{%
+  \ensuremath{
+    \bar{p}%
+    % Subscript part
+    \IfValueT{#1}{_{#1}}%
+    % Superscript part
+    \IfValueT{#2}{^{#2}}%
+    % Conditional part with auto-scaling delimiters
+    \!\left(#3 \,\middle|\, #4\right)%
+  }
+}
+
+\NewDocumentCommand{\analysisdist}{o m}{%
+\ensuremath{
+      \IfValueTF{#1}{%
+       \: p^{a}\!\left(#2 \,\middle|\, #1 \right)%    
+      }{%
+        \: p^{a}\!\left(#2 \,\middle|\, \obs\right)%  
+      }%
+  }
+}
+
+\NewDocumentCommand{\backgrounddist}{g}{%
+  \: p^b\IfValueT{#1}{(#1)}%
+}
+
+
+\NewDocumentCommand{\obsdist}{g}{%
+  \: p^{\obs}\IfValueT{#1}{(#1)}%
+}
+
+
+\NewDocumentCommand{\pffdist}{o g}{%
+  \ensuremath{
+    % Handle the subscript: [sub] or default to \tau
+    \IfValueTF{#1}{p_{#1}}{p_{\tau}}%
+    % Handle the variable: {x} or nothing
+    \IfValueT{#2}{(#2)}%
+  }
+}
+
+% Metrics and divergences
+\NewDocumentCommand{\kldivergence}{m m}{
+    \ensuremath{
+        D_{\text{KL}}\left(#1 , #2 \right)%
+    }
+}
+

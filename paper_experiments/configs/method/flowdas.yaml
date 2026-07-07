@@ -1,0 +1,47 @@
+# FlowDAS baseline (chen_flowdas_2025): SI-SDE with a Monte-Carlo likelihood
+# estimate (J samples of x1 ~ p(x1|x_tau,x0), softmax weight by p(y|x1)).
+# Shares the trained prior with our samplers.
+name: FlowDAS
+stepper: sde
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.gaussian_likelihood.FlowdasGaussianLikelihood
+  # NOTE: the NS/analytical drivers construct FlowdasGaussianLikelihood directly
+  # and read the knobs below from this block; J (Monte-Carlo x1 draws) is taken
+  # from the case's `likelihood_ensemble_size` (num_mc_samples here is an alias
+  # honoured only if the object is instantiated straight from this target).
+  num_mc_samples: 25
+  # Optional L2 cap on the per-member score to tame blow-ups (null = uncapped).
+  max_grad_norm: null
+
+  # Per-cell hyperparameter tables. ANY hyperparameter in this block may be given
+  # either as a scalar OR as a [case][scenario][num_sde_steps M] table marked by a
+  # `default:` key; the scenario rows live under the case name (`navier_stokes:`).
+  # The pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
+  # (case_key, scenario_key, num_steps). A missing case / scenario / M column (or a
+  # null cell) falls back to `default` with a warning -- so urban / analytical use
+  # `default` until an `urban:` block is added. Env FLOWDAS_ZETA overrides the
+  # whole table.
+  #
+  # guidance_scale = FlowDAS zeta on the RAW likelihood score.
+  # Provenance:
+  #   M=500        : paper setting (superres_16 validated by us, E=64: rmse 0.264).
+  #   superres_32 / sparse_5 / sparse_1p5 (M=50/100/250): E=64 tuning sweep, traj1.
+  #   superres_16 (M<500): E=16 sweep, RMSE flat in zeta (~0.23) -> approximate.
+  # Note: sparse zeta is ~flat in M (~0.002-0.004); superres zeta rises with M.
+  guidance_scale:
+    default: 1.0
+    navier_stokes:
+      #             M=50    M=100   M=250   M=500
+      superres_16: { 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
+      superres_32: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+      sparse_5:    { 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
+      sparse_1p5:  { 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+posterior_model:
+  _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior
+  resample: false

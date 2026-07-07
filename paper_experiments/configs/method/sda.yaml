@@ -1,0 +1,41 @@
+# SDA baseline (rozet_score-based_2023): single-window adaptation of score-based
+# data assimilation -- DPS-style observation guidance with SDA's inflated
+# measurement covariance Gamma_tau = R + gamma_sda (sigma/mu)^2 H H^T (Rozet &
+# Louppe Eq. 15), injected into the reverse SDE with the classifier-guidance
+# weight g_tau^2. Runs on the diffusion prior (built from the FM model by
+# default). Shares the trained prior with our samplers. NOTE: this is SDA's
+# single-window guidance, not the full all-at-once trajectory score (see
+# scisi.likelihood_models.sda docstring).
+name: SDA
+stepper: sde
+
+likelihood_model:
+  _target_: scisi.likelihood_models.sda.SDALikelihood
+  # NOTE: the NS/analytical drivers construct SDALikelihood directly and read the
+  # knobs below from this block.
+
+  # Per-cell hyperparameter tables. ANY hyperparameter in this block may be given
+  # either as a scalar OR as a [case][scenario][num_sde_steps M] table marked by a
+  # `default:` key; the scenario rows live under the case name (`navier_stokes:`).
+  # The pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
+  # (case_key, scenario_key, num_steps). A missing case / scenario / M column (or a
+  # null cell) falls back to `default` with a warning -- so urban / analytical use
+  # `default` until an `urban:` block is added. Env SDA_GAMMA overrides the whole
+  # table.
+  #
+  # gamma_sda = SDA's tunable spectral factor gamma in Gamma ~= gamma I
+  # (Rozet & Louppe Eq. 15; released-code default 1e-2).
+  gamma_sda:
+    default: 0.01
+    navier_stokes:
+      #             M=50     M=100     M=250     M=500
+      superres_16: { 50: 0.001,  100: 0.0001, 250: 0.0001, 500: 0.0001 }
+      superres_32: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+      sparse_5:    { 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
+      sparse_1p5:  { 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+posterior_model:
+  _target_: scisi.posterior_models.diffusion_posterior.DiffusionPosterior

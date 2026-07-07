@@ -14,7 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class DiffusionPosterior(BasePosterior):
-    """Diffusion posterior."""
+    """Diffusion (VP/VE) posterior — NON-PAPER baseline.
+
+    This is a guided reverse-diffusion sampler kept as a DPS-style baseline. It
+    is **not** a member of the paper's unified observation-interpolant family:
+    its likelihood term is scaled either by an ad-hoc ``1/2 g_tau**2 sqrt(t)``
+    factor (default DPS branch) or, for SDA (``guidance_weight = "g_squared"``),
+    by the classifier-guidance / h-transform weight ``g_tau**2`` that puts the
+    likelihood score on the same ``-g^2`` footing as the prior score. Neither is
+    the paper's own guidance weight ``w_tau = a_tau + 1/2 g_tau**2`` times the
+    multiplicative gain ``G_tau``; this class is intentionally excluded from the
+    unified-family claims. Use ``StochasticInterpolantPosterior`` /
+    ``FlowMatchingPosterior`` for the paper samplers.
+    """
 
     def __init__(
         self,
@@ -49,23 +61,31 @@ class DiffusionPosterior(BasePosterior):
     ) -> torch.Tensor:
         """One step of the diffusion posterior."""
 
-        base.requires_grad = True
-        # Compute the drift
+        # Fresh grad-enabled leaf (not an in-place mutation of the caller's tensor,
+        # which can corrupt the autoregressive feedback / fail on a non-leaf base).
+        base = base.detach().requires_grad_(True)
+        # Prior drift (one U-Net forward). NOTE: we do NOT also compute
+        # ``model.score`` / ``_get_velocity_from_score`` here -- that was a second,
+        # redundant full U-Net forward whose result was passed as ``drift=`` and
+        # then ignored by both consumers of this posterior (SDALikelihood and
+        # DPSGaussianLikelihood recompute their own denoiser). Dropping it removes
+        # one of the three forwards per step (~30% fewer net evals) with no change
+        # to the output. Guidance likelihoods that actually need the prior velocity
+        # run on the FM/SI posteriors, not here.
         drift = self.model.drift(base, t, field_history, field_cond, pars_cond).detach()
 
-        score = self.model.score(base, t, field_history, field_cond, pars_cond)
-        velocity = self.model._get_velocity_from_score(base, t, score)
-
-        # Compute the likelihood score
-        likelihood_score = self.likelihood_model.score(
+        # Compute the likelihood (guidance) score. Returns (guidance, log_lik).
+        likelihood_out = self.likelihood_model.score(
             observations=observations,
             x=base,
             t=t,
-            drift=velocity,
             field_history=field_history,
             field_cond=field_cond,
             pars_cond=pars_cond,
             dt=dt,
+        )
+        likelihood_score = (
+            likelihood_out[0] if isinstance(likelihood_out, tuple) else likelihood_out
         ).detach()
 
         # Euler-Maruyama drift step
@@ -74,9 +94,16 @@ class DiffusionPosterior(BasePosterior):
         # Euler-Maruyama diffusion step
         base = base + self.diffusion_term(t) * torch.randn_like(base) * dt.sqrt()
 
-        # Likelihood score step
-        base = (
-            base + 0.5 * self.diffusion_term(t) ** 2 * likelihood_score * dt * t.sqrt()
-        )
+        # Likelihood score step. Default (legacy DPS-style) weight is
+        # ``0.5 g^2 sqrt(t)``. A likelihood may instead request the SDA / classifier-
+        # guidance injection weight ``g^2`` by setting ``guidance_weight =
+        # "g_squared"`` (used by SDALikelihood): this is the exact h-transform
+        # footing, putting the likelihood score on the same ``-g^2`` footing as the
+        # prior score (``s = s_prior + s_lik``), matching Rozet & Louppe.
+        g_t = self.diffusion_term(t)
+        if getattr(self.likelihood_model, "guidance_weight", None) == "g_squared":
+            base = base + g_t**2 * likelihood_score * dt
+        else:
+            base = base + 0.5 * g_t**2 * likelihood_score * dt * t.sqrt()
 
         return base.detach()

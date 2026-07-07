@@ -1,0 +1,44 @@
+# SURGE + SDA -- SURGE particle filter combined with SDA's guidance.
+#
+# Wei, Ren, Shi & Lu, "SURGE" (arXiv:2605.18745), combined with Rozet & Louppe,
+# "Score-based Data Assimilation" (rozet_score-based_2023). SURGE is the SMC
+# layer; SDA supplies the guidance G (its single-window covariance-inflated
+# observation score). SDA is a score/diffusion method, so this runs on the
+# FM-derived diffusion prior (case.checkpoints.diffusion_from_fm) through the FM
+# SURGE variant (source N(0, I), anchor a0 = 0). The SMC reward R = log p(y|x) is
+# the TRUE Gaussian observation likelihood (computed by SURGE), so the target is
+# the exact posterior regardless of the guidance -- SDA only steers the proposal.
+name: SURGE (SDA)
+stepper: sde
+
+likelihood_model:
+  # SDA guidance (SDALikelihood, model_class='fm' -> Tweedie denoiser from the
+  # diffusion score). Constructed directly by the NS driver.
+  _target_: scisi.likelihood_models.sda.SDALikelihood
+  # SDA hyperparameters: SAME setup as the standalone SDA config
+  # (configs/method/sda.yaml). gamma_sda = SDA's spectral factor in
+  # Gamma_tau = R + gamma (sigma/mu)^2 H H^T (Eq. 15). Scalar OR a
+  # [case][scenario][num_sde_steps M] table with a `default:` key; scenario rows
+  # live under the case name (`navier_stokes:`), resolved per run by
+  # resolve_scheduled_hparams (missing case/scenario/M cell -> default). Env
+  # SDA_GAMMA overrides.
+  gamma_sda:
+    default: 0.01
+    navier_stokes:
+      #             M=50    M=100   M=250   M=500
+      superres_16: { 50: 0.001,  100: 0.0001, 250: 0.0001, 500: 0.0001 }
+      superres_32: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+      sparse_5:    { 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
+      sparse_1p5:  { 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+posterior_model:
+  _target_: scisi.posterior_models.surge_posterior.SurgeFlowMatchingPosterior
+  # SURGE owns only the SMC layer here. SDA has NO guidance-strength knob -- its
+  # SDE injection weight is the fixed classifier-guidance footing g^2 (applied by
+  # SURGE via guidance_weight == 'g_squared'), exactly as in the standalone SDA.
+  # The only SDA hyperparameter is gamma_sda (likelihood_model above).
+  # Resample when effective sample size / N drops below this fraction.
+  ess_threshold: 0.5

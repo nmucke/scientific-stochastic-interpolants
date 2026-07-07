@@ -4,7 +4,11 @@ from typing import Any, List, Optional, Tuple
 import jax
 import jax.numpy as jnp
 from jax import random
-from jax_cfd_lib.ENKF import SpectralEnKF
+from jax_cfd_lib.ENKF import (
+    SpectralEnKF,
+    correlation_localization_weights,
+    correlation_state_obs,
+)
 from jax.experimental.sparse.linalg import lobpcg_standard
 
 # from jax_cfd_lib.ns_kalman import ObservationOperator
@@ -228,6 +232,23 @@ class LocalizedSpectralETKF(SpectralETKF):
         Maximum allowed localization radius
     adaptation_method : str
         Method for adaptive localization ("correlation", "innovation", "hybrid")
+    localization_type : str
+        Localization scheme. ``"distance"`` (default) uses the existing
+        Gaspari-Cohn distance taper -- unchanged. ``"correlation"`` is the OPT-IN
+        ensemble-correlation selection + observation-error inflation of Vossepoel,
+        Evensen & van Leeuwen (2025): each grid point's LOCAL analysis keeps only
+        the measurements it is correlated with (``|rho| >= corr_threshold``) and
+        inflates their error by ``E_inf`` (see
+        :func:`jax_cfd_lib.ENKF.correlation_localization_weights`). This is the
+        faithful per-variable local-analysis implementation of the paper. It
+        ignores ``localization_radius`` / ``periodic``.
+    corr_threshold : float, optional
+        Truncation threshold ``r_t`` on ``|rho|``. ``None`` (default) ->
+        first-guess ``3 / sqrt(ensemble_size)``.
+    corr_inflation_max : float
+        Maximum obs-error inflation ``E_max`` (default 4.0; paper 4--8).
+    corr_inflation_beta : float
+        Fraction ``beta`` of ``d_t`` below which no inflation (default 0.5).
     """
 
     def __init__(  # type: ignore[no-untyped-def]
@@ -245,6 +266,10 @@ class LocalizedSpectralETKF(SpectralETKF):
         min_radius: Optional[float] = None,
         max_radius: Optional[float] = None,
         adaptation_method: str = "hybrid",
+        localization_type: str = "distance",
+        corr_threshold: Optional[float] = None,
+        corr_inflation_max: float = 4.0,
+        corr_inflation_beta: float = 0.5,
     ):
         """Initialize the LocalizedSpectralETKF."""
         super().__init__(
@@ -260,6 +285,22 @@ class LocalizedSpectralETKF(SpectralETKF):
         self.localization_radius = localization_radius
         self.adaptive_localization = adaptive_localization
         self.adaptation_method = adaptation_method
+
+        # Correlation-based localization (opt-in; default is distance/GC).
+        if localization_type not in ("distance", "correlation"):
+            raise ValueError(
+                f"localization_type must be 'distance' or 'correlation', "
+                f"got {localization_type!r}"
+            )
+        self.localization_type = localization_type
+        # First-guess r_t = 3 / sqrt(N) removes ~99.7% of spurious sampling noise.
+        self.corr_threshold = (
+            float(corr_threshold)
+            if corr_threshold is not None
+            else 3.0 / (ensemble_size**0.5)
+        )
+        self.corr_inflation_max = corr_inflation_max
+        self.corr_inflation_beta = corr_inflation_beta
 
         # Set default min/max radius for adaptive localization
         if min_radius is None:
@@ -326,7 +367,10 @@ class LocalizedSpectralETKF(SpectralETKF):
             0.0,
         )
 
-        return term1 + term2
+        # The piecewise polynomial can dip a few 1e-7 below zero at the support
+        # boundary (r ~ 2) from floating-point cancellation; clamp to [0, inf) so
+        # downstream ``sqrt(weight)`` never produces NaN.
+        return jnp.clip(term1 + term2, 0.0, None)
 
     def compute_local_distances(
         self,
@@ -541,15 +585,37 @@ class LocalizedSpectralETKF(SpectralETKF):
             self.innovation_stats.append(float(innovation_norm))
             self.localization_radius = loc_radius
 
+        # For correlation-based localization, precompute the (n_state, n_obs)
+        # ensemble-correlation weights once (a single matmul over members); each
+        # grid point then reads its own row. The default distance path leaves
+        # this None and uses the per-point Gaspari-Cohn taper below (unchanged).
+        if self.localization_type == "correlation":
+            rho_state_obs = correlation_state_obs(X_pert, HX_pert)  # (n_state, n_obs)
+            corr_weights = correlation_localization_weights(
+                rho_state_obs,
+                self.corr_threshold,
+                self.corr_inflation_max,
+                self.corr_inflation_beta,
+            )  # (n_state, n_obs); w = 1 / E_inf, 0 = truncated
+        else:
+            corr_weights = None
+
         # Perform local analysis at each grid point
         # This is the core LETKF loop - can be vectorized/vmapped
         def analyze_local_point(state_idx: int) -> Tuple[float, jnp.ndarray]:
             """Analyze a single grid point."""
-            # Compute distances to all observations
-            distances = self.compute_local_distances(state_idx, periodic)
-
-            # Compute localization weights using Gaspari-Cohn
-            loc_weights = self.gaspari_cohn(distances, loc_radius)
+            if self.localization_type == "correlation":
+                # OPT-IN correlation localization: keep only the measurements this
+                # grid point is correlated with and inflate their error by E_inf
+                # (folded into ``loc_weights`` = 1 / E_inf, 0 = truncated). This is
+                # the paper's per-variable local analysis -- it reuses the SAME
+                # local ETKF math the distance path uses, only the obs selection /
+                # weighting differs.
+                loc_weights = corr_weights[state_idx]  # (n_obs,)
+            else:
+                # DEFAULT: Gaspari-Cohn distance taper (unchanged).
+                distances = self.compute_local_distances(state_idx, periodic)
+                loc_weights = self.gaspari_cohn(distances, loc_radius)
 
             # Get local ensemble perturbations and mean
             X_pert_local = X_pert[:, state_idx]  # (N,)

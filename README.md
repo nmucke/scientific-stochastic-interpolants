@@ -286,15 +286,28 @@ trainer:
 The framework supports Bayesian inverse problems where partial observations constrain the generative process.
 
 **Likelihood models:**
-- `InterpolantGaussianLikelihood` — point-wise Gaussian noise
-- `FlowdasGaussianLikelihood` — flow-based data assimilation
-- `KalmanInterpolantGaussianLikelihood` — Kalman-style ensemble covariance
-- `SpatialInterpolantGaussianLikelihood` — spatially-correlated likelihood
+- `InterpolantGaussianLikelihood` — the closed-form observation-interpolant likelihood (the method)
+- `FlowdasGaussianLikelihood` — FlowDAS baseline (paper Algorithm-2 importance-weighted residual guidance)
+- `GuidanceGaussianLikelihood` / `FIGGaussianLikelihood` — Guided FM baselines (FIG and OT-ODE modes)
+- `DFlowSGLDLikelihood` — D-Flow SGLD baseline (thin H/R holder)
+- `SDALikelihood` — SDA baseline (single-window adaptation)
+
+**Posterior samplers (paper data-assimilation experiments).** The unified family —
+**SI-SDE**, **FM-ODE**, **FM-SDE** (shown as "FM-SDE (DM)") — shares one
+observation-interpolant likelihood and differs only in the diffusion `g_τ`.
+Baselines: FlowDAS, Guided FM (FIG), Guided FM (OT-ODE), D-Flow SGLD
+(`DFlowPosterior`), SDA, SURGE (`SurgePosterior`), plus the classical filters
+(EnKF, LETKF, particle filter, ensemble score filter) for cases with a true solver.
 
 **Observation operators:**
-- `LinearObservationOperator` — supports grid-based (regular skip) and random observation patterns
+- `LinearObservationOperator` — supports grid-based, random sparse, and block-average super-resolution patterns
 
 Posterior sampling produces an ensemble of trajectories, enabling uncertainty quantification via ensemble spread.
+
+> The full paper-experiment harness, method lineup, and run status live in
+> `paper_experiments/` (see `paper_experiments/results/README.md` for the layout,
+> `paper_experiments/RUN_STATUS.md` for status, and `paper_experiments/DESIGN_NOTES.md`
+> for the code↔math mapping and design rationale).
 
 ## Evaluation Metrics
 

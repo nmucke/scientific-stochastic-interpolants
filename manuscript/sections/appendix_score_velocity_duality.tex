@@ -1,0 +1,106 @@
+\section{Velocity--score duality and the marginal-preserving SDE family}
+\label{appendix:score_velocity}
+
+This appendix establishes the structural facts on which the model-agnostic method rests: for an interpolant path the velocity and the score determine each other in closed form (Proposition~\ref{prop:score_velocity}), the probability-flow ODE belongs to a one-parameter family of SDEs sharing the same marginals (Proposition~\ref{prop:marginal_preservation}), and both velocity and score can be read off the trained network for each model class (Section~\ref{appendix:score_reading}). The first two are known \cite{albergo_stochastic_2023, song_score-based_2021, ma_sit_2024}; we state and prove them in the notation of Section~\ref{subsec:flow_models} for completeness.
+
+Throughout, consider the interpolant path of Eq.~\eqref{eq:general_interpolant},
+\begin{align}\label{eq:app_path}
+    \bx_\tau = \alpha_\tau\bx_0 + \beta_\tau\bx_1 + \sigpath_\tau\latentnoise,
+    \qquad \latentnoise\sim\mathcal{N}(0,\bI)\ \text{independent of}\ \bx_1,
+\end{align}
+with $\bx_0$ deterministic, $\beta_\tau>0$ for $\tau\in(0,1]$, and $\sigpath_\tau>0$ for $\tau\in[0,1)$. Let $p_\tau$ denote the marginal density of $\bx_\tau$ and $\genscore_\tau=\nabla_{\bx}\log p_\tau$ its score.
+
+\begin{lemma}[Tweedie identities for the interpolant path]\label{lem:tweedie}
+Writing $\bm m_\tau := \alpha_\tau\bx_0 + \beta_\tau\bx_1$, so that $\bx_\tau = \bm m_\tau + \sigpath_\tau\latentnoise$ with $\sigpath_\tau\latentnoise$ Gaussian of covariance $\sigpath_\tau^2\bI$ independent of $\bm m_\tau$,
+\begin{align}
+    \E[\bm m_\tau \mid \bx_\tau] &= \bx_\tau + \sigpath_\tau^2\,\genscore_\tau(\bx_\tau), \label{eq:tweedie_mean}\\
+    \E[\latentnoise \mid \bx_\tau] &= -\sigpath_\tau\,\genscore_\tau(\bx_\tau), \label{eq:tweedie_eps}\\
+    \E[\bx_1 \mid \bx_\tau] &= \tfrac{1}{\beta_\tau}\!\left(\bx_\tau + \sigpath_\tau^2\genscore_\tau(\bx_\tau) - \alpha_\tau\bx_0\right), \label{eq:tweedie_x1}\\
+    \cov(\latentnoise \mid \bx_\tau) &= \bI + \sigpath_\tau^2\,\nabla_{\bx}\genscore_\tau(\bx_\tau). \label{eq:tweedie_cov}
+\end{align}
+\end{lemma}
+\begin{proof}
+Equation~\eqref{eq:tweedie_mean} is the Gaussian Tweedie/Miyasawa identity for the additive-Gaussian-noise model $\bx_\tau = \bm m_\tau + \sigpath_\tau\latentnoise$: differentiating $p_\tau(\bx)=\int \mathcal{N}(\bx;\bm m,\sigpath_\tau^2\bI)\,q(\bm m)\,\rd\bm m$ gives $\nabla_{\bx} p_\tau = \int \sigpath_\tau^{-2}(\bm m-\bx)\mathcal{N}(\bx;\bm m,\sigpath_\tau^2\bI)q(\bm m)\rd\bm m$, hence $\sigpath_\tau^2\genscore_\tau(\bx) = \E[\bm m_\tau\mid\bx_\tau]-\bx$, which is \eqref{eq:tweedie_mean}. Since $\latentnoise=(\bx_\tau-\bm m_\tau)/\sigpath_\tau$, \eqref{eq:tweedie_eps} follows, and $\bx_1=(\bm m_\tau-\alpha_\tau\bx_0)/\beta_\tau$ gives \eqref{eq:tweedie_x1}. For \eqref{eq:tweedie_cov}, differentiate $\E[\bm m_\tau\mid\bx_\tau=\bx]$ in $\bx$: on the one hand, by \eqref{eq:tweedie_mean}, $\nabla_{\bx}\E[\bm m_\tau\mid\bx] = \bI + \sigpath_\tau^2\nabla_{\bx}\genscore_\tau$; on the other, differentiating the Gaussian-channel posterior mean directly gives the standard second-order identity $\nabla_{\bx}\E[\bm m_\tau\mid\bx] = \sigpath_\tau^{-2}\cov(\bm m_\tau\mid\bx)$. Hence $\cov(\bm m_\tau\mid\bx)=\sigpath_\tau^2\bI+\sigpath_\tau^4\nabla_{\bx}\genscore_\tau$, and $\cov(\latentnoise\mid\bx)=\sigpath_\tau^{-2}\cov(\bm m_\tau\mid\bx)$ (as $\latentnoise=(\bx-\bm m_\tau)/\sigpath_\tau$ with $\bx$ fixed) yields \eqref{eq:tweedie_cov}.
+\end{proof}
+
+\begin{proposition}[Velocity--score identity]\label{prop:score_velocity}
+The marginal velocity \eqref{eq:general_velocity} and the score of the path \eqref{eq:app_path} satisfy the exact linear relation
+\begin{align}\label{eq:general_velocity_of_score}
+    \fmvel_\tau(\bx)
+    = \frac{\dot\beta_\tau}{\beta_\tau}\bx
+    + \left(\dot\alpha_\tau - \frac{\dot\beta_\tau\alpha_\tau}{\beta_\tau}\right)\bx_0
+    + \sigpath_\tau\!\left(\frac{\dot\beta_\tau}{\beta_\tau}\sigpath_\tau - \dot\sigpath_\tau\right)\genscore_\tau(\bx),
+\end{align}
+where the score coefficient is the velocity--score coefficient $\vscoef_\tau=\sigpath_\tau(\tfrac{\dot\beta_\tau}{\beta_\tau}\sigpath_\tau-\dot\sigpath_\tau)$ of Eq.~\eqref{eq:general_score_velocity}, equivalently
+\begin{align}\label{eq:app_score_of_velocity}
+    \genscore_\tau(\bx)
+    = \frac{\beta_\tau\,\fmvel_\tau(\bx) - \dot\beta_\tau\,\bx - (\dot\alpha_\tau\beta_\tau - \dot\beta_\tau\alpha_\tau)\,\bx_0}
+           {\sigpath_\tau\,(\dot\beta_\tau\sigpath_\tau - \dot\sigpath_\tau\beta_\tau)} .
+\end{align}
+\end{proposition}
+\begin{proof}
+By definition $\fmvel_\tau(\bx)=\E[\dot\alpha_\tau\bx_0 + \dot\beta_\tau\bx_1 + \dot\sigpath_\tau\latentnoise\mid\bx_\tau=\bx]$. Since $\bx_0$ is deterministic, substitute \eqref{eq:tweedie_x1} and \eqref{eq:tweedie_eps}:
+\begin{align}
+    \fmvel_\tau(\bx)
+    &= \dot\alpha_\tau\bx_0
+    + \frac{\dot\beta_\tau}{\beta_\tau}\!\left(\bx + \sigpath_\tau^2\genscore_\tau - \alpha_\tau\bx_0\right)
+    - \dot\sigpath_\tau\sigpath_\tau\genscore_\tau \nonumber\\
+    &= \frac{\dot\beta_\tau}{\beta_\tau}\bx
+    + \left(\dot\alpha_\tau - \frac{\dot\beta_\tau\alpha_\tau}{\beta_\tau}\right)\bx_0
+    + \left(\frac{\dot\beta_\tau}{\beta_\tau}\sigpath_\tau^2 - \dot\sigpath_\tau\sigpath_\tau\right)\genscore_\tau,
+\end{align}
+which is \eqref{eq:general_velocity_of_score}. Multiplying the isolated score term by $\beta_\tau$ and rearranging yields \eqref{eq:app_score_of_velocity}.
+\end{proof}
+
+\begin{proposition}[Marginal-preserving SDE family]\label{prop:marginal_preservation}
+Let $p_\tau$ be the marginals of the path \eqref{eq:app_path} with velocity $\fmvel_\tau$ and score $\genscore_\tau$. For any measurable $\gdiff_\tau\ge0$, the SDE
+\begin{align}\label{eq:app_sde}
+    \rd\bX_\tau = \left[\fmvel_\tau(\bX_\tau) + \tfrac12\gdiff_\tau^2\genscore_\tau(\bX_\tau)\right]\rd\tau + \gdiff_\tau\,\rd\bW_\tau,
+    \qquad \bX_0\sim p_0,
+\end{align}
+has marginal law $p_\tau$ for all $\tau\in[0,1]$. Setting $\gdiff_\tau=0$ gives the probability-flow ODE.
+\end{proposition}
+\begin{proof}
+By construction the marginals satisfy the continuity (transport) equation associated with the velocity,
+\begin{align}\label{eq:app_continuity}
+    \partial_\tau p_\tau = -\nabla\!\cdot\!\left(\fmvel_\tau\,p_\tau\right),
+\end{align}
+since $\fmvel_\tau$ is the conditional expectation generating the path \cite{lipman_flow_2023, albergo_stochastic_2023}. The Fokker--Planck equation of \eqref{eq:app_sde} for a density $q_\tau$ reads
+\begin{align}
+    \partial_\tau q_\tau
+    = -\nabla\!\cdot\!\left(\left[\fmvel_\tau + \tfrac12\gdiff_\tau^2\genscore_\tau\right]q_\tau\right)
+    + \tfrac12\gdiff_\tau^2\Delta q_\tau .
+\end{align}
+Evaluating the right-hand side at $q_\tau=p_\tau$ and using $\Delta p_\tau = \nabla\!\cdot\!(\nabla p_\tau) = \nabla\!\cdot\!(p_\tau\nabla\log p_\tau) = \nabla\!\cdot\!(p_\tau\genscore_\tau)$,
+\begin{align}
+    -\nabla\!\cdot\!\left(\fmvel_\tau p_\tau\right)
+    - \tfrac12\gdiff_\tau^2\nabla\!\cdot\!\left(\genscore_\tau p_\tau\right)
+    + \tfrac12\gdiff_\tau^2\nabla\!\cdot\!\left(p_\tau\genscore_\tau\right)
+    = -\nabla\!\cdot\!\left(\fmvel_\tau p_\tau\right)
+    = \partial_\tau p_\tau,
+\end{align}
+by \eqref{eq:app_continuity}. Hence $p_\tau$ solves the Fokker--Planck equation of \eqref{eq:app_sde}. As the solution with initial datum $p_0$ is unique under standard regularity assumptions, the law of $\bX_\tau$ equals $p_\tau$ for all $\tau$.
+\end{proof}
+
+\subsection{Reading the velocity and score from the trained network}
+\label{appendix:score_reading}
+
+The two model classes train different objects; Proposition~\ref{prop:score_velocity} converts either into the pair $(\fmvel_\tau,\genscore_\tau)$ that the samplers consume.
+
+\paragraph{Flow matching.}
+The trained object is the velocity $\fmvel_\theta$ itself, and the path has $\alpha_\tau\equiv0$ with source schedule $\sigpath_\tau$. Specialising \eqref{eq:app_score_of_velocity},
+\begin{align}\label{eq:fm_score}
+    \genscore_\tau(\bx) = \frac{\beta_\tau\,\fmvel_\theta(\bx,\state^{n-1},\tau) - \dot\beta_\tau\,\bx}{\sigpath_\tau\,(\dot\beta_\tau\sigpath_\tau - \dot\sigpath_\tau\beta_\tau)},
+\end{align}
+which for rectified flow ($\sigpath_\tau=1-\tau$, $\beta_\tau=\tau$) reduces to $\genscore_\tau(\bx) = (\tau\,\fmvel_\theta - \bx)/(1-\tau)$. Note that \eqref{eq:fm_score} degenerates as $\tau\to1$ (where $\sigpath_\tau\to0$), which is why the DM-SDE lift uses an endpoint-vanishing diffusion $\gdiff_\tau$.
+
+\paragraph{Stochastic interpolants.}
+The trained object is the SDE drift $\drift_\theta=\fmvel_\tau+\tfrac12\gamma_\tau^2\genscore_\tau$ of Eq.~\eqref{eq:SI_SDE}, with $\sigpath_\tau=\gamma_\tau\sqrt\tau$. Adding $\tfrac12\gamma_\tau^2\genscore_\tau$ to \eqref{eq:general_velocity_of_score} and solving for the score \cite{chen_probabilistic_2024},
+\begin{align}\label{eq:SI_score}
+    \genscore_\tau(\bx,\bx_0) = A_\tau\!\left[\beta_\tau\drift_\theta(\bx,\bx_0,\tau) - c_\tau(\bx,\bx_0)\right],
+\end{align}
+with $A_\tau = \left[\tau\gamma_\tau(\dot\beta_\tau\gamma_\tau - \beta_\tau\dot\gamma_\tau)\right]^{-1}$ and $c_\tau(\bx,\bx_0)=\dot\beta_\tau\bx + (\beta_\tau\dot\alpha_\tau - \dot\beta_\tau\alpha_\tau)\bx_0$. The velocity, when needed separately, is $\fmvel_\tau=\drift_\theta-\tfrac12\gamma_\tau^2\genscore_\tau$.
+
+\begin{remark}
+Propositions~\ref{prop:score_velocity}--\ref{prop:marginal_preservation} are what make Theorem~\ref{theorem:unified_posterior} (and the path-space Theorem~\ref{theorem:posterior_sde}) applicable to a deterministically trained flow matching model: although the model is sampled as an ODE ($\gdiff_\tau=0$), one may pick any $\gdiff_\tau>0$, recover $\genscore_\tau$ from the velocity by \eqref{eq:fm_score}, and run the equal-marginal SDE \eqref{eq:app_sde}. The conditional path of Proposition~\ref{prop:conditional_path} then inherits the same duality, and the uncontrolled SDE has terminal law $\conddist{\bx_1}{\bx_0}$, the only hypothesis the posterior samplers require.
+\end{remark}

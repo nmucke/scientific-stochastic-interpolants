@@ -1,0 +1,12 @@
+# EnKF / ESMDA baseline (evensen_data_2022): stochastic EnKF for the field cases,
+# same ensemble size E. Localisation / inflation tuned and reported. Classical
+# methods may use the TRUE solver for propagation (note this advantage in paper).
+# GAP E6: wrap the existing JAX EnKF into the shared benchmark (shared truth+obs+mask).
+name: EnKF
+stepper: classical
+
+filter:
+  _target_: scisi.particle_filter.enkf.EnsembleKalmanFilter
+  localisation: null   # TODO(E6): set + report localisation radius.
+  inflation: 1.0       # TODO(E6): tune + report multiplicative inflation.
+  use_true_solver: true

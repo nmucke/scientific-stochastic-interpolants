@@ -1,0 +1,24 @@
+# Ours (DM-SDE) -- Sampler 2 of the unified family (spec Section 1.1).
+# a0 = 0, x ~ N(0,I) init (exact, no reweighting). Endpoint-vanishing diffusion
+# g_tau ~ sqrt(alpha_tau*beta_tau) keeps 0.5 g^2 s finite as tau->1. Score via
+# Eq. fm_score (needs FlowMatchingModel.score -- GAP L1). DOES NOT EXIST YET (P3).
+name: Ours (DM-SDE)
+stepper: sde
+diffusion_term:
+  # g_tau ~ sqrt(alpha*beta) endpoint-vanishing schedule (GAP L7/P3).
+  schedule: sqrt_alpha_beta
+  multiplier: 1.0
+
+likelihood_model:
+  # FM interpolant likelihood: a0=0 => ybar=beta*y, mu_s=-alpha^2 s (P2).
+  _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+  # likelihood_mode: inflated (exact, default) | inflated_shared | dps_jacobian_free.
+  likelihood_mode: inflated
+  # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
+  # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the
+  # schedule scalars kept exact at the current tau). CLI: jacobian_refresh_every=k.
+  jacobian_refresh_every: 1
+  model_class: fm
+
+posterior_model:
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

@@ -1,0 +1,6 @@
+# Tidy results files and emitted snippets are regenerated artifacts.
+results/
+generated/*.tex
+generated/demo_results.csv
+__pycache__/
+*.pyc

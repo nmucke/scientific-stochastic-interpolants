@@ -5,7 +5,6 @@ diffusion_term:
 
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
-  correct_likelihood_score: true
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

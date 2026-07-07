@@ -1,0 +1,12 @@
+# Sparse sensors at fraction f = 5% of the 128^2 grid (spec Section 2). Mask is
+# fixed (seeded via common.seeding.mask_seed) and shared across methods.
+name: sparse 5%
+type: sparse
+fraction: 0.05
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: random
+  percent_obs: 0.05
+  seed: 42  # shared across all methods for this scenario so the mask is identical
+  # The runner may override `seed` via common.seeding.mask_seed(case, scenario).

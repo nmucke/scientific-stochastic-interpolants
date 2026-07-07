@@ -26,6 +26,7 @@ class BasePosterior(nn.Module):
         likelihood_model: nn.Module,
         diffusion_term: Optional[Callable] = None,
         gaussian_base: bool = False,
+        drift_time_shift: float = 0.0,
     ) -> None:
         """
         Initialize base posterior.
@@ -36,11 +37,20 @@ class BasePosterior(nn.Module):
             diffusion_term: Diffusion term.
             resample: Whether to resample the base.
             gaussian_base: Whether to sample the base from a Gaussian distribution.
+            drift_time_shift: Fraction of ``dt`` by which the per-step drift/guidance
+                is evaluated ahead of the left node. ``0.0`` (default) is the
+                left-endpoint Euler scheme (unchanged); ``1.0`` evaluates at the
+                right endpoint ``tau=(i+1)dt`` (the bespoke analytical FM/DM
+                convention); ``0.5`` is the interval midpoint. The step size ``dt``
+                and the node grid are unchanged -- only the drift-evaluation
+                pseudo-time is offset (the likelihood clamps ``tau`` away from the
+                endpoints, so the terminal ``tau=1`` evaluation is guarded).
         """
         super(BasePosterior, self).__init__()
 
         self.model = model
         self.likelihood_model = likelihood_model
+        self.drift_time_shift = float(drift_time_shift)
 
         if diffusion_term is None:
             self.default_diffusion_term = True
@@ -121,7 +131,8 @@ class BasePosterior(nn.Module):
         """Sample from the posterior."""
 
         ensemble_size = field_history.shape[0]
-        observations = observations.to(self.device)
+        device = self.device
+        observations = observations.to(device)
 
         # Prepare the batch
         if (batch_size > 1) and (field_history.shape[0] == 1):
@@ -134,85 +145,125 @@ class BasePosterior(nn.Module):
             )
 
         # Prepare the time
-        t_vec = torch.linspace(0, 1, num_steps+1, device=self.device).unsqueeze(0)
-        dt = t_vec[0,  1] - t_vec[0,  0] 
-
-        # Prepare the fixed input and make sure the tensors are on the correct device
-        fixed_input = lambda batch_ids: {
-            "field_history": (
-                field_history[batch_ids].to(self.device)
-                if field_history is not None
-                else None
-            ),
-            "field_cond": (
-                field_cond[batch_ids].to(self.device)
-                if field_cond is not None
-                else None
-            ),
-            "pars_cond": (
-                pars_cond[batch_ids].to(self.device) if pars_cond is not None else None
-            ),
-        }
+        t_vec = torch.linspace(0, 1, num_steps+1, device=device).unsqueeze(0)
+        dt = t_vec[0,  1] - t_vec[0,  0]
 
         # Sample init state from Gaussian distribution
         if self.gaussian_base:
+            # FM samplers initialise from N(0, I), which is exact for the
+            # marginal construction (Phi_0^obs is constant), so no reweighting.
+            # Drawn BEFORE the device move below so the draw comes from the same
+            # generator (CPU vs CUDA) as before, keeping seeded runs unchanged.
             base = torch.randn_like(field_history[..., 0]) if base is None else base
+        else:
+            # SI sampler: the source is the point mass delta_{x0}, so the loop
+            # must initialise at x = x0 = field_history[..., -1].
+            assert base is not None, (
+                "SI posterior requires a point-mass init base = x0; got None."
+            )
+            # The SI source is the point mass delta_{x0}, so the loop must start
+            # at x0 = field_history[..., -1]. We only enforce this when the state
+            # is FINITE: a numerically diverging sampler (e.g. an unstable baseline)
+            # produces non-finite states, and `allclose(nan, nan)` is False -- the
+            # hard assert would then crash the WHOLE run (all methods/cells) on one
+            # diverging cell. Skipping it for non-finite states lets the divergence
+            # surface as NaN metrics for that cell instead, without blocking others.
+            base_dev = base.to(field_history.device)
+            if torch.isfinite(base_dev).all():
+                assert torch.allclose(
+                    base_dev, field_history[..., -1], atol=1e-5
+                ), "SI posterior init must equal x0 (field_history[..., -1])."
+
+        # Device residency. The state and the per-window conditioning are moved
+        # to the model device ONCE here (and back once at the end), instead of
+        # the previous per-step / per-batch ``.to(device)`` + ``.cpu()`` round
+        # trips, which re-uploaded the (large) field history on EVERY pseudo-time
+        # step and forced a stream sync per step on the download. Batches are
+        # taken as contiguous slices (views), so the inner loop does no host
+        # transfers at all. Same tensors, same compute -- identical outputs.
+        out_device = base.device
+        fh_out_device = field_history.device
+        base = base.to(device)
+        field_history = field_history.to(device)
+        field_cond = field_cond.to(device) if field_cond is not None else None
+        pars_cond = pars_cond.to(device) if pars_cond is not None else None
+
+        fixed_input = lambda sl: {
+            "field_history": field_history[sl] if field_history is not None else None,
+            "field_cond": field_cond[sl] if field_cond is not None else None,
+            "pars_cond": pars_cond[sl] if pars_cond is not None else None,
+        }
 
         # Sample first step
         start_time = 0
         if hasattr(self.model, "_compute_first_step"):
             with torch.no_grad():
                 for batch_idx in range(0, ensemble_size, batch_size):
-                    batch_ids = torch.arange(
-                        batch_idx, min(batch_idx + batch_size, ensemble_size)
-                    )
+                    sl = slice(batch_idx, min(batch_idx + batch_size, ensemble_size))
 
-                    base[batch_ids] = self.model._compute_first_step(
-                        base=base[batch_ids].to(self.device),
+                    base[sl] = self.model._compute_first_step(
+                        base=base[sl],
                         t=t_vec[:, 0],
                         stepper=stepper,
                         dt=dt,
-                        **fixed_input(batch_ids),
-                    ).cpu()
+                        **fixed_input(sl),
+                    )
 
                 start_time = 1
 
-        # Sample remaining steps
-        for i in range(start_time, num_steps - 1):
-            t = t_vec[:, i : i + 1]
-            dt = t_vec[0, i + 1] - t_vec[0, i] 
+        # Sample remaining steps.
+        #
+        # ``t_vec`` has ``num_steps + 1`` nodes (indices 0..num_steps) and hence
+        # ``num_steps`` intervals; the loop must cover every interval up to the
+        # terminal node, so it runs ``i = start_time .. num_steps - 1`` (i.e.
+        # ``range(start_time, num_steps)``). The previous bound
+        # ``range(..., num_steps - 1)`` dropped the final integration step.
+        #
+        # The loop runs under ``no_grad``: every step detaches its result and the
+        # likelihoods re-enable grad locally on their own leaves, so no graph from
+        # the prior drift is ever consumed here -- but without this guard a caller
+        # that forgets ``torch.no_grad()`` pays for building (and freeing) a full
+        # UNet graph per prior forward on every step.
+        with torch.no_grad():
+            for i in range(start_time, num_steps):
+                t = t_vec[:, i : i + 1]
+                dt = t_vec[0, i + 1] - t_vec[0, i]
+                # Drift/guidance evaluation pseudo-time: left node (shift=0,
+                # default, bitwise-unchanged), right endpoint (shift=1) or midpoint
+                # (shift=0.5). ``dt`` and the node grid are untouched.
+                t_eval = t + self.drift_time_shift * dt
 
-            base = self._pre_step(base=base, observations=observations, t=t)
+                base = self._pre_step(base=base, observations=observations, t=t)
 
-            for batch_idx in range(0, ensemble_size, batch_size):
+                for batch_idx in range(0, ensemble_size, batch_size):
+                    sl = slice(batch_idx, min(batch_idx + batch_size, ensemble_size))
 
-                # Prepare the batch
-                batch_ids = torch.arange(
-                    batch_idx, min(batch_idx + batch_size, ensemble_size)
-                )
+                    # Sample one step
+                    base[sl] = self._one_step(
+                        base=base[sl],
+                        observations=observations,
+                        t=t_eval,
+                        dt=dt,
+                        **fixed_input(sl),
+                    )
 
-                # Sample one step
-                base[batch_ids] = self._one_step(
-                    base=base[batch_ids].to(self.device),
+                base, field_history = self._post_step(
+                    base=base,
                     observations=observations,
                     t=t,
-                    dt=dt,
-                    **fixed_input(batch_ids),
-                ).cpu()
+                    field_history=field_history,
+                    dt=dt
+                )
 
-            base, field_history = self._post_step(
-                base=base, 
-                observations=observations, 
-                t=t, 
-                field_history=field_history, 
-                dt=dt
+            base, field_history = self._post_sample(
+                base=base,
+                observations=observations,
+                field_history=field_history
             )
 
-        base, field_history = self._post_sample(
-            base=base,
-            observations=observations,
-            field_history=field_history
-        )
+        # Restore the caller-visible devices (no-ops when nothing was moved).
+        base = base.to(out_device)
+        field_history = field_history.to(fh_out_device)
 
         # Add the new base to the field history
         if return_field_history:
@@ -235,8 +286,18 @@ class BasePosterior(nn.Module):
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
         stepper: Callable = euler_maruyama_step,
+        step_callback: Callable[[int, torch.Tensor], bool] | None = None,
     ) -> torch.Tensor:
-        """Sample a trajectory from the diffusion model with posterior drift."""
+        """Sample a trajectory from the diffusion model with posterior drift.
+
+        ``step_callback`` (optional) is invoked after each assimilated physical
+        step with ``(absolute_physical_index, ensemble_state)``; returning
+        ``True`` aborts the rollout early (e.g. an ensemble-divergence guard).
+        The remaining physical steps are then padded with NaN so the returned
+        trajectory keeps its full ``num_physical_steps`` length and the diverged
+        cell surfaces as NaN metrics instead of burning further compute. ``None``
+        (default) leaves the rollout unchanged.
+        """
 
         len_field_history = field_history.shape[-1]
 
@@ -279,5 +340,16 @@ class BasePosterior(nn.Module):
                 **fixed_input,  # type: ignore[arg-type]
             )
             trajectory.append(base.cpu().clone())
+
+            if step_callback is not None and step_callback(
+                len_field_history + t_idx, base
+            ):
+                # Divergence guard tripped: stop this cell and pad the remaining
+                # physical steps with NaN so the trajectory keeps its full length
+                # (metrics mark the cell diverged) without integrating further.
+                remaining = (num_physical_steps - len_field_history) - (t_idx + 1)
+                nan_frame = torch.full_like(base.cpu(), float("nan"))
+                trajectory.extend(nan_frame.clone() for _ in range(remaining))
+                break
 
         return torch.stack(trajectory, dim=-1)

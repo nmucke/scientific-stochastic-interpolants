@@ -236,9 +236,12 @@ class FollmerStochasticInterpolant(BaseModel):
         field_history: torch.Tensor,
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
-        diffusion_term: Callable = lambda t: 1 - t,
+        diffusion_term: Optional[Callable] = None,
     ) -> torch.Tensor:
         """Compute the posterior drift of the Follmer stochastic interpolant."""
+
+        if diffusion_term is None:
+            diffusion_term = self.interpolation.gamma
 
         drift = self.drift_model(x, t, field_history, field_cond, pars_cond)
 

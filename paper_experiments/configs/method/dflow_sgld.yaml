@@ -1,0 +1,110 @@
+# D-Flow SGLD -- BASELINE (flow matching + ODE), arXiv:2602.21469.
+#
+# D-Flow SGLD (Parikh, Chen & Wang, "D-Flow SGLD: Source-Space Posterior Sampling
+# for Scientific Inverse Problems with Flow Matching") performs training-free
+# posterior sampling by running preconditioned SGLD (pSGLD) over the SOURCE latent
+# z_0 of a trained flow-matching prior, differentiating the data cost through the
+# WHOLE FM-ODE flow Phi(z_0) = x_1. Per Algorithm 1 the per-step update is
+#
+#   L1 = ||y - F(Phi(z_0))||^2                          (data misfit, L6)
+#   L  = L1 + lambda ||z_0||^2                           (optional source reg, Eq. 31)
+#   V  <- omega V + (1 - omega) grad(L1) (.) grad(L1)    (RMSProp on data grad, L14)
+#   P  =  1 / (sqrt(V) + delta)                          (preconditioner, L15)
+#   z_0 <- z_0 - eta P grad(L) + N(0, 2 eta s P)         (Langevin step, L19)
+#
+# returning x_1 = Phi(z_0). The data term is the PLAIN squared residual (no 1/(2R)
+# factor); V uses the DATA-term gradient only; there is no bias correction. The
+# differentiable rollout uses a MIDPOINT (RK2) integrator with 6 steps (Table D.3,
+# D-Flow / D-Flow SGLD column). It backprops through the whole rollout, so it uses
+# a dedicated DFlowPosterior overriding sample(); the likelihood object holds F/H.
+name: D-Flow SGLD
+stepper: ode
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.dflow.DFlowSGLDLikelihood
+
+  # ---------------------------------------------------------------------------
+  # Per-cell hyperparameter tables (same convention as flowdas.yaml). ANY knob
+  # below may be a scalar OR a [case][scenario][num_sde_steps M] table marked by a
+  # `default:` key, with the scenario rows nested under the case name
+  # (`navier_stokes:`); the pipeline (resolve_scheduled_hparams) resolves it to ONE
+  # scalar per run from (case_key, scenario_key, num_steps). A missing case /
+  # scenario / M column / null entry falls back to `default` with a warning, so a
+  # table can hold null placeholders for cells not tuned yet and urban / analytical
+  # use `default` until an `urban:` block is added. Env vars override the whole
+  # resolved value (top precedence, so a sweep needs no edit to this YAML):
+  #   DFLOW_NSTEPS, DFLOW_STEP_SIZE, DFLOW_NOISE_SCALE, DFLOW_LAMBDA.
+  #
+  # Defaults below are TUNED ON THIS NS CASE (eta=5e-3, s=1e-3, lambda=1e-4) from
+  # a 4-scenario x eta x lambda sweep at E=8/2 DA steps, validated at K=50 and
+  # K=300 on superres_32. Findings: (i) the step size eta is the dominant knob --
+  # eta~5e-3--1e-2 is the sweet spot, eta=5e-2 (paper's Turb value) is ~2x worse
+  # even at K=300 (not a K-budget artifact); (ii) lambda is nearly inert on
+  # RMSE/CRPS once eta is right (only a minor calibration/KL effect), contrary to
+  # the paper's framing of lambda as the key knob; (iii) larger K helps (K=300
+  # ~18% lower RMSE than K=50). Paper reference values per case (alpha=beta=0):
+  #   Toy : Nsteps=500, eta=5e-2, s=1e-2, lambda=0.1 (S-curve)/0.05 (Two-moon)
+  #   KS  : Nsteps=300, eta=1e-2, s=1e-3, lambda=1e-3
+  #   Turb: Nsteps=600, eta=5e-2, s=1e-3, lambda=5e-6
+  # NOTE: Nsteps is the dominant compute knob (each step backprops a 6-step
+  # midpoint rollout per member); it is driven by the global M (num_steps), not a
+  # table here (see num_optim_steps note below), so lower M for cheaper runs.
+  # ---------------------------------------------------------------------------
+
+  # num_optim_steps = Nsteps, pSGLD steps per window (endpoint taken post-burn), is
+  # NOT a config hyperparameter (no table): the driver drives it from the global
+  # sampler step count `num_steps` (M). D-Flow's differentiable ODE rollout is
+  # FIXED at ode_steps=6, so M would otherwise be inert -- mapping M ->
+  # num_optim_steps makes the {50,100,250,500} sweep D-Flow's Langevin-steps axis.
+  # The DFLOW_NSTEPS env var still overrides (top precedence).
+
+  # step_size = eta, pSGLD step size. DOMINANT knob on NS; sweep-tuned to 5e-3
+  # (1e-2 nearly as good; 5e-2 the paper's Turb value is ~2x worse here).
+  step_size:
+    default: 0.005
+    navier_stokes:
+      superres_32: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      superres_16: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_5:    { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_1p5:  { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+  # noise_scale = s, Langevin noise scale; increment ~ N(0, 2 eta s P) (s=0 -> MAP).
+  noise_scale:
+    default: 1.0e-3
+    navier_stokes:
+      superres_32: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      superres_16: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_5:    { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_1p5:  { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+  # lambda_reg = lambda, weight on source reg lambda ||z_0||^2 (Eq. 31; 0 disables).
+  # The paper frames this as the key knob, but on NS it is nearly inert on
+  # RMSE/CRPS once eta is right (minor calibration/KL effect only); sweep-tuned to
+  # 1e-4 here (best-calibrated cells; RMSE/CRPS insensitive over [0, 1e-4]).
+  lambda_reg:
+    default: 1.0e-4
+    navier_stokes:
+      superres_32: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      superres_16: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      sparse_5:    { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      sparse_1p5:  { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+    # urban: <add after tuning>   (falls back to default until filled)
+
+  # Fixed across all paper cases (Table D.3) -> plain scalars; promote to a table
+  # like the ones above if a future sweep needs to tune them per cell.
+  precond_decay: 0.99        # omega, RMSProp decay for V (data-grad 2nd moment)
+  precond_eps: 1.0e-3        # delta, floor in P = 1/(sqrt(V) + delta)
+  ode_steps: 6               # midpoint (RK2) rollout steps (decoupled from num_steps)
+  burn: 100                  # burn-in (documented; endpoint-per-chain collection)
+
+posterior_model:
+  _target_: scisi.posterior_models.dflow_posterior.DFlowPosterior
