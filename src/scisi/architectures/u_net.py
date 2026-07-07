@@ -83,6 +83,7 @@ class UNet(nn.Module):
         padding: str = "torch.nn.ZeroPad2d",
         attention_in_layers: List[bool] = [False, False, False, False],
         attention: dict = {"_target_": "torch.nn.Identity"},
+        two_time_cond: bool = False,
         **kwargs: Any,
     ) -> None:
         """
@@ -104,6 +105,9 @@ class UNet(nn.Module):
             padding (str): Padding module.
             attention_in_layers (List[bool]): List of booleans indicating whether to use attention in the encoder layers.
             bottleneck_attention (dict): Bottleneck attention module.
+            two_time_cond (bool): If True, the conditional input is a two-time
+                pair (s, t) of shape [B, 2] embedded by a TwoTimeCondEncoder
+                (Ito maps). Default False keeps the single-time behavior.
         """
         super(UNet, self).__init__()
 
@@ -122,6 +126,7 @@ class UNet(nn.Module):
         self.cond_encoder = get_cond_encoder(
             cond_dim=cond_dim,
             cond_embedding_dim=cond_embedding_dim,
+            two_time=two_time_cond,
         )
 
         # self.pars_cond_encoder handles None case in initialization

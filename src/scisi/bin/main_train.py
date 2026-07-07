@@ -114,6 +114,24 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Model parameters: {count_model_parameters(model)/1e6:.2f}M")
 
+    # Distillation: if the config points at a pre-trained teacher checkpoint
+    # (same block shape as the posterior configs), load it and warm-start /
+    # attach it to the Ito map before constructing the trainer.
+    if ("pre_trained_model" in cfg) and (cfg.pre_trained_model is not None):
+        teacher_project = cfg.pre_trained_model.project
+        teacher_name = cfg.pre_trained_model.name
+        teacher_dir = f"checkpoints/{teacher_project}/{teacher_name}"
+
+        logger.info(f"Loading teacher model from checkpoint: {teacher_dir}")
+        teacher_cfg = OmegaConf.load(f"{teacher_dir}/config.yaml")
+        teacher_model = hydra.utils.instantiate(teacher_cfg.model)
+        teacher_model.load_state_dict(
+            torch.load(f"{teacher_dir}/model.pth", map_location="cpu")
+        )
+
+        logger.info(f"Distilling into {cfg.model._target_}...")
+        model.distill_from(teacher_model)
+
     if "AuroraWrapper" in cfg.model.drift_model._target_:
         model.drift_model.batch_adapter = train_dataloader.dataset.batch_adapter
 

@@ -1,0 +1,130 @@
+experiment_tracking:
+  project: stochastic_navier_stokes
+
+len_field_history: 5
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+  target:
+    mean:
+      - 0.0
+    std:
+      - 3.09969
+
+# Data
+train_data:
+  # Dataloader
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: True
+  # Dataset
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (0, 160)
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: False
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+      - data/stochastic_navier_stokes
+    files:
+      - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (160, 180)
+
+
+test_data:
+  _target_: scisi.data.datasets.StochasticNavierStokesDataset
+  paths:
+    - data/stochastic_navier_stokes
+  files:
+    - data.npz
+  len_field_history: ${len_field_history}
+  tajectories_ids: (180, 200)
+  train_or_test: test
+
+# Deterministic flow map (sigma = 0): one-step / consistency-style flow
+# matching. Trainable from scratch, or by distilling a trained
+# FlowMatchingModel - uncomment the block below and fill in the run name.
+# pre_trained_model:
+#   project: stochastic_navier_stokes
+#   name: null # <- fill in the flow-matching teacher run name
+
+model:
+  _target_: scisi.models.ito_maps.ito_map_model.ItoMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  sigma_schedule: zero # deterministic flow map: no Brownian path, no martingale
+  brownian_encoder: null # sigma = 0 has no path to encode
+  drift_model:
+    _target_: scisi.architectures.u_net.UNet
+    in_channels: 1 # number of channels in the input
+    out_channels: 1 # number of channels in the output
+    hidden_channels: [16, 32, 64, 128] # number of channels in the hidden layers
+    cond_dim: 2 # two-time conditioning (s, t)
+    two_time_cond: true # embed (s, t) with the two-time encoder
+    cond_embedding_dim: 256 # dimension of the scalar conditional embedding
+    len_field_history: ${len_field_history} # number of field history steps
+    field_cond_channels: null # no Brownian features for sigma = 0
+    pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
+    pars_cond_embedding_dim: null # dimension of the pars conditional embedding
+    multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
+    num_blocks: 2 # number of convnext blocks per layer
+    dropout_rate: 0.1 # dropout rate
+    padding: torch.nn.CircularPad2d # padding module
+    attention_in_layers: [false, false, false, true] # whether to use attention in the layers. Last layer is the bottleneck layer.
+    attention: # attention module and its arguments
+      target: scisi.architectures.attention.SpatialAttention # attention module
+      pos_embedding_type: rotary # positional embedding type
+      heads: 4 # number of heads
+      patch_size: 2 # patch size
+      dropout_rate: 0.1 # dropout rate
+      embedding_dim: 512 # embedding dimension
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
+  T_0: 25
+  T_mult: 1
+  eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.ito_map_trainer.ItoMapTrainer
+  num_epochs: 1000
+  device: cuda
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 50
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 200
+  ema_decay: 0.999 # EMA weights stabilize the self-distillation target
+  consistency_mode: lsd # with sigma = 0 this is deterministic flow-map matching
+  consistency_weight: 1.0
+  off_diagonal_distribution: logit_normal # logit_normal | uniform
+  derivative_mode: jvp # jvp | finite_difference (for non-traceable nets)
+  couple_noise_to_path: true # no-op when sigma = 0
