@@ -84,3 +84,6 @@ manuscript/**/*.log
 manuscript/**/*.out
 archive/**/*.log
 archive/**/*.out
+
+# manuscript
+manuscript/
