@@ -71,3 +71,16 @@ paper_experiments/results/states/
 
 # Persistent XLA compile cache (run_ns_reference.sh)
 .jax_cache/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+manuscript/**/*.log
+manuscript/**/*.out
+archive/**/*.log
+archive/**/*.out
