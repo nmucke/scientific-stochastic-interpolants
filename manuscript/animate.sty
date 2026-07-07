@@ -1,9 +1,0 @@
-\NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{animate}[2024/06/26 local shim: static fallback]
-% Static-PDF shim: animations are not rendered in this offline build. The
-% real package is needed for interactive animations; this lets the PDF compile.
-\RequirePackage{graphicx}
-\providecommand{\animategraphics}[5][]{%
-  \fbox{\parbox{0.4\linewidth}{\centering\small[animation: #3#4--#5\\(static build; animate.sty unavailable)]}}}
-\newenvironment{animateinline}[2][]{}{}
-\endinput
