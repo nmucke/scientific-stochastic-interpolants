@@ -15,9 +15,19 @@ LEN_FIELD_HISTORY = 2
 
 
 class ToyDataset(Dataset):
-    """Tiny synthetic dataset with the repo's train-batch layout."""
+    """Tiny synthetic dataset with the repo's train-batch layout.
 
-    def __init__(self, num_samples: int = 8, seed: int = 0) -> None:
+    With ``deterministic_target=True`` the target is a fixed affine map of the
+    base state instead of independent noise, so a next-step predictor can
+    actually learn the input->target map rather than merely memorize samples.
+    """
+
+    def __init__(
+        self,
+        num_samples: int = 8,
+        seed: int = 0,
+        deterministic_target: bool = False,
+    ) -> None:
         generator = torch.Generator().manual_seed(seed)
         self.field_history = torch.randn(
             num_samples,
@@ -27,9 +37,12 @@ class ToyDataset(Dataset):
             LEN_FIELD_HISTORY,
             generator=generator,
         )
-        self.target = torch.randn(
-            num_samples, NUM_CHANNELS, HEIGHT, WIDTH, generator=generator
-        )
+        if deterministic_target:
+            self.target = 0.5 * self.field_history[:, :, :, :, -1] + 0.1
+        else:
+            self.target = torch.randn(
+                num_samples, NUM_CHANNELS, HEIGHT, WIDTH, generator=generator
+            )
 
     def __len__(self) -> int:
         return self.field_history.shape[0]

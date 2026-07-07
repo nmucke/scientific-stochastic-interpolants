@@ -56,6 +56,7 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
     # config_name="knmi_pde_transformer_flow_matching.yaml",
     # config_name="stochastic_navier_stokes_pde_transformer.yaml",
     config_name="stochastic_navier_stokes.yaml",
+    # config_name="deterministic_navier_stokes.yaml",
     # config_name="knmi_pde_transformer.yaml",
     # config_name="knmi.yaml",
     version_base=None,
@@ -132,7 +133,9 @@ def main(cfg: DictConfig) -> None:
         logger.info(f"Distilling into {cfg.model._target_}...")
         model.distill_from(teacher_model)
 
-    if "AuroraWrapper" in cfg.model.drift_model._target_:
+    if ("drift_model" in cfg.model) and (
+        "AuroraWrapper" in cfg.model.drift_model._target_
+    ):
         model.drift_model.batch_adapter = train_dataloader.dataset.batch_adapter
 
     logger.info(f"Instantiating optimizer: {cfg.optimizer._target_}")
