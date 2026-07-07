@@ -13,7 +13,7 @@ WIDTH = 16
 LEN_FIELD_HISTORY = 3
 
 
-def _make_network() -> UNet:
+def _make_network(dropout_rate: float = 0.0) -> UNet:
     """Attention-free two-level UNet small enough for CPU tests."""
     return UNet(
         in_channels=NUM_CHANNELS,
@@ -24,7 +24,7 @@ def _make_network() -> UNet:
         len_field_history=LEN_FIELD_HISTORY,
         multiplier=2,
         num_blocks=1,
-        dropout_rate=0.0,
+        dropout_rate=dropout_rate,
         attention_in_layers=[False, False],
         attention={"target": "torch.nn.Identity"},
     )
@@ -135,6 +135,30 @@ def test_sample_trajectory_rollout(network, batch):
     assert torch.allclose(
         trajectory[:, :, :, :, :LEN_FIELD_HISTORY], batch["field_history"]
     )
+
+
+def test_sample_is_deterministic_despite_dropout_and_train_mode(batch):
+    """sample() forces eval mode internally: dropout must not perturb the
+    prediction, and the caller's training mode must be restored afterwards."""
+    torch.manual_seed(0)
+    model = DeterministicModel(network=_make_network(dropout_rate=0.5))
+    model.train()
+
+    pred_first = model.sample(field_history=batch["field_history"], base=None)
+    pred_second = model.sample(field_history=batch["field_history"], base=None)
+
+    assert torch.allclose(pred_first, pred_second)
+    assert model.training
+
+
+def test_sample_trajectory_rejects_too_short_rollout(network, batch):
+    model = DeterministicModel(network=network).eval()
+
+    with pytest.raises(ValueError, match="num_physical_steps"):
+        model.sample_trajectory(
+            field_history=batch["field_history"],
+            num_physical_steps=LEN_FIELD_HISTORY,
+        )
 
 
 def test_drift_raises(network):

@@ -61,6 +61,8 @@ class DeterministicModel(BaseModel):
         Returns:
             torch.Tensor: Next-state tensor [B, C, H, W].
         """
+        # Zero placeholder for the pseudo-time input the shared architectures
+        # require (cond_dim: 1); constant, so the network learns to ignore it.
         cond = torch.zeros(x.shape[0], 1, device=x.device, dtype=x.dtype)
 
         out = self.network(x, cond, field_history, field_cond, pars_cond)
@@ -154,21 +156,28 @@ class DeterministicModel(BaseModel):
         if base is None:
             base = field_history[:, :, :, :, -1]
 
-        with torch.no_grad():
-            pred = self._step(
-                base.to(self.device),
-                field_history=(
-                    field_history.to(self.device)
-                    if field_history is not None
-                    else None
-                ),
-                field_cond=(
-                    field_cond.to(self.device) if field_cond is not None else None
-                ),
-                pars_cond=(
-                    pars_cond.to(self.device) if pars_cond is not None else None
-                ),
-            ).cpu()
+        # Force eval mode for the step: with dropout active, a "deterministic"
+        # model would produce noise-perturbed, non-reproducible predictions.
+        was_training = self.training
+        self.eval()
+        try:
+            with torch.no_grad():
+                pred = self._step(
+                    base.to(self.device),
+                    field_history=(
+                        field_history.to(self.device)
+                        if field_history is not None
+                        else None
+                    ),
+                    field_cond=(
+                        field_cond.to(self.device) if field_cond is not None else None
+                    ),
+                    pars_cond=(
+                        pars_cond.to(self.device) if pars_cond is not None else None
+                    ),
+                ).cpu()
+        finally:
+            self.train(was_training)
 
         # Add the new state to the field history
         if return_field_history:
@@ -211,7 +220,18 @@ class DeterministicModel(BaseModel):
 
         Returns:
             torch.Tensor: Trajectory tensor [B, C, H, W, num_physical_steps].
+
+        Raises:
+            ValueError: If ``num_physical_steps`` does not exceed the seeded
+                history length (the rollout would generate no new frames).
         """
+        if num_physical_steps <= field_history.shape[-1]:
+            raise ValueError(
+                f"num_physical_steps ({num_physical_steps}) must exceed the "
+                f"field history length ({field_history.shape[-1]}); the "
+                "trajectory includes the seeded history frames."
+            )
+
         return self._sample_trajectory(
             base=base,
             field_history=field_history,

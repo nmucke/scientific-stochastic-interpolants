@@ -170,7 +170,8 @@ class BaseModel(nn.Module):
         """Sample from the model."""
         pass
 
-    @abstractmethod
+    # Concrete shared rollout used by subclasses' sample_trajectory; note that
+    # @abstractmethod would be inert here anyway (nn.Module, not ABCMeta).
     def _sample_trajectory(
         self,
         base: torch.Tensor,
