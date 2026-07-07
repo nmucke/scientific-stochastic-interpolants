@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 
 from scisi.architectures.embeddings import TwoTimeCondEncoder
+from scisi.deterministic_models.deterministic_model import DeterministicModel
 from scisi.models.base_model import BaseModel
 from scisi.models.flow_matching_model import FlowMatchingModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
@@ -222,6 +223,73 @@ def warm_start_from_teacher(student: nn.Module, teacher: nn.Module) -> dict:
     return {"copied": copied, "expanded": expanded, "skipped": skipped}
 
 
+class NextStepDriftAdapter(nn.Module):
+    """Adapts a next-state network to the drift-net contract: G = net(...) - x.
+
+    Used by the deterministic warm start (Method 2 of the fine-tuning plan,
+    docs/plans/deterministic_to_ito_map_finetuning.md) when the teacher's
+    network predicts the next state itself (``residual=False``); a residual
+    teacher already outputs mu(x) - x and needs no adapter. The fixed skip
+    makes the warm-started map satisfy X_hat_{0,1}(x) = x + G(x) = F(x) at
+    initialization (the anchor identity).
+    """
+
+    def __init__(self, net: nn.Module) -> None:
+        """Wrap the next-state network."""
+        super(NextStepDriftAdapter, self).__init__()
+        self.net = net
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        cond: torch.Tensor,
+        field_history: Optional[torch.Tensor] = None,
+        field_cond: Optional[torch.Tensor] = None,
+        pars_cond: Optional[torch.Tensor] = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        """Drift from the next-state prediction: net(x, ...) - x."""
+        out = self.net(
+            x=x,
+            cond=cond,
+            field_history=field_history,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            **kwargs,
+        )
+        return out - x
+
+
+def _pin_scalar_encoder_at_zero(encoder: nn.Sequential) -> None:
+    """Make a scalar time encoder output its embedding of 0 for ALL inputs.
+
+    Zeroes the first linear layer's weight and folds that layer's output at
+    input 0 into its bias, so every downstream (copied) layer processes the
+    embedding-of-zero regardless of the actual time input. Gradients still
+    flow into the zeroed weight, so time dependence can regrow during
+    fine-tuning.
+
+    A deterministic teacher only ever saw the constant placeholder cond = 0
+    (PR 2's ``_step``), so exact functional equivalence at init requires the
+    student's time pathway to be pinned to the teacher's embedding of 0 -
+    merely copying the embedding (the flow-matching warm start) would make
+    the init output vary with (s, t).
+    """
+    device = next(encoder.parameters()).device
+    features = torch.zeros(1, 1, device=device)
+    for module in encoder:
+        if isinstance(module, nn.Linear):
+            with torch.no_grad():
+                bias_at_zero = module(features)[0]
+                module.weight.zero_()
+                module.bias.copy_(bias_at_zero)
+            return
+        features = module(features)
+    raise ValueError(
+        "Expected a linear layer in the scalar time encoder to pin; none found."
+    )
+
+
 class ItoMapModel(BaseModel):
     """Ito map: a learned two-time stochastic flow map.
 
@@ -407,6 +475,70 @@ class ItoMapModel(BaseModel):
         model.distill_from(si_model)
         return model
 
+    @classmethod
+    def from_deterministic(
+        cls,
+        det_model: DeterministicModel,
+        drift_model: nn.Module,
+        interpolation: nn.Module,
+        sigma_schedule: SigmaSchedule | str = "gamma_matched",
+        **kwargs: Any,
+    ) -> "ItoMapModel":
+        """Build an Ito map warm-started from a deterministic next-step model.
+
+        Method 2 (weight-surgery warm start) of the fine-tuning plan
+        (docs/plans/deterministic_to_ito_map_finetuning.md). Unlike the
+        distillation constructors, the deterministic model is NOT attached as
+        a teacher - it has no drift; training uses the from-scratch objective
+        (optionally with a GaussianShellTeacher warm-up). The deterministic
+        model also defines no interpolation, so one must be supplied.
+        """
+        model = cls(
+            interpolation=interpolation,
+            drift_model=drift_model,
+            sigma_schedule=sigma_schedule,
+            **kwargs,
+        )
+        model.warm_start_from_deterministic(det_model)
+        return model
+
+    def warm_start_from_deterministic(self, det_model: DeterministicModel) -> dict:
+        """Warm-start the drift net from a deterministic model (Method 2).
+
+        Three surgery steps, together making the map compute exactly the
+        deterministic model at initialization:
+
+        1. Copy the teacher network into the drift net
+           (``warm_start_from_teacher``: backbone copied, Brownian input
+           pathway left at its zero init, s-branch of the two-time embedding
+           zeroed).
+        2. Pin the t-branch of the two-time embedding to the teacher's
+           embedding of the constant placeholder cond = 0 it was trained
+           with, so the net is blind to (s, t) at init.
+        3. Fix the output head to the drift contract: a ``residual=False``
+           teacher predicts the next state, so G := net(x, ...) - x
+           (``NextStepDriftAdapter``); a ``residual=True`` teacher already
+           predicts the increment mu(x) - x and needs no adapter.
+
+        The initialized map is X_hat_{s,t}(x) = x + (t - s)(F(x) - x) plus
+        the martingale part - linear transport toward the deterministic
+        endpoint, whose Brownian-averaged endpoint at (0, 1) is exactly
+        F(x_n) (the anchor identity holds at init).
+
+        Returns:
+            dict: Weight-surgery report (``copied``/``expanded``/``skipped``).
+        """
+        report = warm_start_from_teacher(self.drift_model, det_model.network)
+
+        cond_encoder = getattr(self.drift_model, "cond_encoder", None)
+        if isinstance(cond_encoder, TwoTimeCondEncoder):
+            _pin_scalar_encoder_at_zero(cond_encoder.t_encoder)
+
+        if not det_model.residual:
+            self.drift_model = NextStepDriftAdapter(self.drift_model)
+
+        return report
+
     def distill_from(self, teacher_model: nn.Module) -> dict:
         """Attach a frozen teacher and warm-start the student net from it.
 
@@ -419,6 +551,15 @@ class ItoMapModel(BaseModel):
         Returns:
             dict: Weight-surgery report (empty if the teacher has no net).
         """
+        if isinstance(teacher_model, DeterministicModel):
+            # Has a (raising) drift method, so it would slip through the
+            # duck-typed branch and only fail at training time.
+            raise TypeError(
+                "A DeterministicModel has no drift to distill from; use "
+                "warm_start_from_deterministic / from_deterministic (Method "
+                "2) or ResidualItoMapModel.from_deterministic (Method 1) "
+                "instead."
+            )
         if isinstance(teacher_model, FlowMatchingModel):
             wrapper: nn.Module = FlowMatchingTeacher(teacher_model, self.sigma_schedule)
         elif isinstance(teacher_model, FollmerStochasticInterpolant):

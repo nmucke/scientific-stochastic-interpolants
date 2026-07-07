@@ -13,6 +13,7 @@
 
 
 import logging
+import os
 import pdb
 
 import hydra
@@ -25,6 +26,13 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
+from scisi.models.ito_maps import (
+    RESIDUAL_STATS_FILENAME,
+    GaussianShellTeacher,
+    ResidualItoMapModel,
+    ResidualStats,
+    estimate_residual_stats,
+)
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
@@ -44,6 +52,75 @@ CONTINUE_FROM_CHECKPOINT = False
 CHECKPOINT_PROJECT = "udales"
 CHECKPOINT_NAME = "kind-sky-9"
 CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth"
+
+
+def _load_or_estimate_residual_stats(det_model, teacher_dir, dataloader):
+    """Stage-0 residual calibration: load persisted stats or estimate them.
+
+    Stats are persisted next to the deterministic checkpoint so repeated
+    fine-tuning runs skip the calibration pass.
+    """
+    stats_path = f"{teacher_dir}/{RESIDUAL_STATS_FILENAME}"
+    if os.path.exists(stats_path):
+        logger.info(f"Loading residual statistics from {stats_path}")
+        return ResidualStats.load(stats_path)
+
+    logger.info("Estimating residual statistics (Stage 0 calibration)...")
+    stats = estimate_residual_stats(det_model, dataloader)
+    stats.save(stats_path)
+    logger.info(f"Saved residual statistics to {stats_path}")
+    return stats
+
+
+def _build_from_deterministic(cfg, model, det_model, teacher_dir, dataloader):
+    """Turn an Ito map + a trained deterministic model into a fine-tunable model.
+
+    ``init_mode: residual`` (Method 1) wraps the Ito map into a
+    ResidualItoMapModel around the frozen mean model; ``init_mode:
+    warm_start`` (Method 2) copies the mean model's weights into the drift
+    net. ``analytic_teacher: true`` additionally attaches the Gaussian-shell
+    teacher (Method 3) - combine with ``trainer.teacher_warmup_epochs``.
+    """
+    init_mode = cfg.pre_trained_model.get("init_mode", "residual")
+    analytic_teacher = cfg.pre_trained_model.get("analytic_teacher", False)
+    device = cfg.trainer.get("device", "cpu")
+
+    if init_mode == "residual":
+        det_model.to(device)
+        stats = _load_or_estimate_residual_stats(det_model, teacher_dir, dataloader)
+        if analytic_teacher:
+            # Residual coordinates: F = 0, rho = 1 inside the inner map.
+            model.distill_from(
+                GaussianShellTeacher(
+                    interpolation=model.interpolation,
+                    sigma_schedule=model.sigma_schedule,
+                )
+            )
+        logger.info("Building ResidualItoMapModel around the frozen mean model...")
+        return ResidualItoMapModel.from_deterministic(
+            det_model=det_model, ito_map=model, residual_stats=stats
+        )
+
+    if init_mode == "warm_start":
+        logger.info("Warm-starting the Ito map from the deterministic model...")
+        model.warm_start_from_deterministic(det_model)
+        if analytic_teacher:
+            det_model.to(device)
+            stats = _load_or_estimate_residual_stats(det_model, teacher_dir, dataloader)
+            model.distill_from(
+                GaussianShellTeacher(
+                    interpolation=model.interpolation,
+                    sigma_schedule=model.sigma_schedule,
+                    mean_model=det_model,
+                    residual_std=stats.std,
+                )
+            )
+        return model
+
+    raise ValueError(
+        f"Unknown pre_trained_model.init_mode: {init_mode} "
+        "(expected 'residual' or 'warm_start')."
+    )
 
 
 @hydra.main(  # type: ignore[misc]
@@ -130,8 +207,13 @@ def main(cfg: DictConfig) -> None:
             torch.load(f"{teacher_dir}/model.pth", map_location="cpu")
         )
 
-        logger.info(f"Distilling into {cfg.model._target_}...")
-        model.distill_from(teacher_model)
+        if cfg.pre_trained_model.get("type", None) == "deterministic":
+            model = _build_from_deterministic(
+                cfg, model, teacher_model, teacher_dir, val_dataloader
+            )
+        else:
+            logger.info(f"Distilling into {cfg.model._target_}...")
+            model.distill_from(teacher_model)
 
     if ("drift_model" in cfg.model) and (
         "AuroraWrapper" in cfg.model.drift_model._target_

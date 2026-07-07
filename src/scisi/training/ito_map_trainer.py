@@ -10,6 +10,12 @@ target (or a frozen teacher's converted drift), and L_consistency enforces
 two-time consistency either via the Lagrangian time-derivative match (LSD,
 using torch.func.jvp with a finite-difference fallback) or via progressive
 semigroup composition (PSD).
+
+Also trains residual Ito maps (deterministic-to-Ito-map fine-tuning, Method 1
+of docs/plans/deterministic_to_ito_map_finetuning.md): a model exposing
+``to_residual_batch`` has each batch moved to normalized residual coordinates
+during batch preparation, and the losses drive its inner map (``ito_map``)
+directly - the loss machinery itself is unchanged.
 """
 
 import logging
@@ -51,6 +57,18 @@ class ItoMapTrainer(BaseTrainer):
             taken from the simulated Brownian path (z_t = W_t / sqrt(t)), so
             the drift net sees mutually consistent (state, path-feature)
             inputs. If False, or when sigma = 0, the noise is independent.
+        freeze: Optional list of dotted submodule names (resolved on the
+            model, e.g. ``["drift_model.net"]``) whose parameters are frozen
+            at construction. Used for staged fine-tuning (Method 2 of the
+            deterministic fine-tuning plan).
+        unfreeze_at_epoch: Epoch at which the frozen modules are unfrozen
+            again (``None`` keeps them frozen throughout). Requires
+            ``freeze``.
+        teacher_warmup_epochs: If > 0 and the model has a teacher attached,
+            the teacher is detached at the start of this epoch, switching the
+            diagonal/consistency targets from the teacher to the exact data
+            targets (e.g. a GaussianShellTeacher warm-up, Method 3). 0 keeps
+            an attached teacher for the whole run.
 
     Teacher mode is controlled by the model: when ``model.teacher`` is set
     (via the ItoMapModel distillation constructors), diagonal and consistency
@@ -71,6 +89,9 @@ class ItoMapTrainer(BaseTrainer):
         derivative_mode: str = "jvp",
         finite_difference_eps: float = 1e-3,
         couple_noise_to_path: bool = True,
+        freeze: Optional[list[str]] = None,
+        unfreeze_at_epoch: Optional[int] = None,
+        teacher_warmup_epochs: int = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize the trainer."""
@@ -84,6 +105,8 @@ class ItoMapTrainer(BaseTrainer):
             )
         if derivative_mode not in DERIVATIVE_MODES:
             raise ValueError(f"Unknown derivative mode: {derivative_mode}")
+        if (unfreeze_at_epoch is not None) and not freeze:
+            raise ValueError("unfreeze_at_epoch requires a non-empty freeze list.")
 
         self.consistency_mode = consistency_mode
         self.consistency_weight = consistency_weight
@@ -91,6 +114,57 @@ class ItoMapTrainer(BaseTrainer):
         self.derivative_mode = derivative_mode
         self.finite_difference_eps = finite_difference_eps
         self.couple_noise_to_path = couple_noise_to_path
+
+        self.freeze = list(freeze) if freeze else []
+        self.unfreeze_at_epoch = unfreeze_at_epoch
+        self.teacher_warmup_epochs = teacher_warmup_epochs
+
+        self._frozen_modules = [
+            self.model.get_submodule(name) for name in self.freeze
+        ]
+        for module in self._frozen_modules:
+            module.requires_grad_(False)
+        if self.freeze:
+            logger.info(f"Froze modules: {self.freeze}")
+
+    # ------------------------------------------------------------------
+    # Model access
+    # ------------------------------------------------------------------
+
+    @property
+    def _map_model(self) -> torch.nn.Module:
+        """The Ito map the losses drive.
+
+        A residual wrapper (ResidualItoMapModel) exposes its inner map as
+        ``ito_map``; the trainer drives that inner map directly, in the
+        residual coordinates ``to_residual_batch`` moved the batch to. For a
+        plain ItoMapModel this is the model itself.
+        """
+        return getattr(self.model, "ito_map", self.model)
+
+    # ------------------------------------------------------------------
+    # Epoch schedule (staged unfreezing, teacher warm-up)
+    # ------------------------------------------------------------------
+
+    def _on_epoch_start(self, epoch: int) -> None:
+        """Staged unfreezing and the teacher warm-up switchover."""
+        if (self.unfreeze_at_epoch is not None) and (epoch == self.unfreeze_at_epoch):
+            for module in self._frozen_modules:
+                module.requires_grad_(True)
+            logger.info(f"Epoch {epoch}: unfroze modules {self.freeze}")
+
+        if (
+            (self.teacher_warmup_epochs > 0)
+            and (epoch == self.teacher_warmup_epochs)
+            and (self._map_model.teacher is not None)
+        ):
+            # The teacher is stashed outside the module registry
+            # (ItoMapModel.__init__), hence the object.__setattr__.
+            object.__setattr__(self._map_model, "_teacher", None)
+            logger.info(
+                f"Epoch {epoch}: teacher warm-up finished, switching to the "
+                "exact data targets."
+            )
 
     # ------------------------------------------------------------------
     # Batch preparation
@@ -113,14 +187,21 @@ class ItoMapTrainer(BaseTrainer):
         return s, t
 
     def _prepare_batch(self, batch: dict) -> dict:
-        """Device transfer plus sampled times and the Brownian path."""
+        """Device transfer plus sampled times and the Brownian path.
+
+        Residual wrappers additionally move (base, target) to normalized
+        residual coordinates here, so all downstream losses see the residual
+        process.
+        """
         batch = super()._prepare_batch(batch)
+        if hasattr(self.model, "to_residual_batch"):
+            batch = self.model.to_residual_batch(batch)
         batch_size = batch["base"].shape[0]
 
         batch["t_diag"] = torch.rand(batch_size, 1, device=self.device)
         batch["s_off"], batch["t_off"] = self._sample_off_diagonal_times(batch_size)
 
-        sampler = self.model.path_sampler
+        sampler = self._map_model.path_sampler
         batch["brownian_sample"] = (
             sampler.sample(batch["base"].shape, self.device)
             if sampler is not None
@@ -151,8 +232,13 @@ class ItoMapTrainer(BaseTrainer):
 
     @property
     def _target_model(self) -> torch.nn.Module:
-        """Model providing stop-gradient consistency targets (EMA if enabled)."""
-        return self.ema_model if self.ema_model is not None else self.model
+        """Map providing stop-gradient consistency targets (EMA if enabled).
+
+        Like ``_map_model``, residual wrappers are unwrapped to their inner
+        map (the EMA model is a copy of the wrapper).
+        """
+        model = self.ema_model if self.ema_model is not None else self.model
+        return getattr(model, "ito_map", model)
 
     def _diagonal_target(
         self,
@@ -162,7 +248,7 @@ class ItoMapTrainer(BaseTrainer):
         noise: torch.Tensor,
     ) -> torch.Tensor:
         """Regression target for the diagonal drift at (x_t, t)."""
-        teacher = self.model.teacher
+        teacher = self._map_model.teacher
         if teacher is not None:
             with torch.no_grad():
                 return teacher.drift(
@@ -172,7 +258,7 @@ class ItoMapTrainer(BaseTrainer):
                     batch.get("field_cond"),
                     batch.get("pars_cond"),
                 )
-        return self.model.G_diag_target(
+        return self._map_model.G_diag_target(
             base=batch["base"], target=batch["target"], noise=noise, t=t
         )
 
@@ -196,7 +282,7 @@ class ItoMapTrainer(BaseTrainer):
         pars_cond = batch.get("pars_cond")
 
         def g_of_t(t_in: torch.Tensor) -> torch.Tensor:
-            return self.model.G(
+            return self._map_model.G(
                 x=x_s,
                 s=s,
                 t=t_in,
@@ -253,7 +339,7 @@ class ItoMapTrainer(BaseTrainer):
             if brownian_sample is not None:
                 x_hat_t = x_hat_t + brownian_sample.martingale_increment(s, t)
 
-            teacher = self.model.teacher
+            teacher = self._map_model.teacher
             if teacher is not None:
                 consistency_target = teacher.drift(
                     x_hat_t, t, field_history, field_cond, pars_cond
@@ -301,7 +387,7 @@ class ItoMapTrainer(BaseTrainer):
             "pars_cond": pars_cond,
         }
 
-        direct = self.model.map(x=x_s, s=s, t=t, **map_kwargs)
+        direct = self._map_model.map(x=x_s, s=s, t=t, **map_kwargs)
 
         with torch.no_grad():
             target_model = self._target_model
@@ -314,14 +400,16 @@ class ItoMapTrainer(BaseTrainer):
         """Diagonal loss plus weighted two-time consistency loss."""
         base, target = batch["base"], batch["target"]
         brownian_sample = batch["brownian_sample"]
-        brownian_features = self.model.encode_brownian(brownian_sample)
+        brownian_features = self._map_model.encode_brownian(brownian_sample)
 
         # Diagonal loss L_SI at s = t.
         t_diag = batch["t_diag"]
         noise_diag = self._noise_at(brownian_sample, t_diag, base.shape)
-        x_t = self.model.interpolant(base=base, target=target, noise=noise_diag, t=t_diag)
+        x_t = self._map_model.interpolant(
+            base=base, target=target, noise=noise_diag, t=t_diag
+        )
 
-        pred_diag = self.model.G(
+        pred_diag = self._map_model.G(
             x=x_t,
             s=t_diag,
             t=t_diag,
@@ -339,7 +427,9 @@ class ItoMapTrainer(BaseTrainer):
         # Consistency loss on the off-diagonal pair (s, t).
         s_off, t_off = batch["s_off"], batch["t_off"]
         noise_off = self._noise_at(brownian_sample, s_off, base.shape)
-        x_s = self.model.interpolant(base=base, target=target, noise=noise_off, t=s_off)
+        x_s = self._map_model.interpolant(
+            base=base, target=target, noise=noise_off, t=s_off
+        )
 
         consistency_fn = (
             self._lsd_loss if self.consistency_mode == "lsd" else self._psd_loss
