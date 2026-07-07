@@ -132,6 +132,16 @@ Phases land as separate PRs in order 1 → 2 → 3 → 4 → 5 (tests written al
 - **`jvp` through wrapped third-party nets** (PDETransformer, Aurora) — finite-difference fallback covers it; the UNet path should trace fine.
 - **Base distribution mismatch with the paper**: the paper's theory is stated for `X₀ ~ N(0,I)`; the repo's Föllmer setup uses a point-mass base (previous PDE state) with `γ(t)` noise. The general diagonal target (`forward_diff + (σ²/2)·score`) handles this, but the `(1+t)v − x` teacher shortcut only holds in the Gaussian-base case — the code should use the general mixin-based conversion and treat the shortcut as a special case.
 
+## Explicit follow-up after PR 1 lands
+
+**Scientific validation (Phase 5.6) is deferred out of PR 1** — the unit and smoke
+tests show the method trains finitely, not that it works. Owner: **nmucke**.
+Task: train an Itô map on the analytical / stochastic Navier-Stokes case and
+compare one-step Itô map samples against 100-step Euler–Maruyama Föllmer samples
+using the existing `metrics/` (CRPS, spread-skill, sliced-W2, spectra), including
+a 1-epoch GPU bf16 mixed-precision run before any long training (the bf16 LSD
+path only has CPU-autocast and skip-if-no-CUDA test coverage).
+
 ## Alignment with the follow-up plans (PR 2, PR 3)
 
 `docs/plans/deterministic_models_and_trainer_refactor.md` (PR 2) and `docs/plans/deterministic_to_ito_map_finetuning.md` (PR 3) are implemented after this plan, in that order, as separate PRs. PR 3 additionally extends two PR 1 files additively (`ito_map_model.py` gains `from_deterministic`; `ito_map_trainer.py` gains freeze/unfreeze/teacher-warmup options) — the two "PR 3 note" design requirements above (duck-typed teacher, `_on_epoch_start` hook) are what make those extensions retrofit-free. Division of labor for PR 1/PR 2:

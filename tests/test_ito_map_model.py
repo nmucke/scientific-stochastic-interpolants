@@ -1,6 +1,7 @@
 """Tests for the ItoMapModel: diagonal target, teacher conversion, weight
 surgery and sampling (plan Phase 5.3 / 5.4)."""
 
+import pytest
 import torch
 import torch.nn as nn
 from ito_map_test_helpers import (
@@ -126,42 +127,175 @@ def test_follmer_teacher_is_identity_when_sigma_matches_gamma():
     assert torch.allclose(converted, b_theta, atol=1e-6)
 
 
-def test_warm_start_surgery():
-    """Weight surgery: matching layers copied, input-channel-grown convs
-    zero-expanded, and the two-time embedding exactly reproduces the
-    teacher's single-time embedding at init."""
+def test_follmer_teacher_small_t_guard():
+    """Below MIN_TIME the prior-score correction (which diverges like 1/t^2)
+    is dropped per-sample, matching _drift_with_prior_score's behavior - even
+    for the 'paper' sigma schedule where the correction is nonzero."""
+    torch.manual_seed(30)
+    si_model = FollmerStochasticInterpolant(
+        interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
+        drift_model=make_tiny_unet(),
+    )
+    teacher = FollmerTeacher(si_model, PaperSigmaSchedule())
+
+    x = _rand_state()
+    field_history = torch.randn(BATCH, NUM_CHANNELS, HEIGHT, WIDTH, LEN_FIELD_HISTORY)
+    t_small = torch.full((BATCH, 1), 5e-5)  # below MIN_TIME = 1e-4
+
+    si_model.eval()
+    with torch.no_grad():
+        b_theta = si_model.drift_model(x, t_small, field_history, None, None)
+        converted = teacher.drift(x, t_small, field_history)
+
+    assert torch.allclose(converted, b_theta, atol=1e-6)
+    assert torch.isfinite(converted).all()
+
+
+def test_warm_start_functional_equivalence_in_ns_layout():
+    """The real NS distillation layout: teacher WITHOUT field_cond, student
+    with Brownian features. Because features enter via a dedicated
+    zero-initialized projection (not the init conv), the student's full
+    forward pass at init must reproduce the teacher's output exactly - on
+    network OUTPUTS, for any s and any Brownian features."""
     torch.manual_seed(4)
-    teacher_net = make_tiny_unet(cond_dim=1, field_cond_channels=2)
+    teacher_net = make_tiny_unet(cond_dim=1)  # field_cond_channels: null
     student_net = make_tiny_unet(
-        cond_dim=2, two_time_cond=True, field_cond_channels=2 + 5
+        cond_dim=2, two_time_cond=True, brownian_feature_channels=5
     )
 
     report = warm_start_from_teacher(student_net, teacher_net)
     assert len(report["copied"]) > 0
-    assert len(report["expanded"]) > 0
 
-    # Deeper blocks are copied exactly.
-    teacher_state = teacher_net.state_dict()
-    student_state = student_net.state_dict()
-    for name in report["copied"]:
-        teacher_name = name.replace("cond_encoder.t_encoder.", "cond_encoder.")
-        assert torch.equal(student_state[name], teacher_state[teacher_name])
+    # The ONLY parameters allowed to stay at fresh init are student-specific:
+    # the (zeroed) s-branch of the two-time embedding and the (zero-init)
+    # Brownian feature projection. Everything else - including the whole
+    # input stage - must transfer.
+    allowed_skipped_prefixes = ("cond_encoder.s_encoder.", "brownian_proj.")
+    assert all(
+        name.startswith(allowed_skipped_prefixes) for name in report["skipped"]
+    ), f"unexpected skipped keys: {report['skipped']}"
+
+    # Functional equivalence of full forward passes at init.
+    teacher_net.eval()
+    student_net.eval()
+    x = _rand_state()
+    field_history = torch.randn(BATCH, NUM_CHANNELS, HEIGHT, WIDTH, LEN_FIELD_HISTORY)
+    s, t = torch.rand(BATCH, 1), torch.rand(BATCH, 1)
+    brownian_features = torch.randn(BATCH, 5, HEIGHT, WIDTH)
+
+    with torch.no_grad():
+        teacher_out = teacher_net(x, t, field_history)
+        student_out = student_net(
+            x,
+            torch.cat([s, t], dim=1),
+            field_history=field_history,
+            brownian_features=brownian_features,
+        )
+    assert torch.allclose(student_out, teacher_out, atol=1e-6)
 
     # The two-time embedding matches the teacher embedding on the diagonal.
     assert isinstance(student_net.cond_encoder, TwoTimeCondEncoder)
-    t = torch.rand(BATCH, 1)
-    s = torch.rand(BATCH, 1)
     with torch.no_grad():
         student_embedding = student_net.cond_encoder(torch.cat([s, t], dim=1))
         teacher_embedding = teacher_net.cond_encoder(t)
     assert torch.allclose(student_embedding, teacher_embedding, atol=1e-6)
 
-    # Zero-expanded convs ignore the new (Brownian-feature) input channels.
-    for name in report["expanded"]:
-        teacher_param = teacher_state[name]
-        student_param = student_state[name]
-        assert torch.equal(student_param[:, : teacher_param.shape[1]], teacher_param)
-        assert torch.all(student_param[:, teacher_param.shape[1] :] == 0)
+
+def test_warm_start_functional_equivalence_with_field_cond_teacher():
+    """Same guarantee when the teacher itself uses field_cond (both nets have
+    the identical init conv class; field_cond channel counts match)."""
+    torch.manual_seed(40)
+    teacher_net = make_tiny_unet(cond_dim=1, field_cond_channels=2)
+    student_net = make_tiny_unet(
+        cond_dim=2,
+        two_time_cond=True,
+        field_cond_channels=2,
+        brownian_feature_channels=5,
+    )
+
+    report = warm_start_from_teacher(student_net, teacher_net)
+    allowed_skipped_prefixes = ("cond_encoder.s_encoder.", "brownian_proj.")
+    assert all(
+        name.startswith(allowed_skipped_prefixes) for name in report["skipped"]
+    ), f"unexpected skipped keys: {report['skipped']}"
+
+    teacher_net.eval()
+    student_net.eval()
+    x = _rand_state()
+    field_history = torch.randn(BATCH, NUM_CHANNELS, HEIGHT, WIDTH, LEN_FIELD_HISTORY)
+    field_cond = torch.randn(BATCH, 2, HEIGHT, WIDTH)
+    s, t = torch.rand(BATCH, 1), torch.rand(BATCH, 1)
+    brownian_features = torch.randn(BATCH, 5, HEIGHT, WIDTH)
+
+    with torch.no_grad():
+        teacher_out = teacher_net(x, t, field_history, field_cond)
+        student_out = student_net(
+            x,
+            torch.cat([s, t], dim=1),
+            field_history=field_history,
+            field_cond=field_cond,
+            brownian_features=brownian_features,
+        )
+    assert torch.allclose(student_out, teacher_out, atol=1e-6)
+
+
+def test_deepcopy_shares_frozen_teacher():
+    """deepcopy(model) (the trainer's EMA setup) must share the stashed
+    teacher, not silently duplicate it in memory."""
+    from copy import deepcopy
+
+    torch.manual_seed(50)
+    fm_model = FlowMatchingModel(
+        interpolation=LinearDeterministicInterpolation(),
+        drift_model=make_tiny_unet(),
+    )
+    student = ItoMapModel(
+        interpolation=LinearDeterministicInterpolation(),
+        drift_model=make_tiny_unet(cond_dim=2, two_time_cond=True),
+        sigma_schedule="paper",
+    )
+    student.distill_from(fm_model)
+
+    copied = deepcopy(student)
+    assert copied.teacher is student.teacher  # shared, not duplicated
+    # The copy's own weights are independent.
+    original_param = next(student.drift_model.parameters())
+    copied_param = next(copied.drift_model.parameters())
+    assert copied_param is not original_param
+    assert torch.equal(copied_param, original_param)
+
+
+def test_dyadic_encoder_with_kl_mode_requires_enough_terms():
+    """K=16 KL terms cannot represent dyadic detail at scale 1/16: the
+    pairing must be rejected unless num_kl_terms >> 2**depth."""
+    from scisi.models.ito_maps.brownian import DyadicEncoder
+
+    with pytest.raises(ValueError, match="DyadicEncoder"):
+        ItoMapModel(
+            interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
+            drift_model=nn.Identity(),
+            sigma_schedule="gamma_matched",
+            brownian_encoder=DyadicEncoder(depth=4),
+            brownian_mode="kl",
+            num_kl_terms=16,
+        )
+
+    # Enough terms, or path mode, are both fine.
+    ItoMapModel(
+        interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
+        drift_model=nn.Identity(),
+        sigma_schedule="gamma_matched",
+        brownian_encoder=DyadicEncoder(depth=2),
+        brownian_mode="kl",
+        num_kl_terms=16,
+    )
+    ItoMapModel(
+        interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
+        drift_model=nn.Identity(),
+        sigma_schedule="gamma_matched",
+        brownian_encoder=DyadicEncoder(depth=4),
+        brownian_mode="path",
+    )
 
 
 def test_distill_from_stashes_frozen_teacher_outside_state_dict():
@@ -194,7 +328,7 @@ def test_one_step_sample_and_trajectory_shapes():
     model = ItoMapModel(
         interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
         drift_model=make_tiny_unet(
-            cond_dim=2, two_time_cond=True, field_cond_channels=3 * NUM_CHANNELS
+            cond_dim=2, two_time_cond=True, brownian_feature_channels=3 * NUM_CHANNELS
         ),
         sigma_schedule="gamma_matched",
         brownian_encoder=KLEncoder(num_coeffs=3),

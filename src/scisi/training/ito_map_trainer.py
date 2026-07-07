@@ -139,11 +139,14 @@ class ItoMapTrainer(BaseTrainer):
         t: torch.Tensor,
         shape: torch.Size,
     ) -> torch.Tensor:
-        """Interpolant noise at time t, coupled to the path when configured."""
+        """Interpolant noise at time t, coupled to the path when configured.
+
+        ``standard_normal_at`` compensates the path representation's variance
+        deficit at small t (KL truncation / grid interpolation), so the noise
+        marginal is exactly N(0, I) at every t.
+        """
         if (brownian_sample is not None) and self.couple_noise_to_path:
-            t_clamped = _clamp_time(t)
-            w_t = brownian_sample.w_at(t_clamped)
-            return w_t / _expand_t(torch.sqrt(t_clamped), w_t)
+            return brownian_sample.standard_normal_at(_clamp_time(t))
         return torch.randn(shape, device=self.device)
 
     @property
@@ -203,28 +206,44 @@ class ItoMapTrainer(BaseTrainer):
                 pars_cond=pars_cond,
             )
 
+        # The time-derivative branch always runs in full precision:
+        # torch.func.jvp does not compose with autocast (dual tensors bypass
+        # the cast layer, mixing bf16 and fp32 mid-net), and finite
+        # differences under bf16 are garbage (eps is below bf16 resolution
+        # inside the Fourier time embedding). The stop-gradient target below
+        # still runs under autocast.
         drift = None
-        if self.derivative_mode == "jvp":
-            try:
-                # Flash/efficient attention kernels have no forward-mode AD;
-                # the math backend does, so force it inside the jvp.
-                with sdpa_kernel([SDPBackend.MATH]):
-                    drift, drift_dt = torch.func.jvp(
-                        g_of_t, (t,), (torch.ones_like(t),)
+        with torch.autocast(device_type=t.device.type, enabled=False):
+            if self.derivative_mode == "jvp":
+                try:
+                    # Flash/efficient attention kernels have no forward-mode
+                    # AD; the math backend does, so force it inside the jvp.
+                    with sdpa_kernel([SDPBackend.MATH]):
+                        drift, drift_dt = torch.func.jvp(
+                            g_of_t, (t,), (torch.ones_like(t),)
+                        )
+                except (NotImplementedError, RuntimeError) as err:
+                    # Backends signal missing forward-mode support
+                    # inconsistently (NotImplementedError or RuntimeError);
+                    # anything else is a real bug and must propagate.
+                    message = str(err).lower()
+                    if isinstance(err, RuntimeError) and not any(
+                        marker in message
+                        for marker in ("forward ad", "forward-mode", "jvp")
+                    ):
+                        raise
+                    logger.warning(
+                        "torch.func.jvp is not supported by this architecture "
+                        f"({err}); falling back to finite differences for the "
+                        "LSD time derivative."
                     )
-            except NotImplementedError:
-                logger.warning(
-                    "torch.func.jvp is not supported by this architecture; "
-                    "falling back to finite differences for the LSD time "
-                    "derivative."
-                )
-                self.derivative_mode = "finite_difference"
+                    self.derivative_mode = "finite_difference"
 
-        if drift is None:
-            drift = g_of_t(t)
-            drift_dt = (
-                g_of_t(t + self.finite_difference_eps) - drift
-            ) / self.finite_difference_eps
+            if drift is None:
+                drift = g_of_t(t)
+                drift_dt = (
+                    g_of_t(t + self.finite_difference_eps) - drift
+                ) / self.finite_difference_eps
 
         dt = _expand_t(t - s, drift)
         pred = drift + dt * drift_dt

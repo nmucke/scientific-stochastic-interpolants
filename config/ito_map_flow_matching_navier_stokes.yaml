@@ -128,3 +128,4 @@ trainer:
   off_diagonal_distribution: logit_normal # logit_normal | uniform
   derivative_mode: jvp # jvp | finite_difference (for non-traceable nets)
   couple_noise_to_path: true # no-op when sigma = 0
+  val_seed: 42 # fixed val-loop sampling so val losses are comparable across epochs

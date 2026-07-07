@@ -14,6 +14,7 @@ matching).
 """
 
 import logging
+from copy import deepcopy
 from typing import Any, Optional
 
 import torch
@@ -23,7 +24,7 @@ from scisi.architectures.embeddings import TwoTimeCondEncoder
 from scisi.models.base_model import BaseModel
 from scisi.models.flow_matching_model import FlowMatchingModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
-from scisi.models.interpolations import _clamp_time, _expand_t
+from scisi.models.interpolations import MIN_TIME, _clamp_time, _expand_t
 from scisi.models.ito_maps.brownian import (
     DEFAULT_DENSE_GRID_SIZE,
     DEFAULT_NUM_GRID_POINTS,
@@ -31,6 +32,7 @@ from scisi.models.ito_maps.brownian import (
     BrownianEncoder,
     BrownianPathSampler,
     BrownianSample,
+    DyadicEncoder,
     GammaMatchedSigmaSchedule,
     PaperSigmaSchedule,
     SigmaSchedule,
@@ -133,7 +135,15 @@ class FollmerTeacher(nn.Module):
         base = field_history[:, :, :, :, -1]
         prior_score = self.model._prior_score(x, base, drift, t_expanded)
 
-        return drift + 0.5 * (sigma**2 - gamma**2) * prior_score
+        # Small-t guard (batch-safe analogue of _drift_with_prior_score's
+        # `if t < MIN_TIME: return drift`): the prior score diverges like
+        # 1/t^2 near 0, so the correction is dropped there per-sample.
+        correction = 0.5 * (sigma**2 - gamma**2) * prior_score
+        correction = torch.where(
+            _expand_t(t, x) < MIN_TIME, torch.zeros_like(correction), correction
+        )
+
+        return drift + correction
 
 
 def warm_start_from_teacher(student: nn.Module, teacher: nn.Module) -> dict:
@@ -268,6 +278,19 @@ class ItoMapModel(BaseModel):
                 )
             self.path_sampler = None
         else:
+            if (
+                isinstance(brownian_encoder, DyadicEncoder)
+                and brownian_mode == "kl"
+                and num_kl_terms < 4 * brownian_encoder.num_features_per_channel
+            ):
+                raise ValueError(
+                    f"DyadicEncoder(depth={brownian_encoder.depth}) needs "
+                    f"dyadic detail at scale 1/{brownian_encoder.num_features_per_channel}, "
+                    f"which {num_kl_terms} KL terms cannot represent - the "
+                    "fine-level Haar coefficients would be near-degenerate. "
+                    "Use brownian_mode='path' or set num_kl_terms >= "
+                    f"{4 * brownian_encoder.num_features_per_channel}."
+                )
             self.path_sampler = BrownianPathSampler(
                 sigma_schedule=self.sigma_schedule,
                 num_grid_points=num_grid_points,
@@ -315,12 +338,29 @@ class ItoMapModel(BaseModel):
         """The frozen distillation teacher, or None for from-scratch training."""
         return self._teacher
 
-    def to(self, device: str) -> "ItoMapModel":
-        """Move the model (and the stashed teacher, if any) to the device."""
-        super(ItoMapModel, self).to(device)
+    def to(self, *args: Any, **kwargs: Any) -> "ItoMapModel":
+        """Move/cast the model (and the stashed teacher, if any)."""
+        super(ItoMapModel, self).to(*args, **kwargs)
         if (self._teacher is not None) and hasattr(self._teacher, "to"):
-            self._teacher.to(device)
+            self._teacher.to(*args, **kwargs)
         return self
+
+    def __deepcopy__(self, memo: dict) -> "ItoMapModel":
+        """Deepcopy that shares (not duplicates) the stashed frozen teacher.
+
+        The trainer's weight EMA deep-copies the model; without this the EMA
+        copy would silently carry a second, never-used copy of the teacher in
+        memory. The teacher is frozen, so sharing the reference is safe.
+        """
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for key, value in self.__dict__.items():
+            if key == "_teacher":
+                object.__setattr__(result, key, value)
+            else:
+                object.__setattr__(result, key, deepcopy(value, memo))
+        return result
 
     # ------------------------------------------------------------------
     # Distillation constructors
@@ -433,24 +473,28 @@ class ItoMapModel(BaseModel):
             s (torch.Tensor): Start time [B, 1].
             t (torch.Tensor): End time [B, 1].
             brownian_features (torch.Tensor): Encoded Brownian path
-                [B, K*C, H, W]. Can be None.
+                [B, K*C, H, W]. Can be None. Requires a drift net exposing a
+                ``brownian_features`` kwarg (e.g. UNet with
+                ``brownian_feature_channels``).
             field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
             field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
         """
         cond = torch.cat([s, t], dim=1)
+        # Brownian features enter through the net's dedicated zero-initialized
+        # projection (UNet ``brownian_feature_channels``), NOT the field_cond
+        # concat: this keeps the init conv structurally identical to a
+        # teacher's, so weight surgery transfers the whole input stage.
+        extra_kwargs = {}
         if brownian_features is not None:
-            field_cond = (
-                brownian_features
-                if field_cond is None
-                else torch.cat([field_cond, brownian_features], dim=1)
-            )
+            extra_kwargs["brownian_features"] = brownian_features
         return self.drift_model(
             x=x,
             cond=cond,
             field_history=field_history,
             field_cond=field_cond,
             pars_cond=pars_cond,
+            **extra_kwargs,
         )
 
     def map(
@@ -535,6 +579,12 @@ class ItoMapModel(BaseModel):
 
         In the paper's canonical setting (linear path, Gaussian base,
         sigma = sqrt(2(1-t))) this reduces exactly to X_1 - 2 X_0.
+
+        Warning: combining the ``paper`` sigma schedule with a *stochastic*
+        interpolation makes the correction grow like 1/sqrt(t) near t = 0
+        (target std ~100x normal at the 1e-4 clamp) - per-sample targets stay
+        finite but heavy-tailed. Prefer ``gamma_matched`` for stochastic
+        interpolations, where the correction is identically zero.
         """
         t_clamped = _clamp_time(t)
         t_expanded = _expand_t(t_clamped, base)
@@ -562,7 +612,17 @@ class ItoMapModel(BaseModel):
         field_cond: Optional[torch.Tensor] = None,
         pars_cond: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Mean-path diagonal drift G_hat_{t,t} with zero Brownian features."""
+        """Mean-path diagonal drift G_hat_{t,t} with zero Brownian features.
+
+        Approximation caveat: zero features are the feature *mean*, but
+        training always conditions the diagonal on real sampled features and
+        the net is nonlinear, so this evaluation is slightly off the training
+        distribution: E[G(., xi)] != G(., E[xi]). It is exact for a net that
+        ignores the features (e.g. right after teacher warm start, where the
+        feature projection is zero-initialized). If a bias-sensitive teacher
+        signal is needed (PR 3), average ``G`` over a few sampled Brownian
+        feature draws instead.
+        """
         brownian_features = None
         if self.brownian_encoder is not None:
             num_features = self.brownian_encoder.num_features_per_channel
@@ -621,7 +681,25 @@ class ItoMapModel(BaseModel):
         partition [0, 1] and reuse the same Brownian path across the partition
         (paper Algorithm 2). Unused solver kwargs (stepper, diffusion_term)
         are accepted for BaseModel._sample_trajectory compatibility.
+
+        Note: in ``kl`` Brownian mode the truncated series cannot represent
+        detail below scale ~1/num_kl_terms, so per-substep martingale
+        increments are under-dispersed for fine partitions (a warning is
+        emitted). ``num_steps = 1`` is unaffected; for many-step sampling use
+        ``brownian_mode='path'`` or raise ``num_kl_terms``.
         """
+        if (
+            (num_steps > 1)
+            and (self.path_sampler is not None)
+            and (self.path_sampler.mode == "kl")
+            and (self.path_sampler.num_kl_terms < 4 * num_steps)
+        ):
+            logger.warning(
+                f"kl Brownian mode with {self.path_sampler.num_kl_terms} terms "
+                f"under-disperses martingale increments over 1/{num_steps} "
+                "subintervals; use brownian_mode='path' or num_kl_terms >= "
+                f"{4 * num_steps} for many-step sampling."
+            )
         if (batch_size > 1) and (field_history.shape[0] == 1):
             base, field_history, field_cond, pars_cond = self._prepare_batch(
                 batch_size=batch_size,

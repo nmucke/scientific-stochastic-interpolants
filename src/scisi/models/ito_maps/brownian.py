@@ -135,6 +135,29 @@ class BrownianSample(ABC):
     def kl_coefficients(self, num_coeffs: int) -> torch.Tensor:
         """First ``num_coeffs`` KL coefficients -> [B, K, C, H, W]."""
 
+    @abstractmethod
+    def w_variance_at(self, t: torch.Tensor) -> torch.Tensor:
+        """Variance actually representable by ``w_at(t)`` [B, 1] -> [B, 1].
+
+        Both representations under-disperse W at small times (KL truncation
+        below scale ~1/K; linear interpolation between grid points), so this
+        is <= t. Used to compensate the deficit in ``standard_normal_at``.
+        """
+
+    def standard_normal_at(self, t: torch.Tensor) -> torch.Tensor:
+        """Path-coupled standard normal z = W_t / sqrt(t), exactly N(0, I).
+
+        The representation's variance deficit t - Var(w_at(t)) is compensated
+        with independent Gaussian noise, so the marginal law of z is exactly
+        standard normal at every t while the path-coupled component is kept.
+        Callers should clamp t away from 0.
+        """
+        w_t = self.w_at(t)
+        view_shape = [t.shape[0]] + [1] * (w_t.ndim - 1)
+        deficit = (t - self.w_variance_at(t)).clamp(min=0.0).view(view_shape)
+        z = w_t + torch.sqrt(deficit) * torch.randn_like(w_t)
+        return z / torch.sqrt(t.view(view_shape))
+
 
 class GridBrownianSample(BrownianSample):
     """Brownian path simulated on a uniform grid over [0, 1]."""
@@ -178,6 +201,17 @@ class GridBrownianSample(BrownianSample):
     def martingale_increment(self, s: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """M_t - M_s for per-sample times s, t [B, 1] -> [B, C, H, W]."""
         return _interp_last_dim(self.m, t) - _interp_last_dim(self.m, s)
+
+    def w_variance_at(self, t: torch.Tensor) -> torch.Tensor:
+        """Variance of the linearly interpolated path at t [B, 1] -> [B, 1].
+
+        Between grid points, W(t) = W_i + frac * (W_{i+1} - W_i), so
+        Var = u_i + frac^2 / G (< t; deficit frac (1 - frac) / G).
+        """
+        pos = (t.reshape(-1) * self.grid_size).clamp(0, self.grid_size)
+        idx0 = pos.floor().clamp(max=self.grid_size - 1)
+        frac = pos - idx0
+        return ((idx0 + frac**2) / self.grid_size).reshape(-1, 1)
 
     def kl_coefficients(self, num_coeffs: int) -> torch.Tensor:
         """First ``num_coeffs`` KL coefficients -> [B, K, C, H, W].
@@ -249,6 +283,11 @@ class KLBrownianSample(BrownianSample):
         """M_t - M_s for per-sample times s, t [B, 1] -> [B, C, H, W]."""
         coeffs = self._integrals_at(t) - self._integrals_at(s)
         return self._contract(coeffs)
+
+    def w_variance_at(self, t: torch.Tensor) -> torch.Tensor:
+        """Truncated-series variance sum_{n<=K} phi_n(t)^2 [B, 1] -> [B, 1]."""
+        phi = math.sqrt(2.0) * torch.sin(self.freqs * t) / self.freqs  # [B, K]
+        return (phi**2).sum(dim=1, keepdim=True)
 
     def kl_coefficients(self, num_coeffs: int) -> torch.Tensor:
         """First ``num_coeffs`` KL coefficients -> [B, K, C, H, W]."""

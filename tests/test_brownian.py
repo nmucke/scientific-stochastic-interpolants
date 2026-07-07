@@ -126,6 +126,31 @@ def test_encoder_output_shapes(mode):
     assert torch.isfinite(dyadic_features).all()
 
 
+@pytest.mark.parametrize(
+    "mode,kwargs",
+    [("path", {"num_grid_points": 64}), ("kl", {"num_kl_terms": 16})],
+)
+def test_standard_normal_at_is_unit_variance_at_small_times(mode, kwargs):
+    """The coupled interpolant noise z = W_t / sqrt(t) must be exactly N(0, 1)
+    marginally at EVERY t. Uncompensated, the truncated KL series (K=16) and
+    the interpolated grid path under-disperse badly below t ~ 1/K (e.g.
+    Var ~ 0.16 at t = 0.005 for kl mode); standard_normal_at compensates the
+    representation's variance deficit with independent noise."""
+    torch.manual_seed(5)
+    num_samples = 20000
+    sampler = BrownianPathSampler(PaperSigmaSchedule(), mode=mode, **kwargs)
+    sample = sampler.sample(torch.Size((num_samples, 1, 1, 1)), "cpu")
+
+    for t_val in (0.005, 0.02, 0.05, 0.5, 0.95):
+        t = torch.full((num_samples, 1), t_val)
+        z = sample.standard_normal_at(t)
+        assert abs(z.var().item() - 1.0) < 0.05, f"t={t_val}: var={z.var():.3f}"
+        assert abs(z.mean().item()) < 0.03
+
+        # The representable variance is a valid lower bound (deficit >= 0).
+        assert torch.all(sample.w_variance_at(t) <= t_val + 1e-6)
+
+
 def test_kl_and_grid_martingale_increments_have_matching_statistics():
     """The two path representations must define the same increment law."""
     torch.manual_seed(4)

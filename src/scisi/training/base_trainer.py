@@ -84,6 +84,7 @@ class BaseTrainer:
         mixed_precision_warmup: int = 0,
         checkpoint_path: str | None = None,
         ema_decay: float | None = None,
+        val_seed: int | None = None,
     ):
         """Initialize the trainer.
 
@@ -107,7 +108,17 @@ class BaseTrainer:
             ema_decay: Optional decay for an exponential moving average of the
                 model weights (e.g. 0.999). ``None`` disables the EMA. The EMA
                 model is exposed as ``self.ema_model`` for subclasses that use
-                it as a stop-gradient target (self-distillation losses).
+                it as a stop-gradient target (self-distillation losses), and
+                its weights are checkpointed alongside the model
+                (``ema_model.pth``) - for self-distillation training the EMA
+                weights are typically the ones to evaluate.
+            val_seed: Optional seed for the validation loop's stochastic batch
+                preparation (pseudo-times, noise, Brownian paths). When set,
+                every validation pass samples identically, so val losses are
+                comparable across epochs and best-model selection is not
+                partly noise. ``None`` (default) keeps the legacy freshly
+                randomized validation. The training RNG stream is unaffected
+                either way (the RNG state is forked around the loop).
         """
         self.model = model
         self.train_dataloader = train_dataloader
@@ -159,6 +170,8 @@ class BaseTrainer:
             self.ema_model.eval()
         else:
             self.ema_model = None
+
+        self.val_seed = val_seed
 
         # Initialize tracker
         self.tracker = tracker
@@ -339,6 +352,11 @@ class BaseTrainer:
         ):
             logger.info(f"Saving checkpoint at epoch {epoch}")
             torch.save(self.model.state_dict(), self.checkpoint_model_path)
+            if self.ema_model is not None:
+                torch.save(
+                    self.ema_model.state_dict(),
+                    f"{self.checkpoint_path}/ema_model.pth",
+                )
 
     def _print_info(self, epoch: int, train_loss: float, val_loss: float) -> None:
         """Print the information about the training and the tracking."""
@@ -355,7 +373,22 @@ class BaseTrainer:
         )
 
     def _compute_val_loss(self) -> float:
-        """Validate the model."""
+        """Validate the model.
+
+        With ``val_seed`` set, the loop's stochastic batch preparation is
+        seeded inside a forked RNG scope so every validation pass samples
+        identically and the training RNG stream is untouched.
+        """
+        if self.val_seed is None:
+            return self._run_validation_loop()
+
+        devices = [self.device] if str(self.device).startswith("cuda") else []
+        with torch.random.fork_rng(devices=devices):
+            torch.manual_seed(self.val_seed)
+            return self._run_validation_loop()
+
+    def _run_validation_loop(self) -> float:
+        """Run one pass over the validation dataloader."""
         self.model.eval()
         with torch.no_grad():
             val_loss = 0.0

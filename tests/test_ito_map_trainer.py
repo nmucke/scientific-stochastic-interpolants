@@ -33,7 +33,7 @@ def _make_stochastic_ito_map(brownian_mode: str = "kl") -> ItoMapModel:
         drift_model=make_tiny_unet(
             cond_dim=2,
             two_time_cond=True,
-            field_cond_channels=NUM_KL_COEFFS * NUM_CHANNELS,
+            brownian_feature_channels=NUM_KL_COEFFS * NUM_CHANNELS,
         ),
         sigma_schedule="gamma_matched",
         brownian_encoder=KLEncoder(num_coeffs=NUM_KL_COEFFS),
@@ -107,7 +107,7 @@ def test_distillation_from_follmer_teacher():
         drift_model=make_tiny_unet(
             cond_dim=2,
             two_time_cond=True,
-            field_cond_channels=NUM_KL_COEFFS * NUM_CHANNELS,
+            brownian_feature_channels=NUM_KL_COEFFS * NUM_CHANNELS,
         ),
         sigma_schedule="gamma_matched",
         brownian_encoder=KLEncoder(num_coeffs=NUM_KL_COEFFS),
@@ -129,7 +129,7 @@ def test_distillation_from_flow_matching_teacher_with_ema_target():
         drift_model=make_tiny_unet(
             cond_dim=2,
             two_time_cond=True,
-            field_cond_channels=NUM_KL_COEFFS * NUM_CHANNELS,
+            brownian_feature_channels=NUM_KL_COEFFS * NUM_CHANNELS,
         ),
         sigma_schedule="paper",
         brownian_encoder=KLEncoder(num_coeffs=NUM_KL_COEFFS),
@@ -139,8 +139,13 @@ def test_distillation_from_flow_matching_teacher_with_ema_target():
 
     trainer = _train(student, consistency_mode="lsd", ema_decay=0.99)
     assert trainer.ema_model is not None
-    # The EMA copy shares the stashed teacher reference, not a re-registration.
-    assert not any("teacher" in name for name, _ in trainer.ema_model.named_parameters())
+    # The EMA deepcopy must SHARE the stashed frozen teacher (ItoMapModel
+    # implements __deepcopy__), not silently duplicate it in memory, and the
+    # teacher must stay outside the module registry.
+    assert trainer.ema_model.teacher is trainer.model.teacher
+    assert not any(
+        "teacher" in name for name, _ in trainer.ema_model.named_parameters()
+    )
 
 
 def test_diagonal_only_training():
@@ -155,7 +160,7 @@ def test_lsd_jvp_through_attention_unet():
     model = ItoMapModel(
         interpolation=QuadraticStochasticInterpolation(gamma_multiplier=1.0),
         drift_model=make_tiny_attention_unet(
-            field_cond_channels=NUM_KL_COEFFS * NUM_CHANNELS
+            brownian_feature_channels=NUM_KL_COEFFS * NUM_CHANNELS
         ),
         sigma_schedule="gamma_matched",
         brownian_encoder=KLEncoder(num_coeffs=NUM_KL_COEFFS),
@@ -164,3 +169,67 @@ def test_lsd_jvp_through_attention_unet():
     trainer = _train(model, consistency_mode="lsd", derivative_mode="jvp")
     # jvp must have worked - no silent downgrade to finite differences.
     assert trainer.derivative_mode == "jvp"
+
+
+def test_seeded_validation_is_reproducible():
+    """With val_seed set, every validation pass samples identical times,
+    noise and Brownian paths, so val losses are comparable across epochs
+    (best-model selection is not partly noise). Without it, they differ."""
+    torch.manual_seed(8)
+    model = _make_stochastic_ito_map()
+    kwargs = make_trainer_kwargs(model)
+    trainer = ItoMapTrainer(**kwargs, val_seed=123)
+
+    first = trainer._compute_val_loss()
+    second = trainer._compute_val_loss()
+    assert first == second
+
+    trainer.val_seed = None
+    third = trainer._compute_val_loss()
+    fourth = trainer._compute_val_loss()
+    assert third != fourth
+
+
+def _prepared_batch(trainer: ItoMapTrainer) -> dict:
+    batch = next(iter(trainer.train_dataloader))
+    return trainer._prepare_batch(batch)
+
+
+def test_lsd_loss_under_bf16_autocast():
+    """The mixed-precision (bf16 autocast) LSD path: jvp must work under
+    autocast, and the finite-difference fallback must produce a sane
+    derivative (its two evaluations run in full precision - eps=1e-3 is
+    below bf16 resolution inside the Fourier time embedding)."""
+    torch.manual_seed(9)
+    model = _make_stochastic_ito_map()
+    trainer = ItoMapTrainer(**make_trainer_kwargs(model), consistency_mode="lsd")
+    batch = _prepared_batch(trainer)
+
+    torch.manual_seed(99)  # align the noise draws between the two calls
+    with torch.amp.autocast("cpu", dtype=torch.bfloat16):
+        loss_jvp = trainer._compute_loss(batch)
+    assert torch.isfinite(loss_jvp)
+    assert trainer.derivative_mode == "jvp"
+
+    trainer.derivative_mode = "finite_difference"
+    torch.manual_seed(99)
+    with torch.amp.autocast("cpu", dtype=torch.bfloat16):
+        loss_fd = trainer._compute_loss(batch)
+    assert torch.isfinite(loss_fd)
+    # The FD evaluations bypass autocast, so the derivative is not the
+    # garbage a bf16 finite difference would give: the two losses agree
+    # to within bf16-level tolerance.
+    assert torch.allclose(loss_jvp.float(), loss_fd.float(), rtol=0.1, atol=0.05)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+def test_lsd_mixed_precision_gpu_smoke():
+    """1-epoch GPU bf16 mixed-precision run (the shipped configs train with
+    mixed_precision_warmup: 200) - run this before burning a real run."""
+    torch.manual_seed(10)
+    model = _make_stochastic_ito_map()
+    kwargs = make_trainer_kwargs(model)
+    kwargs.update(device="cuda", mixed_precision_warmup=1, num_epochs=1)
+    trainer = ItoMapTrainer(**kwargs, consistency_mode="lsd")
+    trainer.train()
+    assert math.isfinite(trainer.early_stopping.best_loss)

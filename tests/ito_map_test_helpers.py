@@ -46,6 +46,7 @@ def make_tiny_unet(
     cond_dim: int = 1,
     two_time_cond: bool = False,
     field_cond_channels: int | None = None,
+    brownian_feature_channels: int | None = None,
 ) -> UNet:
     """Attention-free two-level UNet small enough for CPU tests."""
     return UNet(
@@ -62,13 +63,14 @@ def make_tiny_unet(
         attention_in_layers=[False, False],
         attention={"target": "torch.nn.Identity"},
         two_time_cond=two_time_cond,
+        brownian_feature_channels=brownian_feature_channels,
     )
 
 
 def make_tiny_attention_unet(
     cond_dim: int = 2,
     two_time_cond: bool = True,
-    field_cond_channels: int | None = None,
+    brownian_feature_channels: int | None = None,
 ) -> UNet:
     """Tiny UNet with bottleneck attention (exercises the SDPA/jvp path)."""
     return UNet(
@@ -78,7 +80,7 @@ def make_tiny_attention_unet(
         cond_dim=cond_dim,
         cond_embedding_dim=16,
         len_field_history=LEN_FIELD_HISTORY,
-        field_cond_channels=field_cond_channels,
+        brownian_feature_channels=brownian_feature_channels,
         multiplier=2,
         num_blocks=1,
         dropout_rate=0.0,

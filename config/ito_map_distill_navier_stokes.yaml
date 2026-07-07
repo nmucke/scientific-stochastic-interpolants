@@ -69,7 +69,9 @@ model:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: 1.0
     wiener_process: true
-  sigma_schedule: gamma_matched # gamma_matched | paper | zero
+  sigma_schedule: gamma_matched # gamma_matched | paper | zero. Keep gamma_matched for
+  # stochastic interpolations: 'paper' makes the small-t score correction in the
+  # diagonal target grow like 1/sqrt(t), giving heavy-tailed regression targets.
   brownian_encoder:
     _target_: scisi.models.ito_maps.brownian.KLEncoder
     num_coeffs: 5 # feature channels per state channel
@@ -85,7 +87,9 @@ model:
     two_time_cond: true # embed (s, t) with the two-time encoder
     cond_embedding_dim: 128 # dimension of the scalar conditional embedding
     len_field_history: ${len_field_history} # number of field history steps
-    field_cond_channels: 5 # Brownian features: num_coeffs * in_channels
+    field_cond_channels: null # number of channels in the field conditional input
+    brownian_feature_channels: 5 # Brownian features (num_coeffs * in_channels), injected
+    # via a zero-init projection so the init conv stays teacher-compatible
     pars_cond_dim: null # dimension of the pars conditional input, E.g. Reynolds number, viscosity, etc.
     pars_cond_embedding_dim: null # dimension of the pars conditional embedding
     multiplier: 2 # multiplier for the number of channels in the hidden layers in the conv next blocks
@@ -134,3 +138,4 @@ trainer:
   off_diagonal_distribution: logit_normal # logit_normal | uniform
   derivative_mode: jvp # jvp | finite_difference (for non-traceable nets)
   couple_noise_to_path: true
+  val_seed: 42 # fixed val-loop sampling so val losses are comparable across epochs

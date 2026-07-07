@@ -212,15 +212,20 @@ def test_trainer_alias_and_reexports():
 
 
 def test_checkpoint_saving_without_tracker(tmp_path):
-    """BaseTrainer saves checkpoints without a tracker when given a path."""
+    """BaseTrainer saves checkpoints without a tracker when given a path,
+    and checkpoints the EMA weights alongside the model when EMA is on."""
     model = _build_model(seed=7)
     kwargs = make_trainer_kwargs(model)
     kwargs["checkpoint_path"] = str(tmp_path / "run")
+    kwargs["ema_decay"] = 0.9
 
     trainer = StochasticInterpolantTrainer(**kwargs)
     trainer.train()
 
     assert os.path.exists(str(tmp_path / "run" / "model.pth"))
+    assert os.path.exists(str(tmp_path / "run" / "ema_model.pth"))
+    ema_state = torch.load(str(tmp_path / "run" / "ema_model.pth"))
+    assert set(ema_state.keys()) == set(trainer.model.state_dict().keys())
 
 
 def test_ema_weights_track_model():

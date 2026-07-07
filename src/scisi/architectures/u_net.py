@@ -84,6 +84,7 @@ class UNet(nn.Module):
         attention_in_layers: List[bool] = [False, False, False, False],
         attention: dict = {"_target_": "torch.nn.Identity"},
         two_time_cond: bool = False,
+        brownian_feature_channels: int | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -108,6 +109,12 @@ class UNet(nn.Module):
             two_time_cond (bool): If True, the conditional input is a two-time
                 pair (s, t) of shape [B, 2] embedded by a TwoTimeCondEncoder
                 (Ito maps). Default False keeps the single-time behavior.
+            brownian_feature_channels (int): Number of Brownian-feature
+                channels (Ito maps). Features enter through a dedicated
+                zero-initialized 1x1 projection added onto the trunk after
+                the init conv, so the init conv keeps the exact structure of
+                a network without Brownian features (teacher weight surgery
+                stays a pure copy) and the features are ignored at init.
         """
         super(UNet, self).__init__()
 
@@ -134,6 +141,15 @@ class UNet(nn.Module):
             cond_dim=pars_cond_dim,
             cond_embedding_dim=pars_cond_embedding_dim,
         )
+
+        if brownian_feature_channels is not None:
+            self.brownian_proj = nn.Conv2d(
+                brownian_feature_channels, hidden_channels[0], kernel_size=1
+            )
+            nn.init.zeros_(self.brownian_proj.weight)
+            nn.init.zeros_(self.brownian_proj.bias)
+        else:
+            self.brownian_proj = None
 
         init_conv_args = dict(
             self._fixed_conv_block_args, cond_dim=None, pars_cond_dim=None
@@ -205,6 +221,7 @@ class UNet(nn.Module):
         field_history: torch.Tensor | None = None,
         field_cond: torch.Tensor | None = None,
         pars_cond: torch.Tensor | None = None,
+        brownian_features: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Forward pass.
@@ -215,11 +232,21 @@ class UNet(nn.Module):
             field_history (torch.Tensor): Field history tensor [B, C, H, W, L]. Can be None.
             field_cond (torch.Tensor): Field conditional tensor [B, C_field_cond, H, W]. Can be None.
             pars_cond (torch.Tensor): pars conditional tensor [B, D_pars_cond]. Can be None.
+            brownian_features (torch.Tensor): Encoded Brownian path
+                [B, brownian_feature_channels, H, W]. Can be None.
 
         Returns:
             torch.Tensor: Output tensor [B, C_out, H, W].
         """
         x = self.init_conv(x, field_history=field_history, field_cond=field_cond)
+
+        if brownian_features is not None:
+            if self.brownian_proj is None:
+                raise ValueError(
+                    "brownian_features passed but the UNet was built without "
+                    "brownian_feature_channels."
+                )
+            x = x + self.brownian_proj(brownian_features)
 
         cond = self.cond_encoder(cond)
 
