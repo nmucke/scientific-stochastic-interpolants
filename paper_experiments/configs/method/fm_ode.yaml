@@ -7,12 +7,66 @@ diffusion_term: null   # g_tau = 0 => probability-flow ODE.
 
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
-  # likelihood_mode: inflated (exact, default) | inflated_shared | dps_jacobian_free.
+
+  # Per-cell hyperparameter tables: same [case][scenario][M] convention as
+  # dflow_sgld.yaml, resolved by build_posterior (resolve_scheduled_hparams); a
+  # CLI override beats the resolved value. See si_sde.yaml for the full rationale
+  # behind each knob below -- only the deltas are repeated here.
+
+  # inflated | inflated_shared | dps_jacobian_free (the last makes Sigma_s = rho I,
+  # so every Jacobian knob below is inert).
   likelihood_mode: inflated
-  # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
-  # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the
-  # schedule scalars kept exact at the current tau). CLI: jacobian_refresh_every=k.
-  jacobian_refresh_every: 1
+
+  # jacobian_refresh_every (k) is deliberately NOT a knob here -- it is a
+  # cost/accuracy dial, not a property of the method, so the grid scripts pick it BY
+  # GROUP (ours_shared_k1 / _k5 / _k10 in run_ns_grid.sh) and pass it on the CLI,
+  # keeping the cadence in the output filename + `variant` column. With no override
+  # the constructor default k=1 (exact per-step) applies, which is also the best rmse
+  # on every scenario. See si_sde.yaml for the measured cost-of-lagging table and for
+  # why lambda and k are NOT independent (a stale J masks the lambda=1 divergence).
+
+  # lambda: scales the Jacobian term of Sigma_s = c_iso I + c_jac J (1 = untouched
+  # theory, 0 == dps_jacobian_free). Needed because the learned UNet J is
+  # non-symmetric and injects non-normal amplification at NS scale; at lambda=1
+  # shared FM-ODE is spiky-unstable and WORSE than jacfree (1.41 vs 0.31 at M=100).
+  # Per-scenario values from the 2026-07-13 lambda x refresh matrix; see si_sde.yaml
+  # for the measured table, the moving-cliff caveat and the 0.95 margin warning.
+  # NOTE the matrix was swept on SI-SDE only -- DM/FM reuse its optima, which is the
+  # same "one cell's tuning generalises" assumption that made the old global 0.7
+  # wrong. Verify on FM before trusting these for a headline row.
+  jacobian_damping:
+    default: 1.0             # exact theory; correct for `inflated` / analytical
+    navier_stokes:           # inflated_shared: MUST be < 1 (lambda>=1 diverges)
+      superres_32: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # 0.95 DIVERGES
+      superres_16: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # interior optimum
+      sparse_5:    { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+      sparse_1p5:  { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+    analytical:              # exact J -> no damping needed
+      analytical: { 50: 1.0, 100: 1.0, 250: 1.0, 500: 1.0 }
+    urban:                   # PROVISIONAL, NOT SWEPT -- 0.9 for cliff margin (see
+      sparse_5:   { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # si_sde.yaml). Present
+      sparse_1p5: { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # (not omitted) because
+      # falling back to `default: 1.0` would DIVERGE in inflated_shared.
+
+  # Both TESTED AND REJECTED (they collapse Sigma_bar toward jacfree and discard
+  # the inflation benefit); kept only so that ablation stays reproducible.
+  sigma_bar_eig_floor: false
+  isotropic_front_factor: false
+
+  # Per-member guidance step cap as a fraction of the residual norm (null = off);
+  # superseded by jacobian_damping.
+  residual_step_cap: null
+
+  # drift_time_shift: FM/DM only. Drift/guidance evaluation pseudo-time in units of
+  # dt: 0 = left-endpoint Euler (default, bitwise-unchanged), 1 = right endpoint
+  # (the bespoke FM/DM convention), 0.5 = midpoint; the node grid and dt itself are
+  # untouched. On analytical (M=50, 5 seeds) shift=1 tightens the SHARED posterior
+  # markedly but moves jacfree only from kl_points 0.247 -> 0.226, so it does NOT
+  # close the gap to the old bespoke FM number (0.103) -- that gap is a different
+  # mechanism (the exact closed-form damped denoiser slope, linear-Gaussian only).
+  # Left at 0 pending a decision, so existing grid results stay comparable.
+  drift_time_shift: 0.0
+
   model_class: fm
 
 posterior_model:

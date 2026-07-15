@@ -30,7 +30,8 @@ ROOT=paper_experiments/results/navier_stokes
 REF=$ROOT/reference
 mkdir -p "$REF"
 
-TRAJ="${TRAJ:-1 2 3 4 5}"
+# Slice rows into test_data (data[180:200]); 10..14 == global trajectories 190-194.
+TRAJ="${TRAJ:-10 11 12 13 14}"
 NP="${NP:-20}"
 E_REF="${E_REF:-1000}"
 DEVICE="${DEVICE:-cuda}"

@@ -22,6 +22,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -65,8 +66,19 @@ from .classical_baselines import (
     particle_filter_posterior,
 )
 
-# Reuse the validated analytic KL / sliced-W2 estimators.
-_PAPER_SCRIPTS = Path(__file__).resolve().parents[3] / "paper" / "scripts"
+# Reuse the validated analytic KL / sliced-W2 estimators. `paper/` was untracked
+# and moved to `archive/paper/` locally (commit ada9131), so accept either layout
+# rather than hard-coding one and breaking the case for whoever has the other.
+_REPO = Path(__file__).resolve().parents[3]
+for _cand in (_REPO / "paper" / "scripts", _REPO / "archive" / "paper" / "scripts"):
+    if (_cand / "analytical_utils").is_dir():
+        _PAPER_SCRIPTS = _cand
+        break
+else:
+    raise ModuleNotFoundError(
+        "analytical_utils not found under paper/scripts or archive/paper/scripts "
+        f"(searched from {_REPO}); the analytical case needs its KL/W2 estimators."
+    )
 if str(_PAPER_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_PAPER_SCRIPTS))
 from analytical_utils.kl_divergence import (  # noqa: E402
@@ -124,6 +136,10 @@ def draw_interpolant_posterior(
     g0: float = 1.0,
     seed: int = 0,
     drift_time_shift: float = 0.0,
+    jacobian_damping: float = 1.0,
+    sigma_bar_eig_floor: bool = False,
+    isotropic_front_factor: bool = False,
+    residual_step_cap: Optional[float] = None,
 ) -> torch.Tensor:
     """Draw an Ours-sampler posterior ensemble via the canonical ``src/scisi`` models.
 
@@ -146,12 +162,25 @@ def draw_interpolant_posterior(
     base_si = x0_4d.repeat(n, 1, 1, 1)              # [n, 1, 1, d] SI point-mass source
     y_obs = y.reshape(1, d)
 
+    # Inflated-mode stabilisation knobs, resolved by the caller from the method
+    # YAML. The analytical J is the EXACT (symmetric) Jacobian of a 2-D linear
+    # model, so it carries none of the non-normal amplification that forces
+    # lambda < 1 at NS scale -- the configs keep analytical at lambda=1.0 and the
+    # rest off, i.e. these defaults reproduce the untouched theory.
+    stabilisation = dict(
+        jacobian_damping=jacobian_damping,
+        sigma_bar_eig_floor=sigma_bar_eig_floor,
+        isotropic_front_factor=isotropic_front_factor,
+        residual_step_cap=residual_step_cap,
+    )
+
     torch.manual_seed(int(seed))
     if sampler == "si_sde":
         model = build_si_model(d=d, g0=g0, prior_var=sys_.prior_var)
         likelihood = InterpolantGaussianLikelihood(
             model=model, obs_operator=obs_op, variance=sys_.obs_var,
             model_class="si", likelihood_mode=likelihood_mode,
+            **stabilisation,
         )
         posterior = StochasticInterpolantPosterior(
             model=model, likelihood_model=likelihood,
@@ -162,6 +191,7 @@ def draw_interpolant_posterior(
         likelihood = InterpolantGaussianLikelihood(
             model=model, obs_operator=obs_op, variance=sys_.obs_var,
             model_class="fm", likelihood_mode=likelihood_mode,
+            **stabilisation,
         )
         diffusion_term = (
             endpoint_vanishing_diffusion(model.interpolation, scale=g0)
@@ -257,6 +287,12 @@ class AnalyticalRunner(ExperimentRunner):
         Method.SURGE_SDA: "surge_sda",
         Method.SURGE_FLOWDAS: "surge_flowdas",
         Method.GUIDED_FM_FIG: "guided_fm_fig",
+        # Ours: same YAML source of truth as the baselines, so the inflated-mode
+        # stabilisation knobs are read from configs/method/*.yaml here too rather
+        # than being hard-coded (NS/urban read them via _ns_pipeline.build_posterior).
+        Method.OURS_SI_SDE: "si_sde",
+        Method.OURS_DM_SDE: "dm_sde",
+        Method.OURS_FM_ODE: "fm_ode",
     }
 
     def _method_cfg(self, method: Method):
@@ -315,6 +351,17 @@ class AnalyticalRunner(ExperimentRunner):
         if ctx.method in _OURS_SAMPLER:
             # Ours: run BOTH likelihood-covariance modes -> two variant rows.
             sampler = _OURS_SAMPLER[ctx.method]
+            # Hyperparameters come from this sampler's own YAML (the same
+            # [case][scenario][M] tables the NS/urban pipeline resolves); a CLI
+            # override still wins, so a sweep needs no edit to the tracked config.
+            lik = self._method_cfg(ctx.method).get("likelihood_model", {})
+
+            def _ours_hp(key, fallback):
+                cli = self._cfg_get(key, None)
+                if cli is not None:
+                    return cli
+                return _cfg_hparam(lik, key, M, fallback)
+
             for variant, mode in _OURS_VARIANTS:
                 seed = derive_seed(
                     "analytical", f"{ctx.method.value}:{variant}", ctx.seed
@@ -325,7 +372,15 @@ class AnalyticalRunner(ExperimentRunner):
                     ensemble_size=_N_EVAL, num_steps=M, seed=seed,
                     # FM/DM drift-evaluation time offset (P1 probe); 0 = current
                     # left-endpoint Euler, 1 = bespoke right endpoint, 0.5 = midpoint.
-                    drift_time_shift=float(self._cfg_get("drift_time_shift", 0.0)),
+                    drift_time_shift=float(_ours_hp("drift_time_shift", 0.0)),
+                    jacobian_damping=float(_ours_hp("jacobian_damping", 1.0)),
+                    sigma_bar_eig_floor=bool(_ours_hp("sigma_bar_eig_floor", False)),
+                    isotropic_front_factor=bool(
+                        _ours_hp("isotropic_front_factor", False)
+                    ),
+                    residual_step_cap=(
+                        lambda v: float(v) if v is not None else None
+                    )(_ours_hp("residual_step_cap", None)),
                 )
                 yield from _emit(samp, M, time.perf_counter() - t0, variant)
         else:

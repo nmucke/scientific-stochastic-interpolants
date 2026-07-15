@@ -371,6 +371,11 @@ class UrbanRunner(ExperimentRunner):
         shared). ``None`` for every single-mode method. Mirrors the NS driver."""
         if method not in OURS_METHODS:
             return None
+        # Explicit override (e.g. distinguish an ablation like the cached-Jacobian
+        # shared mode from the every-step shared mode, which share a likelihood_mode).
+        override = self._cfg_get("variant_override", None)
+        if override:
+            return str(override)
         mode = self._cfg_get("likelihood_mode", None)
         return VARIANT_FROM_MODE.get(str(mode)) if mode is not None else None
 

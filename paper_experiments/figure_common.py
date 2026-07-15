@@ -17,6 +17,7 @@ if that file is absent it falls back to the per-M metric files
 from __future__ import annotations
 
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -73,6 +74,11 @@ SCENARIO_LABEL: dict[str, str] = {
 }
 
 
+def slugify(s: str) -> str:
+    """Filename slug: runs of non-alphanumerics -> ``_`` (lowercased)."""
+    return re.sub(r"[^A-Za-z0-9]+", "_", s).strip("_").lower()
+
+
 def apply_style() -> None:
     plt.rcParams.update({
         "font.family": "serif",
@@ -92,13 +98,29 @@ def apply_style() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _canon_variant(variant: str | None) -> str | None:
+    """Map raw CSV variant names onto the canonical ``SERIES`` variants.
+
+    The grid scripts stamp shared-Jacobian runs as ``shared_jac<refresh_every>``
+    (e.g. ``shared_jac5``); all of them are the one "shared" series regardless
+    of the refresh interval. Empty strings become ``None`` (no variant).
+    """
+    if not variant:
+        return None
+    if variant.startswith("shared"):
+        return "shared"
+    return variant
+
+
 def load_metric_vs_M(
-    case: str, metric: str, scenario: str
+    case: str, metric: str, scenario: str, *, steps: tuple[int, ...] = STEPS
 ) -> dict[tuple[str, str | None], dict[int, float]]:
     """Return {(method, variant) -> {M: value}} for one (case, metric, scenario).
 
     Prefers ``results/<case>/aggregated/all.csv``; falls back to the per-M metric
-    files. Returns ``{}`` when no results exist yet (the case's grid has not run).
+    files. ``steps`` restricts the sampler-step axis (a case whose grid uses a
+    different ladder than the default ``STEPS`` passes its own). Returns ``{}``
+    when no results exist yet (the case's grid has not run).
     """
     agg = RESULTS / case / "aggregated" / "all.csv"
     files: list[Path]
@@ -115,11 +137,11 @@ def load_metric_vs_M(
         except Exception:
             continue
         for r in recs:
-            if r.metric != metric or r.scenario != scenario or r.M not in STEPS:
+            if r.metric != metric or r.scenario != scenario or r.M not in steps:
                 continue
             if r.value is None or (isinstance(r.value, float) and math.isnan(r.value)):
                 continue
-            out.setdefault((r.method, r.variant), {})[int(r.M)] = float(r.value)
+            out.setdefault((r.method, _canon_variant(r.variant)), {})[int(r.M)] = float(r.value)
     return out
 
 
@@ -161,7 +183,7 @@ def load_metric_vs_step(
         v = float(val)
         if math.isnan(v):
             continue
-        variant = r.get("variant") or None
+        variant = _canon_variant(r.get("variant"))
         out.setdefault((r["method"], variant), {})[int(float(r["step"]))] = v
     return out
 
@@ -171,7 +193,10 @@ def load_metric_vs_step(
 # --------------------------------------------------------------------------- #
 
 
-def _plot_panel(ax, series: dict, *, logy: bool) -> list:
+def _plot_panel(
+    ax, series: dict, *, logy: bool, steps: tuple[int, ...] = STEPS,
+    ycap: float | None = None,
+) -> list:
     """Draw one panel; return the (handle, label) list in SERIES order."""
     # Auto-detect COLLAPSED / off-scale series (min value >> the rest) so one
     # blown-up method (e.g. FIG) doesn't stretch the axis over many empty decades.
@@ -188,6 +213,11 @@ def _plot_panel(ax, series: dict, *, logy: bool) -> list:
         on_scale_vals = [
             v for k, vs in finite.items() if k not in off_scale for v in vs
         ]
+        # An explicit cap excludes individual DIVERGING points (a series that
+        # blows up at large M) from the axis range; the line simply exits
+        # through the top of the axis.
+        if ycap is not None:
+            on_scale_vals = [v for v in on_scale_vals if v <= ycap] or on_scale_vals
         if on_scale_vals and logy:
             y_lo = min(on_scale_vals) * 0.4
             y_hi = max(on_scale_vals) * 6.0
@@ -202,7 +232,7 @@ def _plot_panel(ax, series: dict, *, logy: bool) -> list:
         s = series.get((method, variant))
         if not s:
             continue
-        xs = [m for m in STEPS if m in s]
+        xs = [m for m in steps if m in s]
         ys = [s[m] for m in xs]
         if not xs:
             continue
@@ -230,16 +260,109 @@ def _plot_panel(ax, series: dict, *, logy: bool) -> list:
         ax.set_yscale("log")
     if y_lo is not None:
         ax.set_ylim(y_lo, y_hi)
-    ax.set_xticks(list(STEPS))
+    ax.set_xticks(list(steps))
     ax.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
     ax.get_xaxis().set_minor_formatter(mticker.NullFormatter())
-    ax.set_xlim(STEPS[0] * 0.9, STEPS[-1] * 1.1)
+    ax.set_xlim(steps[0] * 0.9, steps[-1] * 1.1)
     ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
     ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.15)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
     ax.tick_params(which="both", direction="out", length=4, width=0.8)
     return handles
+
+
+def _save_fig(fig, out_stem: Path, *, png_dpi: int = 300) -> list[Path]:
+    """Save ``fig`` as ``<out_stem>.pdf`` + ``.png`` (tight bbox) and close it."""
+    out_stem.parent.mkdir(parents=True, exist_ok=True)
+    written = []
+    for ext in ("pdf", "png"):
+        p = out_stem.with_suffix(f".{ext}")
+        fig.savefig(p, bbox_inches="tight", dpi=png_dpi if ext == "png" else None)
+        written.append(p)
+    plt.close(fig)
+    return written
+
+
+def _filter_panels(
+    panels: list[tuple[str, dict]], panel_slugs: list[str] | None
+) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Drop empty panels, keeping the (optional) per-panel filename slugs in sync.
+
+    Without explicit slugs they are derived from the panel titles, which works
+    for plain-text titles but NOT for LaTeX ones (``$16^2\\!\\to\\!128^2$`` slugs
+    as ``16_2_to_128_2``); the make scripts pass slugs built from the raw
+    scenario names so the singles match the state-figure stems.
+    """
+    slugs = panel_slugs if panel_slugs is not None else [None] * len(panels)
+    pairs = [(p, sl) for p, sl in zip(panels, slugs) if any(p[1].values())]
+    return (
+        [p for p, _ in pairs],
+        [sl if sl is not None else slugify(p[0]) for p, sl in pairs],
+    )
+
+
+def _save_panel_singles(
+    panels: list[tuple[str, dict]],
+    slugs: list[str],
+    draw_panel,
+    ylabel: str,
+    xlabel: str,
+    out_stem: Path,
+) -> list[Path]:
+    """Save each panel as its own standalone file (no title, no legend).
+
+    The files land in ``<out_stem's dir>/singles/<out_stem's name>_<slug>.pdf``
+    (+ ``.png``) -- a folder that can be copied straight into the manuscript
+    figures tree. The manuscript caption describes the panel content and one
+    shared legend file (see :func:`save_series_legend`) serves a whole cluster
+    of such subfigures, so the singles themselves carry neither.
+    """
+    written: list[Path] = []
+    sdir = out_stem.parent / "singles"
+    for (_title, series), slug in zip(panels, slugs):
+        fig, ax = plt.subplots(figsize=(4.6, 3.5))
+        draw_panel(ax, series)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        name = out_stem.name + (f"_{slug}" if slug else "")
+        written += _save_fig(fig, sdir / name)
+    return written
+
+
+def save_series_legend(
+    keys, out_stem: Path, *, ncol: int = 4
+) -> list[Path]:
+    """Save a standalone legend-only figure for the given ``(method, variant)`` keys.
+
+    Entries follow the shared ``SERIES`` order/styling, so one legend file serves
+    every cluster of single-panel figures of a case (the singles carry no legend
+    of their own). ``keys`` is any iterable of ``(method, variant)`` pairs as
+    found in the loaded series dicts (raw variants are canonicalised). Writes
+    ``<out_stem>.pdf`` + ``.png``; returns the written paths ([] if no key matches).
+    """
+    from matplotlib.lines import Line2D
+
+    canon = {(m, _canon_variant(v)) for m, v in keys}
+    entries = [s for s in SERIES if (s[0], s[1]) in canon]
+    if not entries:
+        return []
+    apply_style()
+    handles = [
+        Line2D(
+            [0], [0], color=colour, linestyle=ls, marker=marker,
+            markersize=6.5, markeredgewidth=1.3, markeredgecolor=colour,
+            markerfacecolor=(colour if filled else "white"), linewidth=2.0,
+        )
+        for _m, _v, _label, colour, ls, marker, filled in entries
+    ]
+    fig = plt.figure()
+    fig.legend(
+        handles, [e[2] for e in entries], loc="center", ncol=ncol,
+        frameon=False, handlelength=2.3, columnspacing=1.3,
+        handletextpad=0.5, labelspacing=0.4, fontsize=9,
+    )
+    return _save_fig(fig, out_stem)
 
 
 def make_vs_M_figure(
@@ -249,16 +372,30 @@ def make_vs_M_figure(
     *,
     ncols: int | None = None,
     logy: bool = True,
+    steps: tuple[int, ...] = STEPS,
+    ycap: float | None = None,
+    panel_slugs: list[str] | None = None,
+    singles: bool = True,
 ) -> list[Path]:
     """Render a (multi-panel) metric-vs-M figure with a shared legend below.
+
+    ``ycap`` (optional) excludes values above it from the y-axis range so a
+    single diverging series doesn't stretch the axis; its line exits the top.
 
     ``panels`` is a list of ``(panel_title, series_dict)`` where ``series_dict``
     maps ``(method, variant) -> {M: value}``. One panel -> a single plot; several
     panels (e.g. one per observation scenario) -> a subplot grid sharing one
-    legend. Saves ``<out_stem>.pdf`` and ``.png``; returns the written paths.
+    legend. ``steps`` sets the sampler-step ticks/limits and must match the
+    ``steps`` passed to :func:`load_metric_vs_M`. Saves ``<out_stem>.pdf`` and
+    ``.png``; returns the written paths.
+
+    With ``singles`` (default) each panel is ALSO saved standalone -- no title,
+    no legend -- into ``singles/<stem>_<slug>.pdf`` next to the combined file
+    (``panel_slugs`` names them; see :func:`_save_panel_singles`). The combined
+    figure remains the overview; the singles are the manuscript subfigures.
     """
     apply_style()
-    panels = [p for p in panels if any(p[1].values())]
+    panels, slugs = _filter_panels(panels, panel_slugs)
     if not panels:
         return []
     n = len(panels)
@@ -273,7 +410,7 @@ def make_vs_M_figure(
     legend_pairs: dict[str, object] = {}
     for i, (title, series) in enumerate(panels):
         ax = flat[i]
-        for h, lab in _plot_panel(ax, series, logy=logy):
+        for h, lab in _plot_panel(ax, series, logy=logy, steps=steps, ycap=ycap):
             legend_pairs.setdefault(lab, h)
         if n > 1:
             ax.set_title(title)
@@ -283,30 +420,63 @@ def make_vs_M_figure(
     for j in range(n, len(flat)):
         flat[j].set_visible(False)
 
-    # One shared legend below the whole figure, in SERIES order.
+    # One shared legend directly below the whole figure, in SERIES order. It is
+    # anchored just under the canvas (no reserved whitespace); bbox_inches="tight"
+    # at save time grows the saved bbox to include it, so the gap stays minimal.
     labels = [s[2] for s in SERIES if s[2] in legend_pairs]
     handles = [legend_pairs[l] for l in labels]
-    ncol_leg = 4 if len(labels) > 8 else max(2, len(labels))
+    if len(labels) <= 4:
+        ncol_leg = max(2, len(labels))
+    else:
+        ncol_leg = 4 if ncols > 1 else 3  # match legend width to figure width
+    fig.tight_layout()
     fig.legend(
-        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.02),
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0),
         ncol=ncol_leg, frameon=False, handlelength=2.3, columnspacing=1.3,
-        handletextpad=0.5, labelspacing=0.5,
+        handletextpad=0.5, labelspacing=0.4, fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0.06 + 0.03 * math.ceil(len(labels) / ncol_leg), 1, 1))
 
-    out_stem.parent.mkdir(parents=True, exist_ok=True)
-    written = []
-    for ext in ("pdf", "png"):
-        p = out_stem.with_suffix(f".{ext}")
-        fig.savefig(p, bbox_inches="tight", dpi=300 if ext == "png" else None)
-        written.append(p)
-    plt.close(fig)
+    written = _save_fig(fig, out_stem)
+    if singles:
+        written += _save_panel_singles(
+            panels, slugs,
+            lambda ax, s: _plot_panel(ax, s, logy=logy, steps=steps, ycap=ycap),
+            ylabel, r"Number of sampler steps $M$", out_stem,
+        )
     return written
 
 
 # --------------------------------------------------------------------------- #
 # The shared "metric vs assimilation step" plotter (per-step curves; legend below)
 # --------------------------------------------------------------------------- #
+
+
+def _plot_step_panel(ax, series: dict, *, logy: bool) -> list:
+    """Draw one metric-vs-assimilation-step panel; return (handle, label) pairs."""
+    handles: list = []
+    for method, variant, label, colour, ls, marker, filled in SERIES:
+        s = series.get((method, variant))
+        if not s:
+            continue
+        xs = sorted(s)
+        ys = [s[x] for x in xs]
+        (h,) = ax.plot(
+            xs, ys, color=colour, linestyle=ls, marker=marker,
+            markersize=6.0, markeredgewidth=1.2, markeredgecolor=colour,
+            markerfacecolor=(colour if filled else "white"),
+            linewidth=2.1 if variant is not None else 1.7, zorder=3,
+        )
+        handles.append((h, label))
+    if logy:
+        ax.set_yscale("log")
+    ax.margins(x=0.03)
+    ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+    ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.15)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.tick_params(which="both", direction="out", length=4, width=0.8)
+    return handles
 
 
 def make_vs_step_figure(
@@ -316,16 +486,20 @@ def make_vs_step_figure(
     *,
     ncols: int | None = None,
     logy: bool = True,
+    panel_slugs: list[str] | None = None,
+    singles: bool = True,
 ) -> list[Path]:
     """Render a (multi-panel) metric-vs-assimilation-step figure, legend below.
 
     Mirrors :func:`make_vs_M_figure` but the x-axis is the assimilation-step index
     (linear), one line per method. ``panels`` is ``[(panel_title, series_dict)]``
     with ``series_dict`` mapping ``(method, variant) -> {step: value}`` (from
-    :func:`load_metric_vs_step`). Saves ``<out_stem>.pdf`` and ``.png``.
+    :func:`load_metric_vs_step`). Saves ``<out_stem>.pdf`` and ``.png``, plus
+    (with ``singles``, default) one standalone title-/legend-free file per panel
+    under ``singles/`` (see :func:`_save_panel_singles`).
     """
     apply_style()
-    panels = [p for p in panels if any(p[1].values())]
+    panels, slugs = _filter_panels(panels, panel_slugs)
     if not panels:
         return []
     n = len(panels)
@@ -339,28 +513,8 @@ def make_vs_step_figure(
     legend_pairs: dict[str, object] = {}
     for i, (title, series) in enumerate(panels):
         ax = flat[i]
-        for method, variant, label, colour, ls, marker, filled in SERIES:
-            s = series.get((method, variant))
-            if not s:
-                continue
-            xs = sorted(s)
-            ys = [s[x] for x in xs]
-            (h,) = ax.plot(
-                xs, ys, color=colour, linestyle=ls, marker=marker,
-                markersize=6.0, markeredgewidth=1.2, markeredgecolor=colour,
-                markerfacecolor=(colour if filled else "white"),
-                linewidth=2.1 if variant is not None else 1.7, zorder=3,
-            )
+        for h, label in _plot_step_panel(ax, series, logy=logy):
             legend_pairs.setdefault(label, h)
-        if logy:
-            ax.set_yscale("log")
-        ax.margins(x=0.03)
-        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-        ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
-        ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.15)
-        for sp in ("top", "right"):
-            ax.spines[sp].set_visible(False)
-        ax.tick_params(which="both", direction="out", length=4, width=0.8)
         if n > 1:
             ax.set_title(title)
         ax.set_xlabel("Assimilation step")
@@ -379,13 +533,13 @@ def make_vs_step_figure(
     )
     fig.tight_layout(rect=(0, 0.06 + 0.03 * math.ceil(len(labels) / ncol_leg), 1, 1))
 
-    out_stem.parent.mkdir(parents=True, exist_ok=True)
-    written = []
-    for ext in ("pdf", "png"):
-        p = out_stem.with_suffix(f".{ext}")
-        fig.savefig(p, bbox_inches="tight", dpi=300 if ext == "png" else None)
-        written.append(p)
-    plt.close(fig)
+    written = _save_fig(fig, out_stem)
+    if singles:
+        written += _save_panel_singles(
+            panels, slugs,
+            lambda ax, s: _plot_step_panel(ax, s, logy=logy),
+            ylabel, "Assimilation step", out_stem,
+        )
     return written
 
 
@@ -400,14 +554,25 @@ def make_vs_step_figure(
 # --------------------------------------------------------------------------- #
 
 
-def load_state_records(case: str, scenario: str | None = None) -> list[dict]:
-    """Load the trajectory-1 saved-state ``.npz`` archives for one case.
+def load_state_records(
+    case: str, scenario: str | None = None, *, traj: int = 1, M: int | None = None
+) -> list[dict]:
+    """Load the saved-state ``.npz`` archives for one case and trajectory.
 
-    Returns a list of dicts (one per method/variant cell), each carrying the
-    archive's arrays plus a ``_path`` key. Filtered to ``scenario`` when given.
-    Returns ``[]`` when the case's grid has not saved states yet.
+    Reads ``results/<case>/states/traj<traj>/``. Returns a list of dicts (one per
+    method/variant cell), each carrying the archive's arrays plus a ``_path`` key.
+    Filtered to ``scenario`` when given.
+
+    The grids save one archive per ``(method, variant, scenario, M)``, so a tree
+    covering several sampler-step counts holds several archives per method. A
+    field map must show ONE M or it silently plots the same method twice at
+    different M: restrict to ``M`` if given, else pick the M with the widest
+    method coverage (ties -> the largest such M). Coverage, not size, is the right
+    default: only a few methods are re-run at the top of the M ladder, so keying
+    on the largest M would silently drop most methods from the field maps.
+    Returns ``[]`` when the case's grid has not saved states for that trajectory.
     """
-    sdir = RESULTS / case / "states" / "traj1"
+    sdir = RESULTS / case / "states" / f"traj{traj}"
     if not sdir.exists():
         return []
     recs: list[dict] = []
@@ -421,6 +586,25 @@ def load_state_records(case: str, scenario: str | None = None) -> list[dict]:
         if scenario is not None and str(rec.get("scenario")) != scenario:
             continue
         recs.append(rec)
+
+    def _M(rec: dict) -> int | None:
+        try:
+            return int(rec["M"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    if M is None:
+        coverage: dict[int, set] = {}
+        for r in recs:
+            m = _M(r)
+            if m is None:
+                continue
+            key = (str(r.get("method")), _canon_variant(str(r.get("variant", ""))))
+            coverage.setdefault(m, set()).add(key)
+        if coverage:
+            M = max(coverage, key=lambda m: (len(coverage[m]), m))
+    if M is not None:
+        recs = [r for r in recs if _M(r) in (M, None)]
     return recs
 
 
@@ -430,36 +614,26 @@ def _state_series_key(method: str, variant: str | None) -> tuple[int, str]:
     Orders rows by the shared ``SERIES`` list so the field maps match the
     metric-vs-M figures; unknown methods sort last under their raw name.
     """
-    variant = variant or None
+    variant = _canon_variant(variant)
     for i, (m, v, label, *_rest) in enumerate(SERIES):
         if m == method and v == variant:
             return i, label
     return len(SERIES), method + (f" ({variant})" if variant else "")
 
 
-def make_state_field_figure(
-    records: list[dict],
-    field_fn,
-    out_stem: Path,
-    *,
-    cbar_label: str = "",
-    cmap: str = "viridis",
-    diverging: bool = False,
-) -> list[Path]:
-    """Render final-step field maps: rows = methods, cols = Truth | Mean | |Error| | Spread.
+def _state_rows_and_scales(records: list[dict], field_fn, diverging: bool):
+    """Shared reduction behind the state figures.
 
-    ``field_fn`` maps a trajectory array ``[n, C, H, W, T]`` to a stack of 2D
-    fields ``[n, H, W]`` at the final step (e.g. pick a channel or take velocity
-    magnitude). Truth is shared across methods, so the Truth/Mean columns share
-    one colour scale; ``|Error|`` and ``Spread`` each share their own scale so
-    methods are directly comparable. Writes ``<out_stem>.pdf`` + ``.png``.
+    Returns ``(rows, truth2d, scales)`` where ``rows`` is
+    ``[(label, mean, |error|, spread)]`` in ``SERIES`` order and ``scales`` holds
+    the colour limits shared across methods: the Truth/Mean field range plus the
+    common ``|error|`` and spread maxima. A diverged method can leave NaN/inf in
+    its posterior; those must not poison the shared scales (a NaN vmax blanks the
+    column for every method), so every reduction runs over finite values only.
     """
-    if not records:
-        return []
     records = sorted(
         records, key=lambda r: _state_series_key(str(r["method"]), str(r.get("variant", "")))
     )
-
     rows = []
     truth2d = None
     for r in records:
@@ -473,16 +647,201 @@ def make_state_field_figure(
         if truth2d is None:
             truth2d = truth
 
+    def _finite_max(a: np.ndarray) -> float:
+        finite = a[np.isfinite(a)]
+        return float(finite.max()) if finite.size else 0.0
+
+    def _robust_vmax(fields: list[np.ndarray]) -> float:
+        """A shared 0..vmax scale that one blown-up method cannot destroy.
+
+        A method that partially diverges can have an |error| or spread an order of
+        magnitude above every other method; keying the shared scale on the raw
+        maximum then pushes all the well-behaved methods into the bottom few
+        percent of the colour map, and their panels read as uniformly black. So
+        take each method's 99th percentile and cap the scale at a small multiple
+        of the median of those -- the outlier simply saturates at the top of the
+        map, which is exactly the message its panel should carry.
+        """
+        p99 = [
+            float(np.percentile(f[np.isfinite(f)], 99))
+            for f in fields if np.isfinite(f).any()
+        ]
+        if not p99:
+            return 1.0
+        med = float(np.median(p99))
+        return (min(max(p99), 4.0 * med) if med > 0 else max(p99)) or 1.0
+
+    if diverging:
+        m = _finite_max(np.abs(truth2d)) or 1.0
+        f_vmin, f_vmax = -m, m
+    else:
+        finite_truth = truth2d[np.isfinite(truth2d)]
+        f_vmin = float(finite_truth.min()) if finite_truth.size else 0.0
+        f_vmax = _finite_max(truth2d) or 1.0
+    scales = {
+        "field": (f_vmin, f_vmax),
+        "err": (0.0, _robust_vmax([r[2] for r in rows])),
+        "spread": (0.0, _robust_vmax([r[3] for r in rows])),
+    }
+    return rows, truth2d, scales
+
+
+def make_state_panel_singles(
+    records: list[dict],
+    field_fn,
+    out_stem: Path,
+    *,
+    cbar_label: str = "",
+    cmap: str = "viridis",
+    diverging: bool = False,
+    panel_size: float = 2.6,
+) -> list[Path]:
+    """Save ONE bare image file per (method, quantity) at the final assimilated step.
+
+    These are the atoms of the manuscript's per-quantity field figures: each file
+    is a single field map with no title, no axes, no colourbar and no method label
+    (the LaTeX subcaption names the method), so a cluster of them tiles into a
+    subfigure grid. Files land next to the combined figure, under ``singles/``:
+
+    * ``<stem>__truth.pdf``            -- the shared truth field
+    * ``<stem>__mean__<method>.pdf``   -- posterior ensemble mean
+    * ``<stem>__std__<method>.pdf``    -- posterior ensemble std (spread)
+    * ``<stem>__abserr__<method>.pdf`` -- $|$posterior mean $-$ truth$|$
+
+    Colour scales are shared across methods per quantity (identical to the
+    combined figure's), so panels are directly comparable; each quantity's scale
+    is also written out once as a standalone horizontal colourbar
+    ``<stem>__cbar_{field,std,abserr}.pdf`` for the figure to carry a single bar.
+    Truth and mean share the field scale (and hence ``cbar_field``).
+    """
+    if not records:
+        return []
+    rows, truth2d, scales = _state_rows_and_scales(records, field_fn, diverging)
+    apply_style()
+    sdir = out_stem.parent / "singles"
+    written: list[Path] = []
+
+    def _panel(field, kw, name: str) -> None:
+        nonlocal written
+        fig, ax = plt.subplots(figsize=(panel_size, panel_size))
+        ax.imshow(field, origin="lower", **kw)
+        # A sampler that blew up leaves an all-NaN field, which imshow renders as
+        # blank white -- indistinguishable from a legitimately near-zero panel.
+        # Say so on the panel instead.
+        if not np.isfinite(field).any():
+            ax.set_facecolor("0.9")
+            ax.text(0.5, 0.5, "diverged\n(NaN)", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=11, color="0.25")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for sp in ax.spines.values():
+            sp.set_linewidth(0.6)
+        written += _save_fig(fig, sdir / name, png_dpi=200)
+
+    field_kw = dict(cmap=cmap, vmin=scales["field"][0], vmax=scales["field"][1])
+    err_kw = dict(cmap="magma", vmin=0.0, vmax=scales["err"][1])
+    std_kw = dict(cmap="magma", vmin=0.0, vmax=scales["spread"][1])
+
+    _panel(truth2d, field_kw, f"{out_stem.name}__truth")
+    for label, mean, err, spread in rows:
+        slug = slugify(label)
+        _panel(mean, field_kw, f"{out_stem.name}__mean__{slug}")
+        _panel(spread, std_kw, f"{out_stem.name}__std__{slug}")
+        _panel(err, err_kw, f"{out_stem.name}__abserr__{slug}")
+
+    # Standalone horizontal colourbars: one per shared scale, so each manuscript
+    # figure shows its scale once instead of repeating it under every panel.
+    for key, kw, label in (
+        ("field", field_kw, cbar_label or "field"),
+        ("std", std_kw, f"{cbar_label} std" if cbar_label else "std"),
+        ("abserr", err_kw, f"$|$error$|$ ({cbar_label})" if cbar_label else "$|$error$|$"),
+    ):
+        fig, ax = plt.subplots(figsize=(5.0, 0.5))
+        norm = matplotlib.colors.Normalize(vmin=kw["vmin"], vmax=kw["vmax"])
+        sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=kw["cmap"])
+        fig.colorbar(sm, cax=ax, orientation="horizontal", label=label)
+        written += _save_fig(fig, sdir / f"{out_stem.name}__cbar_{key}")
+    return written
+
+
+def save_field_panel(
+    out_stem: Path,
+    field: np.ndarray | None = None,
+    *,
+    cmap: str = "viridis",
+    vmin: float | None = None,
+    vmax: float | None = None,
+    scatter: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    background: np.ndarray | None = None,
+    extent: tuple[float, float, float, float] | None = None,
+    panel_size: float = 2.6,
+) -> list[Path]:
+    """Save one bare field map (no title/axes/colourbar) as ``<out_stem>.pdf`` + ``.png``.
+
+    The atom the manuscript's subfigure grids are tiled from -- the LaTeX
+    subcaption carries the label, and one standalone colourbar file serves the
+    whole grid (see :func:`make_state_panel_singles`).
+
+    ``field`` is drawn with ``imshow``. ``scatter`` is an ``(x, y, values)``
+    triple drawn as points on the ``cmap``/``vmin``/``vmax`` scale -- used for the
+    sparse-sensor observation panels, where the observed locations are what
+    matters; pass ``background`` to show the underlying field behind them in
+    faint grey. ``extent`` sets the imshow extent, so a low-resolution observed
+    field (e.g. $16^2$) can be drawn on the full-resolution axes and stay
+    visually comparable in size to the other panels.
+    """
+    apply_style()
+    fig, ax = plt.subplots(figsize=(panel_size, panel_size))
+    if background is not None:
+        ax.imshow(background, origin="lower", cmap="Greys", alpha=0.28,
+                  extent=extent, aspect="equal")
+    if field is not None:
+        ax.imshow(field, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax,
+                  extent=extent, aspect="equal", interpolation="nearest")
+    if scatter is not None:
+        xs, ys, vals = scatter
+        ax.scatter(xs, ys, c=vals, cmap=cmap, vmin=vmin, vmax=vmax, s=3.0,
+                   linewidths=0.0, marker="s")
+        ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.6)
+    return _save_fig(fig, out_stem, png_dpi=200)
+
+
+def make_state_field_figure(
+    records: list[dict],
+    field_fn,
+    out_stem: Path,
+    *,
+    cbar_label: str = "",
+    cmap: str = "viridis",
+    diverging: bool = False,
+    singles: bool = True,
+) -> list[Path]:
+    """Render final-step field maps: rows = methods, cols = Truth | Mean | |Error| | Spread.
+
+    ``field_fn`` maps a trajectory array ``[n, C, H, W, T]`` to a stack of 2D
+    fields ``[n, H, W]`` at the final step (e.g. pick a channel or take velocity
+    magnitude). Truth is shared across methods, so the Truth/Mean columns share
+    one colour scale; ``|Error|`` and ``Spread`` each share their own scale so
+    methods are directly comparable. Writes ``<out_stem>.pdf`` + ``.png``.
+
+    With ``singles`` (default) each method row is ALSO saved as its own 1x4
+    strip -- same shared colour scales and colourbars, but no method label (the
+    manuscript subcaption names the method) -- under
+    ``singles/<stem>__<method_slug>.pdf``.
+    """
+    if not records:
+        return []
     # Column colour scales. Truth/Mean share a scale from the truth field
     # (symmetric about 0 for signed / diverging fields); |Error| and Spread each
     # span 0..max over all methods so rows are comparable.
-    if diverging:
-        m = float(np.abs(truth2d).max()) or 1.0
-        f_vmin, f_vmax = -m, m
-    else:
-        f_vmin, f_vmax = float(truth2d.min()), float(truth2d.max())
-    err_max = max((float(r[2].max()) for r in rows), default=1.0) or 1.0
-    spread_max = max((float(r[3].max()) for r in rows), default=1.0) or 1.0
+    rows, truth2d, scales = _state_rows_and_scales(records, field_fn, diverging)
+    (f_vmin, f_vmax) = scales["field"]
+    err_max = scales["err"][1]
+    spread_max = scales["spread"][1]
 
     apply_style()
     col_titles = ("Truth", "Posterior mean", r"$|\mathrm{error}|$", "Spread")
@@ -518,13 +877,35 @@ def make_state_field_figure(
     fig.colorbar(im_err, ax=axes[:, 2], location="bottom", shrink=0.8, pad=0.02)
     fig.colorbar(im_spread, ax=axes[:, 3], location="bottom", shrink=0.8, pad=0.02)
 
-    out_stem.parent.mkdir(parents=True, exist_ok=True)
-    written = []
-    for ext in ("pdf", "png"):
-        p = out_stem.with_suffix(f".{ext}")
-        fig.savefig(p, bbox_inches="tight", dpi=200 if ext == "png" else None)
-        written.append(p)
-    plt.close(fig)
+    written = _save_fig(fig, out_stem, png_dpi=200)
+
+    # Per-method single-row strips (same shared scales, so subfigures built from
+    # them stay directly comparable across methods).
+    if singles:
+        sdir = out_stem.parent / "singles"
+        for label, mean, err, spread in rows:
+            fig1, axs1 = plt.subplots(1, 4, figsize=(3.0 * 4, 3.6), squeeze=False)
+            panels = (
+                (truth2d, dict(cmap=cmap, vmin=f_vmin, vmax=f_vmax)),
+                (mean, dict(cmap=cmap, vmin=f_vmin, vmax=f_vmax)),
+                (err, dict(cmap="magma", vmin=0.0, vmax=err_max)),
+                (spread, dict(cmap="magma", vmin=0.0, vmax=spread_max)),
+            )
+            for j, (field, kw) in enumerate(panels):
+                ax = axs1[0][j]
+                ax.imshow(field, origin="lower", **kw)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_title(col_titles[j])
+            fig1.colorbar(axs1[0][0].images[0], ax=axs1[:, :2], location="bottom",
+                          shrink=0.5, pad=0.02, label=cbar_label or "field")
+            fig1.colorbar(axs1[0][2].images[0], ax=axs1[:, 2], location="bottom",
+                          shrink=0.8, pad=0.02)
+            fig1.colorbar(axs1[0][3].images[0], ax=axs1[:, 3], location="bottom",
+                          shrink=0.8, pad=0.02)
+            written += _save_fig(
+                fig1, sdir / f"{out_stem.name}__{slugify(label)}", png_dpi=200
+            )
     return written
 
 
@@ -556,9 +937,21 @@ def mirror_to(written: list[Path], mirror_dir: Path) -> list[Path]:
     return copies
 
 
+def mirror_figures(written: list[Path], mirror_root: Path) -> list[Path]:
+    """:func:`mirror_to` that keeps the ``singles/`` subfolder structure.
+
+    Combined figures go to ``mirror_root``, per-panel singles (anything written
+    into a ``singles/`` directory) to ``mirror_root/singles``.
+    """
+    combined = [p for p in written if p.parent.name != "singles"]
+    singles = [p for p in written if p.parent.name == "singles"]
+    return mirror_to(combined, mirror_root) + mirror_to(singles, mirror_root / "singles")
+
+
 __all__ = [
     "STEPS", "SERIES", "SCENARIO_LABEL", "RESULTS", "FIGURES_DIR",
-    "apply_style", "load_metric_vs_M", "make_vs_M_figure",
-    "load_metric_vs_step", "make_vs_step_figure",
-    "load_state_records", "make_state_field_figure", "mirror_to",
+    "apply_style", "slugify", "load_metric_vs_M", "make_vs_M_figure",
+    "load_metric_vs_step", "make_vs_step_figure", "save_series_legend",
+    "load_state_records", "make_state_field_figure", "make_state_panel_singles",
+    "mirror_to", "mirror_figures",
 ]

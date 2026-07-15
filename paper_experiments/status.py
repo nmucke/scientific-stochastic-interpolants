@@ -33,9 +33,10 @@ RESULTS = _here / "results"
 # Expected reduced grid (mirrors the run_*_grid.sh master scripts + README).
 # --------------------------------------------------------------------------- #
 
-STEPS = (50, 100, 250, 500)
-TRAJ = (1, 2, 3, 4, 5)
-SEEDS = (0, 1, 2, 3, 4)
+STEPS = (50, 100, 250)#, 500)
+# Slice rows into test_data (data[180:200]); 10..14 == global trajectories 190-194.
+TRAJ = (10, 11, 12, 13, 14)
+SEEDS = (0) #, 1, 2, 3, 4)
 
 OURS = ("Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)")
 OURS_VARIANTS = ("jacfree", "shared")

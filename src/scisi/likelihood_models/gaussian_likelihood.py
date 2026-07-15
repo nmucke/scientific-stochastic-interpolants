@@ -180,10 +180,16 @@ class InterpolantGaussianLikelihood(nn.Module):
         # behaviour: lambda=1 full Sigma_s, no eig floor, full front factor,
         # no step cap). All are inert for dps_jacobian_free.
         self.jacobian_damping = float(jacobian_damping)
-        if not 0.0 <= self.jacobian_damping <= 1.0:
+        if self.jacobian_damping < 0.0:
             raise ValueError(
-                f"jacobian_damping must be in [0, 1], got {jacobian_damping!r}."
+                f"jacobian_damping must be >= 0, got {jacobian_damping!r}."
             )
+        # lambda > 1 is AMPLIFICATION, not damping: it scales c_jac beyond the
+        # value the theory prescribes. Allowed (and useful -- with a lagged
+        # Jacobian the lambda=1 divergence is suppressed and the rmse curve is
+        # still falling at 1.0, so the optimum can sit above it), but it is an
+        # empirical over-inflation with no derivation behind it; the upper end is
+        # bounded only by divergence, so sweep it, do not assume it.
         self.sigma_bar_eig_floor = bool(sigma_bar_eig_floor)
         self.isotropic_front_factor = bool(isotropic_front_factor)
         self.residual_step_cap = (

@@ -29,7 +29,8 @@ from figure_common import (  # noqa: E402
     FIGURES_DIR,
     load_metric_vs_M,
     make_vs_M_figure,
-    mirror_to,
+    mirror_figures,
+    save_series_legend,
 )
 
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "analytical"
@@ -44,16 +45,23 @@ def main() -> None:
     out = Path(args.out)
     written: list[Path] = []
 
-    # (1) KL vs M and sliced-W2 vs M, all methods.
-    for metric, ylabel, stem in (
-        ("kl_points", r"KL divergence to exact posterior", "analytical_kl_vs_M"),
-        ("sliced_w2", r"Sliced-$W_2$ to exact posterior", "analytical_w2_vs_M"),
+    # (1) KL vs M and sliced-W2 vs M, all methods. The KL axis is capped so the
+    # baselines that diverge at large M (SGLD / SURGE with fixed per-step
+    # hyperparameters) exit the top instead of stretching the axis.
+    legend_keys: set = set()  # every (method, variant) with data, for the legend file
+    for metric, ylabel, stem, ycap in (
+        ("kl_points", r"KL divergence to exact posterior", "analytical_kl_vs_M", 10.0),
+        ("sliced_w2", r"Sliced-$W_2$ to exact posterior", "analytical_w2_vs_M", None),
     ):
         series = load_metric_vs_M(CASE, metric, SCEN)
         if series:
-            written += make_vs_M_figure([("", series)], ylabel, out / stem)
+            legend_keys.update(k for k, s in series.items() if s)
+            written += make_vs_M_figure([("", series)], ylabel, out / stem, ycap=ycap)
         else:
             print(f"[analytical] no data for {metric}; run the analytical grid first")
+
+    # One shared legend file for the legend-free singles of this case.
+    written += save_series_legend(legend_keys, out / "singles" / "analytical_legend")
 
     # (2) the density / convergence panels (fresh draws through src/scisi).
     try:
@@ -64,8 +72,9 @@ def main() -> None:
     except Exception as exc:  # pragma: no cover - panels are optional
         print(f"[analytical] panels skipped ({exc})")
 
-    # Mirror every figure into the in-repo paper_experiments/figures/ tree too.
-    written += mirror_to(written, FIGURES_DIR / CASE)
+    # Mirror every figure into the in-repo paper_experiments/figures/ tree too
+    # (singles/ keeps its subfolder).
+    written += mirror_figures(written, FIGURES_DIR / CASE)
 
     for p in written:
         print(f"[fig] wrote {p}")

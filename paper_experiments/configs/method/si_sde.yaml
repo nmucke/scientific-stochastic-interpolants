@@ -9,17 +9,91 @@ diffusion_term:
 # w_tau = a_tau + 0.5 g_tau^2 (GAP P1; replaces the legacy correction_multiplier).
 likelihood_model:
   _target_: scisi.likelihood_models.gaussian_likelihood.InterpolantGaussianLikelihood
+
   # likelihood_mode: inflated | inflated_shared | dps_jacobian_free.
-  #   inflated          -- PiGDM-style full Sigma_s; exact for the Gaussian case
-  #                        (analytical gate ~0.005). PROVISIONAL DEFAULT / headline rows.
+  #   inflated          -- PiGDM-style full per-member Sigma_s; exact for the
+  #                        Gaussian case (analytical gate ~0.005). Intractable at
+  #                        NS scale (one JVP per member per observation column).
   #   inflated_shared   -- inflated with the Jacobian shared at the ensemble mean
-  #                        (tractable at NS scale).
-  #   dps_jacobian_free -- Corollary cheap_drift (cheap ablation; inaccurate at mid-tau).
+  #                        (tractable at NS scale). NEEDS jacobian_damping < 1.
+  #   dps_jacobian_free -- Corollary cheap_drift (cheap ablation; inaccurate at
+  #                        mid-tau). Sigma_s = rho I, so EVERY Jacobian knob below
+  #                        is inert in this mode.
   likelihood_mode: inflated
-  # inflated_shared only: recompute the ensemble-shared Jacobian every k-th
-  # pseudo-step (1 = every step, exact; >1 reuses the cached H J H^T with the
-  # schedule scalars kept exact at the current tau). CLI: jacobian_refresh_every=k.
-  jacobian_refresh_every: 1
+
+  # jacobian_refresh_every (k) is deliberately NOT a knob here. It is a cost/accuracy
+  # dial rather than a property of the method, so the grid scripts pick it BY GROUP
+  # (ours_shared_k1 / _k5 / _k10 in run_ns_grid.sh) and pass it on the CLI -- that
+  # keeps the cadence in the output filename + `variant` column, so several cadences
+  # can coexist in one results tree. With no override the constructor default k=1
+  # (exact per-step) applies, which is also the best rmse on EVERY scenario.
+  #
+  # Measured cost of lagging (SI-SDE, E=8/NP=12/M=50; each column at its OWN best
+  # lambda) -- nearly free on the block-average superres cells, costly on sparse:
+  #   16^2->128^2    k=1 0.134 | k=5 0.138 (+3%)  | k=10 0.156 (+16%)
+  #   32^2->128^2    k=1 0.058 | k=5 0.059 (+1%)  | k=10 0.059 (+2%)
+  #   sparse 5%      k=1 0.083 | k=5 0.096 (+15%) | k=10 0.141 (+69%)
+  #   sparse 1.5625% k=1 0.162 | k=5 0.241 (+49%) | k=10 0.257 (+59%)
+  #
+  # lambda and k are NOT independent: a staler Jacobian is itself a crude damping and
+  # SUPPRESSES the lambda=1 divergence. lambda=1 diverges at k=1 on every scenario yet
+  # is stable at k=5/10 -- but stable is not good: 16^2->128^2 at lambda=1,k=5 sits at
+  # 0.311, WORSE than jacfree (0.276). The lambda table below was tuned AT k=1; if you
+  # run a lagged group, re-tune lambda rather than assuming these values carry over.
+
+  # TUNED 2026-07-13 from the full lambda x refresh matrix (88 cells; SI-SDE,
+  # E=8/NP=12/M=50/traj1). rmse at refresh=1, best per scenario in [brackets]:
+  #                 jacfree  l=.7    l=.9     l=.95    l=1.0
+  #   sparse_1p5     0.743   0.465   0.232   [0.162]  DIVERGED
+  #   sparse_5       0.600   0.185   0.097   [0.083]  DIVERGED
+  #   superres_16    0.276   0.150  [0.134]   0.138   DIVERGED
+  #   superres_32    0.064   0.059  [0.058]  DIVERGED DIVERGED
+  # The optimum always sits JUST BELOW that scenario's divergence cliff, and the
+  # cliff MOVES: superres_32 already diverges at 0.95 while the sparse cells are
+  # still improving there. lambda > 1 was swept too (1.1 diverges everywhere it was
+  # tried, even in the lagged columns where 1.0 was still improving) -- 1.0 is a
+  # hard ceiling, so there is no headroom above it to exploit.
+  #
+  # MARGIN WARNING: 0.95 on the sparse rows is one grid point from divergence (1.0
+  # diverges). It is the measured optimum and the divergence guard NaN-aborts a bad
+  # cell rather than crashing the run, but it was measured at ONE trajectory and
+  # ONE M (=50). If sparse cells start NaN-ing at other (traj, M), fall back to
+  # 0.9 -- that costs ~43% rmse on sparse_1p5 and ~16% on sparse_5, and is safe.
+  #
+  # Do NOT reuse one scenario's lambda on another: the old global 0.7 came from
+  # superres_16 alone and is 3.1x worse than optimal on sparse_1p5.
+  jacobian_damping:
+    default: 1.0             # exact theory; correct for `inflated` / analytical
+    navier_stokes:           # inflated_shared: MUST be < 1 (lambda>=1 diverges)
+      superres_32: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # 0.95 DIVERGES
+      superres_16: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # interior optimum
+      sparse_5:    { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+      sparse_1p5:  { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+    analytical:              # exact J (2-D model, `inflated`) -> no damping needed
+      analytical: { 50: 1.0, 100: 1.0, 250: 1.0, 500: 1.0 }
+    urban:                   # PROVISIONAL, NOT SWEPT -- carries the NS *sparse*
+      sparse_5:   { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # optimum, since
+      sparse_1p5: { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # urban's scenarios
+      # are sparse too. NOTE 0.95 is one grid point from the cliff on NS sparse, and
+      # urban's cliff has never been located -- if these cells NaN out, drop to 0.9.
+      # Present (not omitted) because falling back to `default: 1.0` would DIVERGE.
+
+  # Symmetrize Sigma_bar and clamp its eigenvalues to the isotropic (jacfree)
+  # floor. TESTED AND REJECTED (2026-07-03): it over-clamps and discards the
+  # inflation benefit -- with the near-isotropic superres H H^T ~ (1/64) I it
+  # collapses to jacfree exactly, and combined with damping it was strictly WORSE
+  # than damping alone. On sparse it collapses even more exactly (H H^T = I).
+  # Kept as a knob so that ablation stays reproducible; leave false.
+  sigma_bar_eig_floor: false
+
+  # Replace the front factor (Sigma_s / rho_tau) H^T with the isotropic H^T. Same
+  # story as above -- collapses toward jacfree; kept for the ablation. Leave false.
+  isotropic_front_factor: false
+
+  # Cap the per-member guidance step at this fraction of the observation residual
+  # norm (null = uncapped). Superseded by jacobian_damping, which fixes the cause
+  # rather than clipping the symptom; kept as a safety valve for untuned cells.
+  residual_step_cap: null
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

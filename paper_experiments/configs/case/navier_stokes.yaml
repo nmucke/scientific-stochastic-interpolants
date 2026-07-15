@@ -34,8 +34,10 @@ require_weights: false
 # kernels used by the full-Sigma_s likelihood); set to mps/cuda when supported.
 device: cpu
 
-# Which test trajectories to run.
-test_sample_indices: [1, 2, 3, 4, 5]
+# Which test trajectories to run. These index the test_data slice, which is
+# data[180:200], so row r == global trajectory 180+r. Rows [10..14] == global
+# trajectories 190-194.
+test_sample_indices: [10, 11, 12, 13, 14]
 
 ensemble_size: 64
 # 5-step seeded history + 15 assimilation steps = 20 physical steps

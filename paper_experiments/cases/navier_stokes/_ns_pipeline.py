@@ -1021,13 +1021,23 @@ def build_posterior(
     )
     model_class = "si" if is_si else "fm"
 
+    # Resolve any per-(case, scenario, M) schedule tables in the Ours likelihood
+    # block to scalars, exactly as the baselines do (scalars pass through
+    # unchanged). This is what lets jacobian_damping & co. be tuned per cell in
+    # the YAML instead of only via the CLI.
+    lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+    hp = resolve_scheduled_hparams(lik_cfg, case_key, scenario_key, num_steps)
+
+    def _resolve(name, override, default):
+        """Explicit CLI override -> resolved method config -> default."""
+        if override is not None:
+            return override
+        val = hp.get(name, default)
+        return default if val is None else val
+
     # Shared-Jacobian refresh cadence (inflated_shared only; inert otherwise):
     # explicit arg -> method config -> 1 (recompute every pseudo-step, exact).
-    jac_every = int(
-        jacobian_refresh_every
-        if jacobian_refresh_every is not None
-        else method_cfg.likelihood_model.get("jacobian_refresh_every", 1)
-    )
+    jac_every = int(_resolve("jacobian_refresh_every", jacobian_refresh_every, 1))
     if mode == "inflated_shared" and jac_every != 1:
         logger.info(
             "%s: shared Jacobian refreshed every %d pseudo-steps", method_name, jac_every
@@ -1036,12 +1046,6 @@ def build_posterior(
     # Inflated-mode stabilisation knobs (explicit CLI override -> method config
     # -> constructor default that reproduces current behaviour). Inert for
     # dps_jacobian_free / non-Ours methods.
-    lik_cfg = method_cfg.get("likelihood_model", {}) or {}
-
-    def _resolve(name, override, default):
-        if override is not None:
-            return override
-        return lik_cfg.get(name, default)
 
     jac_damping = float(_resolve("jacobian_damping", jacobian_damping, 1.0))
     eig_floor = bool(_resolve("sigma_bar_eig_floor", sigma_bar_eig_floor, False))

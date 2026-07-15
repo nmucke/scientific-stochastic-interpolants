@@ -19,6 +19,11 @@ trajectories (trajectory identity comes from the ``traj<N>`` filename token):
 * ``aggregated/per_step.csv`` -- PER-STEP metrics, mean +/- std over trajectories
                                  at each assimilation step; consumed by
                                  ``make_ns_figures`` (metric-vs-step).
+* ``tables.tex``              -- LaTeX results tables, ONE PER SAMPLER-STEP COUNT
+                                 ``M`` (RMSE / CRPS / spread--skill x the four
+                                 scenarios + per-step cost), built from the same
+                                 aggregated rows so they can never drift from the
+                                 CSVs. ``\\input`` straight into the manuscript.
 
 Every NS metric present flows through both files (``rmse``, ``energy_spec_rmse``,
 ``kl_points``, ``crps``, ``crps_observed``, ``crps_unobserved``,
@@ -45,14 +50,64 @@ from common.aggregate_lib import (  # noqa: E402
     write_per_step_csv,
     write_scalar_csv,
 )
+from common.latex_tables import TableSpec, write_latex_tables  # noqa: E402
 
 RESULTS = _here / "results"
 CASE = "navier_stokes"
 KEY_METRICS = ("rmse", "energy_spec_rmse", "crps", "spread_skill", "kl_points")
 
+# The LaTeX tables: metric groups x the four observation scenarios, + cost.
+TABLE_SPEC = TableSpec(
+    case=CASE,
+    case_label="Navier--Stokes",
+    label_stem="tab:ns_accuracy",
+    source="paper_experiments/aggregate_ns.py",
+    scenarios=(
+        ("16^2->128^2", r"$16^2$"),
+        ("32^2->128^2", r"$32^2$"),
+        ("sparse 5%", r"$5\%$"),
+        ("sparse 1.5625%", r"$\tfrac{1}{64}$"),
+    ),
+    metric_groups=(
+        ("rmse", "Vorticity RMSE"),
+        ("crps", "CRPS"),
+        ("spread_skill", "Spread--skill"),
+    ),
+    ours=(
+        ("Ours (SI-SDE)", "Ours (SI-SDE)"),
+        ("Ours (DM-SDE)", "Ours (DM-SDE)"),
+        ("Ours (FM-ODE)", "Ours (FM-ODE)"),
+    ),
+    baselines=(
+        ("FlowDAS", "FlowDAS"),
+        ("SURGE (FlowDAS)", "FlowDAS + SURGE"),
+        ("SDA", "SDA"),
+        ("SURGE (SDA)", "SDA + SURGE"),
+        ("D-Flow SGLD", "D-Flow SGLD"),
+        ("Guided FM (FIG)", "Guided FM (FIG)"),
+    ),
+    classical=(
+        ("EnKF", "EnKF"),
+        ("Particle filter", "Particle filter"),
+    ),
+    metrics_phrase=(
+        r"vorticity RMSE, CRPS, and spread--skill "
+        r"($|1-\mathrm{spread}/\mathrm{skill}|$, $0=$ calibrated)"
+    ),
+    notes=(
+        "The solver-free baselines share the prior; the conventional filters "
+        "(EnKF, particle filter) use the true solver."
+    ),
+)
+
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--std", action="store_true",
+        help="print each table cell as mean +/- across-trajectory std",
+    )
+    args = ap.parse_args()
     root = RESULTS / CASE
 
     # (1) SCALAR metrics, aggregated over trajectories (time already averaged).
@@ -67,6 +122,14 @@ def main() -> None:
         write_scalar_csv(out, rows)
         print(f"[{CASE}] wrote {len(rows)} scalar rows -> {out}")
         print_scalar_table(rows, KEY_METRICS)
+
+        # (1b) LaTeX tables, one per M, from those same aggregated rows.
+        tex = root / "tables.tex"
+        Ms = write_latex_tables(TABLE_SPEC, rows, tex, with_std=args.std)
+        if Ms:
+            print(f"[{CASE}] wrote {len(Ms)} LaTeX tables (M={Ms}) -> {tex}")
+        else:
+            print(f"[{CASE}] no rows carry an M; no LaTeX tables written")
 
     # (2) PER-STEP curves, aggregated over trajectories at each step.
     ps_by_traj = discover_by_traj(root / "per_step")

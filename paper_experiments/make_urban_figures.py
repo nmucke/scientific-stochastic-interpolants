@@ -21,6 +21,14 @@ one figure each per scenario):
   -- rows = methods, cols = Truth / Posterior mean / $|$error$|$ / Spread at the
      final assimilated step, from ``results/urban/states/traj1/*.npz``.
 
+and, into ``singles/``, the bare one-quantity-per-file panels the manuscript's
+per-quantity grids are tiled from (velocity magnitude and temperature x posterior
+mean / std / $|$error$|$, per method), plus the truth and sensor-location panels:
+
+* ``urban_states_<var>_<scenario>__{mean,std,abserr}__<method>`` and the shared
+  colourbars ``__cbar_{field,std,abserr}``.
+* ``urban_truth_{velocity,temperature}`` and ``urban_obs_<scenario>``.
+
 Reads the aggregates produced by ``aggregate_urban.py``: ``aggregated/all.csv``
 (metric-vs-M) and ``aggregated/per_step.csv`` (metric-vs-step); the field maps
 read the saved-state archives directly. Any figure with no data yet is skipped
@@ -50,9 +58,12 @@ from figure_common import (  # noqa: E402
     load_metric_vs_step,
     load_state_records,
     make_state_field_figure,
+    make_state_panel_singles,
     make_vs_M_figure,
     make_vs_step_figure,
-    mirror_to,
+    mirror_figures,
+    save_field_panel,
+    save_series_legend,
 )
 
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "urban"
@@ -83,7 +94,7 @@ STATE_FIELDS = (
 )
 
 
-def _step_figures(out: Path) -> list[Path]:
+def _step_figures(out: Path, legend_keys: set) -> list[Path]:
     """Metric-vs-assimilation-step figures (trajectory-averaged per-step curves).
 
     RMSE is per-variable (velocity + temperature x the two sparse scenarios, 2x2
@@ -93,14 +104,19 @@ def _step_figures(out: Path) -> list[Path]:
     """
     written: list[Path] = []
     rmse_panels: list[tuple[str, dict]] = []
+    rmse_slugs: list[str] = []
     for var_metric, var_name in (
         ("rmse_velocity", "Velocity"), ("rmse_temperature", "Temperature")
     ):
         for sc in SCENARIOS:
             title = f"{var_name} -- {SCENARIO_LABEL.get(sc, sc)}"
             rmse_panels.append((title, load_metric_vs_step(CASE, var_metric, sc)))
+            rmse_slugs.append(f"{var_name.lower()}_{SLUG(sc)}")
+    for _t, series in rmse_panels:
+        legend_keys.update(k for k, s in series.items() if s)
     written += make_vs_step_figure(
-        rmse_panels, r"RMSE (fluid cells)", out / "urban_rmse_vs_step", ncols=2
+        rmse_panels, r"RMSE (fluid cells)", out / "urban_rmse_vs_step", ncols=2,
+        panel_slugs=rmse_slugs,
     )
     for metric, ylabel, stem in (
         ("crps", r"CRPS", "urban_crps_vs_step"),
@@ -111,7 +127,12 @@ def _step_figures(out: Path) -> list[Path]:
             (SCENARIO_LABEL.get(sc, sc), load_metric_vs_step(CASE, metric, sc))
             for sc in SCENARIOS
         ]
-        written += make_vs_step_figure(panels, ylabel, out / stem, ncols=2)
+        for _t, series in panels:
+            legend_keys.update(k for k, s in series.items() if s)
+        written += make_vs_step_figure(
+            panels, ylabel, out / stem, ncols=2,
+            panel_slugs=[SLUG(sc) for sc in SCENARIOS],
+        )
     if not written:
         print("[urban] no per-step data; run run_urban_grid.sh + aggregate_urban.py")
     return written
@@ -125,19 +146,80 @@ def _state_figures(out: Path) -> list[Path]:
     figure and a temperature figure per scenario. Reads the self-contained
     ``results/urban/states/traj1/*.npz`` archives from ``run_urban_grid.sh``;
     skipped with a message if none exist yet.
+
+    Alongside each combined figure it also writes the bare per-(method, quantity)
+    panels the manuscript's per-quantity grids are tiled from -- posterior mean,
+    spread and $|$error$|$, one file each, on colour scales shared across methods
+    (see :func:`figure_common.make_state_panel_singles`).
     """
     written: list[Path] = []
     for sc in SCENARIOS:
         recs = load_state_records(CASE, scenario=sc)
         if not recs:
             continue
+        print(f"[urban] states {sc}: {len(recs)} methods (traj1)")
         for field_fn, infix, cbar, cmap in STATE_FIELDS:
             stem = out / f"urban_states_{infix}_{SLUG(sc)}"
             written += make_state_field_figure(
                 recs, field_fn, stem, cbar_label=cbar, cmap=cmap
             )
+            written += make_state_panel_singles(
+                recs, field_fn, stem, cbar_label=cbar, cmap=cmap
+            )
     if not written:
         print("[urban] no saved states; run run_urban_grid.sh (save_states, traj1) first")
+    return written
+
+
+def _truth_obs_figures(out: Path) -> list[Path]:
+    """Truth + sensor-location panels (singles), for the manuscript's truth figure.
+
+    Writes ``singles/urban_truth_{velocity,temperature}.pdf`` (the true fields at
+    the final assimilation step -- shared by both scenarios, which assimilate the
+    same trajectory) and ``singles/urban_obs_<scenario>.pdf``, the observed grid
+    points of each sparse scenario drawn over a faint truth field. Both scenarios
+    are sparse-sensor, so there is no super-resolution (coarse-field) case here as
+    there is for Navier--Stokes.
+
+    The panels reuse the same colour scales as the combined field maps, so
+    ``urban_states_<var>_<scenario>__cbar_field`` serves this figure too.
+    """
+    written: list[Path] = []
+    truth_done = False
+    for sc in SCENARIOS:
+        recs = load_state_records(CASE, scenario=sc)
+        if not recs:
+            continue
+        r = recs[0]  # truth + observations are shared across the methods of a scenario
+        traj = np.asarray(r["true_trajectory"])
+        vel = _velocity_mag(traj)[0]     # [H, W]
+        thl = _temperature(traj)[0]      # [H, W]
+        H, W = vel.shape
+        if not truth_done:
+            truth_done = True
+            for field, infix, cmap in (
+                (vel, "velocity", "viridis"), (thl, "temperature", "inferno")
+            ):
+                fin = field[np.isfinite(field)]
+                written += save_field_panel(
+                    out / "singles" / f"urban_truth_{infix}", field, cmap=cmap,
+                    vmin=float(fin.min()) if fin.size else 0.0,
+                    vmax=float(fin.max()) if fin.size else 1.0,
+                )
+        if "obs_indices" not in r:
+            continue
+        idx = np.asarray(r["obs_indices"]).reshape(-1)
+        if idx.size >= H * W:  # not a sparse index set -> nothing to mark
+            continue
+        ys, xs = np.divmod(idx % (H * W), W)
+        fin = vel[np.isfinite(vel)]
+        written += save_field_panel(
+            out / "singles" / f"urban_obs_{SLUG(sc)}", None, cmap="viridis",
+            vmin=float(fin.min()) if fin.size else 0.0,
+            vmax=float(fin.max()) if fin.size else 1.0,
+            scatter=(xs.astype(float), ys.astype(float), vel[ys % H, xs % W]),
+            background=vel, extent=(0.0, float(W), 0.0, float(H)),
+        )
     return written
 
 
@@ -147,17 +229,23 @@ def main() -> None:
     args = ap.parse_args()
     out = Path(args.out)
     written: list[Path] = []
+    legend_keys: set = set()  # every (method, variant) with data, for the legend file
 
     # (1) RMSE: velocity + temperature x the two sparse scenarios (2x2 panels).
     rmse_panels: list[tuple[str, dict]] = []
+    rmse_slugs: list[str] = []
     for var_metric, var_name in (
         ("rmse_velocity", "Velocity"), ("rmse_temperature", "Temperature")
     ):
         for sc in SCENARIOS:
             title = f"{var_name} -- {SCENARIO_LABEL.get(sc, sc)}"
             rmse_panels.append((title, load_metric_vs_M(CASE, var_metric, sc)))
+            rmse_slugs.append(f"{var_name.lower()}_{SLUG(sc)}")
+    for _t, series in rmse_panels:
+        legend_keys.update(k for k, s in series.items() if s)
     paths = make_vs_M_figure(
-        rmse_panels, r"RMSE (fluid cells)", out / "urban_rmse_vs_M", ncols=2
+        rmse_panels, r"RMSE (fluid cells)", out / "urban_rmse_vs_M", ncols=2,
+        panel_slugs=rmse_slugs,
     )
     written += paths
     if not paths:
@@ -173,16 +261,25 @@ def main() -> None:
             (SCENARIO_LABEL.get(sc, sc), load_metric_vs_M(CASE, metric, sc))
             for sc in SCENARIOS
         ]
-        paths = make_vs_M_figure(panels, ylabel, out / stem, ncols=2)
+        for _t, series in panels:
+            legend_keys.update(k for k, s in series.items() if s)
+        paths = make_vs_M_figure(
+            panels, ylabel, out / stem, ncols=2, panel_slugs=[SLUG(sc) for sc in SCENARIOS]
+        )
         written += paths
         if not paths:
             print(f"[urban] no data for {metric}; run the urban grid first")
 
-    written += _step_figures(out)
+    written += _step_figures(out, legend_keys)
     written += _state_figures(out)
+    written += _truth_obs_figures(out)
 
-    # Mirror every figure into the in-repo paper_experiments/figures/ tree too.
-    written += mirror_to(written, FIGURES_DIR / CASE)
+    # One shared legend file for all the single-panel metric figures of this case.
+    written += save_series_legend(legend_keys, out / "singles" / "urban_legend")
+
+    # Mirror every figure into the in-repo paper_experiments/figures/ tree too
+    # (singles/ keeps its subfolder).
+    written += mirror_figures(written, FIGURES_DIR / CASE)
 
     for p in written:
         print(f"[fig] wrote {p}")
