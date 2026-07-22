@@ -34,12 +34,12 @@ likelihood_model:
     default: 1.0
     navier_stokes:
       #             M=50   M=100  M=250  M=500
-      superres_16: { 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
-      superres_32: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
-      sparse_5:    { 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
-      sparse_1p5:  { 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
+      superres_16: { 25: 0.016, 50: 0.016, 100: 0.0065, 250: 0.154, 500: 2.0  }
+      superres_32: { 25: 0.004, 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+      sparse_5:    { 25: 0.002, 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
+      sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
+      analytical: { 25: 0.004, 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
     # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:

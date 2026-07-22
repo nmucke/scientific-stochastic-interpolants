@@ -15,7 +15,8 @@ Plus qualitative vorticity field maps for trajectory 11 (one figure per scenario
 
 * ``ns_states_<scenario>``  -- rows = methods, cols = Truth / Posterior mean /
                                $|$error$|$ / Spread at the final assimilated step,
-                               from ``results/navier_stokes/states/traj11/*.npz``.
+                               from ``results/navier_stokes/states/traj11/*.npz``
+                               at $M=250$ (``--state-M`` overrides).
 
 Reads the aggregates produced by ``aggregate_ns.py``: ``aggregated/all.csv``
 (metric-vs-M) and ``aggregated/per_step.csv`` (metric-vs-step); the field maps
@@ -61,6 +62,10 @@ SCENARIOS = ("16^2->128^2", "32^2->128^2", "sparse 5%", "sparse 1.5625%")
 NS_STEPS = (25, 50, 100, 250)
 # Trajectory whose saved posterior/truth fields the field maps are drawn from.
 STATE_TRAJ = 11
+# Sampler-step count the field maps are drawn at. Fixed at the top of the NS
+# ladder (M=250) -- every method is re-run there, and the qualitative panels must
+# all show the SAME M to be comparable. Override with ``--state-M``.
+STATE_M = 250
 
 
 def SLUG(s: str) -> str:
@@ -100,7 +105,7 @@ def _step_figures(out: Path, legend_keys: set) -> list[Path]:
     return written
 
 
-def _state_figures(out: Path, state_M: int | None = None) -> list[Path]:
+def _state_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
     """Qualitative vorticity field maps for trajectory ``STATE_TRAJ``: one figure per
     scenario, rows = methods, cols = Truth | Posterior mean | |Error| | Spread (final
     step).
@@ -108,9 +113,10 @@ def _state_figures(out: Path, state_M: int | None = None) -> list[Path]:
     Reads the self-contained ``results/navier_stokes/states/traj<STATE_TRAJ>/*.npz``
     archives saved by ``run_ns_grid.sh``; skipped with a message if none exist yet.
 
-    ``state_M`` picks the sampler-step count to show (default: the largest saved).
-    The grid saves one archive per M, so this must stay a single M -- otherwise the
-    same method appears once per M as separate rows.
+    ``state_M`` picks the sampler-step count to show (default ``STATE_M`` = 250;
+    ``None`` falls back to the widest-coverage saved M). The grid saves one archive
+    per M, so this must stay a single M -- otherwise the same method appears once
+    per M as separate rows.
     """
     written: list[Path] = []
     # Vorticity is the single (signed) state channel -> diverging colour map.
@@ -141,7 +147,7 @@ def _state_figures(out: Path, state_M: int | None = None) -> list[Path]:
     return written
 
 
-def _truth_obs_figures(out: Path, state_M: int | None = None) -> list[Path]:
+def _truth_obs_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
     """Truth + per-scenario observation panels (singles), for the truth figure.
 
     Writes ``singles/ns_truth.pdf`` (the full true vorticity field at the final
@@ -200,11 +206,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument(
-        "--state-M", type=int, default=None,
-        help="sampler steps M for the field maps (default: largest saved)",
+        "--state-M", type=int, default=STATE_M,
+        help=f"sampler steps M for the field maps (default: {STATE_M}; "
+             "0 = pick the widest-coverage saved M)",
     )
     args = ap.parse_args()
     out = Path(args.out)
+    state_M = args.state_M or None  # --state-M 0 -> auto-pick
     written: list[Path] = []
     legend_keys: set = set()  # every (method, variant) with data, for the legend file
 
@@ -225,8 +233,8 @@ def main() -> None:
             print(f"[ns] no data for {metric}; run run_ns_grid.sh + aggregate_ns.py")
 
     written += _step_figures(out, legend_keys)
-    written += _state_figures(out, state_M=args.state_M)
-    written += _truth_obs_figures(out, state_M=args.state_M)
+    written += _state_figures(out, state_M=state_M)
+    written += _truth_obs_figures(out, state_M=state_M)
 
     # One shared legend file for all the single-panel metric figures of this case.
     written += save_series_legend(legend_keys, out / "singles" / "ns_legend")

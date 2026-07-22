@@ -97,6 +97,7 @@ import torch
 import torch.nn as nn
 
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.posterior_models.base_posterior import BasePosterior
 
 logger = logging.getLogger(__name__)
@@ -521,11 +522,25 @@ class SurgeFlowMatchingPosterior(SurgePosteriorBase):
         beta = self.interpolation.beta(t_grid)
         sigma = self.interpolation.sigma(t_grid)
         if velocity is not None:
-            # Same identity ``model.score`` applies to its own (redundant)
-            # network forward, on the caller's already-computed velocity.
-            score = self.interpolation.score_from_velocity(
-                x=x, v=velocity, t=t_grid, a0=torch.zeros_like(x)
-            )
+            # ``velocity`` holds the caller's ``model.drift`` output. For the
+            # diffusion prior that is the REVERSE-SDE drift d = v + 1/2 g^2 s
+            # (g = the MODEL's own diffusion term, baked into its drift), not
+            # the raw velocity, so invert the affine identity with the extra
+            # 1/2 g^2 gain: from v = (beta_diff / beta) x + a_tau s (a0 = 0),
+            #     s = (beta d - beta_diff x) / (beta (a_tau + 1/2 g^2)).
+            # This must match ``model.score`` exactly -- the reward R has to be
+            # the same function at every evaluation or the Eq. 6 telescoping
+            # breaks. A FlowMatchingModel prior's drift IS the raw velocity
+            # (g = 0), where the identity reduces to ``score_from_velocity``.
+            if isinstance(self.model, DenoiseDiffusionModel):
+                beta_diff = self.interpolation.beta_diff(t_grid)
+                a_tau = self.interpolation.velocity_score_coeff(t_grid)
+                gain = a_tau + 0.5 * self.model.diffusion_term(t_grid) ** 2
+                score = (beta * velocity - beta_diff * x) / (beta * gain)
+            else:
+                score = self.interpolation.score_from_velocity(
+                    x=x, v=velocity, t=t_grid, a0=torch.zeros_like(x)
+                )
         else:
             score = self.model.score(x, t, field_history, field_cond, pars_cond)
         return (x + sigma**2 * score) / beta

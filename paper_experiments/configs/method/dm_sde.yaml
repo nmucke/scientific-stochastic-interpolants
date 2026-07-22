@@ -42,15 +42,15 @@ likelihood_model:
   jacobian_damping:
     default: 1.0             # exact theory; correct for `inflated` / analytical
     navier_stokes:           # inflated_shared: MUST be < 1 (lambda>=1 diverges)
-      superres_32: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # 0.95 DIVERGES
-      superres_16: { 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # interior optimum
-      sparse_5:    { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
-      sparse_1p5:  { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+      superres_32: { 25: 0.9, 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # 0.95 DIVERGES
+      superres_16: { 25: 0.9, 50: 0.9,  100: 0.9,  250: 0.9,  500: 0.9  }  # interior optimum
+      sparse_5:    { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
+      sparse_1p5:  { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
     analytical:              # exact J -> no damping needed
-      analytical: { 50: 1.0, 100: 1.0, 250: 1.0, 500: 1.0 }
+      analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0, 500: 1.0 }
     urban:                   # PROVISIONAL, NOT SWEPT -- 0.9 for cliff margin (see
-      sparse_5:   { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # si_sde.yaml). Present
-      sparse_1p5: { 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # (not omitted) because
+      sparse_5:   { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # si_sde.yaml). Present
+      sparse_1p5: { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # (not omitted) because
       # falling back to `default: 1.0` would DIVERGE in inflated_shared.
 
   # Both TESTED AND REJECTED (they collapse Sigma_bar toward jacfree and discard

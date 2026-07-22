@@ -64,24 +64,24 @@ likelihood_model:
   step_size:
     default: 0.005
     navier_stokes:
-      superres_32: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
-      superres_16: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
-      sparse_5:    { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
-      sparse_1p5:  { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      superres_32: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      superres_16: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_5:    { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_1p5:  { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      analytical: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
     # urban: <add after tuning>   (falls back to default until filled)
 
   # noise_scale = s, Langevin noise scale; increment ~ N(0, 2 eta s P) (s=0 -> MAP).
   noise_scale:
     default: 1.0e-3
     navier_stokes:
-      superres_32: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
-      superres_16: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
-      sparse_5:    { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
-      sparse_1p5:  { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      superres_32: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      superres_16: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_5:    { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_1p5:  { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      analytical: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
     # urban: <add after tuning>   (falls back to default until filled)
 
   # lambda_reg = lambda, weight on source reg lambda ||z_0||^2 (Eq. 31; 0 disables).
@@ -91,12 +91,12 @@ likelihood_model:
   lambda_reg:
     default: 1.0e-4
     navier_stokes:
-      superres_32: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-      superres_16: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-      sparse_5:    { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-      sparse_1p5:  { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      superres_32: { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      superres_16: { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      sparse_5:    { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      sparse_1p5:  { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      analytical: { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
     # urban: <add after tuning>   (falls back to default until filled)
 
   # Fixed across all paper cases (Table D.3) -> plain scalars; promote to a table

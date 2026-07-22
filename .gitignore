@@ -74,3 +74,8 @@ paper_experiments/results/states/
 
 # manuscript
 manuscript/
+
+# paper expriment figures
+paper_experiments/figures/*
+ns_presentation_figs/*
+root/*

@@ -64,24 +64,24 @@ likelihood_model:
     default: 1
     navier_stokes:
       #             M=50   M=100  M=250  M=500
-      superres_16: { 50: 1, 100: 1, 250: 1, 500: 1 }
-      superres_32: { 50: 1, 100: 1, 250: 1, 500: 1 }
-      sparse_5:    { 50: 3, 100: 3, 250: 3, 500: 3 }
-      sparse_1p5:  { 50: 3, 100: 3, 250: 3, 500: 3 }
+      superres_16: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
+      superres_32: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
+      sparse_5:    { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 1, 100: 1, 250: 1, 500: 1 }
+      analytical: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
     # urban: <add after tuning>   (falls back to default until filled)
 
   guidance_scale:            # FIG's c -- corrector step-size scale
     default: 10.0
     navier_stokes:
       #             M=50     M=100    M=250   M=500
-      superres_16: { 50: 20.0, 100: 20.0, 250: 20.0, 500: 10.0 }
-      superres_32: { 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
-      sparse_5:    { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
-      sparse_1p5:  { 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+      superres_16: { 25: 20.0, 50: 20.0, 100: 20.0, 250: 20.0, 500: 10.0 }
+      superres_32: { 25: 20.0, 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
+      sparse_5:    { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+      sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
     analytical:              # single joint scenario; columns are the M sweep
-      analytical: { 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
+      analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
     # urban: <add after tuning>   (falls back to default until filled)
 
 posterior_model:

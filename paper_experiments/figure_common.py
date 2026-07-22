@@ -195,9 +195,16 @@ def load_metric_vs_step(
 
 def _plot_panel(
     ax, series: dict, *, logy: bool, steps: tuple[int, ...] = STEPS,
-    ycap: float | None = None,
+    ycap: float | None = None, detect_off_scale: bool = True,
 ) -> list:
-    """Draw one panel; return the (handle, label) list in SERIES order."""
+    """Draw one panel; return the (handle, label) list in SERIES order.
+
+    ``detect_off_scale`` (default on) folds a series whose values sit far above
+    every other one onto a shelf labelled "collapsed (off scale)". That reading is
+    right for an ACCURACY metric, where such a series has diverged -- but wrong for
+    a COST axis (runtime, NFE), where a method being 100x dearer is the finding, not
+    a failure. Pass ``False`` there and let the log axis show the real spread.
+    """
     # Auto-detect COLLAPSED / off-scale series (min value >> the rest) so one
     # blown-up method (e.g. FIG) doesn't stretch the axis over many empty decades.
     finite = {k: [v for v in s.values()] for k, s in series.items() if s}
@@ -206,7 +213,7 @@ def _plot_panel(
     y_hi = y_lo = None
     if all_vals:
         on_scale_vals = list(all_vals)
-        for k, vs in finite.items():
+        for k, vs in finite.items() if detect_off_scale else ():
             others = [v for kk, vv in finite.items() if kk != k for v in vv]
             if others and min(vs) > 50 * max(others):
                 off_scale.add(k)
@@ -376,8 +383,18 @@ def make_vs_M_figure(
     ycap: float | None = None,
     panel_slugs: list[str] | None = None,
     singles: bool = True,
+    detect_off_scale: bool = True,
+    xlabel_all: bool = False,
 ) -> list[Path]:
     """Render a (multi-panel) metric-vs-M figure with a shared legend below.
+
+    ``detect_off_scale=False`` disables the "collapsed (off scale)" shelf -- see
+    :func:`_plot_panel`; use it for cost axes (runtime, NFE).
+
+    ``xlabel_all`` gives EVERY panel its own x tick labels instead of only the
+    bottom row (the panels always carry the x-axis label itself). Off by default so
+    the manuscript figures keep their shared-axis look; on for slide decks, where a
+    single panel is often cropped out of the grid and has to read alone.
 
     ``ycap`` (optional) excludes values above it from the y-axis range so a
     single diverging series doesn't stretch the axis; its line exits the top.
@@ -404,16 +421,19 @@ def make_vs_M_figure(
 
     fig, axes = plt.subplots(
         nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows),
-        squeeze=False, sharex=True,
+        squeeze=False, sharex=not xlabel_all,
     )
     flat = axes.flatten()
     legend_pairs: dict[str, object] = {}
     for i, (title, series) in enumerate(panels):
         ax = flat[i]
-        for h, lab in _plot_panel(ax, series, logy=logy, steps=steps, ycap=ycap):
+        for h, lab in _plot_panel(ax, series, logy=logy, steps=steps, ycap=ycap,
+                                  detect_off_scale=detect_off_scale):
             legend_pairs.setdefault(lab, h)
         if n > 1:
             ax.set_title(title)
+        if xlabel_all:
+            ax.tick_params(axis="x", labelbottom=True)
         ax.set_xlabel(r"Number of sampler steps $M$")
         if i % ncols == 0:
             ax.set_ylabel(ylabel)
@@ -440,7 +460,8 @@ def make_vs_M_figure(
     if singles:
         written += _save_panel_singles(
             panels, slugs,
-            lambda ax, s: _plot_panel(ax, s, logy=logy, steps=steps, ycap=ycap),
+            lambda ax, s: _plot_panel(ax, s, logy=logy, steps=steps, ycap=ycap,
+                                      detect_off_scale=detect_off_scale),
             ylabel, r"Number of sampler steps $M$", out_stem,
         )
     return written
@@ -488,8 +509,12 @@ def make_vs_step_figure(
     logy: bool = True,
     panel_slugs: list[str] | None = None,
     singles: bool = True,
+    xlabel_all: bool = False,
 ) -> list[Path]:
     """Render a (multi-panel) metric-vs-assimilation-step figure, legend below.
+
+    ``xlabel_all`` -- see :func:`make_vs_M_figure`; every panel gets its own x tick
+    labels rather than only the bottom row.
 
     Mirrors :func:`make_vs_M_figure` but the x-axis is the assimilation-step index
     (linear), one line per method. ``panels`` is ``[(panel_title, series_dict)]``
@@ -507,7 +532,8 @@ def make_vs_step_figure(
     nrows = math.ceil(n / ncols)
 
     fig, axes = plt.subplots(
-        nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False, sharex=True,
+        nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False,
+        sharex=not xlabel_all,
     )
     flat = axes.flatten()
     legend_pairs: dict[str, object] = {}
@@ -517,6 +543,8 @@ def make_vs_step_figure(
             legend_pairs.setdefault(label, h)
         if n > 1:
             ax.set_title(title)
+        if xlabel_all:
+            ax.tick_params(axis="x", labelbottom=True)
         ax.set_xlabel("Assimilation step")
         if i % ncols == 0:
             ax.set_ylabel(ylabel)
