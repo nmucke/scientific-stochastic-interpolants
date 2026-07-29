@@ -8,13 +8,20 @@ saving policy: **`results/README.md`**. Everything below this section is the old
 **Reduced lineup (13 rows/case):** Ours (SI-SDE/DM-SDE/FM-ODE) × {jacfree, shared}
 (the two likelihood-covariance modes, tagged by the tidy `variant` column) +
 FlowDAS, FlowDAS+SURGE (`SURGE (FlowDAS)`), SDA, SDA+SURGE (`SURGE (SDA)`),
-D-Flow SGLD + EnKF, Particle filter (NS & analytical only — urban is
-generative-only). Dropped: Guided FM (FIG/OT-ODE), standalone SURGE, LETKF, EnSF.
+D-Flow SGLD, Guided FM (FIG) + EnKF, Particle filter (NS & analytical only — urban
+is generative-only). Dropped: Guided FM (OT-ODE), standalone SURGE, LETKF, EnSF.
+
+**Urban is SURGE-only (2026-07-25):** where a baseline has a SURGE variant, urban
+runs only that variant — so bare `FlowDAS` / `SDA` are off the urban grid and
+`SURGE (FlowDAS)` / `SURGE (SDA)` stand in. Both stay wired in the driver so
+`run_urban_tuning.sh` can still name them. Urban also drops NS's
+`energy_spec_rmse` (KE spectrum is ill-posed with buildings in the domain) on top
+of the long-standing `kl_points` omission (no ground-truth posterior).
 
 **Grid:** NS scenarios {superres 16/32, sparse 5%/1.5625%}; urban {sparse 5%/1.5625%};
-analytical {joint}. Steps M ∈ {50,100,250,500} (generative). NS/urban: 5 test
-trajectories (`test_index=1..5`, one seed each), `num_physical_steps=20` (5 history
-+ 15 DA). Analytical: 5 seeds averaged in-run.
+analytical {joint}. Steps M ∈ {25,50,100,250} for NS/urban (analytical still
+{50,100,250,500}). NS/urban: 5 test trajectories (`test_index=1..5`, one seed each),
+`num_physical_steps=20` (5 history + 15 DA). Analytical: 5 seeds averaged in-run.
 
 **Saving:** raw states for trajectory 1 ONLY (all methods, **both** Ours modes —
 `variant` is in the filename); per-step metric curves + timings (seconds/NFE) for

@@ -9,11 +9,15 @@
 #     `classical` group (no EnKF/PF) and NO KL reference (no ground-truth
 #     posterior), hence no kl_reference_states argument.
 #   * SPARSE-ONLY scenarios (no super-resolution observation operator).
+#   * SURGE-ONLY baselines -- see METHOD GROUPS below.
+#   * NO energy-spectrum metric: the radially-averaged KE spectrum presumes a
+#     periodic fluid box, which a building array is not.
 #
 # GRID
 #   trajectories : test_index 1..5   (one seed each; seeds=[0])
 #   scenarios    : sparse 5%, sparse 1.5625%
-#   steps M      : 50 100 250 500
+#   steps M      : 25 50 100 250     (the NS figure ladder; make_urban_figures.py
+#                                     URBAN_STEPS must match)
 #   Ours modes   : jacfree (dps_jacobian_free) + shared (inflated_shared)
 #   E=64, num_physical_steps=20 (5 history + 15 DA steps)
 #
@@ -25,8 +29,18 @@
 #                      by picking the group; each writes its own files so cadences
 #                      can coexist in one results tree. lambda (jacobian_damping)
 #                      stays PER-SCENARIO in the method YAMLs.
-#   baselines        : FlowDAS, SURGE (FlowDAS), SDA, SURGE (SDA), D-Flow SGLD,
-#                      Guided FM (FIG)
+#   baselines        : SURGE (FlowDAS), SURGE (SDA), Guided FM (FIG)
+#   dflow            : D-Flow SGLD alone -- same lineup, own group, because it is
+#                      by far the dearest baseline (on NS it ran ~4x the other
+#                      baselines COMBINED), so it is worth being able to pause,
+#                      re-run or move it to another box on its own. It IS in the
+#                      default GRPS, so coverage is unchanged; drop it from GRPS
+#                      to run everything else first.
+#
+# SURGE-ONLY BASELINES (2026-07-25, user request). Where a baseline has a SURGE
+# variant, urban runs the SURGE variant ONLY -- so bare `FlowDAS` and `SDA` are
+# NOT in `baselines`; `SURGE (FlowDAS)` and `SURGE (SDA)` stand in for them.
+# They remain wired in the driver, so run_urban_tuning.sh can still name them.
 #
 # SAVING
 #   save_states  : $SAVE_TRAJ ONLY (default traj1), ALL groups incl. BOTH Ours
@@ -51,7 +65,7 @@ TRAJ="${TRAJ:-1 2 3 4 5}"
 # Which trajectory gets its raw ensembles written out (states are big, so only one).
 # MUST be a member of TRAJ or nothing is saved (guarded below).
 SAVE_TRAJ="${SAVE_TRAJ:-1}"
-STEPS="${STEPS:-50 100 250 500}"
+STEPS="${STEPS:-25 50 100 250}"
 E="${E:-64}"
 NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
 DEVICE="${DEVICE:-cuda}"
@@ -68,6 +82,15 @@ DIV_GUARD="${DIV_GUARD:-10.0}"
 # and urban's own cliff has never been located. If urban shared cells NaN out, drop
 # the urban rows of those tables to 0.9. To sweep a value on purpose, override on
 # the CLI for one run:  +jacobian_damping=0.9
+#
+# The BASELINE hyperparameters are in the same position (2026-07-25): every
+# configs/method/*.yaml now carries an `urban:` block, but each one is the NS
+# *sparse* row COPIED VERBATIM, not an urban sweep -- results/urban/tuning/ is still
+# empty. That is a much better starting point than the old `default` fallback (it
+# moves FlowDAS zeta 1.0 -> 0.002, SDA gamma 0.01 -> 1e-3, FIG k 1 -> 3), but the
+# cells are unvalidated on urban. Re-sweep with run_urban_tuning.sh before the
+# headline table; env vars (FLOWDAS_ZETA, SDA_GAMMA, DFLOW_*, FIG_K/FIG_C) override
+# the tables without editing them.
 
 # Scenarios as a bash array (canonical labels). Urban is sparse-only.
 if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
@@ -86,8 +109,8 @@ else SCEN_ARR=("sparse 5%" "sparse 1.5625%"); fi
 #
 # k is read straight OUT OF the group name (ours_shared_k<k>), so any cadence works
 # with no second list to keep in sync -- e.g. GRPS="... ours_shared_k20 ..." just runs.
-# GRPS="${GRPS:-ours_jacfree ours_shared_k1 ours_shared_k5 baselines}"
-GRPS="${GRPS:-ours_jacfree ours_shared_k10 baselines}"
+# GRPS="${GRPS:-ours_jacfree ours_shared_k1 ours_shared_k5 baselines dflow}"
+GRPS="${GRPS:-ours_jacfree ours_shared_k10 baselines dflow}"
 
 # Cadences requested this run: every ours_shared_k<k> in GRPS, k parsed from the name.
 SHARED_KS=$(echo "$GRPS" | tr ' ' '\n' | sed -nE 's/^ours_shared_k([0-9]+)$/\1/p')
@@ -102,7 +125,9 @@ for g in $GRPS; do
 done
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
-BASELINES='["FlowDAS","SURGE (FlowDAS)","SDA","SURGE (SDA)","D-Flow SGLD","Guided FM (FIG)"]'
+# SURGE-only: bare "FlowDAS" / "SDA" are deliberately absent (see the header).
+BASELINES='["SURGE (FlowDAS)","SURGE (SDA)","Guided FM (FIG)"]'
+DFLOW='["D-Flow SGLD"]'
 # -----------------------------------------------------------------------------
 
 slug() { echo "$1" | sed -E 's/[^A-Za-z0-9]+/_/g; s/^_+//; s/_+$//'; }
@@ -172,6 +197,16 @@ for N in $TRAJ; do
       if has_group baselines; then
         run_cell "$MET/${SS}__M${M}__traj${N}__baselines.csv" "baselines/$SS/M$M/traj$N" \
           "+urban_methods=$BASELINES" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
+          likelihood_mode=dps_jacobian_free \
+          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
+      fi
+      # D-Flow SGLD alone -- its own group/file purely so the dearest baseline can
+      # be paused or re-run without touching the other three. Aggregation globs
+      # every CSV and keys on (method, variant, scenario, metric, M), so the split
+      # is invisible downstream and the two halves rejoin on their own.
+      if has_group dflow; then
+        run_cell "$MET/${SS}__M${M}__traj${N}__dflow.csv" "dflow/$SS/M$M/traj$N" \
+          "+urban_methods=$DFLOW" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
           likelihood_mode=dps_jacobian_free \
           +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
       fi

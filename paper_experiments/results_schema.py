@@ -133,9 +133,13 @@ class Metric(str, Enum):
 
     # (b) Probabilistic calibration.
     CRPS = "crps"  # CRPS over the whole field (all grid points)
+    CRPS_VELOCITY = "crps_velocity"  # urban, per-variable
+    CRPS_TEMPERATURE = "crps_temperature"  # urban, per-variable
     CRPS_OBSERVED = "crps_observed"  # CRPS at observed grid points only
     CRPS_UNOBSERVED = "crps_unobserved"  # CRPS at unobserved grid points only
     SPREAD_SKILL = "spread_skill"  # report |1 - spread/skill| (0 = calibrated)
+    SPREAD_SKILL_VELOCITY = "spread_skill_velocity"  # urban, per-variable
+    SPREAD_SKILL_TEMPERATURE = "spread_skill_temperature"  # urban, per-variable
 
     # (c) Distributional fidelity.
     KL_POINTS = "kl_points"  # KL at points (fields + analytical)

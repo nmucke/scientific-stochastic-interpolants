@@ -20,9 +20,9 @@ likelihood_model:
   # `default:` key; the scenario rows live under the case name (`navier_stokes:`).
   # The pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
   # (case_key, scenario_key, num_steps). A missing case / scenario / M column (or a
-  # null cell) falls back to `default` with a warning -- so urban / analytical use
-  # `default` until an `urban:` block is added. Env FLOWDAS_ZETA overrides the
-  # whole table.
+  # null cell) falls back to `default` with a warning. All three cases now have a
+  # filled block, so nothing should hit that fallback. Env FLOWDAS_ZETA overrides
+  # the whole table.
   #
   # guidance_scale = FlowDAS zeta on the RAW likelihood score.
   # Provenance:
@@ -40,7 +40,16 @@ likelihood_model:
       sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.004, 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25) -- see below
+      sparse_5:    { 25: 0.002, 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
+      sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
+    # URBAN PROVENANCE: these are the NS sparse cells verbatim, NOT an urban sweep
+    # (results/urban/tuning/ is still empty; run_urban_tuning.sh has never run).
+    # The transfer is defensible -- both cases are sparse random-subsampling in the
+    # NORMALISED state space with the same sigma=0.05 -- but it is NOT free: urban's
+    # sparse_5 sees 5% of 4x128x128 dofs against NS's 5% of 1x128x128, so the
+    # residual norm the guidance multiplies is ~4x larger and the optimal zeta need
+    # not be the same. Re-sweep with run_urban_tuning.sh before the headline table.
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

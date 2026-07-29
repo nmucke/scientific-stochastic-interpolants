@@ -31,8 +31,8 @@ likelihood_model:
   # (`navier_stokes:`); the pipeline (resolve_scheduled_hparams) resolves it to ONE
   # scalar per run from (case_key, scenario_key, num_steps). A missing case /
   # scenario / M column / null entry falls back to `default` with a warning, so a
-  # table can hold null placeholders for cells not tuned yet and urban / analytical
-  # use `default` until an `urban:` block is added. Env vars override the whole
+  # table can hold null placeholders for cells not tuned yet. All three cases now
+  # have a filled block, so nothing should hit that fallback. Env vars override the whole
   # resolved value (top precedence, so a sweep needs no edit to this YAML):
   #   DFLOW_NSTEPS, DFLOW_STEP_SIZE, DFLOW_NOISE_SCALE, DFLOW_LAMBDA.
   #
@@ -70,7 +70,10 @@ likelihood_model:
       sparse_1p5:  { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25); the NS
+                             # table is flat in scenario AND M, so this is just eta.
+      sparse_5:    { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_1p5:  { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
 
   # noise_scale = s, Langevin noise scale; increment ~ N(0, 2 eta s P) (s=0 -> MAP).
   noise_scale:
@@ -82,7 +85,9 @@ likelihood_model:
       sparse_1p5:  { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
+      sparse_5:    { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_1p5:  { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
 
   # lambda_reg = lambda, weight on source reg lambda ||z_0||^2 (Eq. 31; 0 disables).
   # The paper frames this as the key knob, but on NS it is nearly inert on
@@ -97,7 +102,16 @@ likelihood_model:
       sparse_1p5:  { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
+      sparse_5:    { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+      sparse_1p5:  { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
+    # URBAN PROVENANCE (all three D-Flow tables above): the NS sparse cells verbatim,
+    # NOT an urban sweep (results/urban/tuning/ is empty). Cheapest transfer of the
+    # six methods to justify -- the NS tuning found eta the only knob that matters
+    # and its optimum flat across all four NS scenarios and every M, with s and
+    # lambda near-inert. Numerically identical to the previous `default` fallback;
+    # the tables exist so urban stops logging "no entry for case='urban'" and so a
+    # future urban sweep has a cell to write into.
 
   # Fixed across all paper cases (Table D.3) -> plain scalars; promote to a table
   # like the ones above if a future sweep needs to tune them per cell.

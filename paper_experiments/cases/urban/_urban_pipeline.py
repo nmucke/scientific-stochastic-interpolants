@@ -223,9 +223,12 @@ def compute_metrics(
     Returns a dict keyed by the canonical metric strings: ``rmse`` (all-channel,
     fluid only), ``rmse_velocity`` (``u, v, w`` channels, fluid only),
     ``rmse_temperature`` (``thl`` channel, fluid only), ``crps``,
+    ``crps_velocity`` / ``crps_temperature`` (the same per-variable split),
     ``crps_observed`` / ``crps_unobserved`` (the observed/unobserved split, both
-    fluid only), ``spread_skill`` (reported as ``|1-ratio|``), plus ``nfe`` /
-    ``seconds``. NO ``kl_points`` -- urban has no ground-truth posterior.
+    fluid only), ``spread_skill`` (reported as ``|1-ratio|``) with its
+    per-variable split ``spread_skill_velocity`` / ``spread_skill_temperature``,
+    plus ``nfe`` / ``seconds``. NO ``kl_points`` -- urban has no ground-truth
+    posterior.
 
     Solid cells (``fluid_mask == False``) are excluded from EVERY metric. The
     observed/unobserved split is taken on the fluid cells only: a cell is
@@ -260,9 +263,13 @@ def compute_metrics(
     rmse_vel_steps: list[float] = []
     rmse_temp_steps: list[float] = []
     crps_steps: list[float] = []
+    crps_vel_steps: list[float] = []
+    crps_temp_steps: list[float] = []
     crps_obs_steps: list[float] = []
     crps_unobs_steps: list[float] = []
     ss_steps: list[float] = []
+    ss_vel_steps: list[float] = []
+    ss_temp_steps: list[float] = []
 
     # Only score the assimilated steps (skip the seeded history prefix).
     for t in range(len_field_history, T):
@@ -277,6 +284,8 @@ def compute_metrics(
             float(ensemble_mean_rmse(ens_t, true_t, mask=temp_keep))
         )
         crps_steps.append(float(crps(ens_t, true_t, mask=fluid)))
+        crps_vel_steps.append(float(crps(ens_t, true_t, mask=vel_keep)))
+        crps_temp_steps.append(float(crps(ens_t, true_t, mask=temp_keep)))
         if has_obs:
             crps_obs_steps.append(float(crps(ens_t, true_t, mask=obs_keep)))
         if has_unobs:
@@ -285,6 +294,10 @@ def compute_metrics(
         if E >= 2:
             ss = spread_skill(ens_t, true_t, mask=fluid)
             ss_steps.append(float(ss["deviation"]))
+            ss_vel = spread_skill(ens_t, true_t, mask=vel_keep)
+            ss_vel_steps.append(float(ss_vel["deviation"]))
+            ss_temp = spread_skill(ens_t, true_t, mask=temp_keep)
+            ss_temp_steps.append(float(ss_temp["deviation"]))
 
     def _mean(xs: list[float]) -> float:
         return float(sum(xs) / len(xs)) if xs else float("nan")
@@ -294,9 +307,13 @@ def compute_metrics(
         "rmse_velocity": _mean(rmse_vel_steps),
         "rmse_temperature": _mean(rmse_temp_steps),
         "crps": _mean(crps_steps),
+        "crps_velocity": _mean(crps_vel_steps),
+        "crps_temperature": _mean(crps_temp_steps),
         "crps_observed": _mean(crps_obs_steps),
         "crps_unobserved": _mean(crps_unobs_steps),
         "spread_skill": _mean(ss_steps),
+        "spread_skill_velocity": _mean(ss_vel_steps),
+        "spread_skill_temperature": _mean(ss_temp_steps),
         "nfe": result.nfe_per_step,
         "seconds": result.seconds_per_step,
         # Per-(assimilation-)step metric curves (one value per scored step), so
@@ -307,9 +324,13 @@ def compute_metrics(
             "rmse_velocity": list(rmse_vel_steps),
             "rmse_temperature": list(rmse_temp_steps),
             "crps": list(crps_steps),
+            "crps_velocity": list(crps_vel_steps),
+            "crps_temperature": list(crps_temp_steps),
             "crps_observed": list(crps_obs_steps),
             "crps_unobserved": list(crps_unobs_steps),
             "spread_skill": list(ss_steps),
+            "spread_skill_velocity": list(ss_vel_steps),
+            "spread_skill_temperature": list(ss_temp_steps),
         },
     }
 

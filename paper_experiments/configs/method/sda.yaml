@@ -19,9 +19,9 @@ likelihood_model:
   # `default:` key; the scenario rows live under the case name (`navier_stokes:`).
   # The pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
   # (case_key, scenario_key, num_steps). A missing case / scenario / M column (or a
-  # null cell) falls back to `default` with a warning -- so urban / analytical use
-  # `default` until an `urban:` block is added. Env SDA_GAMMA overrides the whole
-  # table.
+  # null cell) falls back to `default` with a warning. All three cases now have a
+  # filled block, so nothing should hit that fallback. Env SDA_GAMMA overrides the
+  # whole table.
   #
   # gamma_sda = SDA's tunable spectral factor gamma in Gamma ~= gamma I
   # (Rozet & Louppe Eq. 15; released-code default 1e-2).
@@ -35,7 +35,14 @@ likelihood_model:
       sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.01, 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25) -- see below
+      sparse_5:    { 25: 0.001, 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
+      sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
+    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep
+    # (results/urban/tuning/ is empty; run_urban_tuning.sh has never run). gamma_sda
+    # scales the covariance inflation gamma (sigma/mu)^2 H H^T; for a selection H,
+    # H H^T = I in BOTH cases, so the transfer is on firmer ground here than for
+    # FlowDAS's zeta. Still worth re-sweeping before the headline table.
 
 posterior_model:
   _target_: scisi.posterior_models.diffusion_posterior.DiffusionPosterior

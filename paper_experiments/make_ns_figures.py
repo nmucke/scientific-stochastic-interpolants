@@ -75,7 +75,9 @@ def SLUG(s: str) -> str:
 METRIC_FIGURES = (
     ("rmse", r"Vorticity RMSE", "ns_rmse_vs_M"),
     ("crps", r"CRPS", "ns_crps_vs_M"),
-    ("spread_skill", r"Spread--skill $|1-\mathrm{spread}/\mathrm{skill}|$",
+    # Short label on purpose: the print-size singles are ~1.4in tall, and the
+    # full "Spread--skill |1-...|" wording overflows the panel height.
+    ("spread_skill", r"$|1-\mathrm{spread}/\mathrm{skill}|$",
      "ns_spread_skill_vs_M"),
 )
 

@@ -19,7 +19,8 @@ one figure each per scenario):
 
 * ``urban_states_velocity_<scenario>`` / ``urban_states_temperature_<scenario>``
   -- rows = methods, cols = Truth / Posterior mean / $|$error$|$ / Spread at the
-     final assimilated step, from ``results/urban/states/traj1/*.npz``.
+     final assimilated step, from ``results/urban/states/traj1/*.npz`` at $M=250$
+     (``--state-M`` overrides).
 
 and, into ``singles/``, the bare one-quantity-per-file panels the manuscript's
 per-quantity grids are tiled from (velocity magnitude and temperature x posterior
@@ -69,6 +70,17 @@ from figure_common import (  # noqa: E402
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "urban"
 CASE = "urban"
 SCENARIOS = ("sparse 5%", "sparse 1.5625%")
+# Sampler-step ladder of the urban grid (run_urban_grid.sh STEPS). Must be passed
+# explicitly: figure_common's default STEPS is the older (50, 100, 250, 500), which
+# would silently drop the M=25 column and leave an empty M=500 one.
+URBAN_STEPS = (25, 50, 100, 250)
+# Trajectory whose saved posterior/truth fields the field maps are drawn from
+# (run_urban_grid.sh SAVE_TRAJ).
+STATE_TRAJ = 1
+# Sampler-step count the field maps are drawn at. Fixed at the top of the urban
+# ladder (M=250) -- every method is re-run there, and the qualitative panels must
+# all show the SAME M to be comparable. Override with ``--state-M``.
+STATE_M = 250
 
 
 def SLUG(s: str) -> str:
@@ -120,7 +132,8 @@ def _step_figures(out: Path, legend_keys: set) -> list[Path]:
     )
     for metric, ylabel, stem in (
         ("crps", r"CRPS", "urban_crps_vs_step"),
-        ("spread_skill", r"Spread--skill $|1-\mathrm{spread}/\mathrm{skill}|$",
+        # Short label on purpose -- see make_ns_figures.METRIC_FIGURES.
+        ("spread_skill", r"$|1-\mathrm{spread}/\mathrm{skill}|$",
          "urban_spread_skill_vs_step"),
     ):
         panels = [
@@ -138,14 +151,20 @@ def _step_figures(out: Path, legend_keys: set) -> list[Path]:
     return written
 
 
-def _state_figures(out: Path) -> list[Path]:
-    """Qualitative field maps for trajectory 1: one figure per (variable, scenario),
-    rows = methods, cols = Truth | Posterior mean | |Error| | Spread (final step).
+def _state_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
+    """Qualitative field maps for trajectory ``STATE_TRAJ``: one figure per
+    (variable, scenario), rows = methods, cols = Truth | Posterior mean | |Error| |
+    Spread (final step).
 
     The state is multi-channel ``(u, v, w, thl)``, so it makes a velocity-magnitude
     figure and a temperature figure per scenario. Reads the self-contained
-    ``results/urban/states/traj1/*.npz`` archives from ``run_urban_grid.sh``;
-    skipped with a message if none exist yet.
+    ``results/urban/states/traj<STATE_TRAJ>/*.npz`` archives from
+    ``run_urban_grid.sh``; skipped with a message if none exist yet.
+
+    ``state_M`` picks the sampler-step count to show (default ``STATE_M`` = 250;
+    ``None`` falls back to the widest-coverage saved M). The grid saves one archive
+    per M, so this must stay a single M -- otherwise the same method appears once
+    per M as separate rows.
 
     Alongside each combined figure it also writes the bare per-(method, quantity)
     panels the manuscript's per-quantity grids are tiled from -- posterior mean,
@@ -154,10 +173,11 @@ def _state_figures(out: Path) -> list[Path]:
     """
     written: list[Path] = []
     for sc in SCENARIOS:
-        recs = load_state_records(CASE, scenario=sc)
+        recs = load_state_records(CASE, scenario=sc, traj=STATE_TRAJ, M=state_M)
         if not recs:
             continue
-        print(f"[urban] states {sc}: {len(recs)} methods (traj1)")
+        Ms = sorted({int(r["M"]) for r in recs if "M" in r})
+        print(f"[urban] states {sc}: {len(recs)} methods at M={Ms} (traj{STATE_TRAJ})")
         for field_fn, infix, cbar, cmap in STATE_FIELDS:
             stem = out / f"urban_states_{infix}_{SLUG(sc)}"
             written += make_state_field_figure(
@@ -167,11 +187,14 @@ def _state_figures(out: Path) -> list[Path]:
                 recs, field_fn, stem, cbar_label=cbar, cmap=cmap
             )
     if not written:
-        print("[urban] no saved states; run run_urban_grid.sh (save_states, traj1) first")
+        print(
+            "[urban] no saved states; run run_urban_grid.sh "
+            f"(save_states, traj{STATE_TRAJ}) first"
+        )
     return written
 
 
-def _truth_obs_figures(out: Path) -> list[Path]:
+def _truth_obs_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
     """Truth + sensor-location panels (singles), for the manuscript's truth figure.
 
     Writes ``singles/urban_truth_{velocity,temperature}.pdf`` (the true fields at
@@ -187,7 +210,7 @@ def _truth_obs_figures(out: Path) -> list[Path]:
     written: list[Path] = []
     truth_done = False
     for sc in SCENARIOS:
-        recs = load_state_records(CASE, scenario=sc)
+        recs = load_state_records(CASE, scenario=sc, traj=STATE_TRAJ, M=state_M)
         if not recs:
             continue
         r = recs[0]  # truth + observations are shared across the methods of a scenario
@@ -220,14 +243,22 @@ def _truth_obs_figures(out: Path) -> list[Path]:
             scatter=(xs.astype(float), ys.astype(float), vel[ys % H, xs % W]),
             background=vel, extent=(0.0, float(W), 0.0, float(H)),
         )
+    if not written:
+        print("[urban] no saved states; cannot draw truth/observation panels")
     return written
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument(
+        "--state-M", type=int, default=STATE_M,
+        help=f"sampler steps M for the field maps (default: {STATE_M}; "
+             "0 = pick the widest-coverage saved M)",
+    )
     args = ap.parse_args()
     out = Path(args.out)
+    state_M = args.state_M or None  # --state-M 0 -> auto-pick
     written: list[Path] = []
     legend_keys: set = set()  # every (method, variant) with data, for the legend file
 
@@ -239,13 +270,15 @@ def main() -> None:
     ):
         for sc in SCENARIOS:
             title = f"{var_name} -- {SCENARIO_LABEL.get(sc, sc)}"
-            rmse_panels.append((title, load_metric_vs_M(CASE, var_metric, sc)))
+            rmse_panels.append(
+                (title, load_metric_vs_M(CASE, var_metric, sc, steps=URBAN_STEPS))
+            )
             rmse_slugs.append(f"{var_name.lower()}_{SLUG(sc)}")
     for _t, series in rmse_panels:
         legend_keys.update(k for k, s in series.items() if s)
     paths = make_vs_M_figure(
         rmse_panels, r"RMSE (fluid cells)", out / "urban_rmse_vs_M", ncols=2,
-        panel_slugs=rmse_slugs,
+        steps=URBAN_STEPS, panel_slugs=rmse_slugs,
     )
     written += paths
     if not paths:
@@ -254,25 +287,30 @@ def main() -> None:
     # (2) CRPS and (3) spread--skill: one panel per sparse scenario.
     for metric, ylabel, stem in (
         ("crps", r"CRPS", "urban_crps_vs_M"),
-        ("spread_skill", r"Spread--skill $|1-\mathrm{spread}/\mathrm{skill}|$",
+        # Short label on purpose -- see make_ns_figures.METRIC_FIGURES.
+        ("spread_skill", r"$|1-\mathrm{spread}/\mathrm{skill}|$",
          "urban_spread_skill_vs_M"),
     ):
         panels = [
-            (SCENARIO_LABEL.get(sc, sc), load_metric_vs_M(CASE, metric, sc))
+            (
+                SCENARIO_LABEL.get(sc, sc),
+                load_metric_vs_M(CASE, metric, sc, steps=URBAN_STEPS),
+            )
             for sc in SCENARIOS
         ]
         for _t, series in panels:
             legend_keys.update(k for k, s in series.items() if s)
         paths = make_vs_M_figure(
-            panels, ylabel, out / stem, ncols=2, panel_slugs=[SLUG(sc) for sc in SCENARIOS]
+            panels, ylabel, out / stem, ncols=2, steps=URBAN_STEPS,
+            panel_slugs=[SLUG(sc) for sc in SCENARIOS],
         )
         written += paths
         if not paths:
             print(f"[urban] no data for {metric}; run the urban grid first")
 
     written += _step_figures(out, legend_keys)
-    written += _state_figures(out)
-    written += _truth_obs_figures(out)
+    written += _state_figures(out, state_M=state_M)
+    written += _truth_obs_figures(out, state_M=state_M)
 
     # One shared legend file for all the single-panel metric figures of this case.
     written += save_series_legend(legend_keys, out / "singles" / "urban_legend")

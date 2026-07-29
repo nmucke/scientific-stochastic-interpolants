@@ -101,13 +101,16 @@ ANALYTICAL_METHODS: tuple[Method, ...] = (
     Method.SDA,
     Method.SURGE_SDA,
     Method.D_FLOW_SGLD,
+    Method.GUIDED_FM_FIG,
     Method.ENKF,
     Method.PARTICLE_FILTER,
 )
-# GUIDED_FM_FIG (Guided FM / FIG) is intentionally OUT of the analytical lineup:
-# it is not part of the reduced paper lineup (results/README.md, 13 rows) and it
-# diverges on the untuned analytical cells (kl ~1e11). It remains available for
-# the NS/urban cases where it is tuned.
+# GUIDED_FM_FIG rejoined the lineup on 2026-07-28 (user request) so the
+# analytical figures cover the same baselines as NS/urban. Its (k, c) cells in
+# configs/method/guided_fm_fig.yaml are UNTUNED placeholders (k=1, c=1.0): it
+# collapsed on earlier analytical probes (kl ~1e11), which the figure pipeline
+# folds onto the "collapsed (off scale)" shelf. Sweep the analytical column of
+# that YAML before reading its numbers as a fair comparison.
 
 # The three "Ours" samplers dispatched through ``draw_interpolant_posterior``; each runs
 # under BOTH likelihood-covariance modes below, emitted as distinct ``variant``

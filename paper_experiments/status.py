@@ -4,7 +4,7 @@ Scans ``results/<case>/metrics/*.csv`` (the per-cell tidy files written by the
 ``run_*_grid.sh`` master scripts) and reports coverage of the expected grid:
 which (case, method, variant, scenario, M, trajectory/seed) cells are present,
 which are missing, and which produced non-finite (NaN) values. Also checks the
-paired ``per_step/`` curves and the ``states/traj1/`` ensembles.
+paired ``per_step/`` curves and the ``states/traj<N>/`` ensembles.
 
 Writes a human-readable summary to ``results/STATUS.md`` and prints it. Read-only
 over the results tree apart from that one file.
@@ -41,12 +41,24 @@ SEEDS = (0) #, 1, 2, 3, 4)
 OURS = ("Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)")
 OURS_VARIANTS = ("jacfree", "shared")
 GEN_BASELINES = ("FlowDAS", "SURGE (FlowDAS)", "SDA", "SURGE (SDA)", "D-Flow SGLD")
+# Urban runs the SURGE-only lineup (cases/urban/driver.py URBAN_METHODS): where a
+# baseline has a SURGE variant, ONLY that variant is on the grid. Tracking urban
+# against GEN_BASELINES would report bare FlowDAS / SDA as permanently MISSING.
+URBAN_BASELINES = ("SURGE (FlowDAS)", "SURGE (SDA)", "D-Flow SGLD", "Guided FM (FIG)")
 CLASSICAL = ("EnKF", "Particle filter")
+
+# Urban's own grid axes (run_urban_grid.sh): its own M ladder (starting at 25) and
+# its own trajectory numbering (test_index 1..5, NOT the NS test_data slice rows).
+URBAN_STEPS = (25, 50, 100, 250)
+URBAN_TRAJ = (1, 2, 3, 4, 5)
 
 NS_SCENARIOS = ("16^2->128^2", "32^2->128^2", "sparse 5%", "sparse 1.5625%")
 URBAN_SCENARIOS = ("sparse 5%", "sparse 1.5625%")
 ANALYTICAL_SCENARIOS = ("analytical",)
 
+# Per case: which scenarios / step ladder / method lineup / coverage axis to
+# expect. ``steps`` and ``baselines`` default to the NS values when absent, so a
+# case only names what it differs on.
 CASES = {
     "navier_stokes": {
         "scenarios": NS_SCENARIOS,
@@ -57,8 +69,10 @@ CASES = {
     "urban": {
         "scenarios": URBAN_SCENARIOS,
         "classical": (),
+        "steps": URBAN_STEPS,
+        "baselines": URBAN_BASELINES,
         "axis": "traj",
-        "axis_vals": TRAJ,
+        "axis_vals": URBAN_TRAJ,
     },
     "analytical": {
         "scenarios": ANALYTICAL_SCENARIOS,
@@ -69,6 +83,28 @@ CASES = {
         "axis_vals": (0,),
     },
 }
+
+
+def _steps(case: str) -> tuple[int, ...]:
+    return CASES[case].get("steps", STEPS)
+
+
+def _baselines(case: str) -> tuple[str, ...]:
+    return CASES[case].get("baselines", GEN_BASELINES)
+
+
+def _canon_variant(variant: str | None) -> str | None:
+    """Fold the lagged-Jacobian shared variants onto the canonical ``shared``.
+
+    The grid scripts stamp a shared-mode run with cadence k>1 as ``shared_jac<k>``
+    (``ours_shared_k10`` -> ``shared_jac10``); all cadences are the one "shared"
+    mode as far as coverage goes. Without this, a run with ``ours_shared_k10``
+    reports every ``shared`` cell as MISSING while its own rows match nothing.
+    Mirrors ``figure_common._canon_variant``.
+    """
+    if not variant:
+        return None
+    return "shared" if variant.startswith("shared") else variant
 
 
 def _cell_key(method: str, variant: str | None) -> str:
@@ -83,11 +119,11 @@ def expected_cells(case: str) -> set[tuple[str, str, int | None]]:
     spec = CASES[case]
     cells: set[tuple[str, str, int | None]] = set()
     for scen in spec["scenarios"]:
-        for m in STEPS:
+        for m in _steps(case):
             for method in OURS:
                 for var in OURS_VARIANTS:
                     cells.add((_cell_key(method, var), scen, m))
-            for method in GEN_BASELINES:
+            for method in _baselines(case):
                 cells.add((_cell_key(method, None), scen, m))
         for method in spec["classical"]:
             cells.add((_cell_key(method, None), scen, None))
@@ -110,8 +146,8 @@ def scan(case: str) -> dict:
         for r in recs:
             if r.metric in ("nfe", "seconds"):
                 continue
-            label = _cell_key(r.method, r.variant)
-            m = r.M if (r.M in STEPS) else None
+            label = _cell_key(r.method, _canon_variant(r.variant))
+            m = r.M if (r.M in _steps(case)) else None
             # classical rows may carry an arbitrary placeholder M -> normalise.
             if r.method in spec["classical"]:
                 m = None
@@ -186,7 +222,9 @@ def render(case: str, data: dict) -> list[str]:
     n_states = len(list(states.rglob("*.npz"))) if states.exists() else 0
     n_ps = len(list(per_step.glob("*.csv"))) if per_step.exists() else 0
     lines.append("")
-    lines.append(f"- states files (traj1): {n_states} | per_step files: {n_ps}")
+    # states/ holds one subdir per saved trajectory (only SAVE_TRAJ is written),
+    # so count the whole tree rather than naming a trajectory that may not be 1.
+    lines.append(f"- states files (all traj): {n_states} | per_step files: {n_ps}")
     lines.append("")
     return lines
 

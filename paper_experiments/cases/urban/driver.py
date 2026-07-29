@@ -6,10 +6,11 @@ statistics. Same observation scenarios as NS; sensors at physically plausible
 (fluid) locations.
 
 Produces:
-* ``tab:urban_accuracy``          -- velocity RMSE, temperature RMSE
-                                     x {32^2->128^2, 5%} (NO KL: no GT posterior).
+* ``tab:urban_accuracy``          -- RMSE, velocity RMSE, temperature RMSE
+                                     x the two sparse scenarios (NO KL: no GT
+                                     posterior; NO energy spectrum: buildings).
 * ``tab:urban_calibration_cost``  -- CRPS, |1-spread/skill|, NFE, s/step.
-* ``fig:urban_fields``            -- geometry + truth/prior/posterior (figure TODO).
+* ``fig:urban_fields``            -- geometry + truth/prior/posterior.
 
 Author decision (archive/PROJECT_HANDOFF.md §B.4): the uDALES data is author-provided
 (``data/udales/*.nc`` + ``data/udales/mask.npz``); no CFD generator is needed
@@ -31,6 +32,12 @@ MULTI-CHANNEL with solid cells:
 * NO KL-at-points: urban has only a ground-truth STATE, not a ground-truth
   posterior, so KL (which needs a reference posterior) is not computed and no
   large-E reference ensemble is drawn. Calibration = spread--skill + split CRPS.
+* NO energy-spectrum RMSE: the radially-averaged KE spectrum presumes a periodic
+  box of fluid, which the building array is not -- so the NS ``energy_spec_rmse``
+  is not carried over (user decision, 2026-07-25).
+* SURGE-ONLY BASELINES: where a baseline has a SURGE variant, only the SURGE
+  variant is on the lineup (``SURGE (FlowDAS)`` / ``SURGE (SDA)``, not bare
+  FlowDAS / SDA).
 """
 
 from __future__ import annotations
@@ -58,17 +65,22 @@ logger = logging.getLogger(__name__)
 # same three samplers under two ``likelihood_mode`` settings, tagged apart by the
 # tidy ``variant`` column. Dropped from the earlier lineup: Guided FM (OT-ODE),
 # standalone SURGE.
+#
+# SURGE-ONLY BASELINES (2026-07-25, user request): where a baseline HAS a SURGE
+# variant, urban runs the SURGE variant ONLY -- so ``SURGE (FlowDAS)`` and
+# ``SURGE (SDA)`` are in, and bare ``FlowDAS`` / ``SDA`` are OUT of the default
+# lineup. They stay WIRED (see ``WIRED_METHODS``) so ``run_urban_tuning.sh``,
+# which asks for them by name via ``+urban_methods=["FlowDAS"]``, still works;
+# they are simply not part of the grid the paper reports.
 URBAN_METHODS: tuple[Method, ...] = (
     # Ours (unified family) -- run twice (jacfree + shared) by the master script.
     Method.OURS_SI_SDE,
     Method.OURS_FM_ODE,
     Method.OURS_DM_SDE,  # DM-SDE
     # SI + SDE.
-    Method.FLOWDAS,
-    Method.SURGE_FLOWDAS,  # FlowDAS + SURGE
+    Method.SURGE_FLOWDAS,  # FlowDAS + SURGE  (bare FlowDAS deliberately omitted)
     # Diffusion model + SDE.
-    Method.SDA,
-    Method.SURGE_SDA,  # SDA + SURGE
+    Method.SURGE_SDA,  # SDA + SURGE      (bare SDA deliberately omitted)
     # Flow matching + ODE.
     Method.D_FLOW_SGLD,
     Method.GUIDED_FM_FIG,  # FIG measurement-interpolant corrector
@@ -91,18 +103,34 @@ URBAN_SCENARIOS: tuple[Scenario, ...] = (
     Scenario.SPARSE_1p5,
 )
 
-# Per-variable RMSE + shared distributional / calibration metrics.
-# Urban has only a ground-truth STATE, not a ground-truth posterior, so KL-at-points
-# (which needs a reference posterior) is NOT computed. Calibration is assessed with the
-# spread--skill ratio and CRPS (both scored against the ground-truth state), split into
-# observed/unobserved grid points as for NS.
+# The NS metric set MINUS the two NS-only entries, PLUS the per-variable RMSEs.
+#
+# Dropped vs NS, both for want of a well-posed definition here rather than taste:
+# * ``kl_points``      -- urban has only a ground-truth STATE, not a ground-truth
+#                         posterior, so there is no reference to take a KL against.
+# * ``energy_spec_rmse`` -- the radially-averaged KE spectrum presumes a periodic
+#                         box of fluid. Urban's domain is punched through with
+#                         buildings, so the transform mixes real turbulence with
+#                         the geometry's edges and the number does not mean what
+#                         it means for NS (user decision, 2026-07-25).
+#
+# Calibration is assessed with the spread--skill ratio and CRPS (both scored
+# against the ground-truth state), split into observed/unobserved grid points as
+# for NS. ``rmse`` is the all-channel fluid-cell RMSE (the direct analogue of the
+# NS ``rmse``); the velocity / temperature splits (of RMSE, CRPS, and
+# spread--skill alike) are urban-specific.
 URBAN_METRICS: tuple[Metric, ...] = (
+    Metric.RMSE,
     Metric.RMSE_VELOCITY,
     Metric.RMSE_TEMPERATURE,
     Metric.CRPS,
+    Metric.CRPS_VELOCITY,
+    Metric.CRPS_TEMPERATURE,
     Metric.CRPS_OBSERVED,
     Metric.CRPS_UNOBSERVED,
     Metric.SPREAD_SKILL,
+    Metric.SPREAD_SKILL_VELOCITY,
+    Metric.SPREAD_SKILL_TEMPERATURE,
 )
 
 # Maps a wired Method to the YAML method-config name under configs/method/ (same
@@ -124,6 +152,14 @@ SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
     Scenario.SPARSE_5: "sparse_5",
     Scenario.SPARSE_1p5: "sparse_1p5",
 }
+
+# Every method that CAN be run for urban -- i.e. has a method config wired above.
+# This is deliberately WIDER than ``URBAN_METHODS`` (the default paper lineup):
+# bare FlowDAS / SDA are off the lineup but still runnable when asked for by name
+# (``run_urban_tuning.sh`` does exactly that). ``evaluate`` gates on THIS set, so
+# an explicitly-requested off-lineup method runs for real instead of silently
+# yielding NaN placeholder rows.
+WIRED_METHODS: frozenset = frozenset(METHOD_CONFIG_NAME)
 
 
 class UrbanRunner(ExperimentRunner):
@@ -246,7 +282,7 @@ class UrbanRunner(ExperimentRunner):
     # -- per-(method, scenario, seed) evaluation --------------------------- #
 
     def evaluate(self, ctx: RunContext) -> Iterable[ResultRecord]:
-        if ctx.method not in URBAN_METHODS:
+        if ctx.method not in WIRED_METHODS:
             yield from self._todo_rows(ctx)
             return
 
@@ -512,4 +548,10 @@ class UrbanRunner(ExperimentRunner):
         logger.info("[URBAN] per-step curves -> %s (%d rows)", path, len(rows))
 
 
-__all__ = ["UrbanRunner", "URBAN_METHODS", "URBAN_SCENARIOS", "URBAN_METRICS"]
+__all__ = [
+    "UrbanRunner",
+    "URBAN_METHODS",
+    "URBAN_SCENARIOS",
+    "URBAN_METRICS",
+    "WIRED_METHODS",
+]

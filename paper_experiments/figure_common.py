@@ -41,6 +41,31 @@ FIGURES_DIR = _here / "figures"
 STEPS: tuple[int, ...] = (50, 100, 250, 500)
 
 # --------------------------------------------------------------------------- #
+# Manuscript print geometry (ICLR style: \textwidth 5.5in, \textheight 9in).
+# The appendix includes every metric-curve single at height 0.155\textheight
+# (~1.4in) inside a 0.42\linewidth (~2.3in) subfigure, the qualitative field
+# panels and their colourbars at height 0.116\textheight (~1.04in), and the
+# shared legend at width 0.8\linewidth (~4.4in). The singles are therefore
+# DESIGNED at that physical size, so every font below is its printed size.
+# --------------------------------------------------------------------------- #
+SINGLE_FIGSIZE: tuple[float, float] = (2.4, 1.5)
+# The tight save bbox grows ~20% beyond the axes (labels overhang), so the
+# manuscript scales the singles by ~0.8x; the design sizes below are chosen to
+# PRINT at ~6.5pt ticks / ~7pt labels after that.
+SINGLE_RC: dict = {
+    "font.size": 8.0,
+    "axes.labelsize": 9.0,
+    "xtick.labelsize": 8.0,
+    "ytick.labelsize": 8.0,
+    "axes.linewidth": 0.55,
+}
+# Marker/line sizes of the combined figures are tuned for ~0.4x scaling in the
+# manuscript; the print-size singles scale them down by this factor instead.
+SINGLE_SCALE: float = 0.45
+# Printed height of the qualitative-figure colourbars (0.116\textheight).
+CBAR_HEIGHT_IN: float = 1.04
+
+# --------------------------------------------------------------------------- #
 # Method styling -- one shared ordered series list (cases that lack a method,
 # e.g. urban has no EnKF/PF, simply have no data for it and it is skipped).
 # Colour-blind-friendly Okabe--Ito base palette + a few extensions. Each entry:
@@ -63,6 +88,20 @@ SERIES: tuple[tuple, ...] = (
     ("EnKF", None, "EnKF", "#000000", ":", "p", True),
     ("Particle filter", None, "Particle filter", "#666666", ":", "d", True),
 )
+
+# SURGE-ONLY BASELINE LINEUP (2026-07-28, user request): where a baseline has a
+# SURGE variant, the metric figures plot ONLY the SURGE variant -- the bare
+# methods listed here are dropped from every metric-vs-M / metric-vs-step panel
+# and from the shared legend, across ALL cases (their rows stay untouched in the
+# CSVs, and the qualitative state figures are not affected). To reintroduce a
+# method, simply remove it from this tuple.
+HIDDEN_METHODS: tuple[str, ...] = ("FlowDAS", "SDA")
+
+
+def _visible(series: dict) -> dict:
+    """Drop the ``HIDDEN_METHODS`` series from a ``{(method, variant): ...}`` dict."""
+    return {k: v for k, v in series.items() if k[0] not in HIDDEN_METHODS}
+
 
 # Compact scenario labels (canonical Scenario value -> LaTeX label).
 SCENARIO_LABEL: dict[str, str] = {
@@ -196,6 +235,7 @@ def load_metric_vs_step(
 def _plot_panel(
     ax, series: dict, *, logy: bool, steps: tuple[int, ...] = STEPS,
     ycap: float | None = None, detect_off_scale: bool = True,
+    scale: float = 1.0,
 ) -> list:
     """Draw one panel; return the (handle, label) list in SERIES order.
 
@@ -204,7 +244,13 @@ def _plot_panel(
     right for an ACCURACY metric, where such a series has diverged -- but wrong for
     a COST axis (runtime, NFE), where a method being 100x dearer is the finding, not
     a failure. Pass ``False`` there and let the log axis show the real spread.
+
+    ``scale`` multiplies the marker/line sizes -- the combined figures use 1.0,
+    the print-size singles pass ``SINGLE_SCALE``.
     """
+    # SURGE-only lineup: filter BEFORE the axis-range/off-scale logic so a
+    # hidden method cannot stretch the y-limits either.
+    series = _visible(series)
     # Auto-detect COLLAPSED / off-scale series (min value >> the rest) so one
     # blown-up method (e.g. FIG) doesn't stretch the axis over many empty decades.
     finite = {k: [v for v in s.values()] for k, s in series.items() if s}
@@ -248,19 +294,21 @@ def _plot_panel(
             ys = [y_shelf] * len(xs)
         (h,) = ax.plot(
             xs, ys, color=colour, linestyle=ls, marker=marker,
-            markersize=7.5 if is_off else 6.5, markeredgewidth=1.3,
+            markersize=(7.5 if is_off else 6.5) * scale,
+            markeredgewidth=1.3 * scale,
             markeredgecolor=colour, markerfacecolor=(colour if filled else "white"),
-            linewidth=2.1 if (variant is not None or is_off) else 1.7,
+            linewidth=(2.1 if (variant is not None or is_off) else 1.7) * scale,
             zorder=3, clip_on=True,
         )
         handles.append((h, label))
         if is_off:
             ax.text(
                 math.sqrt(xs[0] * xs[-1]), y_shelf * 2.2, "collapsed (off scale)",
-                ha="center", va="bottom", fontsize=8.0, color=colour,
-                fontstyle="italic",
+                ha="center", va="bottom", fontsize=max(7.0, 8.0 * scale),
+                color=colour, fontstyle="italic",
             )
-            ax.axhline(y_hi / 4.5, color="0.6", lw=0.7, ls=(0, (2, 3)), zorder=1)
+            ax.axhline(y_hi / 4.5, color="0.6", lw=0.7 * scale, ls=(0, (2, 3)),
+                       zorder=1)
 
     ax.set_xscale("log")
     if logy:
@@ -271,11 +319,12 @@ def _plot_panel(
     ax.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
     ax.get_xaxis().set_minor_formatter(mticker.NullFormatter())
     ax.set_xlim(steps[0] * 0.9, steps[-1] * 1.1)
-    ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
-    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.15)
+    ax.grid(True, which="major", linestyle="-", linewidth=0.6 * scale, alpha=0.25)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5 * scale, alpha=0.15)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
-    ax.tick_params(which="both", direction="out", length=4, width=0.8)
+    ax.tick_params(which="both", direction="out", length=4 * scale,
+                   width=0.8 * scale)
     return handles
 
 
@@ -324,21 +373,27 @@ def _save_panel_singles(
     figures tree. The manuscript caption describes the panel content and one
     shared legend file (see :func:`save_series_legend`) serves a whole cluster
     of such subfigures, so the singles themselves carry neither.
+
+    The singles are designed at the size the manuscript prints them
+    (``SINGLE_FIGSIZE``/``SINGLE_RC``, ~1.4in tall in a ~2.3in subfigure), so
+    fonts and line weights come out at their nominal point sizes on the page;
+    ``draw_panel`` should draw with ``scale=SINGLE_SCALE``.
     """
     written: list[Path] = []
     sdir = out_stem.parent / "singles"
     for (_title, series), slug in zip(panels, slugs):
-        fig, ax = plt.subplots(figsize=(4.6, 3.5))
-        draw_panel(ax, series)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        name = out_stem.name + (f"_{slug}" if slug else "")
-        written += _save_fig(fig, sdir / name)
+        with plt.rc_context(SINGLE_RC):
+            fig, ax = plt.subplots(figsize=SINGLE_FIGSIZE)
+            draw_panel(ax, series)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            name = out_stem.name + (f"_{slug}" if slug else "")
+            written += _save_fig(fig, sdir / name)
     return written
 
 
 def save_series_legend(
-    keys, out_stem: Path, *, ncol: int = 4
+    keys, out_stem: Path, *, ncol: int = 3
 ) -> list[Path]:
     """Save a standalone legend-only figure for the given ``(method, variant)`` keys.
 
@@ -347,27 +402,37 @@ def save_series_legend(
     of their own). ``keys`` is any iterable of ``(method, variant)`` pairs as
     found in the loaded series dicts (raw variants are canonicalised). Writes
     ``<out_stem>.pdf`` + ``.png``; returns the written paths ([] if no key matches).
+
+    Designed at print size: the manuscript includes the legend at
+    ``width=0.8\\linewidth`` (~4.4in), and three columns of the full method
+    lineup at 8pt come out at roughly that natural width, so the printed text
+    stays ~8pt (four columns at the old 9pt shrank to ~6pt).
     """
     from matplotlib.lines import Line2D
 
     canon = {(m, _canon_variant(v)) for m, v in keys}
-    entries = [s for s in SERIES if (s[0], s[1]) in canon]
+    # HIDDEN_METHODS (SURGE-only lineup) are excluded here too, so the legend
+    # always matches what the metric panels actually draw.
+    entries = [
+        s for s in SERIES
+        if (s[0], s[1]) in canon and s[0] not in HIDDEN_METHODS
+    ]
     if not entries:
         return []
     apply_style()
     handles = [
         Line2D(
             [0], [0], color=colour, linestyle=ls, marker=marker,
-            markersize=6.5, markeredgewidth=1.3, markeredgecolor=colour,
-            markerfacecolor=(colour if filled else "white"), linewidth=2.0,
+            markersize=4.5, markeredgewidth=1.0, markeredgecolor=colour,
+            markerfacecolor=(colour if filled else "white"), linewidth=1.3,
         )
         for _m, _v, _label, colour, ls, marker, filled in entries
     ]
     fig = plt.figure()
     fig.legend(
         handles, [e[2] for e in entries], loc="center", ncol=ncol,
-        frameon=False, handlelength=2.3, columnspacing=1.3,
-        handletextpad=0.5, labelspacing=0.4, fontsize=9,
+        frameon=False, handlelength=1.9, columnspacing=1.2,
+        handletextpad=0.5, labelspacing=0.35, fontsize=8,
     )
     return _save_fig(fig, out_stem)
 
@@ -461,7 +526,8 @@ def make_vs_M_figure(
         written += _save_panel_singles(
             panels, slugs,
             lambda ax, s: _plot_panel(ax, s, logy=logy, steps=steps, ycap=ycap,
-                                      detect_off_scale=detect_off_scale),
+                                      detect_off_scale=detect_off_scale,
+                                      scale=SINGLE_SCALE),
             ylabel, r"Number of sampler steps $M$", out_stem,
         )
     return written
@@ -472,8 +538,12 @@ def make_vs_M_figure(
 # --------------------------------------------------------------------------- #
 
 
-def _plot_step_panel(ax, series: dict, *, logy: bool) -> list:
-    """Draw one metric-vs-assimilation-step panel; return (handle, label) pairs."""
+def _plot_step_panel(ax, series: dict, *, logy: bool, scale: float = 1.0) -> list:
+    """Draw one metric-vs-assimilation-step panel; return (handle, label) pairs.
+
+    ``scale`` -- see :func:`_plot_panel`.
+    """
+    series = _visible(series)  # SURGE-only lineup, as in _plot_panel
     handles: list = []
     for method, variant, label, colour, ls, marker, filled in SERIES:
         s = series.get((method, variant))
@@ -483,20 +553,22 @@ def _plot_step_panel(ax, series: dict, *, logy: bool) -> list:
         ys = [s[x] for x in xs]
         (h,) = ax.plot(
             xs, ys, color=colour, linestyle=ls, marker=marker,
-            markersize=6.0, markeredgewidth=1.2, markeredgecolor=colour,
+            markersize=6.0 * scale, markeredgewidth=1.2 * scale,
+            markeredgecolor=colour,
             markerfacecolor=(colour if filled else "white"),
-            linewidth=2.1 if variant is not None else 1.7, zorder=3,
+            linewidth=(2.1 if variant is not None else 1.7) * scale, zorder=3,
         )
         handles.append((h, label))
     if logy:
         ax.set_yscale("log")
     ax.margins(x=0.03)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
-    ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
-    ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.15)
+    ax.grid(True, which="major", linestyle="-", linewidth=0.6 * scale, alpha=0.25)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5 * scale, alpha=0.15)
     for sp in ("top", "right"):
         ax.spines[sp].set_visible(False)
-    ax.tick_params(which="both", direction="out", length=4, width=0.8)
+    ax.tick_params(which="both", direction="out", length=4 * scale,
+                   width=0.8 * scale)
     return handles
 
 
@@ -565,7 +637,7 @@ def make_vs_step_figure(
     if singles:
         written += _save_panel_singles(
             panels, slugs,
-            lambda ax, s: _plot_step_panel(ax, s, logy=logy),
+            lambda ax, s: _plot_step_panel(ax, s, logy=logy, scale=SINGLE_SCALE),
             ylabel, "Assimilation step", out_stem,
         )
     return written
@@ -738,8 +810,11 @@ def make_state_panel_singles(
 
     Colour scales are shared across methods per quantity (identical to the
     combined figure's), so panels are directly comparable; each quantity's scale
-    is also written out once as a standalone horizontal colourbar
+    is also written out once as a standalone VERTICAL colourbar
     ``<stem>__cbar_{field,std,abserr}.pdf`` for the figure to carry a single bar.
+    The bars are designed at the height the manuscript prints them
+    (``height=0.116\\textheight`` ~ 1.04in, included unrotated), so their tick
+    and label fonts come out at their nominal point sizes on the page.
     Truth and mean share the field scale (and hence ``cbar_field``).
     """
     if not records:
@@ -756,10 +831,12 @@ def make_state_panel_singles(
         # A sampler that blew up leaves an all-NaN field, which imshow renders as
         # blank white -- indistinguishable from a legitimately near-zero panel.
         # Say so on the panel instead.
+        # The panels print at ~1.04in (0.4x this design size), so the note needs
+        # a design size of ~18pt to come out at a readable ~7pt on the page.
         if not np.isfinite(field).any():
             ax.set_facecolor("0.9")
             ax.text(0.5, 0.5, "diverged\n(NaN)", transform=ax.transAxes,
-                    ha="center", va="center", fontsize=11, color="0.25")
+                    ha="center", va="center", fontsize=18, color="0.25")
         ax.set_xticks([])
         ax.set_yticks([])
         for sp in ax.spines.values():
@@ -777,17 +854,25 @@ def make_state_panel_singles(
         _panel(spread, std_kw, f"{out_stem.name}__std__{slug}")
         _panel(err, err_kw, f"{out_stem.name}__abserr__{slug}")
 
-    # Standalone horizontal colourbars: one per shared scale, so each manuscript
-    # figure shows its scale once instead of repeating it under every panel.
+    # Standalone vertical colourbars: one per shared scale, so each manuscript
+    # figure shows its scale once per row instead of under every panel. Designed
+    # at print height (CBAR_HEIGHT_IN), sitting unrotated beside the panels.
     for key, kw, label in (
         ("field", field_kw, cbar_label or "field"),
         ("std", std_kw, f"{cbar_label} std" if cbar_label else "std"),
         ("abserr", err_kw, f"$|$error$|$ ({cbar_label})" if cbar_label else "$|$error$|$"),
     ):
-        fig, ax = plt.subplots(figsize=(5.0, 0.5))
+        fig = plt.figure(figsize=(0.62, CBAR_HEIGHT_IN * 1.1))
+        cax = fig.add_axes([0.02, 0.05, 0.2, 0.9])
         norm = matplotlib.colors.Normalize(vmin=kw["vmin"], vmax=kw["vmax"])
         sm = matplotlib.cm.ScalarMappable(norm=norm, cmap=kw["cmap"])
-        fig.colorbar(sm, cax=ax, orientation="horizontal", label=label)
+        cb = fig.colorbar(sm, cax=cax, orientation="vertical")
+        cb.set_label(label, fontsize=6.5, labelpad=2.0)
+        cb.locator = mticker.MaxNLocator(nbins=4)
+        cb.formatter = mticker.FuncFormatter(lambda v, _p: f"{v:g}")
+        cb.update_ticks()
+        cb.ax.tick_params(labelsize=6.0, length=2.0, width=0.5, pad=1.5)
+        cb.outline.set_linewidth(0.5)
         written += _save_fig(fig, sdir / f"{out_stem.name}__cbar_{key}")
     return written
 
@@ -827,8 +912,10 @@ def save_field_panel(
         ax.imshow(field, origin="lower", cmap=cmap, vmin=vmin, vmax=vmax,
                   extent=extent, aspect="equal", interpolation="nearest")
     if scatter is not None:
+        # The panel prints at ~1.04in (0.4x this design size); s=10 keeps the
+        # sensor markers visible on the page without overlapping at 5% density.
         xs, ys, vals = scatter
-        ax.scatter(xs, ys, c=vals, cmap=cmap, vmin=vmin, vmax=vmax, s=3.0,
+        ax.scatter(xs, ys, c=vals, cmap=cmap, vmin=vmin, vmax=vmax, s=10.0,
                    linewidths=0.0, marker="s")
         ax.set_aspect("equal")
     ax.set_xticks([])
@@ -977,7 +1064,9 @@ def mirror_figures(written: list[Path], mirror_root: Path) -> list[Path]:
 
 
 __all__ = [
-    "STEPS", "SERIES", "SCENARIO_LABEL", "RESULTS", "FIGURES_DIR",
+    "STEPS", "SERIES", "HIDDEN_METHODS", "SCENARIO_LABEL", "RESULTS",
+    "FIGURES_DIR",
+    "SINGLE_FIGSIZE", "SINGLE_RC", "SINGLE_SCALE", "CBAR_HEIGHT_IN",
     "apply_style", "slugify", "load_metric_vs_M", "make_vs_M_figure",
     "load_metric_vs_step", "make_vs_step_figure", "save_series_legend",
     "load_state_records", "make_state_field_figure", "make_state_panel_singles",

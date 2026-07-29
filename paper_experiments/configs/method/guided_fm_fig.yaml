@@ -35,8 +35,8 @@ likelihood_model:
   # with the scenario rows nested under the case name (`navier_stokes:`); the
   # pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
   # (case_key, scenario_key, num_steps). A missing case / scenario / M cell falls
-  # back to `default` -- so urban / analytical use `default` until an `urban:`
-  # block is added. Env FIG_K / FIG_C override the resolved (k, c) (top precedence,
+  # back to `default`; all three cases now have a filled block, so nothing should
+  # hit that fallback. Env FIG_K / FIG_C override the resolved (k, c) (top precedence,
   # so a tuning sweep needs no edit to this YAML).
   #
   # WHICH KNOBS, AND WHY:
@@ -70,7 +70,16 @@ likelihood_model:
       sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25). k is
+                             # STRUCTURAL (set by observation-operator type), and
+                             # urban's scenarios are the SAME sparse random-
+                             # subsampling operator as NS's -- so k=3 transfers on
+                             # firmer ground than a swept numeric knob would.
+                             # NOTE the default is 1: without this block urban ran
+                             # k=1, which the NS sweep found uniformly worse on
+                             # sparse. This block is a real change, not a no-op.
+      sparse_5:    { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
 
   guidance_scale:            # FIG's c -- corrector step-size scale
     default: 10.0
@@ -82,7 +91,15 @@ likelihood_model:
       sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
+      sparse_5:    { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+      sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep
+    # (results/urban/tuning/ is empty). c is the primary NUMERICAL knob and the NS
+    # sweep found it sensitive to task and M -- on the sparse rows it landed flat at
+    # 10.0 across every M, which is why the transfer is plausible, but c is the FIG
+    # cell most worth re-sweeping on urban. c=10.0 happens to equal the `default`,
+    # so this table only changes behaviour together with the k=3 block above.
 
 posterior_model:
   _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

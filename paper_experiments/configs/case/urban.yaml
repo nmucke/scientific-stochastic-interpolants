@@ -52,7 +52,7 @@ ensemble_size: 64
 # 5-step seeded history + 15 assimilation steps = 20 physical steps
 # (n_assim = num_physical_steps - len_field_history(5) = 15). Matches NS.
 num_physical_steps: 20
-num_steps: 50            # M (sampler steps per assimilation step; swept {50,100,250,500})
+num_steps: 50            # M (sampler steps per assimilation step; swept {25,50,100,250})
 
 # Observation noise R = sigma^2 I in the NORMALISED state space (every channel has
 # unit std after the per-channel preprocesser), so a single scalar variance applies

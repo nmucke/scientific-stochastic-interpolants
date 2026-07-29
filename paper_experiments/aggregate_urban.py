@@ -26,9 +26,13 @@ trajectories (trajectory identity comes from the ``traj<N>`` filename token):
                                  per-step cost.
 
 Urban is multi-variable, so the metric set differs from NS: every urban metric
-present flows through both files (``rmse_velocity``, ``rmse_temperature``,
-``crps``, ``crps_observed``, ``crps_unobserved``, ``spread_skill``, plus ``nfe``
-/ ``seconds``).
+present flows through both files (``rmse``, ``crps`` and ``spread_skill`` each
+with their per-variable ``_velocity`` / ``_temperature`` splits,
+``crps_observed``, ``crps_unobserved``, plus ``nfe`` / ``seconds``). That is
+the NS set with the per-variable splits added and NS's two undefinable entries
+dropped: ``kl_points`` (no ground-truth posterior to reference) and
+``energy_spec_rmse`` (the radially-averaged KE spectrum presumes a periodic
+fluid box, which a building array is not).
 
     .venv/bin/python paper_experiments/aggregate_urban.py
 """
@@ -55,12 +59,17 @@ from common.latex_tables import TableSpec, write_latex_tables  # noqa: E402
 
 RESULTS = _here / "results"
 CASE = "urban"
-KEY_METRICS = ("rmse_velocity", "rmse_temperature", "crps", "spread_skill")
+KEY_METRICS = (
+    "rmse", "rmse_velocity", "rmse_temperature", "crps", "spread_skill"
+)
 
 # The LaTeX tables. Urban runs only the two sparse scenarios (run_urban_grid.sh)
 # and has no true solver, hence no classical filters -- so the row lineup is our
-# samplers + the solver-free baselines only. Columns are the metrics urban
-# actually computes: RMSE is per-variable (velocity, temperature).
+# samplers + the solver-free baselines only. Where a baseline has a SURGE variant
+# only that variant is run (see cases/urban/driver.py), so bare FlowDAS / SDA are
+# not rows here: listing them would print a row of "--" for every column. Columns
+# are the metrics urban actually computes: RMSE is per-variable (velocity,
+# temperature).
 TABLE_SPEC = TableSpec(
     case=CASE,
     case_label="Urban (uDALES)",
@@ -82,9 +91,7 @@ TABLE_SPEC = TableSpec(
         ("Ours (FM-ODE)", "Ours (FM-ODE)"),
     ),
     baselines=(
-        ("FlowDAS", "FlowDAS"),
         ("SURGE (FlowDAS)", "FlowDAS + SURGE"),
-        ("SDA", "SDA"),
         ("SURGE (SDA)", "SDA + SURGE"),
         ("D-Flow SGLD", "D-Flow SGLD"),
         ("Guided FM (FIG)", "Guided FM (FIG)"),
@@ -96,7 +103,8 @@ TABLE_SPEC = TableSpec(
     ),
     notes=(
         "uDALES has no differentiable solver, so the lineup is solver-free "
-        "throughout: no EnKF / particle-filter reference."
+        "throughout: no EnKF / particle-filter reference. FlowDAS and SDA are "
+        "reported in their SURGE form only."
     ),
 )
 

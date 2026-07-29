@@ -32,7 +32,13 @@ likelihood_model:
       sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.01, 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
-    # urban: <add after tuning>   (falls back to default until filled)
+    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
+      sparse_5:    { 25: 0.001, 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
+      sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
+    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep -- same
+    # table as sda.yaml, same caveat (see there). This is the row that actually RUNS
+    # on the urban grid: urban's lineup is SURGE-only, so bare SDA is off it and
+    # `SURGE (SDA)` carries the SDA comparison.
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgeFlowMatchingPosterior
