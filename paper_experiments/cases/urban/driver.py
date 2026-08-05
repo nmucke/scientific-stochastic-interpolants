@@ -98,9 +98,14 @@ VARIANT_FROM_MODE: dict = {
 
 # Random-observation scenarios only (per user): the two sparse sensor densities.
 # NO super-resolution for urban.
+# 2026-08-04: the urban lineup is now the two SPARSEST regimes -- 1/64 and 1/128.
+# `sparse 5%` is OFF the lineup (it remains fully wired: its scenario config, its
+# hyperparameter rows in every method YAML, and its SCENARIO_CONFIG_NAME entry are
+# all intact, so `SCENARIOS="sparse 5%" bash run_urban_grid.sh` still runs it).
+# Ordered densest -> sparsest, matching the Scenario enum's declaration order.
 URBAN_SCENARIOS: tuple[Scenario, ...] = (
-    Scenario.SPARSE_5,
     Scenario.SPARSE_1p5,
+    Scenario.SPARSE_0p78,
 )
 
 # The NS metric set MINUS the two NS-only entries, PLUS the per-variable RMSEs.
@@ -151,6 +156,13 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
 SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
     Scenario.SPARSE_5: "sparse_5",
     Scenario.SPARSE_1p5: "sparse_1p5",
+    # 1/128, added 2026-08-04. NOT in URBAN_SCENARIOS (the default lineup), so the
+    # grid does not pick it up on its own -- it runs only when asked for by name:
+    #     SCENARIOS="sparse 0.78125%" bash paper_experiments/run_urban_grid.sh
+    # This same string is the hyperparameter-table key (`scenario_key`), so every
+    # method YAML needs a matching `sparse_0p78:` row under its `urban:` block or
+    # the knob silently falls back to `default`.
+    Scenario.SPARSE_0p78: "sparse_0p78",
 }
 
 # Every method that CAN be run for urban -- i.e. has a method config wired above.

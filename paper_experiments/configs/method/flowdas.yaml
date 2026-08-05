@@ -40,16 +40,33 @@ likelihood_model:
       sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.004, 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25) -- see below
-      sparse_5:    { 25: 0.002, 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
-      sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
-    # URBAN PROVENANCE: these are the NS sparse cells verbatim, NOT an urban sweep
-    # (results/urban/tuning/ is still empty; run_urban_tuning.sh has never run).
-    # The transfer is defensible -- both cases are sparse random-subsampling in the
-    # NORMALISED state space with the same sigma=0.05 -- but it is NOT free: urban's
-    # sparse_5 sees 5% of 4x128x128 dofs against NS's 5% of 1x128x128, so the
-    # residual norm the guidance multiplies is ~4x larger and the optimal zeta need
-    # not be the same. Re-sweep with run_urban_tuning.sh before the headline table.
+    urban:                   # SWEPT ON URBAN 2026-07-30 (run_urban_tuning.sh flowdas)
+      sparse_5:    { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_1p5:  { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_0p78: { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+    # URBAN PROVENANCE: measured, no longer copied from NS. 64-cell sweep,
+    # results/urban/tuning/flowdas/, zeta in {0, 1e-5, 5e-5, 1e-4, 2e-4, 5e-4, 1e-3,
+    # 2e-3} x {sparse_5, sparse_1p5} x M {25,50,100,250}. Conditions: traj6 (held out
+    # of the paper grid's 1..5), seed 0, E=8, num_physical_steps=6 = 1 DA step.
+    # zeta=5e-4 wins EVERY one of the 8 cells and is a bracketed interior optimum
+    # (2e-4 and 1e-3 both worse on each side), so the value is flat in M and scenario
+    # -- hence the identical rows. M=500 carries the same value; the urban grid does
+    # not run M=500 (its ladder is {25,50,100,250}), so that column is a placeholder.
+    #
+    # THIS MOVED THE CELL BY 4-8x. The previous entries (NS sparse verbatim: 0.002 /
+    # 0.004) are catastrophic on urban -- rmse 0.33-0.44 against 0.054-0.058 at 5e-4,
+    # i.e. ~7x worse, and worse than not assimilating at all. The NS->urban transfer
+    # failed exactly where the old comment predicted it might: urban's sparse_5
+    # observes ~2081 points (5% of the 10409 FLUID cells x 4 channels) against NS's
+    # 819, so the residual the raw likelihood score multiplies is ~2.5x larger.
+    #
+    # CAVEAT, and it is a real one: tuned at ONE trajectory, ONE seed, E=8 and a
+    # SINGLE assimilation step, against the paper grid's E=64 / 15 steps. At 1 step
+    # the metric is dominated by prior forecast error -- the zeta=0 control (no
+    # guidance at all) scores 0.0602/0.0571/0.0561/0.0556, within 3% of the tuned
+    # cell on sparse_5 and within 0.5% on sparse_1p5. So this zeta is the best value
+    # measured, but the measurement had little room to discriminate; FlowDAS was not
+    # re-run at more DA steps (SDA and FIG were -- see their configs).
 
 posterior_model:
   _target_: scisi.posterior_models.stochastic_interpolant_posterior.StochasticInterpolantPosterior

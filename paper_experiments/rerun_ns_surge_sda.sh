@@ -27,10 +27,21 @@
 #                new baselines cells while phase 2 was working; this catches those.
 #
 # The cell list is DERIVED from the data, not hard-coded: exactly those cells that
-# actually contain SURGE (SDA) rows get rerun (59 metrics cells as of 2026-07-25 --
-# 4 scenarios x M in {25,50,100,250} x traj 10..13). Cells the grid has not reached
-# yet are not invented here; the grid will produce them itself, correctly, once the
-# fixed code is in place.
+# actually contain SURGE (SDA) rows get rerun. So the count is NOT the full grid
+# (4 scenarios x M in {25,50,100,250} x traj 10..14 = 80) and is not meant to be --
+# 2026-07-25 it was 59 (traj 10..13 only); 2026-07-30 it is 77, the 3 absent cells
+# being {32^2->128^2, sparse 5%, sparse 1.5625%} x M25 x traj14, which the M25-nodflow
+# grid had not reached yet. Cells the grid has not reached are not invented here; the
+# grid will produce them itself, correctly, once the fixed code is in place.
+#
+# RESUMING AN INTERRUPTED RUN -- pass the cell list explicitly:
+#     CELLS_FILE=paper_experiments/results/navier_stokes/.rerun_surge_sda_cells.txt \
+#       bash paper_experiments/rerun_ns_surge_sda.sh
+#   Do NOT just relaunch. Phase 1 of the first run already stripped the rows, so
+#   re-deriving the list now finds nothing and hands phase 2 an EMPTY list -- the
+#   method would stay missing from the results entirely. With CELLS_FILE set, phase 1
+#   keeps its hands off that file (its own findings go to *_phase1.txt) and off the
+#   cells already finished, so the run picks up where it stopped.
 #
 # RUN IT AGAIN AFTER THE OTHER GRIDS FINISH:
 #     CLEAN_ONLY=1 bash paper_experiments/rerun_ns_surge_sda.sh
@@ -79,7 +90,18 @@ CLEAN_ONLY="${CLEAN_ONLY:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 LOG="$ROOT/rerun_surge_sda.log"
+# Phase 2 reads $CELLS. By default that is the list phase 1 derives from the data.
+# With CELLS_FILE set it is the caller's own list, and phase 1 must NOT overwrite it
+# -- its own findings go to a side file instead. This is what makes a RESUME work:
+# after a first run has stripped the rows, re-deriving finds nothing (the rows are
+# already gone) and would hand phase 2 an empty list.
 CELLS="${CELLS_FILE:-$ROOT/.rerun_surge_sda_cells.txt}"
+if [ -n "${CELLS_FILE:-}" ]; then
+  STRIP_CELLS_OUT="${CELLS%.txt}_phase1.txt"
+  [ -s "$CELLS" ] || { echo "[surge] FATAL: CELLS_FILE='$CELLS' is missing or empty" >&2; exit 1; }
+else
+  STRIP_CELLS_OUT="$CELLS"
+fi
 
 # --- guards ------------------------------------------------------------------
 # "results copy/" is the user's untracked safety net -- never touch it.
@@ -100,31 +122,40 @@ fi
 
 # --- phase 1: clean ----------------------------------------------------------
 STRIP_ARGS=(--root "$ROOT" --method "$METHOD" --exclude-group "$GROUP"
-            --backup "$BACKUP" --cells-out "$CELLS")
+            --backup "$BACKUP" --cells-out "$STRIP_CELLS_OUT")
 [ "$DRY_RUN" = "1" ] && STRIP_ARGS+=(--dry-run)
 echo "[surge] --- phase 1: strip '$METHOD' rows from group CSVs ---" | tee -a "$LOG"
 $PY paper_experiments/strip_method_rows.py "${STRIP_ARGS[@]}" 2>&1 | tee -a "$LOG"
 [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "[surge] FATAL: strip failed" >&2; exit 1; }
 
-# The method's OWN cell files from an earlier rerun: delete, or the grid-style
-# skip-if-exists below would keep the stale numbers alive.
-for f in "$MET"/*__${GROUP}.csv "$PS"/*__${GROUP}.csv; do
-  [ -e "$f" ] || continue
-  if [ "$DRY_RUN" = "1" ]; then echo "[surge] would delete $f" | tee -a "$LOG"; else
-    mkdir -p "$BACKUP/$(basename "$(dirname "$f")")"
-    mv "$f" "$BACKUP/$(basename "$(dirname "$f")")/" && echo "[surge] cleared $(basename "$f")" | tee -a "$LOG"
-  fi
-done
-
-# Stale raw ensembles for this method (SAVE_TRAJ only). Moved, not deleted, so the
-# pre-fix ensembles stay inspectable; the rerun writes fresh ones in their place.
-for f in "$ROOT"/states/traj*/*__${METHOD_SLUG}__*.npz; do
-  [ -e "$f" ] || continue
-  if [ "$DRY_RUN" = "1" ]; then echo "[surge] would move states $(basename "$f")" | tee -a "$LOG"; else
-    dest="$BACKUP/states/$(basename "$(dirname "$f")")"
-    mkdir -p "$dest"; mv "$f" "$dest/" && echo "[surge] cleared states $(basename "$f")" | tee -a "$LOG"
-  fi
-done
+# The method's OWN artefacts from a PRE-FIX rerun -- cell CSVs and raw ensembles.
+# Clear them (move, don't delete: the pre-fix output stays inspectable), or the
+# grid-style skip-if-exists below would keep the stale numbers alive.
+#
+# NOT on a resume (CELLS_FILE set). There everything bearing this method's name is
+# post-fix work that an interrupted run already finished, and skip-if-exists is
+# exactly how we avoid redoing it. Clearing it would restart from cell 1 on every
+# interruption, and would orphan the traj$SAVE_TRAJ ensembles of cells that then get
+# skipped (the CSV survives, so the .npz is never rewritten).
+if [ -n "${CELLS_FILE:-}" ]; then
+  KEPT=$(ls -1 "$MET"/*__${GROUP}.csv 2>/dev/null | wc -l)
+  echo "[surge] RESUME (CELLS_FILE set): keeping $KEPT finished $GROUP cell file(s) + their states; those cells are skipped below." | tee -a "$LOG"
+else
+  for f in "$MET"/*__${GROUP}.csv "$PS"/*__${GROUP}.csv; do
+    [ -e "$f" ] || continue
+    if [ "$DRY_RUN" = "1" ]; then echo "[surge] would delete $f" | tee -a "$LOG"; else
+      mkdir -p "$BACKUP/$(basename "$(dirname "$f")")"
+      mv "$f" "$BACKUP/$(basename "$(dirname "$f")")/" && echo "[surge] cleared $(basename "$f")" | tee -a "$LOG"
+    fi
+  done
+  for f in "$ROOT"/states/traj*/*__${METHOD_SLUG}__*.npz; do
+    [ -e "$f" ] || continue
+    if [ "$DRY_RUN" = "1" ]; then echo "[surge] would move states $(basename "$f")" | tee -a "$LOG"; else
+      dest="$BACKUP/states/$(basename "$(dirname "$f")")"
+      mkdir -p "$dest"; mv "$f" "$dest/" && echo "[surge] cleared states $(basename "$f")" | tee -a "$LOG"
+    fi
+  done
+fi
 
 if [ "$CLEAN_ONLY" = "1" ]; then
   echo "[surge] CLEAN_ONLY=1 -- stopping after the clean phase. $(date)" | tee -a "$LOG"

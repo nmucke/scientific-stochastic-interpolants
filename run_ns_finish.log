@@ -1,0 +1,36 @@
+[nsgrid] START Sun Aug  2 01:56:31 PM CEST 2026 | E=64 NP=20 dev=cuda | traj=[10 11] steps=[50 100 250] groups=[ours_shared_k10] save_states=traj11
+[nsgrid] ===== traj10 (save_states=false) 13:56:31 =====
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/16_2_128_2__M50__traj10__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/16_2_128_2__M100__traj10__ours_shared_jac10.csv
+[nsgrid] RUN  ours_shared_jac10/16_2_128_2/M250/traj10 -> 16_2_128_2__M250__traj10__ours_shared_jac10.csv 13:56:31
+[nsgrid] OK   ours_shared_jac10/16_2_128_2/M250/traj10 16_2_128_2__M250__traj10__ours_shared_jac10.csv 16:15:45
+[nsgrid] RUN  ours_shared_jac10/32_2_128_2/M50/traj10 -> 32_2_128_2__M50__traj10__ours_shared_jac10.csv 16:15:45
+[nsgrid] OK   ours_shared_jac10/32_2_128_2/M50/traj10 32_2_128_2__M50__traj10__ours_shared_jac10.csv 17:03:48
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/32_2_128_2__M100__traj10__ours_shared_jac10.csv
+[nsgrid] RUN  ours_shared_jac10/32_2_128_2/M250/traj10 -> 32_2_128_2__M250__traj10__ours_shared_jac10.csv 17:03:48
+[nsgrid] OK   ours_shared_jac10/32_2_128_2/M250/traj10 32_2_128_2__M250__traj10__ours_shared_jac10.csv 21:03:44
+[nsgrid] RUN  ours_shared_jac10/sparse_5/M50/traj10 -> sparse_5__M50__traj10__ours_shared_jac10.csv 21:03:44
+[nsgrid] OK   ours_shared_jac10/sparse_5/M50/traj10 sparse_5__M50__traj10__ours_shared_jac10.csv 21:46:25
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_5__M100__traj10__ours_shared_jac10.csv
+[nsgrid] RUN  ours_shared_jac10/sparse_5/M250/traj10 -> sparse_5__M250__traj10__ours_shared_jac10.csv 21:46:25
+[nsgrid] OK   ours_shared_jac10/sparse_5/M250/traj10 sparse_5__M250__traj10__ours_shared_jac10.csv 01:19:11
+[nsgrid] RUN  ours_shared_jac10/sparse_1_5625/M50/traj10 -> sparse_1_5625__M50__traj10__ours_shared_jac10.csv 01:19:11
+[nsgrid] OK   ours_shared_jac10/sparse_1_5625/M50/traj10 sparse_1_5625__M50__traj10__ours_shared_jac10.csv 01:47:07
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_1_5625__M100__traj10__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_1_5625__M250__traj10__ours_shared_jac10.csv
+[nsgrid] ===== traj10 done 01:47:07 =====
+[nsgrid] ===== traj11 (save_states=true) 01:47:07 =====
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/16_2_128_2__M50__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/16_2_128_2__M100__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/16_2_128_2__M250__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/32_2_128_2__M50__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/32_2_128_2__M100__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/32_2_128_2__M250__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_5__M50__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_5__M100__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_5__M250__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_1_5625__M50__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_1_5625__M100__traj11__ours_shared_jac10.csv
+[nsgrid] SKIP (exists) paper_experiments/results/navier_stokes/metrics/sparse_1_5625__M250__traj11__ours_shared_jac10.csv
+[nsgrid] ===== traj11 done 01:47:07 =====
+[nsgrid] ALL DONE Mon Aug  3 01:47:07 AM CEST 2026

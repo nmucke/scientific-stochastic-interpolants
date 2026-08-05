@@ -1,0 +1,411 @@
+[urban-tune] START Thu Jul 30 08:35:31 AM CEST 2026 | which=baselines DRY_RUN=0 SMOKE=0 dev=cuda
+[urban-tune] ===== method=flowdas (E=8 NP=6 dev=cuda traj=6) 08:35:31 =====
+[urban-tune] RUN  flowdas/sparse_5/M25/zeta=0 -> sparse_5__M25__zeta0.csv 08:35:31
+[urban-tune] OK   flowdas/sparse_5/M25/zeta=0 08:35:53
+[urban-tune] RUN  flowdas/sparse_5/M25/zeta=0.00001 -> sparse_5__M25__zeta0.00001.csv 08:35:53
+[urban-tune] OK   flowdas/sparse_5/M25/zeta=0.00001 08:36:16
+[urban-tune] RUN  flowdas/sparse_5/M25/zeta=0.00005 -> sparse_5__M25__zeta0.00005.csv 08:36:16
+[urban-tune] OK   flowdas/sparse_5/M25/zeta=0.00005 08:36:38
+[urban-tune] RUN  flowdas/sparse_5/M25/zeta=0.0001 -> sparse_5__M25__zeta0.0001.csv 08:36:38
+[urban-tune] OK   flowdas/sparse_5/M25/zeta=0.0001 08:37:00
+[urban-tune] RUN  flowdas/sparse_5/M25/zeta=0.0002 -> sparse_5__M25__zeta0.0002.csv 08:37:00
+[urban-tune] OK   flowdas/sparse_5/M25/zeta=0.0002 08:37:21
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M25__zeta0.0005.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M25__zeta0.001.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M25__zeta0.002.csv
+[urban-tune] RUN  flowdas/sparse_5/M50/zeta=0 -> sparse_5__M50__zeta0.csv 08:37:21
+[urban-tune] OK   flowdas/sparse_5/M50/zeta=0 08:37:49
+[urban-tune] RUN  flowdas/sparse_5/M50/zeta=0.00001 -> sparse_5__M50__zeta0.00001.csv 08:37:49
+[urban-tune] OK   flowdas/sparse_5/M50/zeta=0.00001 08:38:16
+[urban-tune] RUN  flowdas/sparse_5/M50/zeta=0.00005 -> sparse_5__M50__zeta0.00005.csv 08:38:16
+[urban-tune] OK   flowdas/sparse_5/M50/zeta=0.00005 08:38:44
+[urban-tune] RUN  flowdas/sparse_5/M50/zeta=0.0001 -> sparse_5__M50__zeta0.0001.csv 08:38:44
+[urban-tune] OK   flowdas/sparse_5/M50/zeta=0.0001 08:39:12
+[urban-tune] RUN  flowdas/sparse_5/M50/zeta=0.0002 -> sparse_5__M50__zeta0.0002.csv 08:39:12
+[urban-tune] OK   flowdas/sparse_5/M50/zeta=0.0002 08:39:40
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M50__zeta0.0005.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M50__zeta0.001.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M50__zeta0.002.csv
+[urban-tune] RUN  flowdas/sparse_5/M100/zeta=0 -> sparse_5__M100__zeta0.csv 08:39:40
+[urban-tune] OK   flowdas/sparse_5/M100/zeta=0 08:40:20
+[urban-tune] RUN  flowdas/sparse_5/M100/zeta=0.00001 -> sparse_5__M100__zeta0.00001.csv 08:40:20
+[urban-tune] OK   flowdas/sparse_5/M100/zeta=0.00001 08:40:59
+[urban-tune] RUN  flowdas/sparse_5/M100/zeta=0.00005 -> sparse_5__M100__zeta0.00005.csv 08:40:59
+[urban-tune] OK   flowdas/sparse_5/M100/zeta=0.00005 08:41:42
+[urban-tune] RUN  flowdas/sparse_5/M100/zeta=0.0001 -> sparse_5__M100__zeta0.0001.csv 08:41:42
+[urban-tune] OK   flowdas/sparse_5/M100/zeta=0.0001 08:42:28
+[urban-tune] RUN  flowdas/sparse_5/M100/zeta=0.0002 -> sparse_5__M100__zeta0.0002.csv 08:42:28
+[urban-tune] OK   flowdas/sparse_5/M100/zeta=0.0002 08:43:16
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M100__zeta0.0005.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M100__zeta0.001.csv
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/flowdas/sparse_5__M100__zeta0.002.csv
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0 -> sparse_5__M250__zeta0.csv 08:43:16
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0 08:44:38
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.00001 -> sparse_5__M250__zeta0.00001.csv 08:44:38
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.00001 08:45:58
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.00005 -> sparse_5__M250__zeta0.00005.csv 08:45:58
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.00005 08:47:23
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.0001 -> sparse_5__M250__zeta0.0001.csv 08:47:23
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.0001 08:48:51
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.0002 -> sparse_5__M250__zeta0.0002.csv 08:48:51
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.0002 08:50:15
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.0005 -> sparse_5__M250__zeta0.0005.csv 08:50:15
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.0005 08:51:39
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.001 -> sparse_5__M250__zeta0.001.csv 08:51:39
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.001 08:52:55
+[urban-tune] RUN  flowdas/sparse_5/M250/zeta=0.002 -> sparse_5__M250__zeta0.002.csv 08:52:55
+[urban-tune] OK   flowdas/sparse_5/M250/zeta=0.002 08:54:10
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0 -> sparse_1.5625__M25__zeta0.csv 08:54:10
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0 08:54:31
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.00001 -> sparse_1.5625__M25__zeta0.00001.csv 08:54:31
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.00001 08:54:53
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.00005 -> sparse_1.5625__M25__zeta0.00005.csv 08:54:54
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.00005 08:55:15
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.0001 -> sparse_1.5625__M25__zeta0.0001.csv 08:55:15
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.0001 08:55:37
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.0002 -> sparse_1.5625__M25__zeta0.0002.csv 08:55:37
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.0002 08:55:58
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.0005 -> sparse_1.5625__M25__zeta0.0005.csv 08:55:58
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.0005 08:56:20
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.001 -> sparse_1.5625__M25__zeta0.001.csv 08:56:20
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.001 08:56:45
+[urban-tune] RUN  flowdas/sparse_1.5625/M25/zeta=0.002 -> sparse_1.5625__M25__zeta0.002.csv 08:56:45
+[urban-tune] OK   flowdas/sparse_1.5625/M25/zeta=0.002 08:57:05
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0 -> sparse_1.5625__M50__zeta0.csv 08:57:05
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0 08:57:33
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.00001 -> sparse_1.5625__M50__zeta0.00001.csv 08:57:33
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.00001 08:58:00
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.00005 -> sparse_1.5625__M50__zeta0.00005.csv 08:58:00
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.00005 08:58:27
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.0001 -> sparse_1.5625__M50__zeta0.0001.csv 08:58:27
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.0001 08:58:56
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.0002 -> sparse_1.5625__M50__zeta0.0002.csv 08:58:56
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.0002 08:59:23
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.0005 -> sparse_1.5625__M50__zeta0.0005.csv 08:59:23
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.0005 08:59:52
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.001 -> sparse_1.5625__M50__zeta0.001.csv 08:59:52
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.001 09:00:19
+[urban-tune] RUN  flowdas/sparse_1.5625/M50/zeta=0.002 -> sparse_1.5625__M50__zeta0.002.csv 09:00:19
+[urban-tune] OK   flowdas/sparse_1.5625/M50/zeta=0.002 09:00:47
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0 -> sparse_1.5625__M100__zeta0.csv 09:00:47
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0 09:01:27
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.00001 -> sparse_1.5625__M100__zeta0.00001.csv 09:01:27
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.00001 09:02:08
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.00005 -> sparse_1.5625__M100__zeta0.00005.csv 09:02:08
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.00005 09:02:47
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.0001 -> sparse_1.5625__M100__zeta0.0001.csv 09:02:47
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.0001 09:03:27
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.0002 -> sparse_1.5625__M100__zeta0.0002.csv 09:03:27
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.0002 09:04:10
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.0005 -> sparse_1.5625__M100__zeta0.0005.csv 09:04:10
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.0005 09:04:49
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.001 -> sparse_1.5625__M100__zeta0.001.csv 09:04:50
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.001 09:05:45
+[urban-tune] RUN  flowdas/sparse_1.5625/M100/zeta=0.002 -> sparse_1.5625__M100__zeta0.002.csv 09:05:45
+[urban-tune] OK   flowdas/sparse_1.5625/M100/zeta=0.002 09:06:26
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0 -> sparse_1.5625__M250__zeta0.csv 09:06:26
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0 09:07:44
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.00001 -> sparse_1.5625__M250__zeta0.00001.csv 09:07:44
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.00001 09:08:59
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.00005 -> sparse_1.5625__M250__zeta0.00005.csv 09:08:59
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.00005 09:10:20
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.0001 -> sparse_1.5625__M250__zeta0.0001.csv 09:10:20
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.0001 09:11:35
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.0002 -> sparse_1.5625__M250__zeta0.0002.csv 09:11:35
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.0002 09:12:50
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.0005 -> sparse_1.5625__M250__zeta0.0005.csv 09:12:50
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.0005 09:14:06
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.001 -> sparse_1.5625__M250__zeta0.001.csv 09:14:06
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.001 09:15:22
+[urban-tune] RUN  flowdas/sparse_1.5625/M250/zeta=0.002 -> sparse_1.5625__M250__zeta0.002.csv 09:15:22
+[urban-tune] OK   flowdas/sparse_1.5625/M250/zeta=0.002 09:16:38
+[urban-tune] ===== method=sda (E=8 NP=6 dev=cuda traj=6) 09:16:38 =====
+[urban-tune] RUN  sda/sparse_5/M25/gamma=0.00001 -> sparse_5__M25__gamma0.00001.csv 09:16:38
+[urban-tune] OK   sda/sparse_5/M25/gamma=0.00001 09:17:01
+[urban-tune] RUN  sda/sparse_5/M25/gamma=0.0001 -> sparse_5__M25__gamma0.0001.csv 09:17:01
+[urban-tune] OK   sda/sparse_5/M25/gamma=0.0001 09:17:23
+[urban-tune] RUN  sda/sparse_5/M25/gamma=0.0005 -> sparse_5__M25__gamma0.0005.csv 09:17:23
+[urban-tune] OK   sda/sparse_5/M25/gamma=0.0005 09:17:48
+[urban-tune] RUN  sda/sparse_5/M25/gamma=0.001 -> sparse_5__M25__gamma0.001.csv 09:17:48
+[urban-tune] OK   sda/sparse_5/M25/gamma=0.001 09:18:11
+[urban-tune] RUN  sda/sparse_5/M25/gamma=0.01 -> sparse_5__M25__gamma0.01.csv 09:18:11
+[urban-tune] OK   sda/sparse_5/M25/gamma=0.01 09:18:33
+[urban-tune] RUN  sda/sparse_5/M50/gamma=0.00001 -> sparse_5__M50__gamma0.00001.csv 09:18:33
+[urban-tune] OK   sda/sparse_5/M50/gamma=0.00001 09:19:02
+[urban-tune] RUN  sda/sparse_5/M50/gamma=0.0001 -> sparse_5__M50__gamma0.0001.csv 09:19:02
+[urban-tune] OK   sda/sparse_5/M50/gamma=0.0001 09:19:30
+[urban-tune] RUN  sda/sparse_5/M50/gamma=0.0005 -> sparse_5__M50__gamma0.0005.csv 09:19:30
+[urban-tune] OK   sda/sparse_5/M50/gamma=0.0005 09:19:59
+[urban-tune] RUN  sda/sparse_5/M50/gamma=0.001 -> sparse_5__M50__gamma0.001.csv 09:19:59
+[urban-tune] OK   sda/sparse_5/M50/gamma=0.001 09:20:27
+[urban-tune] RUN  sda/sparse_5/M50/gamma=0.01 -> sparse_5__M50__gamma0.01.csv 09:20:27
+[urban-tune] OK   sda/sparse_5/M50/gamma=0.01 09:20:55
+[urban-tune] RUN  sda/sparse_5/M100/gamma=0.00001 -> sparse_5__M100__gamma0.00001.csv 09:20:55
+[urban-tune] OK   sda/sparse_5/M100/gamma=0.00001 09:21:34
+[urban-tune] RUN  sda/sparse_5/M100/gamma=0.0001 -> sparse_5__M100__gamma0.0001.csv 09:21:34
+[urban-tune] OK   sda/sparse_5/M100/gamma=0.0001 09:22:14
+[urban-tune] RUN  sda/sparse_5/M100/gamma=0.0005 -> sparse_5__M100__gamma0.0005.csv 09:22:14
+[urban-tune] OK   sda/sparse_5/M100/gamma=0.0005 09:22:56
+[urban-tune] RUN  sda/sparse_5/M100/gamma=0.001 -> sparse_5__M100__gamma0.001.csv 09:22:56
+[urban-tune] OK   sda/sparse_5/M100/gamma=0.001 09:23:36
+[urban-tune] RUN  sda/sparse_5/M100/gamma=0.01 -> sparse_5__M100__gamma0.01.csv 09:23:36
+[urban-tune] OK   sda/sparse_5/M100/gamma=0.01 09:24:16
+[urban-tune] RUN  sda/sparse_5/M250/gamma=0.00001 -> sparse_5__M250__gamma0.00001.csv 09:24:16
+[urban-tune] OK   sda/sparse_5/M250/gamma=0.00001 09:25:31
+[urban-tune] RUN  sda/sparse_5/M250/gamma=0.0001 -> sparse_5__M250__gamma0.0001.csv 09:25:31
+[urban-tune] OK   sda/sparse_5/M250/gamma=0.0001 09:26:46
+[urban-tune] RUN  sda/sparse_5/M250/gamma=0.0005 -> sparse_5__M250__gamma0.0005.csv 09:26:46
+[urban-tune] OK   sda/sparse_5/M250/gamma=0.0005 09:28:02
+[urban-tune] RUN  sda/sparse_5/M250/gamma=0.001 -> sparse_5__M250__gamma0.001.csv 09:28:03
+[urban-tune] OK   sda/sparse_5/M250/gamma=0.001 09:29:19
+[urban-tune] RUN  sda/sparse_5/M250/gamma=0.01 -> sparse_5__M250__gamma0.01.csv 09:29:19
+[urban-tune] OK   sda/sparse_5/M250/gamma=0.01 09:30:40
+[urban-tune] RUN  sda/sparse_1.5625/M25/gamma=0.00001 -> sparse_1.5625__M25__gamma0.00001.csv 09:30:40
+[urban-tune] OK   sda/sparse_1.5625/M25/gamma=0.00001 09:31:02
+[urban-tune] RUN  sda/sparse_1.5625/M25/gamma=0.0001 -> sparse_1.5625__M25__gamma0.0001.csv 09:31:02
+[urban-tune] OK   sda/sparse_1.5625/M25/gamma=0.0001 09:31:23
+[urban-tune] RUN  sda/sparse_1.5625/M25/gamma=0.0005 -> sparse_1.5625__M25__gamma0.0005.csv 09:31:23
+[urban-tune] OK   sda/sparse_1.5625/M25/gamma=0.0005 09:31:50
+[urban-tune] RUN  sda/sparse_1.5625/M25/gamma=0.001 -> sparse_1.5625__M25__gamma0.001.csv 09:31:50
+[urban-tune] OK   sda/sparse_1.5625/M25/gamma=0.001 09:32:11
+[urban-tune] RUN  sda/sparse_1.5625/M25/gamma=0.01 -> sparse_1.5625__M25__gamma0.01.csv 09:32:11
+[urban-tune] OK   sda/sparse_1.5625/M25/gamma=0.01 09:32:32
+[urban-tune] RUN  sda/sparse_1.5625/M50/gamma=0.00001 -> sparse_1.5625__M50__gamma0.00001.csv 09:32:32
+[urban-tune] OK   sda/sparse_1.5625/M50/gamma=0.00001 09:32:59
+[urban-tune] RUN  sda/sparse_1.5625/M50/gamma=0.0001 -> sparse_1.5625__M50__gamma0.0001.csv 09:32:59
+[urban-tune] OK   sda/sparse_1.5625/M50/gamma=0.0001 09:33:27
+[urban-tune] RUN  sda/sparse_1.5625/M50/gamma=0.0005 -> sparse_1.5625__M50__gamma0.0005.csv 09:33:27
+[urban-tune] OK   sda/sparse_1.5625/M50/gamma=0.0005 09:33:55
+[urban-tune] RUN  sda/sparse_1.5625/M50/gamma=0.001 -> sparse_1.5625__M50__gamma0.001.csv 09:33:55
+[urban-tune] OK   sda/sparse_1.5625/M50/gamma=0.001 09:34:23
+[urban-tune] RUN  sda/sparse_1.5625/M50/gamma=0.01 -> sparse_1.5625__M50__gamma0.01.csv 09:34:23
+[urban-tune] OK   sda/sparse_1.5625/M50/gamma=0.01 09:34:52
+[urban-tune] RUN  sda/sparse_1.5625/M100/gamma=0.00001 -> sparse_1.5625__M100__gamma0.00001.csv 09:34:52
+[urban-tune] OK   sda/sparse_1.5625/M100/gamma=0.00001 09:35:33
+[urban-tune] RUN  sda/sparse_1.5625/M100/gamma=0.0001 -> sparse_1.5625__M100__gamma0.0001.csv 09:35:33
+[urban-tune] OK   sda/sparse_1.5625/M100/gamma=0.0001 09:36:12
+[urban-tune] RUN  sda/sparse_1.5625/M100/gamma=0.0005 -> sparse_1.5625__M100__gamma0.0005.csv 09:36:12
+[urban-tune] OK   sda/sparse_1.5625/M100/gamma=0.0005 09:36:51
+[urban-tune] RUN  sda/sparse_1.5625/M100/gamma=0.001 -> sparse_1.5625__M100__gamma0.001.csv 09:36:51
+[urban-tune] OK   sda/sparse_1.5625/M100/gamma=0.001 09:37:30
+[urban-tune] RUN  sda/sparse_1.5625/M100/gamma=0.01 -> sparse_1.5625__M100__gamma0.01.csv 09:37:31
+[urban-tune] OK   sda/sparse_1.5625/M100/gamma=0.01 09:38:12
+[urban-tune] RUN  sda/sparse_1.5625/M250/gamma=0.00001 -> sparse_1.5625__M250__gamma0.00001.csv 09:38:12
+[urban-tune] OK   sda/sparse_1.5625/M250/gamma=0.00001 09:39:28
+[urban-tune] RUN  sda/sparse_1.5625/M250/gamma=0.0001 -> sparse_1.5625__M250__gamma0.0001.csv 09:39:28
+[urban-tune] OK   sda/sparse_1.5625/M250/gamma=0.0001 09:40:46
+[urban-tune] RUN  sda/sparse_1.5625/M250/gamma=0.0005 -> sparse_1.5625__M250__gamma0.0005.csv 09:40:46
+[urban-tune] OK   sda/sparse_1.5625/M250/gamma=0.0005 09:42:19
+[urban-tune] RUN  sda/sparse_1.5625/M250/gamma=0.001 -> sparse_1.5625__M250__gamma0.001.csv 09:42:19
+[urban-tune] OK   sda/sparse_1.5625/M250/gamma=0.001 09:44:51
+[urban-tune] RUN  sda/sparse_1.5625/M250/gamma=0.01 -> sparse_1.5625__M250__gamma0.01.csv 09:44:51
+[urban-tune] OK   sda/sparse_1.5625/M250/gamma=0.01 09:47:19
+[urban-tune] ===== method=fig (E=8 NP=6 dev=cuda traj=6) 09:47:19 =====
+[urban-tune] RUN  fig/sparse_5/M25/k=1 c=2 -> sparse_5__M25__k1_c2.csv 09:47:19
+[urban-tune] OK   fig/sparse_5/M25/k=1 c=2 09:47:44
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/fig/sparse_5__M25__k1_c5.csv
+[urban-tune] RUN  fig/sparse_5/M25/k=1 c=10 -> sparse_5__M25__k1_c10.csv 09:47:44
+[urban-tune] OK   fig/sparse_5/M25/k=1 c=10 09:48:04
+[urban-tune] RUN  fig/sparse_5/M25/k=1 c=20 -> sparse_5__M25__k1_c20.csv 09:48:04
+[urban-tune] OK   fig/sparse_5/M25/k=1 c=20 09:48:26
+[urban-tune] RUN  fig/sparse_5/M25/k=3 c=2 -> sparse_5__M25__k3_c2.csv 09:48:26
+[urban-tune] OK   fig/sparse_5/M25/k=3 c=2 09:48:51
+[urban-tune] RUN  fig/sparse_5/M25/k=3 c=5 -> sparse_5__M25__k3_c5.csv 09:48:51
+[urban-tune] OK   fig/sparse_5/M25/k=3 c=5 09:49:12
+[urban-tune] RUN  fig/sparse_5/M25/k=3 c=10 -> sparse_5__M25__k3_c10.csv 09:49:12
+[urban-tune] OK   fig/sparse_5/M25/k=3 c=10 09:49:34
+[urban-tune] RUN  fig/sparse_5/M25/k=3 c=20 -> sparse_5__M25__k3_c20.csv 09:49:34
+[urban-tune] OK   fig/sparse_5/M25/k=3 c=20 09:49:55
+[urban-tune] RUN  fig/sparse_5/M50/k=1 c=2 -> sparse_5__M50__k1_c2.csv 09:49:55
+[urban-tune] OK   fig/sparse_5/M50/k=1 c=2 09:50:21
+[urban-tune] RUN  fig/sparse_5/M50/k=1 c=5 -> sparse_5__M50__k1_c5.csv 09:50:21
+[urban-tune] OK   fig/sparse_5/M50/k=1 c=5 09:50:46
+[urban-tune] RUN  fig/sparse_5/M50/k=1 c=10 -> sparse_5__M50__k1_c10.csv 09:50:46
+[urban-tune] OK   fig/sparse_5/M50/k=1 c=10 09:51:11
+[urban-tune] RUN  fig/sparse_5/M50/k=1 c=20 -> sparse_5__M50__k1_c20.csv 09:51:11
+[urban-tune] OK   fig/sparse_5/M50/k=1 c=20 09:51:35
+[urban-tune] RUN  fig/sparse_5/M50/k=3 c=2 -> sparse_5__M50__k3_c2.csv 09:51:35
+[urban-tune] OK   fig/sparse_5/M50/k=3 c=2 09:52:00
+[urban-tune] RUN  fig/sparse_5/M50/k=3 c=5 -> sparse_5__M50__k3_c5.csv 09:52:00
+[urban-tune] OK   fig/sparse_5/M50/k=3 c=5 09:52:27
+[urban-tune] RUN  fig/sparse_5/M50/k=3 c=10 -> sparse_5__M50__k3_c10.csv 09:52:27
+[urban-tune] OK   fig/sparse_5/M50/k=3 c=10 09:52:52
+[urban-tune] RUN  fig/sparse_5/M50/k=3 c=20 -> sparse_5__M50__k3_c20.csv 09:52:52
+[urban-tune] OK   fig/sparse_5/M50/k=3 c=20 09:53:17
+[urban-tune] RUN  fig/sparse_5/M100/k=1 c=2 -> sparse_5__M100__k1_c2.csv 09:53:18
+[urban-tune] OK   fig/sparse_5/M100/k=1 c=2 09:53:52
+[urban-tune] RUN  fig/sparse_5/M100/k=1 c=5 -> sparse_5__M100__k1_c5.csv 09:53:52
+[urban-tune] OK   fig/sparse_5/M100/k=1 c=5 09:54:26
+[urban-tune] RUN  fig/sparse_5/M100/k=1 c=10 -> sparse_5__M100__k1_c10.csv 09:54:26
+[urban-tune] OK   fig/sparse_5/M100/k=1 c=10 09:54:59
+[urban-tune] RUN  fig/sparse_5/M100/k=1 c=20 -> sparse_5__M100__k1_c20.csv 09:54:59
+[urban-tune] OK   fig/sparse_5/M100/k=1 c=20 09:55:33
+[urban-tune] RUN  fig/sparse_5/M100/k=3 c=2 -> sparse_5__M100__k3_c2.csv 09:55:33
+[urban-tune] OK   fig/sparse_5/M100/k=3 c=2 09:56:06
+[urban-tune] RUN  fig/sparse_5/M100/k=3 c=5 -> sparse_5__M100__k3_c5.csv 09:56:06
+[urban-tune] OK   fig/sparse_5/M100/k=3 c=5 09:56:39
+[urban-tune] RUN  fig/sparse_5/M100/k=3 c=10 -> sparse_5__M100__k3_c10.csv 09:56:39
+[urban-tune] OK   fig/sparse_5/M100/k=3 c=10 09:57:12
+[urban-tune] RUN  fig/sparse_5/M100/k=3 c=20 -> sparse_5__M100__k3_c20.csv 09:57:12
+[urban-tune] OK   fig/sparse_5/M100/k=3 c=20 09:57:47
+[urban-tune] RUN  fig/sparse_5/M250/k=1 c=2 -> sparse_5__M250__k1_c2.csv 09:57:47
+[urban-tune] OK   fig/sparse_5/M250/k=1 c=2 09:58:44
+[urban-tune] RUN  fig/sparse_5/M250/k=1 c=5 -> sparse_5__M250__k1_c5.csv 09:58:45
+[urban-tune] OK   fig/sparse_5/M250/k=1 c=5 09:59:42
+[urban-tune] RUN  fig/sparse_5/M250/k=1 c=10 -> sparse_5__M250__k1_c10.csv 09:59:42
+[urban-tune] OK   fig/sparse_5/M250/k=1 c=10 10:00:38
+[urban-tune] RUN  fig/sparse_5/M250/k=1 c=20 -> sparse_5__M250__k1_c20.csv 10:00:38
+[urban-tune] OK   fig/sparse_5/M250/k=1 c=20 10:01:34
+[urban-tune] RUN  fig/sparse_5/M250/k=3 c=2 -> sparse_5__M250__k3_c2.csv 10:01:34
+[urban-tune] OK   fig/sparse_5/M250/k=3 c=2 10:02:30
+[urban-tune] RUN  fig/sparse_5/M250/k=3 c=5 -> sparse_5__M250__k3_c5.csv 10:02:30
+[urban-tune] OK   fig/sparse_5/M250/k=3 c=5 10:03:26
+[urban-tune] RUN  fig/sparse_5/M250/k=3 c=10 -> sparse_5__M250__k3_c10.csv 10:03:26
+[urban-tune] OK   fig/sparse_5/M250/k=3 c=10 10:04:22
+[urban-tune] RUN  fig/sparse_5/M250/k=3 c=20 -> sparse_5__M250__k3_c20.csv 10:04:22
+[urban-tune] OK   fig/sparse_5/M250/k=3 c=20 10:05:18
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=1 c=2 -> sparse_1.5625__M25__k1_c2.csv 10:05:18
+[urban-tune] OK   fig/sparse_1.5625/M25/k=1 c=2 10:05:38
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=1 c=5 -> sparse_1.5625__M25__k1_c5.csv 10:05:38
+[urban-tune] OK   fig/sparse_1.5625/M25/k=1 c=5 10:05:59
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=1 c=10 -> sparse_1.5625__M25__k1_c10.csv 10:05:59
+[urban-tune] OK   fig/sparse_1.5625/M25/k=1 c=10 10:06:20
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=1 c=20 -> sparse_1.5625__M25__k1_c20.csv 10:06:20
+[urban-tune] OK   fig/sparse_1.5625/M25/k=1 c=20 10:06:42
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=3 c=2 -> sparse_1.5625__M25__k3_c2.csv 10:06:42
+[urban-tune] OK   fig/sparse_1.5625/M25/k=3 c=2 10:07:03
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=3 c=5 -> sparse_1.5625__M25__k3_c5.csv 10:07:03
+[urban-tune] OK   fig/sparse_1.5625/M25/k=3 c=5 10:07:24
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=3 c=10 -> sparse_1.5625__M25__k3_c10.csv 10:07:24
+[urban-tune] OK   fig/sparse_1.5625/M25/k=3 c=10 10:07:42
+[urban-tune] RUN  fig/sparse_1.5625/M25/k=3 c=20 -> sparse_1.5625__M25__k3_c20.csv 10:07:42
+[urban-tune] OK   fig/sparse_1.5625/M25/k=3 c=20 10:08:01
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=1 c=2 -> sparse_1.5625__M50__k1_c2.csv 10:08:01
+[urban-tune] OK   fig/sparse_1.5625/M50/k=1 c=2 10:08:21
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=1 c=5 -> sparse_1.5625__M50__k1_c5.csv 10:08:21
+[urban-tune] OK   fig/sparse_1.5625/M50/k=1 c=5 10:08:46
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=1 c=10 -> sparse_1.5625__M50__k1_c10.csv 10:08:46
+[urban-tune] OK   fig/sparse_1.5625/M50/k=1 c=10 10:09:11
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=1 c=20 -> sparse_1.5625__M50__k1_c20.csv 10:09:11
+[urban-tune] OK   fig/sparse_1.5625/M50/k=1 c=20 10:09:37
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=3 c=2 -> sparse_1.5625__M50__k3_c2.csv 10:09:37
+[urban-tune] OK   fig/sparse_1.5625/M50/k=3 c=2 10:10:02
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=3 c=5 -> sparse_1.5625__M50__k3_c5.csv 10:10:02
+[urban-tune] OK   fig/sparse_1.5625/M50/k=3 c=5 10:10:28
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=3 c=10 -> sparse_1.5625__M50__k3_c10.csv 10:10:28
+[urban-tune] OK   fig/sparse_1.5625/M50/k=3 c=10 10:10:54
+[urban-tune] RUN  fig/sparse_1.5625/M50/k=3 c=20 -> sparse_1.5625__M50__k3_c20.csv 10:10:54
+[urban-tune] OK   fig/sparse_1.5625/M50/k=3 c=20 10:11:19
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=1 c=2 -> sparse_1.5625__M100__k1_c2.csv 10:11:19
+[urban-tune] OK   fig/sparse_1.5625/M100/k=1 c=2 10:11:53
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=1 c=5 -> sparse_1.5625__M100__k1_c5.csv 10:11:53
+[urban-tune] OK   fig/sparse_1.5625/M100/k=1 c=5 10:12:26
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=1 c=10 -> sparse_1.5625__M100__k1_c10.csv 10:12:26
+[urban-tune] OK   fig/sparse_1.5625/M100/k=1 c=10 10:13:01
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=1 c=20 -> sparse_1.5625__M100__k1_c20.csv 10:13:01
+[urban-tune] OK   fig/sparse_1.5625/M100/k=1 c=20 10:13:34
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=3 c=2 -> sparse_1.5625__M100__k3_c2.csv 10:13:34
+[urban-tune] OK   fig/sparse_1.5625/M100/k=3 c=2 10:14:06
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=3 c=5 -> sparse_1.5625__M100__k3_c5.csv 10:14:06
+[urban-tune] OK   fig/sparse_1.5625/M100/k=3 c=5 10:14:39
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=3 c=10 -> sparse_1.5625__M100__k3_c10.csv 10:14:39
+[urban-tune] OK   fig/sparse_1.5625/M100/k=3 c=10 10:15:11
+[urban-tune] RUN  fig/sparse_1.5625/M100/k=3 c=20 -> sparse_1.5625__M100__k3_c20.csv 10:15:11
+[urban-tune] OK   fig/sparse_1.5625/M100/k=3 c=20 10:15:44
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=1 c=2 -> sparse_1.5625__M250__k1_c2.csv 10:15:44
+[urban-tune] OK   fig/sparse_1.5625/M250/k=1 c=2 10:16:40
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=1 c=5 -> sparse_1.5625__M250__k1_c5.csv 10:16:40
+[urban-tune] OK   fig/sparse_1.5625/M250/k=1 c=5 10:17:35
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=1 c=10 -> sparse_1.5625__M250__k1_c10.csv 10:17:35
+[urban-tune] OK   fig/sparse_1.5625/M250/k=1 c=10 10:18:30
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=1 c=20 -> sparse_1.5625__M250__k1_c20.csv 10:18:30
+[urban-tune] OK   fig/sparse_1.5625/M250/k=1 c=20 10:19:26
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=3 c=2 -> sparse_1.5625__M250__k3_c2.csv 10:19:26
+[urban-tune] OK   fig/sparse_1.5625/M250/k=3 c=2 10:20:22
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=3 c=5 -> sparse_1.5625__M250__k3_c5.csv 10:20:22
+[urban-tune] OK   fig/sparse_1.5625/M250/k=3 c=5 10:21:18
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=3 c=10 -> sparse_1.5625__M250__k3_c10.csv 10:21:18
+[urban-tune] OK   fig/sparse_1.5625/M250/k=3 c=10 10:22:14
+[urban-tune] RUN  fig/sparse_1.5625/M250/k=3 c=20 -> sparse_1.5625__M250__k3_c20.csv 10:22:14
+[urban-tune] OK   fig/sparse_1.5625/M250/k=3 c=20 10:23:10
+[urban-tune] ===== method=dflow (E=8 NP=6 dev=cuda traj=6) 10:23:10 =====
+[urban-tune] SKIP (exists) paper_experiments/results/urban/tuning/dflow/sparse_5__M25__eta0.002_lam0.0001.csv
+[urban-tune] RUN  dflow/sparse_5/M25/eta=0.005 lam=0.0001 -> sparse_5__M25__eta0.005_lam0.0001.csv 10:23:10
+[urban-tune] OK   dflow/sparse_5/M25/eta=0.005 lam=0.0001 10:26:08
+[urban-tune] RUN  dflow/sparse_5/M25/eta=0.01 lam=0.0001 -> sparse_5__M25__eta0.01_lam0.0001.csv 10:26:09
+[urban-tune] OK   dflow/sparse_5/M25/eta=0.01 lam=0.0001 10:29:07
+[urban-tune] RUN  dflow/sparse_5/M25/eta=0.02 lam=0.0001 -> sparse_5__M25__eta0.02_lam0.0001.csv 10:29:07
+[urban-tune] OK   dflow/sparse_5/M25/eta=0.02 lam=0.0001 10:32:11
+[urban-tune] RUN  dflow/sparse_5/M25/eta=0.005 lam=0.001 -> sparse_5__M25__eta0.005_lam0.001.csv 10:32:11
+[urban-tune] OK   dflow/sparse_5/M25/eta=0.005 lam=0.001 10:35:11
+[urban-tune] RUN  dflow/sparse_5/M50/eta=0.002 lam=0.0001 -> sparse_5__M50__eta0.002_lam0.0001.csv 10:35:11
+[urban-tune] OK   dflow/sparse_5/M50/eta=0.002 lam=0.0001 10:39:44
+[urban-tune] RUN  dflow/sparse_5/M50/eta=0.005 lam=0.0001 -> sparse_5__M50__eta0.005_lam0.0001.csv 10:39:44
+[urban-tune] OK   dflow/sparse_5/M50/eta=0.005 lam=0.0001 10:44:46
+[urban-tune] RUN  dflow/sparse_5/M50/eta=0.01 lam=0.0001 -> sparse_5__M50__eta0.01_lam0.0001.csv 10:44:46
+[urban-tune] OK   dflow/sparse_5/M50/eta=0.01 lam=0.0001 10:47:27
+[urban-tune] RUN  dflow/sparse_5/M50/eta=0.02 lam=0.0001 -> sparse_5__M50__eta0.02_lam0.0001.csv 10:47:27
+[urban-tune] OK   dflow/sparse_5/M50/eta=0.02 lam=0.0001 10:50:09
+[urban-tune] RUN  dflow/sparse_5/M50/eta=0.005 lam=0.001 -> sparse_5__M50__eta0.005_lam0.001.csv 10:50:09
+[urban-tune] OK   dflow/sparse_5/M50/eta=0.005 lam=0.001 10:52:49
+[urban-tune] RUN  dflow/sparse_5/M100/eta=0.002 lam=0.0001 -> sparse_5__M100__eta0.002_lam0.0001.csv 10:52:49
+[urban-tune] OK   dflow/sparse_5/M100/eta=0.002 lam=0.0001 10:57:57
+[urban-tune] RUN  dflow/sparse_5/M100/eta=0.005 lam=0.0001 -> sparse_5__M100__eta0.005_lam0.0001.csv 10:57:57
+[urban-tune] OK   dflow/sparse_5/M100/eta=0.005 lam=0.0001 11:03:06
+[urban-tune] RUN  dflow/sparse_5/M100/eta=0.01 lam=0.0001 -> sparse_5__M100__eta0.01_lam0.0001.csv 11:03:06
+[urban-tune] OK   dflow/sparse_5/M100/eta=0.01 lam=0.0001 11:08:28
+[urban-tune] RUN  dflow/sparse_5/M100/eta=0.02 lam=0.0001 -> sparse_5__M100__eta0.02_lam0.0001.csv 11:08:28
+[urban-tune] OK   dflow/sparse_5/M100/eta=0.02 lam=0.0001 11:14:46
+[urban-tune] RUN  dflow/sparse_5/M100/eta=0.005 lam=0.001 -> sparse_5__M100__eta0.005_lam0.001.csv 11:14:46
+[urban-tune] OK   dflow/sparse_5/M100/eta=0.005 lam=0.001 11:22:01
+[urban-tune] RUN  dflow/sparse_5/M250/eta=0.002 lam=0.0001 -> sparse_5__M250__eta0.002_lam0.0001.csv 11:22:01
+[urban-tune] OK   dflow/sparse_5/M250/eta=0.002 lam=0.0001 11:38:49
+[urban-tune] RUN  dflow/sparse_5/M250/eta=0.005 lam=0.0001 -> sparse_5__M250__eta0.005_lam0.0001.csv 11:38:49
+[urban-tune] OK   dflow/sparse_5/M250/eta=0.005 lam=0.0001 11:59:40
+[urban-tune] RUN  dflow/sparse_5/M250/eta=0.01 lam=0.0001 -> sparse_5__M250__eta0.01_lam0.0001.csv 11:59:40
+[urban-tune] OK   dflow/sparse_5/M250/eta=0.01 lam=0.0001 12:20:00
+[urban-tune] RUN  dflow/sparse_5/M250/eta=0.02 lam=0.0001 -> sparse_5__M250__eta0.02_lam0.0001.csv 12:20:00
+[urban-tune] OK   dflow/sparse_5/M250/eta=0.02 lam=0.0001 12:42:57
+[urban-tune] RUN  dflow/sparse_5/M250/eta=0.005 lam=0.001 -> sparse_5__M250__eta0.005_lam0.001.csv 12:42:57
+[urban-tune] OK   dflow/sparse_5/M250/eta=0.005 lam=0.001 13:06:04
+[urban-tune] RUN  dflow/sparse_1.5625/M25/eta=0.002 lam=0.0001 -> sparse_1.5625__M25__eta0.002_lam0.0001.csv 13:06:05
+[urban-tune] OK   dflow/sparse_1.5625/M25/eta=0.002 lam=0.0001 13:09:05
+[urban-tune] RUN  dflow/sparse_1.5625/M25/eta=0.005 lam=0.0001 -> sparse_1.5625__M25__eta0.005_lam0.0001.csv 13:09:05
+[urban-tune] OK   dflow/sparse_1.5625/M25/eta=0.005 lam=0.0001 13:11:44
+[urban-tune] RUN  dflow/sparse_1.5625/M25/eta=0.01 lam=0.0001 -> sparse_1.5625__M25__eta0.01_lam0.0001.csv 13:11:44
+[urban-tune] OK   dflow/sparse_1.5625/M25/eta=0.01 lam=0.0001 13:14:22
+[urban-tune] RUN  dflow/sparse_1.5625/M25/eta=0.02 lam=0.0001 -> sparse_1.5625__M25__eta0.02_lam0.0001.csv 13:14:22
+[urban-tune] OK   dflow/sparse_1.5625/M25/eta=0.02 lam=0.0001 13:17:05
+[urban-tune] RUN  dflow/sparse_1.5625/M25/eta=0.005 lam=0.001 -> sparse_1.5625__M25__eta0.005_lam0.001.csv 13:17:05
+[urban-tune] OK   dflow/sparse_1.5625/M25/eta=0.005 lam=0.001 13:20:08
+[urban-tune] RUN  dflow/sparse_1.5625/M50/eta=0.002 lam=0.0001 -> sparse_1.5625__M50__eta0.002_lam0.0001.csv 13:20:08
+[urban-tune] OK   dflow/sparse_1.5625/M50/eta=0.002 lam=0.0001 13:25:24
+[urban-tune] RUN  dflow/sparse_1.5625/M50/eta=0.005 lam=0.0001 -> sparse_1.5625__M50__eta0.005_lam0.0001.csv 13:25:24
+[urban-tune] OK   dflow/sparse_1.5625/M50/eta=0.005 lam=0.0001 13:31:02
+[urban-tune] RUN  dflow/sparse_1.5625/M50/eta=0.01 lam=0.0001 -> sparse_1.5625__M50__eta0.01_lam0.0001.csv 13:31:02
+[urban-tune] OK   dflow/sparse_1.5625/M50/eta=0.01 lam=0.0001 13:36:11
+[urban-tune] RUN  dflow/sparse_1.5625/M50/eta=0.02 lam=0.0001 -> sparse_1.5625__M50__eta0.02_lam0.0001.csv 13:36:11
+[urban-tune] OK   dflow/sparse_1.5625/M50/eta=0.02 lam=0.0001 13:41:44
+[urban-tune] RUN  dflow/sparse_1.5625/M50/eta=0.005 lam=0.001 -> sparse_1.5625__M50__eta0.005_lam0.001.csv 13:41:44
+[urban-tune] OK   dflow/sparse_1.5625/M50/eta=0.005 lam=0.001 13:47:21
+[urban-tune] RUN  dflow/sparse_1.5625/M100/eta=0.002 lam=0.0001 -> sparse_1.5625__M100__eta0.002_lam0.0001.csv 13:47:21
+[urban-tune] OK   dflow/sparse_1.5625/M100/eta=0.002 lam=0.0001 13:57:53
+[urban-tune] RUN  dflow/sparse_1.5625/M100/eta=0.005 lam=0.0001 -> sparse_1.5625__M100__eta0.005_lam0.0001.csv 13:57:53
+[urban-tune] OK   dflow/sparse_1.5625/M100/eta=0.005 lam=0.0001 14:06:36
+[urban-tune] RUN  dflow/sparse_1.5625/M100/eta=0.01 lam=0.0001 -> sparse_1.5625__M100__eta0.01_lam0.0001.csv 14:06:36
+[urban-tune] OK   dflow/sparse_1.5625/M100/eta=0.01 lam=0.0001 14:15:48
+[urban-tune] RUN  dflow/sparse_1.5625/M100/eta=0.02 lam=0.0001 -> sparse_1.5625__M100__eta0.02_lam0.0001.csv 14:15:48
+[urban-tune] OK   dflow/sparse_1.5625/M100/eta=0.02 lam=0.0001 14:25:47
+[urban-tune] RUN  dflow/sparse_1.5625/M100/eta=0.005 lam=0.001 -> sparse_1.5625__M100__eta0.005_lam0.001.csv 14:25:47
+[urban-tune] OK   dflow/sparse_1.5625/M100/eta=0.005 lam=0.001 14:35:49
+[urban-tune] RUN  dflow/sparse_1.5625/M250/eta=0.002 lam=0.0001 -> sparse_1.5625__M250__eta0.002_lam0.0001.csv 14:35:49
+[urban-tune] OK   dflow/sparse_1.5625/M250/eta=0.002 lam=0.0001 15:01:12
+[urban-tune] RUN  dflow/sparse_1.5625/M250/eta=0.005 lam=0.0001 -> sparse_1.5625__M250__eta0.005_lam0.0001.csv 15:01:12
+[urban-tune] OK   dflow/sparse_1.5625/M250/eta=0.005 lam=0.0001 15:23:29
+[urban-tune] RUN  dflow/sparse_1.5625/M250/eta=0.01 lam=0.0001 -> sparse_1.5625__M250__eta0.01_lam0.0001.csv 15:23:29
+[urban-tune] OK   dflow/sparse_1.5625/M250/eta=0.01 lam=0.0001 15:48:33
+[urban-tune] RUN  dflow/sparse_1.5625/M250/eta=0.02 lam=0.0001 -> sparse_1.5625__M250__eta0.02_lam0.0001.csv 15:48:33
+[urban-tune] OK   dflow/sparse_1.5625/M250/eta=0.02 lam=0.0001 16:15:50
+[urban-tune] RUN  dflow/sparse_1.5625/M250/eta=0.005 lam=0.001 -> sparse_1.5625__M250__eta0.005_lam0.001.csv 16:15:50
+[urban-tune] OK   dflow/sparse_1.5625/M250/eta=0.005 lam=0.001 16:42:36
+[urban-tune] ALL DONE Thu Jul 30 04:42:36 PM CEST 2026

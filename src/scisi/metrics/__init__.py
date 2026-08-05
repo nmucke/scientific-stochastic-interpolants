@@ -25,12 +25,14 @@ from scisi.metrics.distributional import (
 )
 from scisi.metrics.spectral import (
     energy_spectrum_rmse,
+    radial_enstrophy_spectrum,
     radial_kinetic_energy_spectrum,
 )
 
 __all__ = [
     "ensemble_mean_rmse",
     "energy_spectrum_rmse",
+    "radial_enstrophy_spectrum",
     "radial_kinetic_energy_spectrum",
     "crps",
     "spread_skill",

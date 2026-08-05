@@ -70,16 +70,23 @@ likelihood_model:
       sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25). k is
-                             # STRUCTURAL (set by observation-operator type), and
-                             # urban's scenarios are the SAME sparse random-
-                             # subsampling operator as NS's -- so k=3 transfers on
-                             # firmer ground than a swept numeric knob would.
-                             # NOTE the default is 1: without this block urban ran
-                             # k=1, which the NS sweep found uniformly worse on
-                             # sparse. This block is a real change, not a no-op.
+    urban:                   # CHECKED ON URBAN 2026-07-30: k is IRRELEVANT here.
+                             # The 1-DA-step sweep ran k in {1,3} against every c in
+                             # {2,5,10,20,40,80,160} x 4 M x 2 scenarios -- 56 paired
+                             # comparisons -- and the two agree to FOUR DECIMALS in
+                             # every one. NS's "k=3 beats k=1 beats k=2 uniformly on
+                             # sparse" does NOT reproduce on urban.
+                             # Cost is identical too (measured: k=1 21.6 s vs k=3
+                             # 21.0 s at M=25, and 56.0 s vs 56.0 s at M=250) --
+                             # k multiplies only the corrector, which differentiates
+                             # ||y_t - Hx|| with H a subsampling and so touches no
+                             # network. So k is neither an accuracy nor a cost lever.
+                             # Kept at 3 (not reverted to the default 1) purely for
+                             # continuity with the NS rows and the earlier urban runs;
+                             # 1 would be equally defensible and equally fast.
       sparse_5:    { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
       sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_0p78: { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
 
   guidance_scale:            # FIG's c -- corrector step-size scale
     default: 10.0
@@ -91,15 +98,31 @@ likelihood_model:
       sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
-      sparse_5:    { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
-      sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
-    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep
-    # (results/urban/tuning/ is empty). c is the primary NUMERICAL knob and the NS
-    # sweep found it sensitive to task and M -- on the sparse rows it landed flat at
-    # 10.0 across every M, which is why the transfer is plausible, but c is the FIG
-    # cell most worth re-sweeping on urban. c=10.0 happens to equal the `default`,
-    # so this table only changes behaviour together with the k=3 block above.
+    urban:                   # SWEPT ON URBAN 2026-07-30, at 4 DA steps
+      sparse_5:    { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+      sparse_1p5:  { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+      sparse_0p78: { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+    # URBAN PROVENANCE: measured, no longer copied from NS. results/urban/tuning_da4/
+    # fig/, c in {5, 10, 20, 40, 80, 160} x {sparse_5, sparse_1p5} x M {25,50,100,250}
+    # at k=3. Conditions: traj6 (held out of the paper grid's 1..5), seed 0, E=8,
+    # num_physical_steps=9 = 4 DA steps. c=160 wins ALL 8 cells in both scenarios.
+    # (A 1-DA-step sweep, results/urban/tuning/fig/, spanning c in {2,...,160} x
+    # k in {1,3} agrees: c=160 wins there too. Superseded, not deleted.)
+    #
+    # *** c=160 IS AN UNBRACKETED GRID EDGE, NOT A LOCATED OPTIMUM. ***
+    # rmse falls monotonically across the whole range and is still falling at the top
+    # in BOTH regimes, after two upward extensions (the sweep first ran c<=20, then
+    # <=160). All that is established is c >= 160. It is written here because it is
+    # the best measured value and the table needs one, NOT because the optimum was
+    # found. Two things make chasing it further look unattractive: an 8x increase in
+    # c (20 -> 160) buys only 2.6% rmse, and FIG at EVERY c tested is worse than not
+    # assimilating at all (1-step sweep: best FIG 0.0664 vs the no-guidance control's
+    # 0.0602). Extend to c in {320, 640} if FIG's row needs a defensible interior
+    # optimum; expect a small gain at best.
+    #
+    # This value is a 16x move from the NS-copied 10.0, which the urban sweep ranks
+    # among the WORST cells -- so the NS->urban transfer failed here as it did for
+    # FlowDAS's zeta. M=500 repeats the value (urban's ladder is {25,50,100,250}).
 
 posterior_model:
   _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

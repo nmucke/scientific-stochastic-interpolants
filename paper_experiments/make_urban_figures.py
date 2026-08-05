@@ -19,7 +19,7 @@ one figure each per scenario):
 
 * ``urban_states_velocity_<scenario>`` / ``urban_states_temperature_<scenario>``
   -- rows = methods, cols = Truth / Posterior mean / $|$error$|$ / Spread at the
-     final assimilated step, from ``results/urban/states/traj1/*.npz`` at $M=250$
+     final assimilated step, from ``results/urban/states/traj1/*.npz`` at $M=50$
      (``--state-M`` overrides).
 
 and, into ``singles/``, the bare one-quantity-per-file panels the manuscript's
@@ -69,7 +69,8 @@ from figure_common import (  # noqa: E402
 
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "urban"
 CASE = "urban"
-SCENARIOS = ("sparse 5%", "sparse 1.5625%")
+# 2026-08-04: urban lineup = the two sparsest regimes (1/64, 1/128); 5% is off it.
+SCENARIOS = ("sparse 1.5625%", "sparse 0.78125%")
 # Sampler-step ladder of the urban grid (run_urban_grid.sh STEPS). Must be passed
 # explicitly: figure_common's default STEPS is the older (50, 100, 250, 500), which
 # would silently drop the M=25 column and leave an empty M=500 one.
@@ -77,10 +78,10 @@ URBAN_STEPS = (25, 50, 100, 250)
 # Trajectory whose saved posterior/truth fields the field maps are drawn from
 # (run_urban_grid.sh SAVE_TRAJ).
 STATE_TRAJ = 1
-# Sampler-step count the field maps are drawn at. Fixed at the top of the urban
-# ladder (M=250) -- every method is re-run there, and the qualitative panels must
-# all show the SAME M to be comparable. Override with ``--state-M``.
-STATE_M = 250
+# Sampler-step count the field maps are drawn at. Fixed at M=50 -- the qualitative
+# panels must all show the SAME M to be comparable, so this has to be a rung every
+# method actually reached. Override with ``--state-M``.
+STATE_M = 50
 
 
 def SLUG(s: str) -> str:
@@ -161,7 +162,7 @@ def _state_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
     ``results/urban/states/traj<STATE_TRAJ>/*.npz`` archives from
     ``run_urban_grid.sh``; skipped with a message if none exist yet.
 
-    ``state_M`` picks the sampler-step count to show (default ``STATE_M`` = 250;
+    ``state_M`` picks the sampler-step count to show (default ``STATE_M`` = 50;
     ``None`` falls back to the widest-coverage saved M). The grid saves one archive
     per M, so this must stay a single M -- otherwise the same method appears once
     per M as separate rows.

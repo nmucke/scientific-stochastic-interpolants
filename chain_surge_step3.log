@@ -1,0 +1,25 @@
+[chain-step3] 2026-07-31 16:32:43 waiting for step 1 (pid 2102028) to exit
+[chain-step3] 2026-07-31 21:09:04 step 1 exited
+[chain-step3] 2026-07-31 21:09:24 refilling 3 cell(s):
+[chain-step3]   32_2_128_2 25 14
+[chain-step3]   sparse_1_5625 25 14
+[chain-step3]   sparse_5 25 14
+[surge] START Fri Jul 31 09:09:24 PM CEST 2026 | method='SURGE (SDA)' group=surge_sda | E=64 NP=20 dev=cuda save_states=traj11
+[surge] --- phase 1: strip 'SURGE (SDA)' rows from group CSVs ---
+[strip] removed 0 rows for ['SURGE (SDA)'] across 0 file(s); 0 distinct cell(s)
+[strip] cell list -> paper_experiments/results/navier_stokes/.rerun_surge_sda_cells_phase3_phase1.txt
+[surge] RESUME (CELLS_FILE set): keeping 77 finished surge_sda cell file(s) + their states; those cells are skipped below.
+[surge] --- phase 2: rerun 3 cell(s) ---
+[surge] RUN  (1/3) 32_2_128_2/M25/traj14 21:09:25
+[surge] OK   (1/3) 32_2_128_2__M25__traj14__surge_sda.csv 21:14:08
+[surge] RUN  (2/3) sparse_1_5625/M25/traj14 21:14:08
+[surge] OK   (2/3) sparse_1_5625__M25__traj14__surge_sda.csv 21:18:53
+[surge] RUN  (3/3) sparse_5/M25/traj14 21:18:53
+[surge] OK   (3/3) sparse_5__M25__traj14__surge_sda.csv 21:23:40
+[surge] --- phase 3: re-strip (catch rows written during the rerun) ---
+[strip] removed 0 rows for ['SURGE (SDA)'] across 0 file(s); 0 distinct cell(s)
+[strip] cell list -> paper_experiments/results/navier_stokes/.rerun_surge_sda_cells_phase3_phase3.txt
+[surge] NOTE: any cell listed above lost its 'SURGE (SDA)' rows and was NOT rerun
+[surge]       -- rerun this script once the other grids finish to refill them.
+[surge] ALL DONE Fri Jul 31 09:23:41 PM CEST 2026
+[chain-step3] 2026-07-31 21:23:41 done; surge_sda cell files now: 80/80

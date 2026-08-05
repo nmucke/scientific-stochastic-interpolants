@@ -610,13 +610,24 @@ def build_posterior(
         zeta = float(os.environ.get("FLOWDAS_ZETA", _z if _z is not None else 1.0))
         _mgn = os.environ.get("FLOWDAS_MAX_GRAD_NORM", hp.get("max_grad_norm", None))
         max_grad_norm = None if _mgn in (None, "", "null", "None") else float(_mgn)
+        # mc_chunk: how many of the J Monte-Carlo members are materialised at once
+        # inside FlowdasGaussianLikelihood.score. None = all J = the historical
+        # (bitwise-unchanged) path, which is what NS uses. Urban needs a split: at
+        # E=64 its 4-channel state makes the [J,B,C,H,W] block 0.39 GiB and pushes a
+        # J*B=1600-sample batch through the obs operator, which OOMs a 24 GB card
+        # (NS survives only because C=1 is 4x smaller). run_urban_grid.sh exports
+        # FLOWDAS_MC_CHUNK for that reason; a genuine split moves the score by
+        # <= ~1.4 ULP (float addition is not associative when the sum over J is
+        # regrouped), so NS stays exactly reproducible by leaving this unset.
+        _mcc = os.environ.get("FLOWDAS_MC_CHUNK", hp.get("mc_chunk", None))
+        mc_chunk = None if _mcc in (None, "", "null", "None") else int(_mcc)
         # J = MC x_1 draws per member (paper Eq. 10; 25 irrespective of E).
         # Decoupled from the DA ensemble size; falls back to the legacy
         # likelihood_ensemble_size when the config key is absent.
         n_mc = int(hp.get("num_mc_samples") or likelihood_ensemble_size)
         logger.info(
-            "FlowDAS zeta=%s J=%d max_grad_norm=%s (scenario=%s, M=%s)",
-            zeta, n_mc, max_grad_norm, scenario_key, num_steps,
+            "FlowDAS zeta=%s J=%d max_grad_norm=%s mc_chunk=%s (scenario=%s, M=%s)",
+            zeta, n_mc, max_grad_norm, mc_chunk, scenario_key, num_steps,
         )
         likelihood = FlowdasGaussianLikelihood(
             model=model,
@@ -625,6 +636,7 @@ def build_posterior(
             num_mc_samples=n_mc,
             guidance_scale=zeta,
             max_grad_norm=max_grad_norm,
+            mc_chunk=mc_chunk,
         )
         posterior = StochasticInterpolantPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
@@ -989,9 +1001,20 @@ def build_posterior(
         zeta = float(os.environ.get("FLOWDAS_ZETA", _z if _z is not None else 1.0))
         _mgn = os.environ.get("FLOWDAS_MAX_GRAD_NORM", hp.get("max_grad_norm", None))
         max_grad_norm = None if _mgn in (None, "", "null", "None") else float(_mgn)
+        # mc_chunk: how many of the J Monte-Carlo members are materialised at once
+        # inside FlowdasGaussianLikelihood.score. None = all J = the historical
+        # (bitwise-unchanged) path, which is what NS uses. Urban needs a split: at
+        # E=64 its 4-channel state makes the [J,B,C,H,W] block 0.39 GiB and pushes a
+        # J*B=1600-sample batch through the obs operator, which OOMs a 24 GB card
+        # (NS survives only because C=1 is 4x smaller). run_urban_grid.sh exports
+        # FLOWDAS_MC_CHUNK for that reason; a genuine split moves the score by
+        # <= ~1.4 ULP (float addition is not associative when the sum over J is
+        # regrouped), so NS stays exactly reproducible by leaving this unset.
+        _mcc = os.environ.get("FLOWDAS_MC_CHUNK", hp.get("mc_chunk", None))
+        mc_chunk = None if _mcc in (None, "", "null", "None") else int(_mcc)
         logger.info(
-            "SURGE (FlowDAS) zeta=%s max_grad_norm=%s (scenario=%s, M=%s)",
-            zeta, max_grad_norm, scenario_key, num_steps,
+            "SURGE (FlowDAS) zeta=%s max_grad_norm=%s mc_chunk=%s (scenario=%s, M=%s)",
+            zeta, max_grad_norm, mc_chunk, scenario_key, num_steps,
         )
         likelihood = FlowdasGaussianLikelihood(
             model=model,
@@ -1001,6 +1024,7 @@ def build_posterior(
             num_mc_samples=int(hp.get("num_mc_samples") or likelihood_ensemble_size),
             guidance_scale=zeta,  # FlowDAS zeta; SURGE applies it via sde_weight.
             max_grad_norm=max_grad_norm,
+            mc_chunk=mc_chunk,
         )
         # SURGE owns only the SMC layer -> no guidance_scale, only ess_threshold.
         surge_hp = resolve_scheduled_hparams(surge_cfg, case_key, scenario_key, num_steps)

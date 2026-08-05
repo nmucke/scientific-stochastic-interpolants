@@ -1,0 +1,6 @@
+[urban-tune-ours] START Thu Jul 30 03:36:16 PM CEST 2026 | which=ours DRY_RUN=0 SMOKE=0 dev=cuda KS=[10]
+[urban-tune-ours] ===== ours = ["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"] (E=8 NP=8 dev=cuda traj=6) 15:36:16 =====
+[urban-tune-ours] SKIP (exists) paper_experiments/results/urban/tuning_da3/ours/sparse_5__M25__jacfree.csv
+[urban-tune-ours] RUN  ours/sparse_5/M25/k=10 lambda=0.9 -> sparse_5__M25__k10_lam0.9.csv 15:36:16
+[urban-tune-ours] OK   ours/sparse_5/M25/k=10 lambda=0.9 16:45:32
+[urban-tune-ours] RUN  ours/sparse_5/M25/k=10 lambda=0.95 -> sparse_5__M25__k10_lam0.95.csv 16:45:32

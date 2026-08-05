@@ -15,11 +15,11 @@
 #
 # GRID
 #   trajectories : test_index 1..5   (one seed each; seeds=[0])
-#   scenarios    : sparse 5%, sparse 1.5625%
-#   steps M      : 25 50 100 250     (the NS figure ladder; make_urban_figures.py
-#                                     URBAN_STEPS must match)
+#   scenarios    : sparse 1.5625% + sparse 0.78125%  (2026-08-04; 5% off the lineup)
+#   steps M      : 50 ONLY            (2026-08-03 -- M=25,100,250 deferred; see the
+#                                     STEPS= line below for why and how to add them)
 #   Ours modes   : jacfree (dps_jacobian_free) + shared (inflated_shared)
-#   E=64, num_physical_steps=20 (5 history + 15 DA steps)
+#   E=64, num_physical_steps=55 (5 history + 50 DA steps -- RAISED 2026-08-03)
 #
 # METHOD GROUPS (each is one run.py call per (traj, scenario, M)):
 #   ours_jacfree     : Ours (SI-SDE/DM-SDE/FM-ODE), likelihood_mode=dps_jacobian_free
@@ -65,14 +65,86 @@ TRAJ="${TRAJ:-1 2 3 4 5}"
 # Which trajectory gets its raw ensembles written out (states are big, so only one).
 # MUST be a member of TRAJ or nothing is saved (guarded below).
 SAVE_TRAJ="${SAVE_TRAJ:-1}"
-STEPS="${STEPS:-25 50 100 250}"
+# M LADDER TRIMMED TO {25,50,100} (2026-08-02, user decision). M=250 is dropped for
+# now, not abandoned -- add it later with a single resumable pass:
+#     STEPS=250 bash paper_experiments/run_urban_grid.sh
+# The grid is skip-if-exists and every cell writes its own file, so that fills only
+# the M=250 column and touches nothing already produced.
+#
+# WHY: M=250 is by far the dearest rung and it dominated the budget. Cost here is
+# driven by the shared-Jacobian group, whose per-DA-step work scales with the
+# refresh count M/k (k=10) -- so M=250 alone is 25 refreshes against 3+5+10=18 for
+# the whole rest of the ladder COMBINED. Measured per-DA-step (uncontended, urban,
+# 3 methods per cell):
+#     sparse 5%        M=25 11.0 min | M=50 18.8 | M=100 36.7 | M=250 91.7
+#     sparse 1.5625%   M=25  3.8 min | M=50  6.4 | M=100 12.6 | M=250 31.4
+# Over 15 DA steps x 5 trajectories x 2 scenarios that puts the run at roughly
+# 7 days for {25,50,100} against ~17 days with M=250 included -- i.e. the last rung
+# was ~60% of the total. (D-Flow is separately excluded from GRPS; see below.)
+#
+# NOTE make_urban_figures.py URBAN_STEPS and status.py URBAN_STEPS still list all
+# four rungs, so the M=250 column will simply read as missing in the figures and
+# the coverage report until it is run -- visibly absent rather than silently
+# dropped, which is the intended behaviour.
+# 2026-08-03: trimmed AGAIN, to {25,50}. M=100 joins M=250 in the deferred pile --
+# both are one resumable pass away (`STEPS=100 bash ...`, `STEPS=250 bash ...`), and
+# both fill only their own column. This second trim pays for the DA-step change
+# below: 30 assimilation steps is exactly 2x the work per cell, so dropping M=100
+# (which by the refresh-count argument above is ~53% of the {25,50,100} budget)
+# roughly cancels it.
+# 2026-08-03 (later the same day): narrowed again to M=50 ONLY, alongside the move to
+# 50 DA steps below. M=25 joins {100,250} in the deferred pile; each is one resumable
+# pass (`STEPS=25 bash ...`) filling only its own column.
+STEPS="${STEPS:-50}"
 E="${E:-64}"
-NP="${NP:-20}"                       # num_physical_steps (5 history + 15 DA)
+# num_physical_steps = len_field_history(5) + n_assim, so 55 -> 50 DA steps.
+# RAISED FROM 20 (15 DA steps) on 2026-08-03, via 35, to 55. Cost is exactly linear
+# in n_assim (every step is one full sampler pass), so this is 3.33x the original
+# per-cell cost -- which is why STEPS was narrowed to a single rung in the same edit.
+#
+# HEADROOM: the urban test trajectories are 200 steps long (raw files are 250, with
+# starting_time=50 discarding spin-up; measured sample['x'].shape = (4,128,128,200)),
+# and n_assim = NP - len_field_history(5), so the ceiling is NP=200 / 195 DA steps.
+# 50 uses a quarter of that. Do NOT exceed 200: prepare_truth_and_obs slices with
+# `traj[..., :num_physical_steps]`, which silently truncates, then loops
+# `range(num_physical_steps)` over it -- so an over-large NP dies with an IndexError
+# deep in the observation loop after the model has loaded, not with a clear message.
+#
+# NOTE this makes the urban horizon DIFFER FROM NS, which stays at num_physical_steps
+# =20 / 15 DA steps (configs/case/navier_stokes.yaml, run_ns_grid.sh). The two cases
+# were deliberately matched before, so per-step curves and any "at step k" statement
+# are no longer directly comparable across cases -- and results/urban_dasteps_15/
+# (the 15-step run, backed up 2026-08-03) is NOT comparable to what this produces.
+# Aggregation keys on (method, scenario, metric, E, M, variant) and does NOT carry
+# n_assim, so mixing the two trees in one aggregate would silently average different
+# horizons. Keep them separate.
+NP="${NP:-55}"                       # num_physical_steps (5 history + 50 DA)
 DEVICE="${DEVICE:-cuda}"
 REQUIRE_W="${REQUIRE_W:-true}"       # hard-fail if no trained weights
 # Divergence safety net: abort a cell whose ensemble RMSE exceeds this (well above
 # any healthy value) and NaN-pad the rest, rather than crashing the whole run.
 DIV_GUARD="${DIV_GUARD:-10.0}"
+
+# FlowDAS Monte-Carlo chunking -- REQUIRED ON URBAN, and the reason the `baselines`
+# group OOM-ed on 2026-08-02 (2 grid cells + 2 timing cells, all with
+#   torch.OutOfMemoryError ... this process has 22.65 GiB in use
+# out of a 23.59 GiB card). FlowdasGaussianLikelihood.score materialises J
+# one-step predictions as a [J,B,C,H,W] block and pushes J*B samples through the
+# observation operator in ONE batch. Urban: J=25, B=E=64, C=4, H=W=128 -> a 0.39 GiB
+# block and a 1600-sample operator batch. NS survives untouched only because its
+# C=1 makes every one of those tensors 4x smaller.
+#
+# mc_chunk=5 splits J=25 into 5 passes of 5 members: peak transients go from ~4*J*S
+# to J*S + O(k*S), and the operator sees 320 samples instead of 1600. Same number of
+# UNet evaluations (2 forwards + 1 backward) -- the extra cost is one cheap chunked
+# pass through the observation operator.
+#
+# EXPORTED HERE RATHER THAN PUT IN THE YAML on purpose: chunking regroups a float sum
+# over J, and float addition is not associative, so a genuine split moves the score by
+# <= ~1.4 ULP. Setting it only for urban leaves the already-produced NS FlowDAS /
+# SURGE-FlowDAS numbers reproducible BIT-FOR-BIT. 5 divides 25 evenly; any value >= J
+# (or unset) is a no-op and stays bitwise identical to the old code.
+export FLOWDAS_MC_CHUNK="${FLOWDAS_MC_CHUNK:-5}"
 #
 # NOTE lambda (jacobian_damping) is NOT set here. It is PER-SCENARIO and lives in
 # the method YAMLs (configs/method/{si_sde,dm_sde,fm_ode}.yaml) as [case][scenario][M]
@@ -94,7 +166,30 @@ DIV_GUARD="${DIV_GUARD:-10.0}"
 
 # Scenarios as a bash array (canonical labels). Urban is sparse-only.
 if [ -n "${SCENARIOS:-}" ]; then IFS='|' read -r -a SCEN_ARR <<< "$SCENARIOS";
-else SCEN_ARR=("sparse 5%" "sparse 1.5625%"); fi
+else SCEN_ARR=("sparse 0.78125%"); fi
+# else SCEN_ARR=("sparse 1.5625%" "sparse 0.78125%"); fi
+# THE URBAN LINEUP IS NOW THE TWO SPA012//RSEST REGIMES (2026-08-04): 1.5625% (1/64) and
+# 0.78125% (1/128). `sparse 5%` is OFF the lineup -- it stays fully wired (scenario
+# config, SCENARIO_CONFIG_NAME entry, and hyperparameter rows in every method YAML are
+# all intact), so it runs on demand with one resumable pass:
+#     SCENARIOS="sparse 5%" bash paper_experiments/run_urban_grid.sh
+# Cells are per-scenario files, so that fills only the 5% rows and touches nothing.
+#
+# sparse_0p78's hyperparameters are the sparse_1p5 rows COPIED VERBATIM in every
+# method YAML (zeta 5e-4, gamma 5e-4, FIG k=3/c=160, D-Flow eta 5e-3/s 1e-3/lambda
+# 1e-3, jacobian_damping 0.95). That transfer is better supported than the earlier
+# NS->urban one: each of those knobs measured FLAT between sparse_5 and sparse_1p5,
+# i.e. across a 3.2x change in observation count, so extending it across a further
+# 2x reduction interpolates inside a demonstrated plateau.
+#
+# This is also the CHEAPER half by a wide margin, which is worth knowing when
+# budgeting the deferred pass: shared-mode cost scales with the OBSERVATION COUNT
+# (one JVP per observation per Jacobian refresh), and sparse 1.5625% sees
+# N_y ~ 650 against sparse 5%'s ~2081 -- ~3.2x. Measured per-DA-step, 3 methods:
+#     sparse 1.5625%   M=25  3.8 min | M=50  6.4
+#     sparse 5%        M=25 11.0 min | M=50 18.8
+# So this run is ~1/4 of the two-scenario budget, and the deferred 5% pass will
+# cost roughly 3x what this one does.
 
 # SHARED-MODE GROUPS -- one per Jacobian refresh cadence k. Pick the cadence by
 # picking the group; each writes its own files (variant is stamped in), so several
@@ -126,8 +221,8 @@ done
 
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 # SURGE-only: bare "FlowDAS" / "SDA" are deliberately absent (see the header).
-BASELINES='["SURGE (FlowDAS)","SURGE (SDA)","Guided FM (FIG)"]'
-DFLOW='["D-Flow SGLD"]'
+BASELINES='["SURGE (FlowDAS)","SURGE (SDA)","Guided FM (FIG)","D-Flow SGLD"]'
+# DFLOW='["D-Flow SGLD"]'
 # -----------------------------------------------------------------------------
 
 slug() { echo "$1" | sed -E 's/[^A-Za-z0-9]+/_/g; s/^_+//; s/_+$//'; }

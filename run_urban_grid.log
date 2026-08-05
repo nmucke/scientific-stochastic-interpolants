@@ -1,0 +1,7 @@
+nohup: ignoring input
+[urbangrid] START Wed Aug  5 12:12:53 PM CEST 2026 | E=64 NP=55 dev=cuda | traj=[1 2 3 4 5] steps=[50] groups=[ours_jacfree ours_shared_k10 baselines dflow] save_states=traj1
+[urbangrid] ===== traj1 (save_states=true) 12:12:53 =====
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_0_78125__M50__traj1__ours_jacfree.csv
+[urbangrid] RUN  ours_shared_jac10/sparse_0_78125/M50/traj1 -> sparse_0_78125__M50__traj1__ours_shared_jac10.csv 12:12:53
+[urbangrid] OK   ours_shared_jac10/sparse_0_78125/M50/traj1 sparse_0_78125__M50__traj1__ours_shared_jac10.csv 14:59:53
+[urbangrid] RUN  baselines/sparse_0_78125/M50/traj1 -> sparse_0_78125__M50__traj1__baselines.csv 14:59:53

@@ -1,0 +1,6 @@
+[chain-0p78] 2026-08-04 13:50:16 waiting for the sparse 1.5625% grid (pid 563397) to finish
+[chain-0p78] 2026-08-05 08:05:33 previous grid exited
+[chain-0p78] 2026-08-05 08:06:33 GPU free = 23557 MiB; launching sparse 0.78125%
+[urbangrid] START Wed Aug  5 08:06:33 AM CEST 2026 | E=64 NP=55 dev=cuda | traj=[1 2 3 4 5] steps=[50] groups=[ours_jacfree ours_shared_k10 baselines] save_states=traj1
+[urbangrid] ===== traj1 (save_states=true) 08:06:33 =====
+[urbangrid] RUN  ours_jacfree/sparse_0_78125/M50/traj1 -> sparse_0_78125__M50__traj1__ours_jacfree.csv 08:06:33

@@ -151,6 +151,17 @@ def _canon_variant(variant: str | None) -> str | None:
     return variant
 
 
+def series_key(method: str, variant: str | None) -> tuple[str, str | None]:
+    """Canonical ``(method, variant)`` series key, as used by the ``SERIES`` styling.
+
+    The loaders build these keys themselves; scripts that assemble series from
+    another source (e.g. the saved-state archives behind the energy-spectrum
+    figures, whose ``variant`` is the raw ``shared_jac<k>`` string) use this so
+    their keys match the styling table.
+    """
+    return (method, _canon_variant(variant))
+
+
 def load_metric_vs_M(
     case: str, metric: str, scenario: str, *, steps: tuple[int, ...] = STEPS
 ) -> dict[tuple[str, str | None], dict[int, float]]:
@@ -393,7 +404,8 @@ def _save_panel_singles(
 
 
 def save_series_legend(
-    keys, out_stem: Path, *, ncol: int = 3
+    keys, out_stem: Path, *, ncol: int = 3,
+    extra: tuple[tuple[str, dict], ...] = (),
 ) -> list[Path]:
     """Save a standalone legend-only figure for the given ``(method, variant)`` keys.
 
@@ -402,6 +414,10 @@ def save_series_legend(
     of their own). ``keys`` is any iterable of ``(method, variant)`` pairs as
     found in the loaded series dicts (raw variants are canonicalised). Writes
     ``<out_stem>.pdf`` + ``.png``; returns the written paths ([] if no key matches).
+
+    ``extra`` prepends non-method entries as ``(label, Line2D kwargs)`` pairs --
+    used by the energy-spectrum figures, whose panels carry a reference curve
+    (the true spectrum) that is not one of the ``SERIES`` methods.
 
     Designed at print size: the manuscript includes the legend at
     ``width=0.8\\linewidth`` (~4.4in), and three columns of the full method
@@ -417,10 +433,11 @@ def save_series_legend(
         s for s in SERIES
         if (s[0], s[1]) in canon and s[0] not in HIDDEN_METHODS
     ]
-    if not entries:
+    if not entries and not extra:
         return []
     apply_style()
-    handles = [
+    handles = [Line2D([0], [0], **style) for _label, style in extra]
+    handles += [
         Line2D(
             [0], [0], color=colour, linestyle=ls, marker=marker,
             markersize=4.5, markeredgewidth=1.0, markeredgecolor=colour,
@@ -428,9 +445,10 @@ def save_series_legend(
         )
         for _m, _v, _label, colour, ls, marker, filled in entries
     ]
+    labels = [label for label, _style in extra] + [e[2] for e in entries]
     fig = plt.figure()
     fig.legend(
-        handles, [e[2] for e in entries], loc="center", ncol=ncol,
+        handles, labels, loc="center", ncol=ncol,
         frameon=False, handlelength=1.9, columnspacing=1.2,
         handletextpad=0.5, labelspacing=0.35, fontsize=8,
     )
@@ -639,6 +657,189 @@ def make_vs_step_figure(
             panels, slugs,
             lambda ax, s: _plot_step_panel(ax, s, logy=logy, scale=SINGLE_SCALE),
             ylabel, "Assimilation step", out_stem,
+        )
+    return written
+
+
+# --------------------------------------------------------------------------- #
+# The shared spectrum plotter (S(k) vs k; truth + every method)
+#
+# Unlike the metric plotters above, a spectrum series is a pair of ARRAYS
+# ``(k, Sk)`` rather than a ``{x: y}`` mapping, and the panel additionally shows
+# a reference curve (the TRUE spectrum) that belongs to no method. That reference
+# travels inside the same series dict under the reserved key ``TRUTH_KEY``, so
+# spectrum panels flow through the very same empty-panel filtering and
+# print-size singles machinery as every other figure of the paper.
+# --------------------------------------------------------------------------- #
+
+# Reserved series key carrying the reference (true) spectrum of a panel.
+TRUTH_KEY: tuple[str, None] = ("__truth__", None)
+TRUTH_LABEL: str = "Truth"
+# Thick black reference curve, drawn on top of the method curves.
+TRUTH_STYLE: dict = dict(color="black", linestyle="-", linewidth=2.4)
+
+
+def _clip_to_kmin(s, kmin: float | None):
+    """Restrict a ``(k, Sk)`` spectrum pair to ``k >= kmin`` (no-op if ``None``)."""
+    k, sk = np.asarray(s[0], dtype=float), np.asarray(s[1], dtype=float)
+    if kmin is None:
+        return k, sk
+    sel = k >= kmin
+    return k[sel], sk[sel]
+
+
+def _plot_spectrum_panel(
+    ax, series: dict, *, scale: float = 1.0, kmin: float | None = None
+) -> list:
+    """Draw one spectrum-vs-k panel (log--log); return the (handle, label) pairs.
+
+    ``series`` maps ``(method, variant) -> (k, Sk)`` with, optionally, the
+    reference spectrum under ``TRUTH_KEY``. ``scale`` -- see :func:`_plot_panel`.
+
+    ``kmin`` restricts the panel to ``k >= kmin`` -- the zoomed high-wavenumber
+    companion panels. The curves are SLICED rather than merely x-limited, so the
+    y-range and the sparse markers are computed from the visible window alone
+    (an x-limit would leave the y-axis spanning the low-$k$ decades and the
+    markers bunched outside the frame).
+
+    A method whose posterior partially diverged can carry values many decades
+    above the truth; keying the y-range on the raw extremes would then squash
+    every physical curve into a sliver. The range is therefore anchored on the
+    TRUE spectrum (the reference every curve should track) and only widened as
+    far as a bounded number of decades around it -- an off-scale method exits
+    through the top or bottom of the axis, which is the reading its curve
+    deserves.
+    """
+    series = dict(series)
+    truth = series.pop(TRUTH_KEY, None)
+    series = _visible(series)  # SURGE-only lineup, as in _plot_panel
+    series = {key: _clip_to_kmin(s, kmin) for key, s in series.items()}
+    if truth is not None:
+        truth = _clip_to_kmin(truth, kmin)
+
+    handles: list = []
+    for method, variant, label, colour, ls, marker, filled in SERIES:
+        s = series.get((method, variant))
+        if s is None:
+            continue
+        k, ek = s
+        if not np.isfinite(ek).any():
+            continue
+        # Sparse markers: the curves are ~60 bins long, so marking every bin
+        # would bury the line, but the legend identifies series by marker.
+        (h,) = ax.plot(
+            k, ek, color=colour, linestyle=ls, marker=marker,
+            markersize=5.5 * scale, markeredgewidth=1.1 * scale,
+            markeredgecolor=colour,
+            markerfacecolor=(colour if filled else "white"),
+            markevery=max(1, len(k) // 6),
+            linewidth=(1.9 if variant is not None else 1.6) * scale, zorder=3,
+        )
+        handles.append((h, label))
+    if truth is not None:
+        k, ek = truth
+        style = dict(TRUTH_STYLE, linewidth=TRUTH_STYLE["linewidth"] * scale)
+        (h,) = ax.plot(k, ek, zorder=4, **style)
+        handles.insert(0, (h, TRUTH_LABEL))
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    # y-range: anchored on the truth, widened to the method curves but never
+    # beyond a few decades either side of it (see the docstring).
+    if truth is not None:
+        t = truth[1]
+        t = t[np.isfinite(t) & (t > 0)]
+    else:
+        t = np.empty(0)
+    all_vals = np.concatenate([
+        v[np.isfinite(v) & (v > 0)]
+        for v in ([t] + [s[1] for s in series.values()])
+        if v.size
+    ]) if (t.size or series) else np.empty(0)
+    if t.size and all_vals.size:
+        # The truth is always shown in full; the methods widen the range by at
+        # most three decades below / two above it.
+        y_lo = max(all_vals.min() / 3.0, t.min() * 1e-3)
+        y_hi = min(all_vals.max() * 3.0, t.max() * 1e2)
+        if y_lo < y_hi:
+            ax.set_ylim(y_lo, y_hi)
+    ax.grid(True, which="major", linestyle="-", linewidth=0.6 * scale, alpha=0.25)
+    ax.grid(True, which="minor", linestyle=":", linewidth=0.5 * scale, alpha=0.15)
+    for sp in ("top", "right"):
+        ax.spines[sp].set_visible(False)
+    ax.tick_params(which="both", direction="out", length=4 * scale,
+                   width=0.8 * scale)
+    return handles
+
+
+def make_spectrum_figure(
+    panels: list[tuple[str, dict]],
+    out_stem: Path,
+    *,
+    ncols: int | None = None,
+    xlabel: str = r"Wavenumber $k$",
+    ylabel: str = r"$Z(k)$",
+    panel_slugs: list[str] | None = None,
+    singles: bool = True,
+    kmin: float | None = None,
+) -> list[Path]:
+    """Render a (multi-panel) spectrum figure with a shared legend below.
+
+    Mirrors :func:`make_vs_M_figure` in structure and output: ``panels`` is
+    ``[(panel_title, series_dict)]`` with ``series_dict`` mapping
+    ``(method, variant) -> (k, Sk)`` plus the reference spectrum under
+    ``TRUTH_KEY``. Saves ``<out_stem>.pdf`` + ``.png`` and, with ``singles``
+    (default), one standalone title-/legend-free file per panel under
+    ``singles/<stem>_<slug>.pdf`` -- the manuscript subfigures.
+
+    ``kmin`` renders the zoomed high-wavenumber companion: the same panels
+    restricted to ``k >= kmin`` (see :func:`_plot_spectrum_panel`).
+    """
+    apply_style()
+    panels, slugs = _filter_panels(panels, panel_slugs)
+    if not panels:
+        return []
+    n = len(panels)
+    ncols = ncols or (1 if n == 1 else (2 if n <= 4 else 3))
+    nrows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5.2 * ncols, 4.4 * nrows), squeeze=False,
+    )
+    flat = axes.flatten()
+    legend_pairs: dict[str, object] = {}
+    for i, (title, series) in enumerate(panels):
+        ax = flat[i]
+        for h, label in _plot_spectrum_panel(ax, series, kmin=kmin):
+            legend_pairs.setdefault(label, h)
+        if n > 1:
+            ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        if i % ncols == 0:
+            ax.set_ylabel(ylabel)
+    for j in range(n, len(flat)):
+        flat[j].set_visible(False)
+
+    # Truth first, then the methods in SERIES order.
+    labels = [l for l in (TRUTH_LABEL,) if l in legend_pairs]
+    labels += [s[2] for s in SERIES if s[2] in legend_pairs]
+    handles = [legend_pairs[l] for l in labels]
+    ncol_leg = 4 if len(labels) > 8 else max(2, len(labels))
+    fig.tight_layout()
+    fig.legend(
+        handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0),
+        ncol=ncol_leg, frameon=False, handlelength=2.3, columnspacing=1.3,
+        handletextpad=0.5, labelspacing=0.4, fontsize=9,
+    )
+
+    written = _save_fig(fig, out_stem)
+    if singles:
+        written += _save_panel_singles(
+            panels, slugs,
+            lambda ax, s: _plot_spectrum_panel(
+                ax, s, scale=SINGLE_SCALE, kmin=kmin
+            ),
+            ylabel, xlabel, out_stem,
         )
     return written
 
@@ -1067,8 +1268,10 @@ __all__ = [
     "STEPS", "SERIES", "HIDDEN_METHODS", "SCENARIO_LABEL", "RESULTS",
     "FIGURES_DIR",
     "SINGLE_FIGSIZE", "SINGLE_RC", "SINGLE_SCALE", "CBAR_HEIGHT_IN",
-    "apply_style", "slugify", "load_metric_vs_M", "make_vs_M_figure",
-    "load_metric_vs_step", "make_vs_step_figure", "save_series_legend",
+    "TRUTH_KEY", "TRUTH_LABEL", "TRUTH_STYLE",
+    "apply_style", "slugify", "series_key", "load_metric_vs_M", "make_vs_M_figure",
+    "load_metric_vs_step", "make_vs_step_figure", "make_spectrum_figure",
+    "save_series_legend",
     "load_state_records", "make_state_field_figure", "make_state_panel_singles",
     "mirror_to", "mirror_figures",
 ]

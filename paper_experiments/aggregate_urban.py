@@ -76,8 +76,12 @@ TABLE_SPEC = TableSpec(
     label_stem="tab:urban_accuracy",
     source="paper_experiments/aggregate_urban.py",
     scenarios=(
-        ("sparse 5%", r"$5\%$"),
+        # 2026-08-04: the urban lineup is the two SPARSEST regimes. `sparse 5%` is
+        # off it, so its column is dropped here too -- leaving it in would render a
+        # full column of "--" for a scenario the grid no longer runs. Re-add this
+        # line if you run `SCENARIOS="sparse 5%"` (it stays fully wired).
         ("sparse 1.5625%", r"$\tfrac{1}{64}$"),
+        ("sparse 0.78125%", r"$\tfrac{1}{128}$"),
     ),
     metric_groups=(
         ("rmse_velocity", "Velocity RMSE"),

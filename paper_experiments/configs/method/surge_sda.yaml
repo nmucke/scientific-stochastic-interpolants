@@ -32,13 +32,25 @@ likelihood_model:
       sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.01, 50: 0.01,   100: 0.01,   250: 0.001,  500: 0.001  }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
-      sparse_5:    { 25: 0.001, 50: 0.001,  100: 0.001,  250: 0.0001, 500: 0.0001 }
-      sparse_1p5:  { 25: 0.0001, 50: 0.0001, 100: 0.0001, 250: 0.0001, 500: 0.0001 }
-    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep -- same
-    # table as sda.yaml, same caveat (see there). This is the row that actually RUNS
-    # on the urban grid: urban's lineup is SURGE-only, so bare SDA is off it and
-    # `SURGE (SDA)` carries the SDA comparison.
+    urban:                   # from the 2026-07-30 BARE-SDA urban sweep (4 DA steps)
+      sparse_5:    { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_1p5:  { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_0p78: { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+    # URBAN PROVENANCE: the 2026-07-30 urban sweep value from sda.yaml (gamma=5e-4,
+    # winner of 7 of 8 cells at 4 DA steps; see that file for the sweep spec, the
+    # 1-step-vs-4-step story and the caveats). Replaces the NS-copied 1e-3 / 1e-4.
+    #
+    # IT IS A TRANSFER, NOT A MEASUREMENT. `SURGE (SDA)` was NOT swept: only the four
+    # BARE baselines were run, on the argument that gamma_sda is a property of the
+    # covariance inflation itself and can be tuned bare and reused under SURGE. The
+    # transfer is on firmer ground than FlowDAS's zeta -- gamma scales
+    # gamma (sigma/mu)^2 H H^T and for a selection H, H H^T = I in both cases -- but
+    # SURGE's SMC resampling layer can still move the optimum, which is why
+    # run_urban_tuning.sh keeps `surge_sda` as its own sweep key.
+    #
+    # THIS IS THE ROW THAT ACTUALLY RUNS. Urban's lineup is SURGE-ONLY, so bare SDA is
+    # off the grid and `SURGE (SDA)` carries the published SDA comparison. Measure it
+    # directly with `run_urban_tuning.sh surge_sda` before the headline table.
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgeFlowMatchingPosterior

@@ -106,6 +106,12 @@ class Scenario(str, Enum):
     SUPERRES_16 = "16^2->128^2"
     SPARSE_5 = "sparse 5%"
     SPARSE_1p5 = "sparse 1.5625%"
+    # 1/128 -- the sparsest regime, URBAN ONLY (2026-08-04). Registered in the urban
+    # driver's SCENARIO_CONFIG_NAME but NOT the NS one, because no method YAML has a
+    # `navier_stokes: sparse_0p78` hyperparameter row; an NS run would silently fall
+    # back to each knob's `default`. Declared AFTER sparse_1p5 so `SCENARIOS` keeps
+    # its density ordering (5% -> 1/64 -> 1/128).
+    SPARSE_0p78 = "sparse 0.78125%"
     ANALYTICAL = "analytical"  # Case 1 has a single (joint) scenario.
 
 

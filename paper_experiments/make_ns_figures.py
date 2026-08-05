@@ -18,10 +18,20 @@ Plus qualitative vorticity field maps for trajectory 11 (one figure per scenario
                                from ``results/navier_stokes/states/traj11/*.npz``
                                at $M=250$ (``--state-M`` overrides).
 
+And the radially-averaged enstrophy spectra, two panels per scenario:
+
+* ``ns_enstrophy_spectrum_<scenario>``      -- $Z(k)$ of the TRUE field and of
+                               every method's posterior mean, from the same
+                               saved-state archives. Enstrophy, not energy: it is
+                               a functional of the stored vorticity alone.
+* ``ns_enstrophy_spectrum_zoom_<scenario>`` -- the same panels restricted to
+                               $k \\ge$ ``ZOOM_KMIN``, where the methods separate.
+
 Reads the aggregates produced by ``aggregate_ns.py``: ``aggregated/all.csv``
 (metric-vs-M) and ``aggregated/per_step.csv`` (metric-vs-step); the field maps
-read the saved-state archives directly. Any figure with no data yet is skipped
-with a message. Run order: ``run_ns_grid.sh`` -> ``aggregate_ns.py`` -> this.
+and the spectra read the saved-state archives directly. Any figure with no data
+yet is skipped with a message. Run order: ``run_ns_grid.sh`` ->
+``aggregate_ns.py`` -> this.
 
     python paper_experiments/make_ns_figures.py
 """
@@ -43,9 +53,13 @@ import numpy as np  # noqa: E402
 from figure_common import (  # noqa: E402
     FIGURES_DIR,
     SCENARIO_LABEL,
+    TRUTH_KEY,
+    TRUTH_LABEL,
+    TRUTH_STYLE,
     load_metric_vs_M,
     load_metric_vs_step,
     load_state_records,
+    make_spectrum_figure,
     make_state_field_figure,
     make_state_panel_singles,
     make_vs_M_figure,
@@ -53,6 +67,7 @@ from figure_common import (  # noqa: E402
     mirror_figures,
     save_field_panel,
     save_series_legend,
+    series_key,
 )
 
 DEFAULT_OUT = _here.parent / "manuscript" / "figures" / "navier_stokes"
@@ -66,6 +81,11 @@ STATE_TRAJ = 11
 # ladder (M=250) -- every method is re-run there, and the qualitative panels must
 # all show the SAME M to be comparable. Override with ``--state-M``.
 STATE_M = 250
+# Lower wavenumber of the zoomed enstrophy-spectrum panels. The spectra are
+# binned onto 60 radial shells over |k| <= sqrt(2)*64 ~ 90.5 (Nyquist is 64), so
+# this keeps the small-scale end of the axis -- where the methods separate, and
+# which the full-range panels compress into their last centimetre.
+ZOOM_KMIN = 30.0
 
 
 def SLUG(s: str) -> str:
@@ -146,6 +166,119 @@ def _state_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
             "[ns] no saved states; run run_ns_grid.sh "
             f"(save_states, traj{STATE_TRAJ}) first"
         )
+    return written
+
+
+def _mean_field_spectrum(fields: np.ndarray):
+    """Radially-averaged enstrophy spectrum of vorticity fields ``[T, H, W]``.
+
+    The enstrophy spectrum ``Z(k)`` (shell average of $\\tfrac12|\\hat\\omega|^2$)
+    is a functional of the vorticity alone -- no stream-function inversion and no
+    velocity reconstruction, unlike the kinetic-energy spectrum.
+
+    Returns ``(k, Zk)`` as numpy arrays, with ``Zk`` averaged over the leading
+    (assimilation-step) axis -- radial binning is linear, so binning the
+    step-averaged modal enstrophy is identical to averaging the per-step spectra.
+    Returns ``None`` for a field stack that is not finite (a diverged sampler),
+    whose spectrum would be all-NaN and would silently vanish from the panel.
+    """
+    import torch  # local: the metric figures must not pay for a torch import
+
+    from scisi.metrics.spectral import radial_enstrophy_spectrum
+
+    if not np.isfinite(fields).all():
+        return None
+    k, zk = radial_enstrophy_spectrum(
+        torch.as_tensor(np.ascontiguousarray(fields), dtype=torch.float64)
+    )
+    return np.asarray(k), np.asarray(zk)
+
+
+def _assimilated_mean_fields(rec: dict, key: str) -> np.ndarray:
+    """The ensemble-mean vorticity over the ASSIMILATED steps: ``[T', H, W]``.
+
+    ``key`` is ``posterior_trajectory`` ``[E, C, H, W, T]`` or
+    ``true_trajectory`` ``[1, C, H, W, T]``. The archives store the whole
+    trajectory, whose leading ``len_field_history`` steps are the conditioning
+    window and were never assimilated; the number of assimilated steps is
+    recovered from the saved per-step metric curves (they have one entry per
+    assimilated step), falling back to the final step alone.
+    """
+    traj = np.asarray(rec[key])[:, 0, :, :, :]  # [n, H, W, T]
+    n_steps = int(np.asarray(rec.get("per_step_rmse", ())).size) or 1
+    fields = traj[..., -n_steps:].mean(axis=0)  # [H, W, T'] (ensemble mean)
+    return np.moveaxis(fields, -1, 0)           # [T', H, W]
+
+
+def _spectrum_figures(out: Path, state_M: int | None = STATE_M) -> list[Path]:
+    """Enstrophy-spectrum figures: two panels/files per scenario, all methods + truth.
+
+    Reads the same self-contained saved-state archives as the field maps
+    (``results/navier_stokes/states/traj<STATE_TRAJ>/*.npz``) and plots, per
+    scenario, the radially-averaged enstrophy spectrum $Z(k)$ of the TRUE
+    vorticity field against that of every method's POSTERIOR MEAN, averaged over
+    the assimilated steps of trajectory ``STATE_TRAJ`` at ``state_M`` sampler
+    steps. Each scenario gets TWO panels: the full spectrum, and a companion
+    zoomed to $k \\ge$ ``ZOOM_KMIN``, where the methods actually separate (the
+    full range spans several decades, which flattens the differences).
+
+    Because $Z = |k|^2 E$, the log discrepancy against the truth is the same on
+    either spectrum up to the spread of $|k|$ within a shell, so these curves
+    localise in $k$ what the tabulated ``energy_spec_rmse`` summarises (that
+    metric takes the log-spectrum RMSE PER STEP and averages, so the two are
+    companions rather than the same number).
+
+    Writes the combined figures, the per-scenario singles, and -- because the
+    panels carry a curve the shared method legend has no entry for -- its own
+    legend file with Truth prepended.
+    """
+    written: list[Path] = []
+    keys: set = set()
+    panels: list[tuple[str, dict]] = []
+    slugs: list[str] = []
+    for sc in SCENARIOS:
+        recs = load_state_records(CASE, scenario=sc, traj=STATE_TRAJ, M=state_M)
+        if not recs:
+            continue
+        series: dict = {}
+        truth = None
+        for r in recs:
+            if truth is None:
+                truth = _mean_field_spectrum(_assimilated_mean_fields(r, "true_trajectory"))
+            key = series_key(str(r["method"]), str(r.get("variant", "")))
+            spec = _mean_field_spectrum(
+                _assimilated_mean_fields(r, "posterior_trajectory")
+            )
+            if spec is None:
+                print(f"[ns] spectrum {sc}: {key[0]} diverged (non-finite); skipped")
+                continue
+            series[key] = spec
+            keys.add(key)
+        if not series or truth is None:
+            continue
+        series[TRUTH_KEY] = truth
+        panels.append((SCENARIO_LABEL.get(sc, sc), series))
+        slugs.append(SLUG(sc))
+        print(f"[ns] spectrum {sc}: {len(series) - 1} methods (traj{STATE_TRAJ})")
+    if not panels:
+        print(
+            "[ns] no saved states; cannot draw enstrophy spectra "
+            f"(run run_ns_grid.sh with save_states for traj{STATE_TRAJ})"
+        )
+        return written
+    # Full spectrum + the high-wavenumber zoom, from the SAME panel data: 4
+    # scenarios x 2 views = the 8 single-panel files the manuscript tiles.
+    written += make_spectrum_figure(
+        panels, out / "ns_enstrophy_spectrum", ncols=2, panel_slugs=slugs,
+    )
+    written += make_spectrum_figure(
+        panels, out / "ns_enstrophy_spectrum_zoom", ncols=2, panel_slugs=slugs,
+        kmin=ZOOM_KMIN,
+    )
+    written += save_series_legend(
+        keys, out / "singles" / "ns_enstrophy_spectrum_legend",
+        extra=((TRUTH_LABEL, dict(TRUTH_STYLE, linewidth=1.6)),),
+    )
     return written
 
 
@@ -236,6 +369,7 @@ def main() -> None:
 
     written += _step_figures(out, legend_keys)
     written += _state_figures(out, state_M=state_M)
+    written += _spectrum_figures(out, state_M=state_M)
     written += _truth_obs_figures(out, state_M=state_M)
 
     # One shared legend file for all the single-panel metric figures of this case.

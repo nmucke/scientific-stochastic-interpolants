@@ -60,8 +60,13 @@ def discover_by_traj(metrics_dir: Path) -> dict[int, list[Path]]:
     """Map trajectory index -> its per-cell CSV paths.
 
     Trajectory is parsed from ``__traj<N>__`` in the filename; files without it
-    (analytical, already seed-aggregated) fall into bucket 0. Skips the
-    ``ref_*`` bookkeeping files.
+    (analytical, already seed-aggregated) fall into bucket 0. The ``ref_*`` files
+    are skipped: they are a SEPARATE run of the same method (the NS reference EnKF
+    at a much larger ensemble, which also serves as the KL reference), so folding
+    them in with the graded cells would silently average two different
+    configurations of "EnKF" together. The reference is brought in deliberately,
+    under its own method name, via :func:`load_records_by_traj` on the CSV that
+    ``compute_ns_reference_metrics.py`` writes.
     """
     by_traj: dict[int, list[Path]] = defaultdict(list)
     if not metrics_dir.exists():
@@ -71,6 +76,25 @@ def discover_by_traj(metrics_dir: Path) -> dict[int, list[Path]]:
             continue
         m = re.search(r"traj(\d+)", p.name)
         by_traj[int(m.group(1)) if m else 0].append(p)
+    return dict(sorted(by_traj.items()))
+
+
+def load_records_by_traj(
+    path: Path, *, traj_column: str = "test_index"
+) -> dict[int, list[ResultRecord]]:
+    """Bucket ONE tidy CSV's rows by trajectory, ready for :func:`aggregate_scalar_records`.
+
+    The per-cell grids write one file per trajectory and encode the trajectory in
+    the filename; a post-hoc script (``compute_ns_reference_metrics.py``) instead
+    writes every trajectory into one file with a ``test_index`` column. This reads
+    that shape. Rows with no usable trajectory cell fall into bucket 0, matching
+    :func:`discover_by_traj`'s handling of files with no ``traj<N>`` token.
+    """
+    by_traj: dict[int, list[ResultRecord]] = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            traj = _as_opt_int(row.get(traj_column))
+            by_traj[0 if traj is None else traj].append(ResultRecord.from_row(row))
     return dict(sorted(by_traj.items()))
 
 
@@ -145,6 +169,20 @@ def _per_traj_value(records: list[ResultRecord]) -> float:
 def aggregate_scalar(by_traj: dict[int, list[Path]]) -> list[dict[str, object]]:
     """Reduce per-trajectory scalar cells to mean +/- std over trajectories.
 
+    Thin wrapper over :func:`aggregate_scalar_records` that loads the per-cell
+    files first; see there for the reduction.
+    """
+    return aggregate_scalar_records({
+        traj: [r for path in paths for r in load_records(path)]
+        for traj, paths in by_traj.items()
+    })
+
+
+def aggregate_scalar_records(
+    by_traj: dict[int, list[ResultRecord]]
+) -> list[dict[str, object]]:
+    """Reduce already-loaded per-trajectory records to mean +/- std over trajectories.
+
     Grouping key is ``(case, method, scenario, metric, E, M, variant)``. For each
     group we collect ONE value per trajectory bucket, then take nanmean / nanstd
     across trajectories. All-NaN groups are skipped. Every metric present in the
@@ -154,11 +192,10 @@ def aggregate_scalar(by_traj: dict[int, list[Path]]) -> list[dict[str, object]]:
     cells: dict[tuple, dict[int, list[ResultRecord]]] = defaultdict(
         lambda: defaultdict(list)
     )
-    for traj, paths in by_traj.items():
-        for path in paths:
-            for r in load_records(path):
-                key = (r.case, r.method, r.scenario, r.metric, r.E, r.M, r.variant)
-                cells[key][traj].append(r)
+    for traj, records in by_traj.items():
+        for r in records:
+            key = (r.case, r.method, r.scenario, r.metric, r.E, r.M, r.variant)
+            cells[key][traj].append(r)
 
     rows: list[dict[str, object]] = []
     for (case, method, scenario, metric, E, M, variant), per_traj in cells.items():
@@ -294,6 +331,7 @@ def print_scalar_table(rows: list[dict[str, object]], key_metrics: tuple[str, ..
 
 __all__ = [
     "SKIP_PREFIX", "SCALAR_FIELDNAMES", "PER_STEP_AGG_FIELDNAMES",
-    "discover_by_traj", "aggregate_scalar", "write_scalar_csv",
+    "discover_by_traj", "load_records_by_traj",
+    "aggregate_scalar", "aggregate_scalar_records", "write_scalar_csv",
     "aggregate_per_step", "write_per_step_csv", "print_scalar_table",
 ]

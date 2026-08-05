@@ -70,10 +70,23 @@ likelihood_model:
       sparse_1p5:  { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25); the NS
-                             # table is flat in scenario AND M, so this is just eta.
+    urban:                   # SWEPT ON URBAN 2026-07-30 -- CONFIRMS the NS value.
+                             # results/urban/tuning/dflow/, eta in {0.002, 0.005,
+                             # 0.01, 0.02} at lambda=1e-4, x 2 scenarios x M
+                             # {25,50,100,250}; traj6, seed 0, E=8, 1 DA step.
+                             # eta=0.005 is a bracketed interior optimum (0.002 and
+                             # 0.01 worse on each side) and, with lambda=1e-3, wins 6
+                             # of the 8 cells. The two exceptions are M=25/sparse_1p5
+                             # (eta=0.01 by 0.0002) and M=250/sparse_5 (eta=0.002 by
+                             # 0.0006) -- both inside single-trajectory noise, so the
+                             # row stays flat rather than encoding them.
+                             # eta=0.02 (near the paper's Turb 5e-2) degrades sharply
+                             # with M -- 0.0710 -> 0.0816 from M=25 to M=250 -- the
+                             # expected pSGLD failure mode, since M maps to the
+                             # Langevin chain length here, not an integration count.
       sparse_5:    { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
       sparse_1p5:  { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
+      sparse_0p78: { 25: 0.005, 50: 0.005, 100: 0.005, 250: 0.005, 500: 0.005 }
 
   # noise_scale = s, Langevin noise scale; increment ~ N(0, 2 eta s P) (s=0 -> MAP).
   noise_scale:
@@ -88,6 +101,7 @@ likelihood_model:
     urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
       sparse_5:    { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
       sparse_1p5:  { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_0p78: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
 
   # lambda_reg = lambda, weight on source reg lambda ||z_0||^2 (Eq. 31; 0 disables).
   # The paper frames this as the key knob, but on NS it is nearly inert on
@@ -102,16 +116,29 @@ likelihood_model:
       sparse_1p5:  { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
-      sparse_5:    { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-      sparse_1p5:  { 25: 1.0e-4, 50: 1.0e-4, 100: 1.0e-4, 250: 1.0e-4, 500: 1.0e-4 }
-    # URBAN PROVENANCE (all three D-Flow tables above): the NS sparse cells verbatim,
-    # NOT an urban sweep (results/urban/tuning/ is empty). Cheapest transfer of the
-    # six methods to justify -- the NS tuning found eta the only knob that matters
-    # and its optimum flat across all four NS scenarios and every M, with s and
-    # lambda near-inert. Numerically identical to the previous `default` fallback;
-    # the tables exist so urban stops logging "no entry for case='urban'" and so a
-    # future urban sweep has a cell to write into.
+    urban:                   # SWEPT ON URBAN 2026-07-30 -- lambda MOVED 1e-4 -> 1e-3.
+      sparse_5:    { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_1p5:  { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+      sparse_0p78: { 25: 1.0e-3, 50: 1.0e-3, 100: 1.0e-3, 250: 1.0e-3, 500: 1.0e-3 }
+    # URBAN PROVENANCE (all three D-Flow tables above): measured, no longer copied
+    # from NS. results/urban/tuning/dflow/, 40 cells: an eta grid {0.002,0.005,0.01,
+    # 0.02} at lambda=1e-4, then a lambda refinement {1e-4, 1e-3} at eta=0.005, x 2
+    # scenarios x M {25,50,100,250}; traj6, seed 0, E=8, 1 DA step. noise_scale was
+    # held FIXED at 1e-3 (not swept) -- it stays the NS/paper value.
+    #
+    # *** LAMBDA IS NOT INERT ON URBAN. *** The NS tuning concluded lambda is "nearly
+    # inert on RMSE/CRPS once eta is right" (see the block comment at the top of this
+    # file), which is why every other row here carries 1e-4. On urban, lambda=1e-3
+    # beats 1e-4 at the same eta in 7 of 8 cells, and the margin GROWS with M:
+    #   sparse_5      M=25 0.0668 vs 0.0673 ... M=250 0.0690 vs 0.0747
+    #   sparse_1p5    M=50 0.0685 vs 0.0695 ... M=250 0.0671 vs 0.0720
+    # M=250 is where the paper table lives, so this is not a rounding-level change.
+    #
+    # CAVEAT: 1e-3 is the TOP of a two-value lambda grid, so it is unbracketed -- the
+    # true optimum may be higher. Extend to lambda in {3e-3, 1e-2} at eta=0.005 to
+    # bracket it (16 cells; D-Flow is the dearest baseline, ~2.5 h even on a free GPU).
+    # Also ONE trajectory, ONE seed, E=8, ONE DA step vs the grid's E=64 / 15 steps;
+    # D-Flow was not re-run at more DA steps.
 
   # Fixed across all paper cases (Table D.3) -> plain scalars; promote to a table
   # like the ones above if a future sweep needs to tune them per cell.

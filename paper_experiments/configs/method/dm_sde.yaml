@@ -48,10 +48,24 @@ likelihood_model:
       sparse_1p5:  { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }  # 1.0 diverges
     analytical:              # exact J -> no damping needed
       analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0, 500: 1.0 }
-    urban:                   # PROVISIONAL, NOT SWEPT -- 0.9 for cliff margin (see
-      sparse_5:   { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # si_sde.yaml). Present
-      sparse_1p5: { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }   # (not omitted) because
-      # falling back to `default: 1.0` would DIVERGE in inflated_shared.
+    urban:                   # SWEPT ON URBAN 2026-08-01 -- 0.95 CONFIRMED.
+      sparse_5:   { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }
+      sparse_1p5: { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }
+      sparse_0p78: { 25: 0.95, 50: 0.95, 100: 0.95, 250: 0.95, 500: 0.95 }
+    # URBAN PROVENANCE: measured. Same sweep as si_sde.yaml (see there for the full
+    # spec): results/urban/tuning_da3/ours/, lambda in {0.9,0.95,1.0} x 2 scenarios
+    # x M {25,50}, k=10, traj6, seed 0, E=8, 3 DA steps -- all three Ours methods in
+    # the same cells, so their curves are directly comparable.
+    #
+    # DM-SDE rmse, lambda=0.9 / 0.95 / 1.0, with the untuned jacfree reference:
+    #   sparse_5      M=25   0.1372 jf | 0.1357  0.1354   0.1353*
+    #                 M=50   0.1357 jf | 0.1340  0.1336*  0.2145  <- DIVERGED
+    #   sparse_1p5    M=25   0.1466 jf | 0.1459  0.1457*  0.1465
+    #                 M=50   0.1452 jf | 0.1443  0.1441*  0.1454
+    # 0.95 wins 3 of 4. The exception is sparse_5/M=25, where 1.0 edges it by 0.0001
+    # -- noise at one trajectory and one seed, and the SAME lambda=1.0 blows up to
+    # 0.2145 one M-rung later, so 0.95 is taken for the whole row rather than
+    # encoding a hairline win that sits next to a divergence.
 
   # Both TESTED AND REJECTED (they collapse Sigma_bar toward jacfree and discard
   # the inflation benefit); kept only so that ablation stays reproducible.

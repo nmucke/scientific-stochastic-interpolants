@@ -1,0 +1,115 @@
+[sched-urban] 2026-08-02 14:38:48 waiting for the queued jobs to finish
+[sched-urban]   groups = ours_jacfree ours_shared_k10 baselines   (dflow excluded on purpose)
+[sched-urban] 2026-08-02 14:38:48 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 14:48:49 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 14:58:49 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:08:50 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:18:50 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:28:51 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:38:51 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:48:51 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 15:58:52 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:08:52 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:18:53 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:28:53 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:38:54 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:48:54 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 16:58:54 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:08:55 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:18:55 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:28:56 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:38:56 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:48:57 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 17:58:57 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:08:57 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:18:58 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:28:58 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:38:59 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:48:59 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 18:58:59 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:09:00 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:19:00 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:29:01 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:39:01 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:49:02 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 19:59:02 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:09:02 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:19:03 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:29:03 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:39:04 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:49:04 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 20:59:05 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:09:05 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:19:05 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:29:06 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:39:06 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:49:07 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 21:59:07 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:09:07 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:19:08 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:29:08 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:39:09 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:49:09 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 22:59:10 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:09:10 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:19:10 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:29:11 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:39:11 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:49:12 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-02 23:59:12 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:09:13 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:19:13 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:29:13 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:39:14 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:49:14 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 00:59:15 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 01:09:15 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 01:19:16 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 01:29:16 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 01:39:16 still busy: run_ns_grid.sh -- waiting 10 min
+[sched-urban] 2026-08-03 01:49:17 queue clear, GPU free = 23580 MiB
+[sched-urban] launching run_urban_grid.sh with GRPS='ours_jacfree ours_shared_k10 baselines'
+[urbangrid] START Mon Aug  3 01:49:17 AM CEST 2026 | E=64 NP=20 dev=cuda | traj=[1 2 3 4 5] steps=[25 50 100] groups=[ours_jacfree ours_shared_k10 baselines] save_states=traj1
+[urbangrid] ===== traj1 (save_states=true) 01:49:17 =====
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_5__M25__traj1__ours_jacfree.csv
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_5__M25__traj1__ours_shared_jac10.csv
+[urbangrid] RUN  baselines/sparse_5/M25/traj1 -> sparse_5__M25__traj1__baselines.csv 01:49:17
+[urbangrid] OK   baselines/sparse_5/M25/traj1 sparse_5__M25__traj1__baselines.csv 02:16:59
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_5__M50__traj1__ours_jacfree.csv
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_5__M50__traj1__ours_shared_jac10.csv
+[urbangrid] RUN  baselines/sparse_5/M50/traj1 -> sparse_5__M50__traj1__baselines.csv 02:16:59
+[urbangrid] OK   baselines/sparse_5/M50/traj1 sparse_5__M50__traj1__baselines.csv 03:12:40
+[urbangrid] SKIP (exists) paper_experiments/results/urban/metrics/sparse_5__M100__traj1__ours_jacfree.csv
+[urbangrid] RUN  ours_shared_jac10/sparse_5/M100/traj1 -> sparse_5__M100__traj1__ours_shared_jac10.csv 03:12:40
+[urbangrid] OK   ours_shared_jac10/sparse_5/M100/traj1 sparse_5__M100__traj1__ours_shared_jac10.csv 14:33:56
+[urbangrid] RUN  baselines/sparse_5/M100/traj1 -> sparse_5__M100__traj1__baselines.csv 14:33:56
+[urbangrid] OK   baselines/sparse_5/M100/traj1 sparse_5__M100__traj1__baselines.csv 16:19:16
+[urbangrid] RUN  ours_jacfree/sparse_1_5625/M25/traj1 -> sparse_1_5625__M25__traj1__ours_jacfree.csv 16:19:16
+[urbangrid] OK   ours_jacfree/sparse_1_5625/M25/traj1 sparse_1_5625__M25__traj1__ours_jacfree.csv 16:28:02
+[urbangrid] RUN  ours_shared_jac10/sparse_1_5625/M25/traj1 -> sparse_1_5625__M25__traj1__ours_shared_jac10.csv 16:28:02
+[urbangrid] OK   ours_shared_jac10/sparse_1_5625/M25/traj1 sparse_1_5625__M25__traj1__ours_shared_jac10.csv 17:50:56
+[urbangrid] RUN  baselines/sparse_1_5625/M25/traj1 -> sparse_1_5625__M25__traj1__baselines.csv 17:50:56
+[urbangrid] OK   baselines/sparse_1_5625/M25/traj1 sparse_1_5625__M25__traj1__baselines.csv 18:18:05
+[urbangrid] RUN  ours_jacfree/sparse_1_5625/M50/traj1 -> sparse_1_5625__M50__traj1__ours_jacfree.csv 18:18:05
+[urbangrid] OK   ours_jacfree/sparse_1_5625/M50/traj1 sparse_1_5625__M50__traj1__ours_jacfree.csv 18:34:26
+[urbangrid] RUN  ours_shared_jac10/sparse_1_5625/M50/traj1 -> sparse_1_5625__M50__traj1__ours_shared_jac10.csv 18:34:26
+[urbangrid] OK   ours_shared_jac10/sparse_1_5625/M50/traj1 sparse_1_5625__M50__traj1__ours_shared_jac10.csv 21:08:25
+[urbangrid] RUN  baselines/sparse_1_5625/M50/traj1 -> sparse_1_5625__M50__traj1__baselines.csv 21:08:25
+[urbangrid] OK   baselines/sparse_1_5625/M50/traj1 sparse_1_5625__M50__traj1__baselines.csv 22:03:08
+[urbangrid] RUN  ours_jacfree/sparse_1_5625/M100/traj1 -> sparse_1_5625__M100__traj1__ours_jacfree.csv 22:03:08
+[urbangrid] OK   ours_jacfree/sparse_1_5625/M100/traj1 sparse_1_5625__M100__traj1__ours_jacfree.csv 22:34:52
+[urbangrid] RUN  ours_shared_jac10/sparse_1_5625/M100/traj1 -> sparse_1_5625__M100__traj1__ours_shared_jac10.csv 22:34:52
+[urbangrid] OK   ours_shared_jac10/sparse_1_5625/M100/traj1 sparse_1_5625__M100__traj1__ours_shared_jac10.csv 03:45:59
+[urbangrid] RUN  baselines/sparse_1_5625/M100/traj1 -> sparse_1_5625__M100__traj1__baselines.csv 03:45:59
+[urbangrid] OK   baselines/sparse_1_5625/M100/traj1 sparse_1_5625__M100__traj1__baselines.csv 05:35:32
+[urbangrid] ===== traj1 done 05:35:32 =====
+[urbangrid] ===== traj2 (save_states=false) 05:35:32 =====
+[urbangrid] RUN  ours_jacfree/sparse_5/M25/traj2 -> sparse_5__M25__traj2__ours_jacfree.csv 05:35:32
+[urbangrid] OK   ours_jacfree/sparse_5/M25/traj2 sparse_5__M25__traj2__ours_jacfree.csv 05:43:43
+[urbangrid] RUN  ours_shared_jac10/sparse_5/M25/traj2 -> sparse_5__M25__traj2__ours_shared_jac10.csv 05:43:43
+[urbangrid] OK   ours_shared_jac10/sparse_5/M25/traj2 sparse_5__M25__traj2__ours_shared_jac10.csv 09:02:53
+[urbangrid] RUN  baselines/sparse_5/M25/traj2 -> sparse_5__M25__traj2__baselines.csv 09:02:53
+[urbangrid] OK   baselines/sparse_5/M25/traj2 sparse_5__M25__traj2__baselines.csv 09:29:42
+[urbangrid] RUN  ours_jacfree/sparse_5/M50/traj2 -> sparse_5__M50__traj2__ours_jacfree.csv 09:29:42
+[urbangrid] OK   ours_jacfree/sparse_5/M50/traj2 sparse_5__M50__traj2__ours_jacfree.csv 09:46:03
+[urbangrid] RUN  ours_shared_jac10/sparse_5/M50/traj2 -> sparse_5__M50__traj2__ours_shared_jac10.csv 09:46:03

@@ -839,6 +839,7 @@ class FlowdasGaussianLikelihood(nn.Module):
         guidance_scale: float = 1.0,
         max_grad_norm: Optional[float] = None,
         num_mc_samples: Optional[int] = 25,
+        mc_chunk: Optional[int] = None,
     ) -> None:
         """Initialize the FlowDAS Monte-Carlo likelihood.
 
@@ -863,6 +864,26 @@ class FlowdasGaussianLikelihood(nn.Module):
                 PER ensemble member for the likelihood estimate (paper Eq. 10;
                 recommended ``J=25`` irrespective of ``E``). This is decoupled
                 from ``ensemble_size``. ``None`` falls back to the ``25`` default.
+            mc_chunk: How many of the ``J`` Monte-Carlo members are materialised
+                (and pushed through ``obs_operator``) AT ONCE. ``None`` (default)
+                means "all J", i.e. exactly the unchunked code path. A finite
+                value caps the transient at ``[chunk, B, C, H, W]`` instead of
+                ``[J, B, C, H, W]`` and the observation-operator batch at
+                ``chunk * B`` instead of ``J * B`` -- required at urban scale
+                (J=25, B=64, C=4, 128x128 is a 400 MiB block per tensor and
+                1600 samples through the operator, which OOMs a 24 GB card).
+                The estimator is unchanged: ``eps`` is still drawn in a single
+                ``randn`` call over the full ``[J, B, C, H, W]`` block (identical
+                random stream) and the importance-weight softmax stays GLOBAL
+                over all ``J``; only the observation-operator evaluation and the
+                gradient accumulation are split. Costs one extra chunked forward
+                pass through ``obs_operator`` (the weights must be known before
+                the differentiated pass). ``mc_chunk >= J`` (and ``None``) is
+                BITWISE the old result; a genuine split is bitwise-exact in the
+                weights but not in the score, because summing the per-member
+                gradients chunk-by-chunk regroups a float sum -- measured at
+                <= 1.4 ULP of ``max|score|`` (rel. 3e-16 in f64, 1.6e-7 in f32),
+                i.e. pure associativity noise, not a different estimator.
         """
         super(FlowdasGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -872,6 +893,11 @@ class FlowdasGaussianLikelihood(nn.Module):
         self.ensemble_size = ensemble_size
         # J = number of one-step x_1 predictions per member (paper Eq. 10).
         self.num_mc_samples = int(num_mc_samples) if num_mc_samples is not None else 25
+        # Monte-Carlo chunk over J (memory vs one extra obs-operator pass).
+        # None -> no chunking, i.e. the historical single-shot code path.
+        self.mc_chunk = int(mc_chunk) if mc_chunk is not None else None
+        if self.mc_chunk is not None and self.mc_chunk < 1:
+            raise ValueError(f"mc_chunk must be >= 1 or None, got {mc_chunk!r}.")
         self.dist = torch.distributions.MultivariateNormal
         self.integration_order = integration_order
         self.guidance_scale = guidance_scale
@@ -932,6 +958,32 @@ class FlowdasGaussianLikelihood(nn.Module):
         )
         return x + 0.5 * (drift_milstein + drift_rk) * (1.0 - t)
 
+    def _sq_obs_err(
+        self,
+        mu_x1: torch.Tensor,
+        eps: torch.Tensor,
+        s: torch.Tensor,
+        observations: torch.Tensor,
+    ) -> torch.Tensor:
+        """Squared observation residuals ``||y - H(mu_x1 + s eps_j)||^2``.
+
+        Evaluated for the ``k`` Monte-Carlo members carried by ``eps``
+        (``[k, B, C, H, W]``); returns ``[k, B]``. Every operation here is
+        elementwise or a reduction over the OBSERVATION axis only, so slicing
+        ``eps`` along its leading (member) axis and concatenating the results is
+        bitwise the same as one call with all ``J`` members -- which is what
+        makes the chunked path in :meth:`score` an exact refactor rather than an
+        approximation. This is the only place the ``[k, B, C, H, W]`` block and
+        the ``k * B``-sample operator batch are materialised, hence the only
+        place the memory peak has to be controlled.
+        """
+        k = eps.shape[0]
+        b, c, h, w = mu_x1.shape
+        preds = mu_x1.unsqueeze(0) + s * eps  # [k, B, C, H, W]
+        Hpreds = self.obs_operator(preds.reshape(k * b, c, h, w)).reshape(k, b, -1)
+        residual = observations.unsqueeze(0) - Hpreds  # [k, B, N_y]
+        return (residual**2).sum(dim=-1)  # [k, B]
+
     def score(
         self,
         observations: torch.Tensor,
@@ -972,6 +1024,10 @@ class FlowdasGaussianLikelihood(nn.Module):
         # level (state-independent scalar).
         s = self._gamma_mult * self.integral_variance(t)
 
+        # How many MC members to materialise at once (None -> all J at once,
+        # the historical path). Clamped to J so `mc_chunk >= J` costs nothing.
+        chunk = n_mc if self.mc_chunk is None else min(self.mc_chunk, n_mc)
+
         # Detached grad-enabled leaf: the score flows through mu_x1(x_g) but the
         # caller's working tensor is untouched.
         x_g = x.detach().requires_grad_(True)
@@ -979,31 +1035,80 @@ class FlowdasGaussianLikelihood(nn.Module):
             mu_x1 = self._denoiser_mean(
                 x_g, t, field_history, field_cond, pars_cond, drift
             )
-            b, c, h, w = mu_x1.shape
+            b = mu_x1.shape[0]  # mu_x1 is [B, C, H, W]; C/H/W only matter inside
+            #                     _sq_obs_err, which re-reads them from mu_x1.
 
             # J one-step predictions with DETACHED source noise; the x_g-dependence
-            # is ONLY through mu_x1 (eps_j are constants).
+            # is ONLY through mu_x1 (eps_j are constants). Drawn in ONE randn call
+            # over the full [J, B, C, H, W] block whether or not the evaluation is
+            # chunked: eps is not what overflows the card (the obs_operator over
+            # J*B samples is), and per-chunk draws would silently move the random
+            # stream, so every chunked result would differ from every unchunked one.
             eps = torch.randn(
                 (n_mc, *mu_x1.shape), device=mu_x1.device, dtype=mu_x1.dtype
             )
-            preds = mu_x1.unsqueeze(0) + s * eps  # [J, B, C, H, W]
 
-            Hpreds = self.obs_operator(preds.reshape(n_mc * b, c, h, w)).reshape(
-                n_mc, b, -1
-            )
-            residual = observations.unsqueeze(0) - Hpreds  # [J, B, N_y]
-            sq_err = (residual**2).sum(dim=-1)  # [J, B]
+            if chunk >= n_mc:
+                # --- unchunked: one shot, exactly as before.
+                sq_err = self._sq_obs_err(mu_x1, eps, s, observations)  # [J, B]
 
-            # DETACHED importance weights (constants in the autograd graph).
-            log_w = -0.5 * sq_err.detach() / R  # [J, B]
-            weights = torch.softmax(log_w, dim=0)  # [J, B]
+                # DETACHED importance weights (constants in the autograd graph).
+                log_w = -0.5 * sq_err.detach() / R  # [J, B]
+                weights = torch.softmax(log_w, dim=0)  # [J, B]
 
-            # log p(y|x_tau) with the 1/(2 sigma^2) factor kept; differentiate
-            # THROUGH the predictor (weights detached) to get the raw score. The
-            # -1/(2R) sign makes `grad` already point UP the log-likelihood, so
-            # the posterior ascends with a positive step size zeta.
-            log_lik = -0.5 * (weights * sq_err).sum(dim=0).sum() / R  # scalar
-            grad = torch.autograd.grad(outputs=log_lik, inputs=x_g)[0]
+                # log p(y|x_tau) with the 1/(2 sigma^2) factor kept; differentiate
+                # THROUGH the predictor (weights detached) to get the raw score. The
+                # -1/(2R) sign makes `grad` already point UP the log-likelihood, so
+                # the posterior ascends with a positive step size zeta.
+                log_lik = -0.5 * (weights * sq_err).sum(dim=0).sum() / R  # scalar
+                grad = torch.autograd.grad(outputs=log_lik, inputs=x_g)[0]
+            else:
+                # --- chunked over J, in two passes. The weights are a softmax
+                # over ALL J members, so they cannot be formed chunk-by-chunk:
+                # pass 1 assembles the (cheap, [J, B]) squared errors WITHOUT a
+                # graph, the softmax is then taken globally, and pass 2 rebuilds
+                # the same quantities inside the graph one chunk at a time. The
+                # extra forward pass buys the memory bound; the arithmetic is the
+                # unchunked one element for element (see _sq_obs_err).
+                with torch.no_grad():
+                    sq_err = torch.cat(
+                        [
+                            self._sq_obs_err(
+                                mu_x1, eps[j0 : j0 + chunk], s, observations
+                            )
+                            for j0 in range(0, n_mc, chunk)
+                        ],
+                        dim=0,
+                    )  # [J, B]
+
+                # GLOBAL softmax over all J (never per chunk). Already detached.
+                log_w = -0.5 * sq_err / R  # [J, B]
+                weights = torch.softmax(log_w, dim=0)  # [J, B]
+
+                # log_lik is a plain SUM over j of per-member terms, so its
+                # gradient is the sum of the per-chunk gradients. Accumulate that
+                # sum at mu_x1 rather than at x_g: the denoiser then gets ONE
+                # backward pass (two model evaluations), exactly as unchunked,
+                # instead of one per chunk. Each chunk's graph is freed by its own
+                # grad() call, which is what keeps the peak at chunk size; the
+                # graph UPSTREAM of mu_x1 is never traversed here, so it survives
+                # for the final backward. Regrouping that sum is the ONE thing
+                # chunking cannot keep bitwise (float addition is not
+                # associative); the measured drift is <= 1.4 ULP of max|score|.
+                g_mu = torch.zeros_like(mu_x1)
+                for j0 in range(0, n_mc, chunk):
+                    sq_err_c = self._sq_obs_err(
+                        mu_x1, eps[j0 : j0 + chunk], s, observations
+                    )
+                    log_lik_c = (
+                        -0.5
+                        * (weights[j0 : j0 + chunk] * sq_err_c).sum(dim=0).sum()
+                        / R
+                    )
+                    g_mu = g_mu + torch.autograd.grad(log_lik_c, mu_x1)[0]
+                grad = torch.autograd.grad(
+                    outputs=mu_x1, inputs=x_g, grad_outputs=g_mu
+                )[0]
 
         score = grad
         # Optional safety cap: clip only members whose score exceeds max_grad_norm,

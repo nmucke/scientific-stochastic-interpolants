@@ -53,7 +53,8 @@ URBAN_STEPS = (25, 50, 100, 250)
 URBAN_TRAJ = (1, 2, 3, 4, 5)
 
 NS_SCENARIOS = ("16^2->128^2", "32^2->128^2", "sparse 5%", "sparse 1.5625%")
-URBAN_SCENARIOS = ("sparse 5%", "sparse 1.5625%")
+# 2026-08-04: urban lineup = the two sparsest regimes (1/64, 1/128); 5% is off it.
+URBAN_SCENARIOS = ("sparse 1.5625%", "sparse 0.78125%")
 ANALYTICAL_SCENARIOS = ("analytical",)
 
 # Per case: which scenarios / step ladder / method lineup / coverage axis to

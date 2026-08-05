@@ -1,0 +1,57 @@
+[sched-classical] 2026-08-01 08:26:27 sleeping 12813s until 2026-08-01 12:00
+[sched-classical] 2026-08-01 12:00:00 12:00 reached; checking for other GPU jobs
+[sched-classical] 2026-08-01 12:00:01 GPU free = 23580 MiB; launching classical group
+[ns-classical] 2026-08-01 12:00:01 launching run_ns_grid.sh with GRPS=classical
+[ns-classical] expecting 20 cells: 4 scenarios x traj 10 11 12 13 14
+[nsgrid] START Sat Aug  1 12:00:01 PM CEST 2026 | E=64 NP=20 dev=cuda | traj=[10 11 12 13 14] steps=[50 100 250] groups=[classical] save_states=traj11
+[nsgrid] ===== traj10 (save_states=false) 12:00:01 =====
+[nsgrid] RUN  classical/16_2_128_2/traj10 -> 16_2_128_2__traj10__classical.csv 12:00:01
+[nsgrid] OK   classical/16_2_128_2/traj10 16_2_128_2__traj10__classical.csv 12:03:50
+[nsgrid] RUN  classical/32_2_128_2/traj10 -> 32_2_128_2__traj10__classical.csv 12:03:50
+[nsgrid] OK   classical/32_2_128_2/traj10 32_2_128_2__traj10__classical.csv 12:07:39
+[nsgrid] RUN  classical/sparse_5/traj10 -> sparse_5__traj10__classical.csv 12:07:39
+[nsgrid] OK   classical/sparse_5/traj10 sparse_5__traj10__classical.csv 12:11:32
+[nsgrid] RUN  classical/sparse_1_5625/traj10 -> sparse_1_5625__traj10__classical.csv 12:11:32
+[nsgrid] OK   classical/sparse_1_5625/traj10 sparse_1_5625__traj10__classical.csv 12:15:24
+[nsgrid] ===== traj10 done 12:15:24 =====
+[nsgrid] ===== traj11 (save_states=true) 12:15:24 =====
+[nsgrid] RUN  classical/16_2_128_2/traj11 -> 16_2_128_2__traj11__classical.csv 12:15:24
+[nsgrid] OK   classical/16_2_128_2/traj11 16_2_128_2__traj11__classical.csv 12:19:23
+[nsgrid] RUN  classical/32_2_128_2/traj11 -> 32_2_128_2__traj11__classical.csv 12:19:23
+[nsgrid] OK   classical/32_2_128_2/traj11 32_2_128_2__traj11__classical.csv 12:23:22
+[nsgrid] RUN  classical/sparse_5/traj11 -> sparse_5__traj11__classical.csv 12:23:22
+[nsgrid] OK   classical/sparse_5/traj11 sparse_5__traj11__classical.csv 12:27:26
+[nsgrid] RUN  classical/sparse_1_5625/traj11 -> sparse_1_5625__traj11__classical.csv 12:27:26
+[nsgrid] OK   classical/sparse_1_5625/traj11 sparse_1_5625__traj11__classical.csv 12:31:28
+[nsgrid] ===== traj11 done 12:31:28 =====
+[nsgrid] ===== traj12 (save_states=false) 12:31:28 =====
+[nsgrid] RUN  classical/16_2_128_2/traj12 -> 16_2_128_2__traj12__classical.csv 12:31:28
+[nsgrid] OK   classical/16_2_128_2/traj12 16_2_128_2__traj12__classical.csv 12:35:19
+[nsgrid] RUN  classical/32_2_128_2/traj12 -> 32_2_128_2__traj12__classical.csv 12:35:19
+[nsgrid] OK   classical/32_2_128_2/traj12 32_2_128_2__traj12__classical.csv 12:39:09
+[nsgrid] RUN  classical/sparse_5/traj12 -> sparse_5__traj12__classical.csv 12:39:09
+[nsgrid] OK   classical/sparse_5/traj12 sparse_5__traj12__classical.csv 12:43:04
+[nsgrid] RUN  classical/sparse_1_5625/traj12 -> sparse_1_5625__traj12__classical.csv 12:43:04
+[nsgrid] OK   classical/sparse_1_5625/traj12 sparse_1_5625__traj12__classical.csv 12:46:59
+[nsgrid] ===== traj12 done 12:46:59 =====
+[nsgrid] ===== traj13 (save_states=false) 12:46:59 =====
+[nsgrid] RUN  classical/16_2_128_2/traj13 -> 16_2_128_2__traj13__classical.csv 12:46:59
+[nsgrid] OK   classical/16_2_128_2/traj13 16_2_128_2__traj13__classical.csv 12:50:49
+[nsgrid] RUN  classical/32_2_128_2/traj13 -> 32_2_128_2__traj13__classical.csv 12:50:49
+[nsgrid] OK   classical/32_2_128_2/traj13 32_2_128_2__traj13__classical.csv 12:54:40
+[nsgrid] RUN  classical/sparse_5/traj13 -> sparse_5__traj13__classical.csv 12:54:40
+[nsgrid] OK   classical/sparse_5/traj13 sparse_5__traj13__classical.csv 12:58:35
+[nsgrid] RUN  classical/sparse_1_5625/traj13 -> sparse_1_5625__traj13__classical.csv 12:58:35
+[nsgrid] OK   classical/sparse_1_5625/traj13 sparse_1_5625__traj13__classical.csv 13:02:29
+[nsgrid] ===== traj13 done 13:02:29 =====
+[nsgrid] ===== traj14 (save_states=false) 13:02:29 =====
+[nsgrid] RUN  classical/16_2_128_2/traj14 -> 16_2_128_2__traj14__classical.csv 13:02:29
+[nsgrid] OK   classical/16_2_128_2/traj14 16_2_128_2__traj14__classical.csv 13:06:19
+[nsgrid] RUN  classical/32_2_128_2/traj14 -> 32_2_128_2__traj14__classical.csv 13:06:19
+[nsgrid] OK   classical/32_2_128_2/traj14 32_2_128_2__traj14__classical.csv 13:10:09
+[nsgrid] RUN  classical/sparse_5/traj14 -> sparse_5__traj14__classical.csv 13:10:09
+[nsgrid] OK   classical/sparse_5/traj14 sparse_5__traj14__classical.csv 13:14:04
+[nsgrid] RUN  classical/sparse_1_5625/traj14 -> sparse_1_5625__traj14__classical.csv 13:14:04
+[nsgrid] OK   classical/sparse_1_5625/traj14 sparse_1_5625__traj14__classical.csv 13:17:58
+[nsgrid] ===== traj14 done 13:17:58 =====
+[nsgrid] ALL DONE Sat Aug  1 01:17:58 PM CEST 2026

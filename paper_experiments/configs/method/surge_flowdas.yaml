@@ -40,15 +40,29 @@ likelihood_model:
       sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
     analytical:              # single joint scenario; columns are the M sweep
       analytical: { 25: 0.004, 50: 0.004, 100: 0.052,  250: 0.154, 500: 1.0  }
-    urban:                   # COPIED FROM THE NS SPARSE ROWS (2026-07-25)
-      sparse_5:    { 25: 0.002, 50: 0.002, 100: 0.002,  250: 0.002, 500: 1.0  }
-      sparse_1p5:  { 25: 0.004, 50: 0.004, 100: 0.004,  250: 0.002, 500: 1.75 }
-    # URBAN PROVENANCE: the NS sparse cells verbatim, NOT an urban sweep -- same
-    # table as flowdas.yaml, same caveat (see there). Note this is the row that
-    # actually RUNS on the urban grid: urban's lineup is SURGE-only, so bare FlowDAS
-    # is off it and `SURGE (FlowDAS)` carries the FlowDAS comparison. SURGE's SMC
-    # layer can also shift zeta's optimum away from standalone FlowDAS's, which is
-    # why run_urban_tuning.sh sweeps the two separately.
+    urban:                   # from the 2026-07-30 BARE-FlowDAS urban sweep
+      sparse_5:    { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_1p5:  { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+      sparse_0p78: { 25: 0.0005, 50: 0.0005, 100: 0.0005, 250: 0.0005, 500: 0.0005 }
+    # URBAN PROVENANCE: the 2026-07-30 urban sweep value from flowdas.yaml (zeta=5e-4,
+    # winner of all 8 cells there; see that file for the sweep spec and caveats).
+    # It replaces the old NS-copied 0.002/0.004, which urban measured as ~7x worse
+    # than 5e-4 and worse than no assimilation at all -- so this row is a large
+    # correction even though it is a transfer.
+    #
+    # IT IS A TRANSFER, NOT A MEASUREMENT. `SURGE (FlowDAS)` was NOT swept: only the
+    # four BARE baselines were run (run_urban_tuning.sh baselines = flowdas sda fig
+    # dflow), on the argument that zeta is a property of the guidance term itself and
+    # the cheap path is to tune it bare and reuse it under SURGE. That argument is
+    # reasonable but untested here, and this file's own earlier note is the counter-
+    # argument: SURGE's SMC layer resamples between guidance steps and can shift
+    # zeta's optimum away from standalone FlowDAS's, which is why
+    # run_urban_tuning.sh keeps `surge_flowdas` as a separate sweep key at all.
+    #
+    # THIS MATTERS MORE HERE THAN IN flowdas.yaml: urban's lineup is SURGE-ONLY, so
+    # bare FlowDAS never runs on the grid and THIS is the row that produces the
+    # published FlowDAS comparison. Run `run_urban_tuning.sh surge_flowdas` to
+    # measure it directly before the headline table.
 
 posterior_model:
   _target_: scisi.posterior_models.surge_posterior.SurgeStochasticInterpolantPosterior
