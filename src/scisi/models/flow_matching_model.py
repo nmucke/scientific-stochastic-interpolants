@@ -162,9 +162,23 @@ class FlowMatchingModel(BaseModel):
         return_field_history: bool = False,
         stepper: Callable = euler_step,
         gaussian_base: bool = True,
+        diffusion_term: Optional[Callable] = None,
         **kwargs: Any,
     ) -> torch.Tensor:
-        """Sample from the Flow Matching model."""
+        """Sample from the Flow Matching model.
+
+        ``diffusion_term`` is FORWARDED to ``_sample`` (as it already is by the SI
+        and diffusion models). It used to be swallowed by ``**kwargs`` and
+        silently dropped, which left ``_sample`` falling back to
+        ``self.diffusion_term`` -- ``None`` on this model, since the FM path is an
+        ODE by default. That was harmless while every caller used the
+        deterministic ``euler_step``, but it crashes any caller that supplies an
+        SDE stepper (``euler_maruyama_step`` needs ``diffusion_term(t)``), which
+        is exactly the FM-SDE configuration used by ``Ours (DM-SDE)``.
+
+        ``None`` (the default, and what every pre-existing caller passes) keeps
+        the previous behaviour exactly.
+        """
 
         return self._sample(
             field_history=field_history,
@@ -175,6 +189,7 @@ class FlowMatchingModel(BaseModel):
             field_cond=field_cond,
             pars_cond=pars_cond,
             return_field_history=return_field_history,
+            diffusion_term=diffusion_term,
         )
 
     def sample_trajectory(

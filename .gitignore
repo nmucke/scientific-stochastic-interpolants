@@ -81,3 +81,12 @@ ns_presentation_figs/*
 root/*
 paper_experiments/results copy/*
 paper_experiments/results_full/*
+
+# Local paper manuscripts and frozen submission artifacts
+/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/manuscript/
+/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/manuscript_final/
+/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_submission_code/
+/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_submission_code.zip
+
+# Local presentation material
+/presentations/

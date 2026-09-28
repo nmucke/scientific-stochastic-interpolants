@@ -287,6 +287,8 @@ class BasePosterior(nn.Module):
         pars_cond: torch.Tensor | None = None,
         stepper: Callable = euler_maruyama_step,
         step_callback: Callable[[int, torch.Tensor], bool] | None = None,
+        assimilate_every: int = 1,
+        assimilate_from: int | None = None,
     ) -> torch.Tensor:
         """Sample a trajectory from the diffusion model with posterior drift.
 
@@ -297,7 +299,28 @@ class BasePosterior(nn.Module):
         trajectory keeps its full ``num_physical_steps`` length and the diverged
         cell surfaces as NaN metrics instead of burning further compute. ``None``
         (default) leaves the rollout unchanged.
+
+        SPARSE ASSIMILATION (``assimilate_every`` / ``assimilate_from``). By
+        default (``assimilate_every=1``, ``assimilate_from=None``) EVERY generated
+        physical step is a posterior step -- the historical behaviour, bit-for-bit.
+        With ``assimilate_every=k`` only the physical steps
+        ``assimilate_from, assimilate_from + k, assimilate_from + 2k, ...`` are
+        assimilated; every step in between is advanced by the PRIOR sampler
+        ``self.model.sample`` -- plain unconditional generation, no observation, no
+        likelihood -- over the SAME ``num_steps`` pseudo-time grid with the SAME
+        stepper and the same source convention (``self.gaussian_base``). The
+        trajectory still records EVERY physical step, so the free-running steps are
+        scored against the truth like any other. ``assimilate_from`` is an ABSOLUTE
+        physical index (it counts the seeded history prefix), so with a 5-step
+        history ``assimilate_from=10, assimilate_every=10`` assimilates at physical
+        steps 10, 20, 30, ... and free-runs 5..9, 11..19, ...  ``None`` starts at
+        the first generated step (``len_field_history``).
         """
+        assimilate_every = int(assimilate_every)
+        if assimilate_every < 1:
+            raise ValueError(
+                f"assimilate_every must be >= 1, got {assimilate_every}"
+            )
 
         len_field_history = field_history.shape[-1]
 
@@ -330,15 +353,52 @@ class BasePosterior(nn.Module):
             ),
             "observations": observations[:, :, t_idx],
         }
+        # Prior-only (free-running) steps reuse the posterior's own SDE/ODE
+        # settings: same pseudo-time grid (num_steps), same stepper, same source
+        # convention, and the same diffusion schedule when one was supplied
+        # explicitly. ``self.default_diffusion_term`` means the schedule already IS
+        # the model's own, so the prior sampler resolves it itself.
+        free_run_extra: dict = (
+            {} if getattr(self, "default_diffusion_term", True)
+            else {"diffusion_term": self.diffusion_term}
+        )
+
+        assim_start = (
+            len_field_history if assimilate_from is None else int(assimilate_from)
+        )
+
+        def _is_assim_step(phys_idx: int) -> bool:
+            if phys_idx < assim_start:
+                return False
+            return (phys_idx - assim_start) % assimilate_every == 0
+
         pbar = tqdm.tqdm(range(0, num_physical_steps - len_field_history))
 
         for t_idx in pbar:
-            base, field_history = self.sample(
-                base=None if self.gaussian_base else base,
-                field_history=field_history,
-                **cond_input(t_idx),
-                **fixed_input,  # type: ignore[arg-type]
-            )
+            phys_idx = len_field_history + t_idx
+            if _is_assim_step(phys_idx):
+                base, field_history = self.sample(
+                    base=None if self.gaussian_base else base,
+                    field_history=field_history,
+                    **cond_input(t_idx),
+                    **fixed_input,  # type: ignore[arg-type]
+                )
+            else:
+                # Free-running forecast: the trained PRIOR only. The observation at
+                # this physical step is deliberately not read.
+                cond = cond_input(t_idx)
+                with torch.no_grad():
+                    base, field_history = self.model.sample(
+                        base=None if self.gaussian_base else base,
+                        field_history=field_history,
+                        field_cond=cond["field_cond"],
+                        pars_cond=cond["pars_cond"],
+                        num_steps=num_steps,
+                        batch_size=batch_size,
+                        return_field_history=True,
+                        stepper=stepper,
+                        **free_run_extra,
+                    )
             trajectory.append(base.cpu().clone())
 
             if step_callback is not None and step_callback(

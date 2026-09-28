@@ -1,0 +1,75 @@
+# Stage 1 — Agent G (Adversarial reviewer) raw report
+
+Status: received, NOT yet verified by orchestrator (Stage 3 pending).
+
+# Adversarial Review (Agent G) — Recommendation: Reject
+
+Paper reviewed: `manuscript/main.tex` + all active `sections/*.tex`, cross-checked against the claim ledger in `review/paper-map.md`.
+
+---
+
+## Attack 1 — The empirical record is not submission-complete: a placeholder ablation table, a single urban trajectory, and no uncertainty quantification anywhere
+
+**Location (quoted):** Table 4 caption, `appendix_ns_case.tex`: *"\emph{Run in progress}; cells (\texttt{--}) are placeholders."* And Table 2 caption, `results.tex`: *"One held-out trajectory, $E=64$, and $M=50$ sampler steps."*
+
+**Severity:** Blocking. **Confidence a real reviewer raises it:** High (near-certain; the placeholder table alone will be quoted in the meta-review).
+
+**The attack as written:**
+
+The paper's methodological story rests on four tunable components — the covariance mode (Jacobian-free vs. ensemble-shared inflated), the Jacobian refresh cadence $k$, the empirical damping $\lambda\in[0,1]$, and the diffusion strength $g_\tau$ — and Section H.3 promises exactly the ablation that would isolate them. Table 4 then contains **no data at all**: every cell is `--` and the caption states the run is "in progress." Submitting a paper whose own ablation section certifies itself as unfinished is disqualifying on its face. It matters substantively, not just cosmetically: $\lambda$ is introduced in Section 4.3 as an *empirical* damping of the learned Jacobian "for stability with strongly nonlinear priors" with no theory and no reported value sensitivity, and $k=10$ is asserted in the Table 1 header without evidence that the cadence does not degrade the very sparse-observation accuracy the paper's headline rests on. The reader cannot distinguish "the inflated covariance helps" from "the inflated covariance helps at the specific $(\lambda,k)$ the authors settled on."
+
+Second, the flagship realistic experiment (Section 5.3) is **one trajectory**. Every number in Table 2 — including the paper's conclusions that "DM-SDE performs best on observed velocity" and "SI-SDE best limits error growth in temperature" — is a sample of size one over initial conditions, in a turbulent LES where trajectory-to-trajectory variability is the norm. The velocity RMSE margins being interpreted (0.55 vs. 0.60, 0.36 vs. 0.38 temperature) are exactly the size that a second trajectory could erase or reverse. No error bars, standard deviations, or significance indications appear in Table 1 either, despite five NS trajectories being available (Appendix H states five held-out trajectories, so the authors *have* the spread and chose not to print it). Bolding "best value... to 2 decimal places" is not a substitute for showing whether differences exceed run-to-run noise.
+
+Third, the NS spectra caption (Fig. 14) quietly concedes "averaged over the 15 assimilated steps of one held-out trajectory" and "A method with no saved run at this $M$, or whose posterior diverged there, carries no curve" — i.e., divergent runs are silently dropped from a diagnostic figure with no accounting of which methods diverged how often.
+
+**Verdict:** Fixable only by experiment (complete the ablation grid, run ≥3–5 urban trajectories, add dispersion to all tables). As submitted, fatal.
+
+**Authors' best rebuttal:** The covariance ablation is in fact present throughout: the Jac-free vs. shared split is reported for every sampler in every scenario of Tables 1–3, and Appendix G isolates the covariance approximation against an *exact* posterior. $M$-convergence is covered by Figures 3 and 11–13, and ensemble-size effects partially by the $E=1000$ EnKF reference. The urban case is a 145-step rollout with 49 assimilation cycles, so the per-step curves (Figs. 19–21) average substantial internal variability; LES data generation is expensive.
+
+**Does it convince?** No. The covariance and $M$ axes are indeed semi-covered, but $\lambda$, $k$, and $g_\tau$ — the knobs unique to this paper — have zero reported sensitivity, and a table stamped "run in progress" is an admission the authors agree the evidence is owed. Temporal averaging within one trajectory does not estimate variability over initial conditions. A reviewer will treat "we'll have it by the camera-ready" as grounds for rejection, not acceptance.
+
+---
+
+## Attack 2 — The abstract's central empirical claim is contradicted by the paper's own Table 1, and the baselines are reported only in a form the paper itself shows can be pathological
+
+**Location (quoted):** Abstract: *"covariance inflated by the model's source covariance, which is essential for sparse observations."* And Section 5: *"so we report only the SURGE-enhanced versions."*
+
+**Severity:** Blocking (claims/evidence mismatch + baseline-fairness). **Confidence:** High.
+
+**The attack as written:**
+
+The abstract asserts the inflated source covariance is "essential for sparse observations." The paper's own sparse-observation results say otherwise. In Table 1, at 5% sensors the best RMSE is **SDA+SURGE at 1.616** — a baseline using an isotropic Tweedie covariance with *no* source inflation — beating the authors' best method, SI-SDE (shared), at 1.731. At 1/64 sensors, **D-Flow SGLD wins RMSE (2.313)** and wins CRPS (1.179 vs. 2.073) and spread–skill (0.947 vs. 1.954), and SDA+SURGE (2.970) again beats SI-SDE (3.854). The $E=1000$ EnKF reference dominates every sparse column (0.935/1.053). So in both sparse NS scenarios, methods without the paper's inflated covariance take the top RMSE line, and in the sparsest one a baseline also takes calibration and CRPS. What Table 1 actually supports is the far weaker statement "inflation helps *our* sampler relative to *our own* Jacobian-free variant" — a within-family ablation, not essentiality. The urban case then undercuts even that: shared vs. Jac-free moves temperature RMSE from 0.38/0.43 to 0.36/0.41 (≈5%) at 3–4× cost, and the conclusion itself concedes prior correlations "provide only modest gains in the urban case." An abstract-level "essential" resting on one of three cases, and beaten there by two baselines, is an overclaim a reviewer will not let stand.
+
+The comparison design compounds this. Raw FlowDAS and raw SDA — the closest prior methods, one of them the paper's most direct competitor on SI priors — are never reported on either field case; only SURGE-wrapped versions appear, justified by an appeal to the SURGE paper ("According to \cite{wei_surge_2026}..."). But the paper's *own* Table 3 shows the wrapper is unstable for FlowDAS (KL $5\times10^{8}$ at $M=500$) and both wrapped field-scale runs have collapsed ensembles (spread–skill 9.2–10.0 ×10⁻¹ in every NS scenario, 0.97–0.98 urban). The paper thus presents its closest competitor exclusively through a wrapper it elsewhere documents as degenerate, while its own methods are shown in both covariance variants. Whether or not this is intentional, it is not a comparison a reviewer can accept: the reader cannot tell whether tuned raw FlowDAS (the method actually proposed by Chen et al.) would match SI-SDE at field scale.
+
+**Verdict:** The overclaim is fixable by text change (demote "essential" to "substantially improves our SI sampler in sparse NS"); the baseline gap is fixable only by experiment (report raw FlowDAS/SDA on NS and urban).
+
+**Authors' best rebuttal:** SDA+SURGE's sparse RMSE win is a Pyrrhic one — its spread–skill of 0.94–1.0 means the ensemble has collapsed to a point estimate, so it is not sampling a posterior at all; on the proper probabilistic metric, SI-SDE (shared) has the best CRPS in three of four NS scenarios (e.g., 0.872 vs. 1.130 at 5%). D-Flow's wins cost ≈700 s/step — an order of magnitude more than SI-SDE — and the EnKF reference needs the true solver, which the urban case shows is not always available. "Essential" was meant relative to the uninflated covariance within the framework, where the effect is 2–4× RMSE.
+
+**Does it convince?** Partially. The calibration/CRPS defense is genuinely strong against SDA+SURGE and is already in the paper; a fair reviewer will grant it. But it does not rescue the word "essential" (D-Flow beats them on CRPS *and* calibration at 1/64), does not explain the missing raw baselines, and does not touch the urban case where the inflation buys ~5% for 3–4× cost. Expect the reviewer to hold the line: claims must be rewritten around calibration-at-cost, and raw FlowDAS/SDA must appear. Score moves from reject to weak-reject at best without the new runs.
+
+---
+
+## Attack 3 — The theory's exactness is vacuous for everything actually run, and the practical delta over FIG + ΠGDM is incremental — the paper's own urban table shows its ODE member is numerically indistinguishable from FIG
+
+**Location (quoted):** Abstract: *"yielding a marginal-preserving SDE that samples the exact posterior when this intermediate score is known."* And Section 4.2: *"Building on the measurement-interpolant idea used by FIG."*
+
+**Severity:** Major (novelty/positioning; decision-relevant at ICLR's bar). **Confidence:** High.
+
+**The attack as written:**
+
+Theorem 4.1 is presented as the paper's theoretical centerpiece, but it is an assembly of known parts under an assumption the method never satisfies. The marginal-preserving SDE family for interpolant paths is established (Albergo et al.; SiT — the paper cites both exactly where it invokes them: "Since every interpolant path admits a family of ODE/SDE dynamics with identical marginals"), and Proposition B.1 — that conditioning retargets the path because $\varepsilon\perp y\mid x_1$ — is a three-line observation. Composing the two with the standard score decomposition $\nabla\log p_\tau(x\mid y)=\nabla\log p_\tau(x)+\nabla\log p_\tau(y\mid x)$, which the Related Work section itself attributes to Song et al. and lists as the basis of a dozen prior methods, yields Eq. (9). The exactness holds "when this intermediate score is known" — but the score is precisely the intractable object, and everything run in Sections 5.1–5.3 replaces it with (i) a Gaussian closure, (ii) stopped covariance gradients that the paper admits omit the log-determinant and covariance-derivative terms, (iii) a Jacobian shared across the ensemble at the mean, refreshed every 10th step, and (iv) an ad-hoc damping $\lambda$. None of these approximations carries any error bound, so the theorem certifies exactly the regime the experiments never occupy. The one case where surrogate and truth coincide (linear–Gaussian) is a case the EnKF solves exactly in 0.01 s (Table 3).
+
+What remains is the practical contribution, and its components are each pre-existing: the observation interpolant is FIG's (acknowledged verbatim), covariance inflation of the guidance likelihood is ΠGDM's (acknowledged in Appendix F: "ΠGDM inflates it -- and we adopt the inflated form"), and the mean's Tweedie/score structure is standard. The delta is "apply FIG's interpolant with ΠGDM-style inflation, uniformly, across three samplers." The paper's own results quantify how much that delta is worth outside toy settings: in the urban Table 2, **Guided FM (FIG) is row-for-row indistinguishable from Ours (FM-ODE, Jac-free)** — V-RMSE 0.59/0.66 vs. 0.59/0.66, CRPS 0.31/0.36 vs. 0.31/0.36, SS 0.48/0.46 vs. 0.48/0.46 — and in NS the sparse columns differ by ~3% (7.231/8.461 vs. 7.026/8.460). The unified-family framing likewise buys little in practice: the paper's conclusion states the best member is problem-dependent, i.e., the practitioner still faces a per-problem model-selection question, now with extra knobs ($g_\tau$, covariance mode, $\lambda$, $k$) whose ablation table is empty (Attack 1).
+
+**Verdict:** Fatal for the theory-as-contribution framing at ICLR's novelty bar; partially fixable by text change (reposition Theorem 4.1 as an organizing lemma, foreground the covariance analysis and Lemmas 4.2–4.3, which are the only genuinely new formal content).
+
+**Authors' best rebuttal:** The unification is not free: it produces the correct guidance weight $w_\tau=\kappa_\tau+\tfrac12 g_\tau^2$, and Appendix F shows the competing SDA weight ($g_\tau^2$, a Doob $h$-transform of a fixed diffusion) targets the wrong intermediate marginals — an error invisible without the theorem. Lemmas 4.2–4.3 give *exact* conditional moments including the bias correction $-H\hat{s}_\tau$ that FIG lacks entirely; the analytical case shows the consequence — FIG's KL is $6\times10^{11}$ (a collapse) while our samplers reach $10^{-3}$, and raw SDA stalls at 0.26. And the FIG-parity rows are the *Jacobian-free* variant; the shared inflated covariance beats FIG by 2–4× RMSE in sparse NS (1.731 vs. 7.231 at 5%).
+
+**Does it convince?** Halfway. The weight analysis and the exact-moment lemmas are real, citable content, and the analytical FIG collapse is a fair counter. But the reviewer's core point survives: the exactness claim in the abstract is vacuous for the deployed method; the sparse-NS advantage traces to the inflated Jacobian covariance — a ΠGDM-lineage idea — rather than to the unified family; and in the paper's most realistic case its own numbers show near-parity with a cheaper 2024 baseline. A repositioned, humbler paper survives this attack; the current framing does not.
+
+---
+
+## Overall hostile summary (as it would appear in the review)
+
+This paper proposes wrapping FIG-style observation interpolation with a ΠGDM-style inflated covariance and applying it uniformly across SI, FM, and diffusion samplers for autoregressive data assimilation. The unifying theorem is a composition of known results whose exactness assumption (a known intermediate likelihood score) is never met by anything the paper runs, and the practical novelty over FIG and ΠGDM is incremental — the paper's own urban table shows its deterministic member matching FIG to every reported digit. More importantly, the submission is not empirically finished: the ablation table for the paper's four newly introduced knobs is an explicit "run in progress" placeholder with every cell empty, the flagship urban experiment is a single trajectory, no table reports any measure of variability, and the abstract's claim that source-covariance inflation is "essential for sparse observations" is contradicted by the paper's own Table 1, where SDA+SURGE and D-Flow SGLD — neither using the inflated covariance — take the best sparse RMSE, while the closest prior method (FlowDAS) is never shown in its raw form at field scale. The decision-driving weakness is the incomplete and underpowered empirical record: with a placeholder ablation, a single-trajectory headline case, and no error bars, the paper's central comparative claims cannot be verified, and several are already falsified by its own tables. I recommend rejection; a resubmission with a completed ablation grid, multi-trajectory urban results with dispersion, raw baselines, and claims rewritten around calibration-per-cost could be a solid paper. Score: 3 (reject); confidence: 4.
