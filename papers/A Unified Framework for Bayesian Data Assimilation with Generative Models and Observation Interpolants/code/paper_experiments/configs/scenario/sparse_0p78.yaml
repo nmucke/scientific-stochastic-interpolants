@@ -1,0 +1,28 @@
+# Sparse sensors at fraction f = 0.78125% (= 1/128) of the 128^2 grid -- the
+# sparsest observation regime in the study, half the density of sparse_1p5 (1/64)
+# and 1/6.4 that of sparse_5.
+#
+# URBAN ONLY (2026-08-04). It is registered in the urban driver's
+# SCENARIO_CONFIG_NAME but deliberately NOT in the NS driver's: the method YAMLs
+# carry no `navier_stokes: sparse_0p78` hyperparameter rows, so an NS run would
+# silently fall back to each knob's `default` -- which for FlowDAS is zeta=1.0, a
+# value the urban sweep measured as ~7x worse than the tuned one. Add the NS rows
+# first if this scenario is ever wanted for NS.
+#
+# OBSERVATION COUNT (urban, 4 channels, 10409 fluid cells after the building mask):
+#     sparse 5%        N_y ~ 2081
+#     sparse 1.5625%   N_y ~  650
+#     sparse 0.78125%  N_y ~  325     <- this one
+# That matters for cost as well as difficulty: `inflated_shared` spends one JVP per
+# OBSERVATION per Jacobian refresh, so this scenario is ~2x cheaper than sparse_1p5
+# and ~6.4x cheaper than sparse_5 in the Ours-shared group.
+name: sparse 0.78125%
+type: sparse
+fraction: 0.0078125
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: random
+  percent_obs: 0.0078125
+  seed: 42  # shared across all methods for this scenario so the mask is identical
+  # The runner may override `seed` via common.seeding.mask_seed(case, scenario).

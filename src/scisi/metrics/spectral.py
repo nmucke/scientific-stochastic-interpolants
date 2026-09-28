@@ -50,6 +50,88 @@ def spectral_kinetic_energy(
     return bins, E_k_shell
 
 
+def _spectral_grid(
+    vorticity: torch.Tensor, n_bins: int, N: Optional[int], L: float
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Shared setup of the radial spectra: ``(field, kx, ky, k_grid)``.
+
+    ``field`` is the input flattened to ``[batch, N, N]`` in double precision;
+    ``kx``/``ky`` are the angular wavenumbers shaped for broadcasting and
+    ``k_grid`` their radial magnitude ``[N, N]``. With ``L = 2 pi`` the
+    wavenumbers are the integer mode numbers.
+    """
+    if vorticity.shape[-1] != vorticity.shape[-2]:
+        raise ValueError("Expected a square field in the trailing two dims.")
+    if N is None:
+        N = vorticity.shape[-1]
+
+    dx = L / N
+    field = vorticity.reshape(-1, N, N).to(torch.float64)
+    kx = (torch.fft.fftfreq(N, dx) * 2 * torch.pi).reshape(N, 1)
+    ky = (torch.fft.fftfreq(N, dx) * 2 * torch.pi).reshape(1, N)
+    return field, kx, ky, torch.sqrt(kx**2 + ky**2)
+
+
+def _radial_shell_average(
+    modal: torch.Tensor, k_grid: torch.Tensor, n_bins: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Bin a modal density ``[N, N]`` into ``n_bins`` radial shells.
+
+    Returns ``(centres, binned)``, both length ``n_bins``: equal-width bins over
+    ``[0, max|k|]``, each holding the MEAN of the modes in the shell
+    ``(edge_i, edge_{i+1}]`` and zero where the shell is empty. Fixing the bin
+    grid is what makes two spectra comparable bin-by-bin.
+    """
+    k_max = float(k_grid.max())
+    edges = torch.linspace(0.0, k_max, n_bins + 1, dtype=torch.float64)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+
+    binned = torch.zeros(n_bins, dtype=torch.float64)
+    for i in range(n_bins):
+        in_shell = (k_grid > edges[i]) & (k_grid <= edges[i + 1])
+        count = int(in_shell.sum())
+        if count > 0:
+            binned[i] = modal[in_shell].sum() / count
+    return centres, binned
+
+
+def radial_enstrophy_spectrum(
+    vorticity: torch.Tensor,
+    n_bins: int = 60,
+    N: Optional[int] = None,
+    L: float = 2 * torch.pi,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Radially-averaged enstrophy spectrum, straight from the vorticity.
+
+    ``Z(k)`` is the shell average of the modal enstrophy density
+    ``0.5 |omega_hat(k)|^2``. Unlike :func:`radial_kinetic_energy_spectrum` this
+    needs no inversion of the Laplacian and no velocity reconstruction -- it is a
+    functional of the vorticity alone, which is exactly what the Navier--Stokes
+    case stores. The two are related mode-by-mode by ``Z = |k|^2 E``, so their
+    LOG discrepancies against a reference field agree up to the spread of ``|k|``
+    inside a shell; the log-spectrum RMSE therefore means the same thing on
+    either spectrum. Prefer this over :func:`get_enstrophy_spectrum` whenever two
+    fields are to be compared bin-by-bin: that one normalises by the total
+    enstrophy (discarding amplitude) and bins onto its own integer-``k`` grid.
+
+    Args:
+        vorticity: Real field ``[..., N, N]``; the spectrum is computed over the
+            trailing two (spatial) dimensions and averaged over any leading
+            batch dimensions.
+        n_bins: Number of radial wavenumber bins.
+        N: Grid size; inferred from the trailing dimension if ``None``.
+        L: Physical domain length (square torus ``[0, L]^2``).
+
+    Returns:
+        ``(k, Zk)`` with ``k`` the bin-centre wavenumbers ``[n_bins]`` and
+        ``Zk`` the radially-averaged enstrophy ``[n_bins]``.
+    """
+    field, _kx, _ky, k_grid = _spectral_grid(vorticity, n_bins, N, L)
+    w_h = torch.fft.fft2(field, dim=(-2, -1))
+    enstrophy = (0.5 * w_h.abs() ** 2).mean(dim=0)
+    return _radial_shell_average(enstrophy, k_grid, n_bins)
+
+
 def radial_kinetic_energy_spectrum(
     vorticity: torch.Tensor,
     n_bins: int = 60,
@@ -74,17 +156,9 @@ def radial_kinetic_energy_spectrum(
         ``(k, Ek)`` with ``k`` the bin-centre wavenumbers ``[n_bins]`` and
         ``Ek`` the radially-averaged kinetic energy ``[n_bins]``.
     """
-    if vorticity.shape[-1] != vorticity.shape[-2]:
-        raise ValueError("Expected a square field in the trailing two dims.")
-    if N is None:
-        N = vorticity.shape[-1]
-
-    dx = L / N
-    field = vorticity.reshape(-1, N, N).to(torch.float64)
+    field, kx, ky, k_grid = _spectral_grid(vorticity, n_bins, N, L)
 
     # Stream function psi from -Delta psi = omega, then velocity = curl(psi).
-    kx = (torch.fft.fftfreq(N, dx) * 2 * torch.pi).reshape(N, 1)
-    ky = (torch.fft.fftfreq(N, dx) * 2 * torch.pi).reshape(1, N)
     lap = -(kx**2 + ky**2)
     lap[0, 0] = 1.0
 
@@ -94,21 +168,8 @@ def radial_kinetic_energy_spectrum(
     v_h = -psi_h * (1j * kx)
 
     # Kinetic energy per Fourier mode, averaged over the batch.
-    energy = 0.5 * (u_h.abs() ** 2 + v_h.abs() ** 2)
-    energy = energy.mean(dim=0)
-
-    k_grid = torch.sqrt(kx**2 + ky**2)
-    k_max = float(k_grid.max())
-    edges = torch.linspace(0.0, k_max, n_bins + 1, dtype=torch.float64)
-    centres = 0.5 * (edges[:-1] + edges[1:])
-
-    Ek = torch.zeros(n_bins, dtype=torch.float64)
-    for i in range(n_bins):
-        in_shell = (k_grid > edges[i]) & (k_grid <= edges[i + 1])
-        count = int(in_shell.sum())
-        if count > 0:
-            Ek[i] = energy[in_shell].sum() / count
-    return centres, Ek
+    energy = (0.5 * (u_h.abs() ** 2 + v_h.abs() ** 2)).mean(dim=0)
+    return _radial_shell_average(energy, k_grid, n_bins)
 
 
 def energy_spectrum_rmse(

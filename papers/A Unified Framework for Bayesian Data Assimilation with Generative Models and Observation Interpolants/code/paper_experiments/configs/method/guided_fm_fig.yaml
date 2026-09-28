@@ -1,0 +1,128 @@
+# FIG baseline (yan_fig_2025): "Flow with Interpolant Guidance for Linear Inverse
+# Problems" (Yan, Zhang, Meng & Zhao, ICLR 2025). Faithful re-implementation of
+# the official FIG_flow/sampler.py ``FIG.update`` corrector: a guided
+# probability-flow ODE that, after each prior Euler flow step, pulls the proposed
+# state toward the measurement interpolant y_t = t_next * y by k gradient-descent
+# corrections with step size c * (1 - t) / t (paper Algorithm 1 / Eqs. 9-10),
+# differentiating the GLOBAL residual norm ||y_t - H x_next|| (no cap). Shares the
+# trained FM prior; routed through FlowMatchingPosterior with stepper=ode (g=0).
+#
+# NOTE ON THE POSTERIOR WEIGHT: the FM-ODE posterior generically applies
+# b_post = b_prior + w_tau * guidance with w_tau = a_tau = velocity_score_coeff(t).
+# FIG has NO such weight, so FIGGaussianLikelihood pre-divides its corrector
+# displacement by exactly a_tau * dt (guidance = Delta / (a_tau * dt)); the two
+# cancel and the net per-step correction is FIG's raw displacement -- matching the
+# paper, independent of the FM posterior's schedule.
+name: Guided FM (FIG)
+stepper: ode
+diffusion_term: null
+
+likelihood_model:
+  _target_: scisi.likelihood_models.guidance.FIGGaussianLikelihood
+
+  # ---------------------------------------------------------------------------
+  # FIXED (not tuned). Paper sets w = 0 for EVERY linear-inverse task
+  # (super-resolution, inpainting, and both deblurs; configs/algo/fig.py). The
+  # noise term in the measurement interpolant is an optional stochastic-
+  # interpolant feature FIG never enables for these deterministic operators, so
+  # it stays a hard 0 -- it is not a knob.
+  # ---------------------------------------------------------------------------
+  interpolant_noise: 0.0     # FIG's w
+
+  # ---------------------------------------------------------------------------
+  # Per-cell tables (same schema as flowdas.yaml): a hyperparameter may be a
+  # scalar OR a [case][scenario][num_steps M] table marked by a `default:` key,
+  # with the scenario rows nested under the case name (`navier_stokes:`); the
+  # pipeline (resolve_scheduled_hparams) resolves it to ONE scalar per run from
+  # (case_key, scenario_key, num_steps). A missing case / scenario / M cell falls
+  # back to `default`; all three cases now have a filled block, so nothing should
+  # hit that fallback. Env FIG_K / FIG_C override the resolved (k, c) (top precedence,
+  # so a tuning sweep needs no edit to this YAML).
+  #
+  # WHICH KNOBS, AND WHY:
+  #   k = guidance_steps -- STRUCTURAL, set from the paper by task type, NOT an
+  #     RMSE sweep. FIG assigns k by observation operator (k=1 super-resolution,
+  #     k=2 inpainting; k=14/25 for the deblurs). It does not depend on M, so
+  #     each scenario row is constant across the M columns. Our super-resolution
+  #     scenarios map to FIG SR (k=1); our sparse random-subsampling scenarios
+  #     map to FIG inpainting (k=2).
+  #   c = guidance_scale -- the primary NUMERICAL knob, TUNED per cell (paper
+  #     c in {10, 20, 25}; sensitive to both task and step count M).
+  #
+  # ALL 16 cells below are the sweep WINNERS (min RMSE) from run_ns_fig_sweep_full.sh
+  # (E=8, 1 traj, 2 assim steps, KL off). Findings vs the paper analogy:
+  #   * super-res: k=1 confirmed best; the best c DECREASES with M (M=50 -> ~20,
+  #     M>=250 -> ~5), consistent with more integration steps needing a smaller
+  #     per-step corrector. (superres_16 stays higher, c~20, as it is the harder,
+  #     more ill-posed operator.)
+  #   * sparse: k=3 beats k=1 beats k=2 uniformly -- the paper's inpainting k=2 is
+  #     the WORST here -- with c=10 flat across M.
+  # The old locked c=80 (fit to the capped/per-sample corrector) is the worst in
+  # every row after the faithfulness fix, as expected. NOTE: tuned at E=8/1 traj;
+  # re-validate the headline cells at E=64 before the final table.
+  guidance_steps:            # FIG's k -- inner corrector iterations per flow step
+    default: 1
+    navier_stokes:
+      #             M=50   M=100  M=250  M=500
+      superres_16: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
+      superres_32: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
+      sparse_5:    { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 25: 1, 50: 1, 100: 1, 250: 1, 500: 1 }
+    urban:                   # CHECKED ON URBAN 2026-07-30: k is IRRELEVANT here.
+                             # The 1-DA-step sweep ran k in {1,3} against every c in
+                             # {2,5,10,20,40,80,160} x 4 M x 2 scenarios -- 56 paired
+                             # comparisons -- and the two agree to FOUR DECIMALS in
+                             # every one. NS's "k=3 beats k=1 beats k=2 uniformly on
+                             # sparse" does NOT reproduce on urban.
+                             # Cost is identical too (measured: k=1 21.6 s vs k=3
+                             # 21.0 s at M=25, and 56.0 s vs 56.0 s at M=250) --
+                             # k multiplies only the corrector, which differentiates
+                             # ||y_t - Hx|| with H a subsampling and so touches no
+                             # network. So k is neither an accuracy nor a cost lever.
+                             # Kept at 3 (not reverted to the default 1) purely for
+                             # continuity with the NS rows and the earlier urban runs;
+                             # 1 would be equally defensible and equally fast.
+      sparse_5:    { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_1p5:  { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+      sparse_0p78: { 25: 3, 50: 3, 100: 3, 250: 3, 500: 3 }
+
+  guidance_scale:            # FIG's c -- corrector step-size scale
+    default: 10.0
+    navier_stokes:
+      #             M=50     M=100    M=250   M=500
+      superres_16: { 25: 20.0, 50: 20.0, 100: 20.0, 250: 20.0, 500: 10.0 }
+      superres_32: { 25: 20.0, 50: 20.0, 100: 10.0, 250: 5.0,  500: 5.0  }
+      sparse_5:    { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+      sparse_1p5:  { 25: 10.0, 50: 10.0, 100: 10.0, 250: 10.0, 500: 10.0 }
+    analytical:              # single joint scenario; columns are the M sweep
+      analytical: { 25: 1.0, 50: 1.0, 100: 1.0, 250: 1.0,  500: 1.0  }
+    urban:                   # SWEPT ON URBAN 2026-07-30, at 4 DA steps
+      sparse_5:    { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+      sparse_1p5:  { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+      sparse_0p78: { 25: 160.0, 50: 160.0, 100: 160.0, 250: 160.0, 500: 160.0 }
+    # URBAN PROVENANCE: measured, no longer copied from NS. results/urban/tuning_da4/
+    # fig/, c in {5, 10, 20, 40, 80, 160} x {sparse_5, sparse_1p5} x M {25,50,100,250}
+    # at k=3. Conditions: traj6 (held out of the paper grid's 1..5), seed 0, E=8,
+    # num_physical_steps=9 = 4 DA steps. c=160 wins ALL 8 cells in both scenarios.
+    # (A 1-DA-step sweep, results/urban/tuning/fig/, spanning c in {2,...,160} x
+    # k in {1,3} agrees: c=160 wins there too. Superseded, not deleted.)
+    #
+    # *** c=160 IS AN UNBRACKETED GRID EDGE, NOT A LOCATED OPTIMUM. ***
+    # rmse falls monotonically across the whole range and is still falling at the top
+    # in BOTH regimes, after two upward extensions (the sweep first ran c<=20, then
+    # <=160). All that is established is c >= 160. It is written here because it is
+    # the best measured value and the table needs one, NOT because the optimum was
+    # found. Two things make chasing it further look unattractive: an 8x increase in
+    # c (20 -> 160) buys only 2.6% rmse, and FIG at EVERY c tested is worse than not
+    # assimilating at all (1-step sweep: best FIG 0.0664 vs the no-guidance control's
+    # 0.0602). Extend to c in {320, 640} if FIG's row needs a defensible interior
+    # optimum; expect a small gain at best.
+    #
+    # This value is a 16x move from the NS-copied 10.0, which the urban sweep ranks
+    # among the WORST cells -- so the NS->urban transfer failed here as it did for
+    # FlowDAS's zeta. M=500 repeats the value (urban's ladder is {25,50,100,250}).
+
+posterior_model:
+  _target_: scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior

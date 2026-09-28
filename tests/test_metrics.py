@@ -21,6 +21,8 @@ from scisi.metrics import (
     kde_kl_1d,
     kl_at_points,
     plot_rank_histogram,
+    radial_enstrophy_spectrum,
+    radial_kinetic_energy_spectrum,
     rank_histogram,
     sliced_wasserstein_w2,
     spread_skill,
@@ -70,6 +72,48 @@ def test_energy_spectrum_rmse_identical_zero():
 def test_energy_spectrum_rmse_positive():
     val = energy_spectrum_rmse(torch.randn(128, 128), torch.randn(128, 128))
     assert val.item() > 0.0
+
+
+def test_radial_enstrophy_spectrum_fixed_grid_and_nonnegative():
+    k, Zk = radial_enstrophy_spectrum(torch.randn(4, 64, 64), n_bins=20)
+    assert k.shape == Zk.shape == (20,)
+    assert torch.all(Zk >= 0.0) and torch.isfinite(Zk).all()
+    # Bin centres are strictly increasing and cover 0..max|k| (= sqrt(2) * N/2).
+    assert torch.all(k[1:] > k[:-1]) and k[-1] < 2**0.5 * 32
+
+
+def test_radial_enstrophy_spectrum_single_mode_localised():
+    """A single Fourier mode puts all the enstrophy in the shell holding its |k|."""
+    N, m = 64, 12
+    x = torch.arange(N, dtype=torch.float64) * (2 * torch.pi / N)
+    field = torch.cos(m * x).reshape(1, N).expand(N, N)  # omega = cos(m x), |k| = m
+    k, Zk = radial_enstrophy_spectrum(field, n_bins=20)
+    hot = int(torch.argmax(Zk))
+    assert abs(float(k[hot]) - m) <= float(k[1] - k[0])  # within one bin width
+    assert float(Zk[hot]) > 1e3 * float(Zk.sum() - Zk[hot])
+
+
+def test_enstrophy_and_energy_log_discrepancies_agree():
+    """Z = |k|^2 E, so the LOG gap to a reference is the same on either spectrum.
+
+    The manuscript leans on this: the enstrophy-spectrum figures and the
+    tabulated (energy) log-spectrum RMSE report the same discrepancy, up to the
+    spread of |k| within a radial shell.
+    """
+    torch.manual_seed(0)
+    a = torch.randn(3, 128, 128)
+    b = a + 0.3 * torch.randn(3, 128, 128)
+    _, Za = radial_enstrophy_spectrum(a)
+    _, Zb = radial_enstrophy_spectrum(b)
+    _, Ea = radial_kinetic_energy_spectrum(a)
+    _, Eb = radial_kinetic_energy_spectrum(b)
+    valid = (Za > 0) & (Zb > 0) & (Ea > 0) & (Eb > 0)
+    gap_Z = torch.log(Za[valid]) - torch.log(Zb[valid])
+    gap_E = torch.log(Ea[valid]) - torch.log(Eb[valid])
+    assert torch.allclose(gap_Z, gap_E, atol=0.05)
+    rmse_Z = (gap_Z**2).mean().sqrt()
+    rmse_E = (gap_E**2).mean().sqrt()
+    assert abs(float(rmse_Z - rmse_E)) < 1e-3
 
 
 # --------------------------------------------------------------------------- #
