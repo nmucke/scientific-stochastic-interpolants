@@ -581,7 +581,7 @@ def main_latex_snippet(output, development=False):
                 warning,
                 r"\begin{table*}[t]\centering\small",
                 rf"\input{{{prefix}/main_fvd_table.tex}}",
-                r"\caption{Pixel-video FVD (lower is better). Pooled FVD compares 128 real and 512 generated clips. Member FVD reports mean $\pm$ completion SD of four separate 128-versus-128 comparisons, not confidence intervals. All budgets use identical frozen cases and checkpoints. NFE is per generated frame and member; persistence uses none. Other metrics are in Appendix~\ref{app:video-results}.}\label{tab:video-main-fvd}",
+                r"\caption{Pixel-video FVD (lower is better). Pooled FVD compares 128 real and 512 generated clips. Member FVD reports mean $\pm$ completion SD of four separate 128-versus-128 comparisons, not confidence intervals. Cases are shared; each model uses one checkpoint at all its budgets. NFE is per generated frame and member; persistence uses none. Other metrics are in Appendix~\ref{app:video-results}.}\label{tab:video-main-fvd}",
                 r"\end{table*}",
                 r"\begin{figure*}[t]\centering",
                 rf"\includegraphics[width=\textwidth]{{{prefix}/main_forecast_sequences.pdf}}",

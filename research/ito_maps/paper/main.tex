@@ -12,6 +12,7 @@
 \newcommand{\Law}{\operatorname{Law}}
 \input{generated/seed0_claims}
 \input{generated/replication_claims}
+\input{generated/long_horizon_status}
 \icmltitlerunning{Conditional Stochastic Forecast Maps}
 \begin{document}
 \twocolumn[
@@ -26,7 +27,7 @@
 ]
 \printAffiliationsAndNotice{}
 \begin{abstract}
-Probabilistic forecasting requires ensembles of plausible futures, making the cost of each generated sample consequential. We develop conditional It\^o maps for forecasting stochastic interpolants, preserving a deterministic observed initial state and replacing numerical integration with learned transitions conditioned on Brownian information. We derive the appropriate diagonal regression and shared-path composition objective, use teacher-supervised refinement, and implement deterministic flow maps under the same interface. In a held-out Navier--Stokes study with three student-training seeds and fixed teachers, eight map evaluations give a \repItoEightIntervalPercent\% higher mean CRPS than 64 stochastic-interpolant steps at \repItoEightIntervalSpeed$\times$ lower latency. Over ten autoregressive physical leads, final-lead CRPS is \repItoEightRollPercent\% higher at \repItoEightRollSpeed$\times$ lower total latency, with residual underdispersion and increased spectral error. Deterministic flow maps provide an even stronger speed--score comparator: the results support efficient conditional forecasting, but not general calibration retention or stochastic-map superiority.
+Probabilistic forecasting requires ensembles of plausible futures, making the cost of each generated sample consequential. We develop conditional It\^o maps for forecasting stochastic interpolants, preserving a deterministic observed initial state and replacing numerical integration with learned transitions conditioned on Brownian information. We derive the appropriate diagonal regression and shared-path composition objective, use teacher-supervised refinement, and implement deterministic flow maps under the same interface. In a held-out Navier--Stokes study with three student-training seeds and fixed teachers, eight map evaluations give a \repItoEightIntervalPercent\% higher mean CRPS than 64 stochastic-interpolant steps at \repItoEightIntervalSpeed$\times$ lower latency. Over ten autoregressive physical leads, final-lead CRPS is \repItoEightRollPercent\% higher at \repItoEightRollSpeed$\times$ lower total latency, with residual underdispersion and increased spectral error. Pixel-space KTH and CLEVRER pilots reduce generation time by about sixfold with eight-step It\^o maps, but increase FVD by 14.8\% and 42.8\% relative to 64-step stochastic interpolants. Deterministic maps provide a strong comparator; the results support measured speed--quality tradeoffs, not general calibration retention or stochastic-map superiority.
 \end{abstract}
 
 \section{Introduction}
@@ -34,7 +35,7 @@ Forecasting a stochastic dynamical system is a conditional sampling problem. Giv
 
 Stochastic-interpolant forecasting starts a generative diffusion at the observed state and transforms that point mass into a forecast distribution \citep{chen2024forecasting}. Flow map matching learns finite-time deterministic transport \citep{boffi2025flowmaps}. It\^o maps extend this idea to stochastic dynamics by including the driving Brownian path as an input \citep{pan2026itomaps}. These developments suggest an efficient conditional forecast sampler. Their combination nevertheless requires care: a forecasting model starts from a fixed observation, its regression target depends on the chosen interpolant, and composition must use compatible Brownian information.
 
-Our contribution is a conditional formulation and implementation connecting these ingredients. We derive a two-time map for the existing forecasting SDE, explain how its loss differs from a Gaussian-base construction, and give a deterministic baseline under the same map interface. We separate errors due to drift estimation, Brownian compression, and map learning. The empirical question is whether a small number of learned transitions retains the forecast quality of a well-resolved SDE at lower inference cost. Fewer network evaluations alone do not establish this claim.
+Our contribution is a conditional formulation and implementation connecting these ingredients. We derive a two-time map for the existing forecasting SDE, explain how its loss differs from a Gaussian-base construction, and give a deterministic baseline under the same map interface. We separate errors due to drift estimation, Brownian compression, and map learning. We evaluate stochastic-fluid trajectories and pixel-space KTH and CLEVRER videos. The empirical question is whether a small number of learned transitions retains forecast quality at lower inference cost. Fewer network evaluations alone do not establish this claim.
 
 \section{Conditional Forecasting Setup}
 Let $h_n=(y_{n-p+1},\ldots,y_n)$ denote the available history and $c(h_n)=y_n$ its latest state. The target is $p(y_{n+1}\mid h_n)$ for a fixed physical lead time $\Delta$. Iteration defines a finite-history surrogate; recovering the true joint trajectory law additionally requires sufficient history, correct kernels on encountered histories, and inclusion of relevant time dependence (Appendix~\ref{app:method-assumptions}). We use $s,t\in[0,1]$ exclusively for artificial generative time; one completed generative trajectory produces one physical forecast. A multi-step physical forecast repeatedly generates a future state and updates the history, using independent fresh randomness for each physical step and ensemble member. Algorithm~\ref{alg:forecast} separates these two loops: $N$ neural evaluations produce one physical forecast, and $L$ such forecasts form a rollout. For a deterministic flow map, the same algorithm starts each physical forecast from fresh Gaussian noise and sets the martingale increment to zero.
@@ -190,13 +191,14 @@ Our proposed distinction is preservation of a specified forecasting SDE's transi
 \input{video_main}
 
 \section{Limitations and Discussion}
-The forecasting distribution is constrained by history and training coverage. Compressed Brownian inputs, map error and teacher bias require separate diagnostics. In a partial 4,096-interval extension, both maps remain finite, but the It\^o map loses substantial enstrophy and spread (Appendix~\ref{app:long-horizon}). Bounded trajectories do not establish distributional accuracy; the long solver references remain pending.
+The forecasting distribution is constrained by history and training coverage. Compressed Brownian inputs, map error and teacher bias require separate diagnostics. In a 4,096-interval extension, both maps remain finite, but the It\^o map loses substantial enstrophy and spread (Appendix~\ref{app:long-horizon}). Bounded trajectories do not establish distributional accuracy. \iflongAllModels Matched solver references are included in that appendix.\else The long solver references remain pending.\fi
 
 The contribution is a conditional scientific-forecasting adaptation of existing map-learning principles, with a point-mass initial state and evidence about the quality--cost tradeoff. The fluid confirmation uses one archive, three student trainings and fixed teachers. The main-text pixel-video case extends the evaluation to KTH and CLEVRER; full setup and additional diagnostics are in Appendix~\ref{app:video-case}. Other consistency or adversarial-distillation baselines, independent teacher trainings and physical conditional reference ensembles remain necessary to assess generality.
 
 \section*{Impact Statement}
 This work seeks to reduce the cost of probabilistic scientific simulation and forecasting. Faster ensembles may make uncertainty assessment more accessible, but poorly calibrated accelerated models could produce misleading confidence in downstream decisions. The study therefore reports calibration and physical diagnostics alongside speed, and does not establish suitability for safety-critical deployment. Training and distillation consume compute that should be included when assessing overall efficiency.
 
+\clearpage
 \bibliography{references}
 \bibliographystyle{icml2026}
 

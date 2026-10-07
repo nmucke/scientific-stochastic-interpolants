@@ -9,6 +9,10 @@ and GPU work, the fixed initial budget and remaining tasks. This is an initial
 operational study: no latent autoencoder, no random historical conditioning
 frame, one training seed, and a smaller evaluation sample count than the paper.
 
+## Completed pilot
+
+Both datasets and all model/budget combinations are evaluated and independently audited. See the [complete report](results/report/README.md), [KTH audit](notes/kth_independent_audit.md), and [CLEVRER audit](notes/clevrer_independent_audit.md). The main manuscript includes pooled FVD and matched prediction frame sequences. These results show substantial sampling savings with metric-dependent quality losses; they do not establish uniformly preserved sample quality.
+
 ## Main files
 
 - [Primary-source protocol](notes/paper_video_protocol.md): reference horizons,

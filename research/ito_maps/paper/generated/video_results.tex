@@ -1,0 +1,87 @@
+\subsection{Held-Out Pixel-Video Results}\label{app:video-results}
+
+Both frozen video evaluations and their artifact audits are complete. Results below use all four model families and persistence on the same cases; this single-training-seed pixel pilot is not a reproduction of the larger latent-space benchmark.
+
+Frame scores average over future leads and weight original source videos equally. FVD uses the selected clip distribution. Time is generation seconds for a complete four-member rollout, and rollout NFE counts neural calls per member over all future frames. Member-FVD SD measures completion randomness, not uncertainty over test cases or training seeds. SI denotes the stochastic interpolant and FM denotes flow matching.
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/clevrer_quality_table.tex}
+
+\caption{CLEVRER: matched pilot distributional quality and generation cost. Pooled FVD uses 128 real and 512 generated clips; member FVD uses 4 separate 128-versus-128 comparisons. Lower CRPS and FVD are better. Persistence has zero neural evaluations.}\label{tab:video-clevrer-quality}
+
+\end{table*}
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/clevrer_images_table.tex}
+
+\caption{CLEVRER: future image quality, averaged across leads. Sample metrics average over completions. Mean PSNR/SSIM score the ensemble-mean image. Image/perceptual metrics use clipped copies; neither feedback nor proper scores are clipped.}\label{tab:video-clevrer-images}
+
+\end{table*}
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/clevrer_calibration_table.tex}
+
+\caption{CLEVRER: additional future-only proper-score and calibration diagnostics. Spread/skill includes the finite-ensemble correction; 90\% denotes the empirical central interval from four members and is not expected to attain 90\% even under ideal calibration. Out-of-range values are measured before display clipping.}\label{tab:video-clevrer-calibration}
+
+\end{table*}
+
+\begin{figure*}[t]\centering
+
+\includegraphics[width=\textwidth]{figures/video_results/clevrer_fvd_vs_cost.png}
+
+\caption{CLEVRER: quality versus complete-ensemble generation cost, copied from the audited report without re-aggregating scores. The right panel uses equal-count member FVD; error bars are completion SD, not confidence intervals.}\label{fig:video-clevrer-cost}
+
+\end{figure*}
+
+\begin{figure*}[t]\centering
+
+\includegraphics[width=\textwidth,height=.78\textheight,keepaspectratio]{figures/video_results/clevrer_fixed_forecast.pdf}
+
+\caption{CLEVRER: the first preselected test case and ensemble member zero, at fixed future leads. Solver64, It\^o-map8, flow-map1 and persistence budgets were chosen before completed comparisons. All rows share the same observations and truth; no case or member was chosen by forecast quality. Display clips copies to the pixel range.}\label{fig:video-clevrer-forecast}
+
+\end{figure*}
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/kth_quality_table.tex}
+
+\caption{KTH: matched pilot distributional quality and generation cost. Pooled FVD uses 128 real and 512 generated clips; member FVD uses 4 separate 128-versus-128 comparisons. Lower CRPS and FVD are better. Persistence has zero neural evaluations.}\label{tab:video-kth-quality}
+
+\end{table*}
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/kth_images_table.tex}
+
+\caption{KTH: future image quality, averaged across leads. Sample metrics average over completions. Mean PSNR/SSIM score the ensemble-mean image. Image/perceptual metrics use clipped copies; neither feedback nor proper scores are clipped.}\label{tab:video-kth-images}
+
+\end{table*}
+
+\begin{table*}[t]\centering\small
+
+\input{figures/video_results/kth_calibration_table.tex}
+
+\caption{KTH: additional future-only proper-score and calibration diagnostics. Spread/skill includes the finite-ensemble correction; 90\% denotes the empirical central interval from four members and is not expected to attain 90\% even under ideal calibration. Out-of-range values are measured before display clipping.}\label{tab:video-kth-calibration}
+
+\end{table*}
+
+\begin{figure*}[t]\centering
+
+\includegraphics[width=\textwidth]{figures/video_results/kth_fvd_vs_cost.png}
+
+\caption{KTH: quality versus complete-ensemble generation cost, copied from the audited report without re-aggregating scores. The right panel uses equal-count member FVD; error bars are completion SD, not confidence intervals.}\label{fig:video-kth-cost}
+
+\end{figure*}
+
+\begin{figure*}[t]\centering
+
+\includegraphics[width=\textwidth,height=.78\textheight,keepaspectratio]{figures/video_results/kth_fixed_forecast.pdf}
+
+\caption{KTH: the first preselected test case and ensemble member zero, at fixed future leads. Solver64, It\^o-map8, flow-map1 and persistence budgets were chosen before completed comparisons. All rows share the same observations and truth; no case or member was chosen by forecast quality. Display clips copies to the pixel range.}\label{fig:video-kth-forecast}
+
+\end{figure*}
+
+Full per-lead source-video bootstrap intervals, additional oracle-member metrics and the unrounded aggregate metrics remain in the accompanying machine-readable reports. These intervals do not quantify training-seed variation. The finite-member forecast examples are illustrative rather than evidence of calibrated conditional uncertainty.

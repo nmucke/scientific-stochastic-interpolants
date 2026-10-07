@@ -79,3 +79,24 @@ and is explicitly incomplete. It is not included in the manuscript. CPU tests
 also verify that the main panel actually uses member zero rather than averaging
 members, produces both grayscale and RGB panels, and retains both datasets and
 all budgets in the main FVD table.
+
+## Final audited assets generated
+
+On 2026-10-07, after both protocol/result audits passed, the canonical report
+was generated at `results/report` and the strict paper builder produced both
+main-text and appendix snippets. Actual KTH and CLEVRER panels and FVD/cost
+figures were visually inspected. Table values match the report formatter for
+all nine budgets per dataset; copied CSV files and cost plots match source
+bytes. See `results/paper_visual_audit.json` for source hashes and checks.
+
+The predeclared KTH example is `person23_handclapping_d2_s01`, member zero;
+main-panel retained indices 9/10/25/39 map to original video indices
+109/110/125/139. The CLEVRER example is `video_17574`, member zero;
+retained indices 1/2/9/15 map to original indices 5/10/45/75. All four model
+rows are present. The observed column is marked separately from predictions;
+full observed history still conditions each forecast. Blur, deformation and
+object mismatches visible in the fixed examples are retained without replacing
+cases or members. Tables and interpretation, rather than this one illustrative
+sample, establish the aggregate comparison. Reported video generation times
+come from the separate GPU-exclusive evaluation phase; shared training times
+are not used as inference-speed evidence.

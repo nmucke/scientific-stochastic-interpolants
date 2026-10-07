@@ -1,0 +1,9 @@
+
+\begin{table*}[t]\centering\small
+\input{figures/video_results/main_fvd_table.tex}
+\caption{Pixel-video FVD (lower is better). Pooled FVD compares 128 real and 512 generated clips. Member FVD reports mean $\pm$ completion SD of four separate 128-versus-128 comparisons, not confidence intervals. Cases are shared; each model uses one checkpoint at all its budgets. NFE is per generated frame and member; persistence uses none. Other metrics are in Appendix~\ref{app:video-results}.}\label{tab:video-main-fvd}
+\end{table*}
+\begin{figure*}[t]\centering
+\includegraphics[width=\textwidth]{figures/video_results/main_forecast_sequences.pdf}
+\caption{Matched observed and predicted frame sequences for both datasets. Rows show truth and one sampled completion from each model, never an ensemble average. The blue-bordered column repeats the last observed frame; remaining columns are forecasts. $r$ is the zero-based retained-frame index within the clip: KTH retains every frame; CLEVRER raw-frame index is $5r$. Cases are the first frozen selections, member zero, at prespecified budgets (parentheses). Display clipping does not alter feedback. The other observed history frames condition each model but are omitted for space.}\label{fig:video-main-sequences}
+\end{figure*}

@@ -20,3 +20,6 @@ results/long_rollout/**/*.pt
 # Optional assumed-parameter PDE helper snapshots are local payloads as well.
 results/long_horizon/**/*.npy
 results/long_rollout/**/*.npy
+# CPU finalization staging and lock; final derived products remain tracked.
+results/long_horizon/.finalize.lock
+results/long_horizon/.finalize-*/

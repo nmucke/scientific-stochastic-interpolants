@@ -1,8 +1,12 @@
+\iflongAllModels
+\section{Long Autonomous Rollouts: Four-Model Comparison}
+\else
 \section{Long Autonomous Rollouts: Completed Maps, Pending Solver References}
+\fi
 \label{app:long-horizon}
 
 \paragraph{Test case and current scope.}
-We extend the selected seed-zero maps to 4,096 successive forecast intervals from one held-out initial history: trajectory 180, frames 0--4. Each model carries eight independent generated histories after initialization. The It\^o map uses eight generative steps per frame and the flow map one. Both runs are complete. The matched 64-step stochastic-interpolant and flow-matching trajectories are planned but not yet complete, so this appendix reports a \emph{partial model comparison}, not a completed four-model stability study. It is separate from the all-20-trajectory, three-student confirmation in the main text.
+We extend the selected seed-zero maps to 4,096 successive forecast intervals from one held-out initial history: trajectory 180, frames 0--4. Each model carries eight independent generated histories after initialization. The It\^o map uses eight generative steps per frame and the flow map one. \iflongAllModels Both maps and the matched 64-step stochastic-interpolant and flow-matching references have completed all 4,096 intervals.\else Both maps are complete. The matched 64-step stochastic-interpolant and flow-matching trajectories are not yet complete, so this appendix reports a \emph{partial model comparison}.\fi It is separate from the all-20-trajectory, three-student confirmation in the main text.
 
 \paragraph{Time and reference data.}
 The recovered companion archive supplies a mean saved-time increment of 0.49989997016; thus this horizon spans approximately 2,047.59 nominal simulation-time units. The primary coordinate remains stored snapshot intervals. Exact matching of all coarse fields to the companion's stride-two downsampling establishes the timestamp association, but does not identify the original viscosity or forcing parameters. Only 95 future truth fields are available, corresponding to archive frames 5--99. RMSE and spread/skill stop at lead 95; later diagnostics do not measure accuracy against a reference continuation.
@@ -13,14 +17,14 @@ We inverse-transform each member into the archive's vorticity units, without cha
 \frac1E\sum_e Z_e
 = Z(\bar\omega)+\frac{E-1}{2E}S_{\mathrm{RMS}}^2,
 \end{equation}
-where $S_{\mathrm{RMS}}$ uses unbiased sample variance as in Appendix~\ref{app:metrics}. Corrected spread is $\sqrt{(E+1)/E}\,S_{\mathrm{RMS}}$; the ratio divides it by ensemble-mean RMSE. No amplitude clipping, rescaling, truth reset or replacement of a failed member is allowed. An independent CPU audit checks all 8,192 scalar records and all 700 saved raw-field snapshots from the two maps.
+where $S_{\mathrm{RMS}}$ uses unbiased sample variance as in Appendix~\ref{app:metrics}. Corrected spread is $\sqrt{(E+1)/E}\,S_{\mathrm{RMS}}$; the ratio divides it by ensemble-mean RMSE. No amplitude clipping, rescaling, truth reset or replacement of a failed member is allowed. \longAuditSentence
 
 \input{generated/long_horizon_maps_table}
 
 \paragraph{Observed behavior.}
 Both maps remain finite through all 4,096 intervals, but their amplitude and uncertainty differ substantially (Table~\ref{tab:long-maps}). The It\^o trajectory loses member enstrophy and approaches a lower-amplitude range. Over the final 512 intervals its mean enstrophy is 1.4047, compared with 3.8366 for the flow map. The contextual mean across 2,000 stored held-out fields is 4.6654; this archive statistic is not an independently verified long-time target distribution. More directly, mean enstrophy of the available paired truth over leads 1--95 is 4.3526, whereas the corresponding It\^o and flow-map values are 1.9777 and 3.8592. Thus the It\^o amplitude loss is already visible where reference data exist.
 
-The ratio of pooled corrected spread to pooled RMSE over those 95 leads is 0.6709 for the It\^o map and 0.9387 for the flow map (Figure~\ref{fig:long-maps-skill}). Their pooled ensemble-mean RMSE values are relatively close, 3.0148 and 3.0789, despite the spread difference. Low error of an ensemble mean therefore does not establish retained forecast variability. These correlated leads from one initial condition do not provide an independent-case calibration estimate. The observation supports numerical boundedness of these two runs, with marked It\^o dissipation; it does not establish accurate invariant statistics or stability for other initial conditions. The pending teacher trajectories are needed to separate inherited teacher behavior from additional map error. No mechanistic attribution or new timing-based speedup claim is made from this extension.
+The ratio of pooled corrected spread to pooled RMSE over those 95 leads is 0.6709 for the It\^o map and 0.9387 for the flow map (Figure~\ref{fig:long-maps-skill}). Their pooled ensemble-mean RMSE values are relatively close, 3.0148 and 3.0789, despite the spread difference. Low error of an ensemble mean therefore does not establish retained forecast variability. These correlated leads from one initial condition do not provide an independent-case calibration estimate. The observation supports numerical boundedness of these two runs, with marked It\^o dissipation; it does not establish accurate invariant statistics or stability for other initial conditions. \longTeacherComparison No mechanistic attribution or new timing-based speedup claim is made from this extension.
 
 \paragraph{Spatial enstrophy spectra.}
 To resolve the scales of the first and last generated fields, let
@@ -36,20 +40,20 @@ This is a sum over modes in each shell, not a radially averaged power spectrum; 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=.82\textwidth]{figures/first_step_enstrophy_spectrum.pdf}
-\caption{Spatial enstrophy spectrum at the first forecast step (lead 1). Curves are means of eight member shell-summed spectra, with member 5--95\% bands, in archive vorticity units. The black curve is the matching observed field. Both axes are logarithmic; $k$ denotes radial spatial frequency in cycles per grid domain. The dotted line marks the axis Nyquist frequency 64; higher shells contain square-grid corner modes. This is a partial two-map comparison; solver references remain pending.}
+\caption{Spatial enstrophy spectrum at the first forecast step (lead 1). Curves are means of eight member shell-summed spectra, with member 5--95\% bands, in archive vorticity units. The black curve is the matching observed field. Both axes are logarithmic; $k$ denotes radial spatial frequency in cycles per grid domain. The dotted line marks the axis Nyquist frequency 64; higher shells contain square-grid corner modes. \longScopeCaption}
 \label{fig:long-spectrum-first}
 \end{figure*}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=.82\textwidth]{figures/last_step_enstrophy_spectrum.pdf}
-\caption{Spatial enstrophy spectrum at the last forecast step (lead 4,096), using the same normalization and log--log spatial-frequency axes as Figure~\ref{fig:long-spectrum-first}. Member-mean spectra and 5--95\% member bands describe generated fields only: no reference continuation is available at this lead. Differences between maps therefore show different retained spatial variability, not verified long-time spectral accuracy. Solver references remain pending.}
+\caption{Spatial enstrophy spectrum at the last forecast step (lead 4,096), using the same normalization and log--log spatial-frequency axes as Figure~\ref{fig:long-spectrum-first}. Member-mean spectra and 5--95\% member bands describe generated fields only: no reference continuation is available at this lead. Differences between maps therefore show different retained spatial variability, not verified long-time spectral accuracy. \longScopeCaption}
 \label{fig:long-spectrum-last}
 \end{figure*}
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/long_horizon_maps_skill.pdf}
-\caption{Available-reference diagnostics for the same trajectories, restricted to leads 1--95. Left: corrected spread (dashed) and ensemble-mean RMSE (solid). Right: their per-lead ratio. The correction is $\sqrt{9/8}$ applied to unbiased RMS spread for eight members. Similar RMSE does not compensate for the It\^o map's smaller spread. No skill values are extrapolated beyond the stored reference.}
+\caption{Available-reference diagnostics for the same trajectories, restricted to leads 1--95. Left: corrected spread (dashed) and ensemble-mean RMSE (solid). Right: their per-lead ratio. The correction is $\sqrt{9/8}$ applied to unbiased RMS spread for eight members. Similar RMSE does not compensate for the It\^o map's smaller spread. No skill values are extrapolated beyond the stored reference. \longScopeCaption}
 \label{fig:long-maps-skill}
 \end{figure*}
