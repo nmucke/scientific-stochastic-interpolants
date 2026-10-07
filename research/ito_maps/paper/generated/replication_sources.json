@@ -1,0 +1,82 @@
+[
+  {
+    "source": "results/final_report/one_step/student_training_seeds/training_seed_report.json",
+    "sha256": "e3fd604b932e3136b43f89c0b27cda5797d039fc72b2662a4b36753a49ab2efa"
+  },
+  {
+    "source": "results/final_report/one_step/student_training_seeds/per_student_seed.csv",
+    "sha256": "8dd3d57fdd758e123db5719c1cb62dfc5a25f00e1961800a8341fd32c3fa8bae"
+  },
+  {
+    "source": "results/final_report/one_step/student_training_seeds/fixed_teacher_comparison.json",
+    "sha256": "7a5ffcf6c869528860c9fa563faebada8e291765bc9c07251d0c31321382de36"
+  },
+  {
+    "source": "results/final_report/rollout/student_training_seeds/training_seed_report.json",
+    "sha256": "f94b14d71292c40470107357cc1c6e6461ccbd9a7bdb241292f536f415f069ae"
+  },
+  {
+    "source": "results/final_report/rollout/student_training_seeds/per_student_seed.csv",
+    "sha256": "889af47a534695b0316b7ce13c2a44ac554490ebba6f44687832f8847ba14fdd"
+  },
+  {
+    "source": "results/final_report/rollout/student_training_seeds/fixed_teacher_comparison.json",
+    "sha256": "384db4e20a504a5eb912fc691d122f26a84e833607d3761d17ba9dacfc5c5b89"
+  },
+  {
+    "source": "results/final_report/one_step/summary.csv",
+    "sha256": "ed6075502b33c2265c54ecc3fd1df2e83c767340386941fb16d87a9c6442fb36"
+  },
+  {
+    "source": "results/final_report/rollout/all_leads.csv",
+    "sha256": "33e6b71dea1439dd479f47175c8c1b2f34ae34510de01fefe804deb13701093b"
+  },
+  {
+    "source": "results/training/ito_psd_seed0/history.json",
+    "sha256": "c101cbfb892096f51dd27abe7610c740cec2c6788f04e898b5d25259d6b4f220"
+  },
+  {
+    "source": "results/training/ito_rollout_seed0/history.json",
+    "sha256": "5264741e440ed7a759cebbedf1fa35ba541e47023041f0d1fcfcdceffa699e40"
+  },
+  {
+    "source": "results/training/ito_psd_seed1/history.json",
+    "sha256": "f7233f30d311b18cebf9abfce6023216d78b4b0c195a040fbaa58f44dc2fc1f5"
+  },
+  {
+    "source": "results/training/ito_rollout_seed1/history.json",
+    "sha256": "1f1bff8331e9fb80c1697c267c6035c1201182426c1e1313aae29687181e1e19"
+  },
+  {
+    "source": "results/training/ito_psd_seed2/history.json",
+    "sha256": "2e0ffa6b43110a9679dac888fb2b2d79c659b9485aedc200662e6ac877327807"
+  },
+  {
+    "source": "results/training/ito_rollout_seed2/history.json",
+    "sha256": "0bbb3d6957897571ad4cb3e009ec35c0f389187f693163a61bc864ba26b72948"
+  },
+  {
+    "source": "results/training/flow_psd_seed0/history.json",
+    "sha256": "04d19b22f775af5f8c822a518fde41e7673dd18225a97f589fb6552b0198f384"
+  },
+  {
+    "source": "results/training/flow_rollout_seed0/history.json",
+    "sha256": "2085ecb036186eda86df92ac6f2d094fa908a85bb84967200762329d3e107e38"
+  },
+  {
+    "source": "results/training/flow_psd_seed1/history.json",
+    "sha256": "856b9705e1c7c18b8415a95734f95f9cb5ca8ec4d61458c0858d193b017b431b"
+  },
+  {
+    "source": "results/training/flow_rollout_seed1/history.json",
+    "sha256": "e1b1719346f2b74e37323b2c0bdc7bf5377c376883842453d6d8bdbab09393a3"
+  },
+  {
+    "source": "results/training/flow_psd_seed2/history.json",
+    "sha256": "9151369d5e1901941622aa0c8e72a63df0724265da7c1f2a8d2e54d415dfb0c1"
+  },
+  {
+    "source": "results/training/flow_rollout_seed2/history.json",
+    "sha256": "eaf96714e9d1cb43516ac965d6c0b52fabb558008b7a15754fad017ebb725a81"
+  }
+]

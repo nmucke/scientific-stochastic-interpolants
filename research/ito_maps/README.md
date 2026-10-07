@@ -1,6 +1,6 @@
 # Itô maps for probabilistic forecasting
 
-Working branch: `research/ito-map-forecasting`. Started2026-10-07. Root leads research/integration and owns final commits. Read [STATUS.md](STATUS.md) for the current handover and [the live confirmation log](results/confirmation.log) before launching any work.
+Working branch: `research/ito-map-forecasting`. Started2026-10-07. Root leads research/integration and owns final commits. Read [STATUS.md](STATUS.md) for the completed experiment, reproducibility commands and handover limits.
 
 ## Objective and research discipline
 
@@ -8,11 +8,13 @@ Adapt conditional stochastic-interpolant forecasting ([Chen et al.](https://arxi
 
 Main research and the first manuscript draft preceded implementation. Keep exact Gaussian path queries distinct from finite-feature/neural approximations, preserve trajectory-level splits, and select configurations on validation only. Existing teacher training histories are incomplete and their pretraining cost must remain labeled unavailable.
 
-## Current frozen confirmation plan
+## Completed frozen confirmation
 
-Implementation and validation-only development are complete. The selection is frozen in [results/frozen_protocol.json](results/frozen_protocol.json), including checkpoint/config/source hashes. K4 was selected: controlled K16 refinement yielded worse validation one-step CRPS0.3086 versus0.3047 forK4. The deterministic flow map currently has stronger one-step validation quality. This is part of the result, not grounds to change the comparison after testing.
+Implementation and validation-only development are complete. All frozen held-out confirmations are also complete. The selection is frozen in [results/frozen_protocol.json](results/frozen_protocol.json), including checkpoint/config/source hashes. K4 was selected: controlled K16 refinement yielded worse validation one-step CRPS0.3086 versus0.3047 forK4. The deterministic flow map currently has stronger one-step validation quality. This is part of the result, not grounds to change the comparison after testing.
 
-A single serialized GPU sequence is running under root session **53576**, using [experiments/run_confirmation.sh](experiments/run_confirmation.sh) and logging to [results/confirmation.log](results/confirmation.log). It evaluates all20 held-out trajectories with ensemble16, one-step forecasts at origins5/45/85, and10-new-step autoregressive forecasts from origin45. It then trains complete unchanged student pipelines for seeds1 and2 and evaluates those replicas. Do not start another GPU job. All additional diagnostics should be CPU-only unless the root explicitly schedules otherwise.
+The serialized [confirmation sequence](experiments/run_confirmation.sh) completed successfully for all three student seeds in both model families. The [confirmation audit](results/confirmation_audit.json) verifies all4,360 forecast records,16 evaluation artifacts,12 training stages and original frozen checkpoint hashes. No GPU job remains. All20 held-out trajectories were evaluated with ensemble16, one-step forecasts at origins5/45/85, and10-new-step autoregressive forecasts from origin45.
+
+The [final report](results/final_report/final_report_manifest.json) separates training-seed variability from trajectory-bootstrap uncertainty. Eight-step Itô maps have mean one-step CRPS0.27139 versus0.26780 forSI64 (+1.34%) at7.16x lower measured latency; one-step deterministic maps have0.26663 versus0.26501 forFM64 (+0.61%) at56.32x lower latency. The maps remain underdispersed, and later-lead Itô score/spectral degradation prevents a claim of full quality retention. The deterministic map is a strong baseline, not evidence of universal Itô superiority.
 
 The last completed whole-suite run reported105 passing tests on CPU. The nontrivial-mask constructor guard and API documentation do not alter the frozen unmasked NS numerics; its source-hash addendum is [notes/post_freeze_api_guard.json](notes/post_freeze_api_guard.json).
 
@@ -44,14 +46,15 @@ Map sampling takes normalized2D histories and returns normalized CPU tensors. Us
 
 ## Handover reading order
 
-1. [STATUS.md](STATUS.md): live sequence, completed evidence, remaining work and constraints.
+1. [STATUS.md](STATUS.md): completed evidence, audit/rebuild commands and remaining scientific limits.
 2. [notes/methodology.md](notes/methodology.md) and [notes/flow_maps_and_code_design.md](notes/flow_maps_and_code_design.md): source papers, conditional construction and implementation choices.
 3. [notes/methodology_implementation_audit.md](notes/methodology_implementation_audit.md), [notes/code_equation_audit.md](notes/code_equation_audit.md), and [notes/map_api_compatibility.md](notes/map_api_compatibility.md): equations, finite-feature caveats and supported usage.
 4. [notes/validation_iteration_log.md](notes/validation_iteration_log.md): chronological decisions made before test exposure.
 5. [notes/ns_path_compression_assessment.md](notes/ns_path_compression_assessment.md): actual teacher information diagnostic and its one-history/finite-teacher limits.
 6. [notes/experiment_protocol.md](notes/experiment_protocol.md), [results/frozen_protocol.json](results/frozen_protocol.json), and [notes/navier_stokes_provenance.md](notes/navier_stokes_provenance.md): evaluation and data provenance.
-7. [notes/broader_literature.md](notes/broader_literature.md), [paper/guidelines.md](paper/guidelines.md), and [paper/main.tex](paper/main.tex): novelty boundary and evolving manuscript.
-8. Executed scripts, archived configurations and raw results: verify actual completion, source checkpoint hashes and cumulative training cost before reporting outcomes.
+7. [notes/heldout_three_seed_assessment.md](notes/heldout_three_seed_assessment.md) and [the compiled paper](paper/main.pdf): complete results and interpretation.
+8. [notes/broader_literature.md](notes/broader_literature.md), [paper/guidelines.md](paper/guidelines.md), and [paper/main.tex](paper/main.tex): novelty boundary and evolving manuscript.
+9. Executed scripts, archived configurations and raw results: verify actual completion, source checkpoint hashes and cumulative training cost before reporting outcomes.
 
 ## Useful reproducibility commands
 

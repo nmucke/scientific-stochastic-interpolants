@@ -109,3 +109,54 @@ conditional-expectation variance decomposition, same-coupling Wasserstein
 bound and Gaussian score illustration are established facts, not novel
 theorems. Submission strength depends on the completed evidence and the
 positioning relative to prior forecasting and map-distillation work.
+
+## Completion evidence after three-seed integration
+
+All frozen runs subsequently completed on 2026-10-07. The live
+`results/confirmation_audit.json` reports success at
+`2026-10-07T09:57:11.806064+00:00`: 4,360 raw forecast rows, 16 evaluation
+artifacts, 12 complete training stages, and 40 exact standalone/rollout
+lead-one matches for each of the six students. The four original frozen
+model/config hashes passed. The root agent reports the final complete CPU
+suite passed **105 tests**, with only the inherited CUDA-disabled warning.
+
+After the paper agent signaled integration complete, I independently
+recomputed all **72** `generated/replication_claims.tex` numeric macros from
+the raw evaluation rows. These included per-seed and across-seed score
+means, sample standard deviations, calibration values, all relevant paired
+10,000-resample trajectory intervals, relative score changes, and cumulative
+rollout latency ratios. Every displayed number matched its specified
+rounding. All `generated/replication_sources.json` hashes matched their
+current source files. The generated replication tables agree with those
+values and the archived training histories.
+
+Key independently checked results (means over student seeds 0, 1, 2):
+
+| Comparison to fixed 64-step teacher | CRPS mean | Student-seed SD | Relative CRPS change | Measured latency ratio |
+| --- | ---: | ---: | ---: | ---: |
+| Itô map, 8 steps, one interval | 0.27139388 | 0.00168421 | +1.34303% | 7.15903 |
+| Itô map, 8 steps, physical lead 10 | 0.54221859 | 0.00147725 | +1.74276% | 7.25918 |
+| Flow map, 1 step, one interval | 0.26662567 | 0.00075751 | +0.60893% | 56.31716 |
+| Flow map, 1 step, physical lead 10 | 0.53353189 | 0.00048451 | +0.08420% | 58.92186 |
+
+Ratios at physical lead 10 use total latency through all ten leads. Positive
+CRPS changes mean worse point estimates than the corresponding teacher.
+The flow map's one-interval paired lower endpoint is
+`0.000011517461389295456`, correctly reported as positive rather than an
+interval crossing zero. Its final-lead interval crosses zero, with no
+equivalence claim.
+
+I also checked the manually stated three-seed coverage references (74.89%
+and 73.78%), the Itô map's final spectral-discrepancy increase (14.90%),
+the flow teacher's final RMS spread/skill ratio (1.056), and the reported
+training-time ranges (18.99–19.05 minutes for Itô students and 18.44–18.53
+minutes for flow students). All agree with their sources.
+
+The integrated `main.tex` and `results.tex` contain no stale pending-seed
+claims. They retain explicit seed-zero labels for complete budget curves,
+separate training-seed variability from trajectory intervals, and preserve
+the uncertainty, deterministic-baseline, data-provenance and compute-cost
+limitations. No numerical or scientific-claim inconsistency was found.
+The paper agent separately reports a clean build with main content ending
+on page eight and the appendix beginning on page nine; that layout check
+was not repeated in this numerical review.

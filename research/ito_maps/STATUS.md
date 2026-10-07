@@ -1,6 +1,6 @@
 # Handover status
 
-Updated 2026-10-07 after configuration freeze and launch of the serialized confirmation sequence. Read the live log before starting work: this snapshot records a running experiment, not its completion.
+Updated 2026-10-07 after the full frozen three-seed confirmation completed. All training and evaluation jobs finished successfully; no GPU job remains. The final manuscript includes the complete results and builds to14 total pages, with main text/impact ending on page8 and appendices starting on9. Numerical claims and key PDF pages were independently reviewed.
 
 ## Branch and authority
 
@@ -13,7 +13,7 @@ Branch: `research/ito-map-forecasting`. The user authorized extensive delegated 
 - `BaseMapModel`, `FollmerItoMapModel`, `FlowMapModel`, compatible two-time/path conditioning adapters, and exact finite-query weighted-Brownian bridges.
 - `MapTrainer`: teacher-diagonal PSD and supervised same-path teacher-rollout objectives, offline artifacts, EMA, and tested epoch-boundary resume.
 - Hydra train/test entry points and NS configurations, reusing existing datasets, preprocessing, U-Net, losses/optimizer/clipping and metrics.
-- Latest completed whole-suite run:105 tests pass (CPU), including provenance, confirmation audits, paired seed reporting and the nontrivial-mask guard.
+- Latest whole-suite run:105 tests pass (CPU), including provenance, confirmation audits, paired seed reporting and the nontrivial-mask guard. The single warning is inherited CUDA autocast disabling during the explicitly CPU-only test run.
 - Real GPU training/evaluation smoke and all validation-only development comparisons.
 - Both seed0 PSD stages (2,000 updates each), followed by both teacher-rollout stages (500 updates each). Frozen teacher grids use32 drift substeps during supervised training/validation.
 - Analytic/Monte Carlo OU compression experiment and actual frozen-NS conditional-bridge diagnostic (CPU).
@@ -30,54 +30,48 @@ Validation-only evidence: after teacher-rollout refinement, one-step Itô CRPS0.
 
 The NS conditional-path diagnostic at one validation history found approximately9.68% omitted teacher endpoint variance withK4 and0.66% withK16. It establishes a finite-feature same-path information limit for that teacher/history, not a guarantee that training exploits the added information or improves forecast scores.
 
-## Live serialized confirmation job
+## Completed confirmation and principal findings
 
-Root tool session: **53576**. Script: `experiments/run_confirmation.sh`. Live log: `results/confirmation.log`. One RTX3090 is reserved for this sequence. Other agents should use CPU only. Sessions may be owned by the root tool context; inspect the log/process state rather than launching a duplicate job if the session is unavailable to a child agent.
+The frozen serialized sequence `experiments/run_confirmation.sh` completed with exit0. Root session53576 is closed. All six students (two families, seeds0/1/2) completed2,000 PSD plus500 teacher-rollout updates. All12 training stages are archived under `results/training/` with resolved configurations, histories, initialization lineage and selected checkpoint hashes. Original teacher pretraining was shared and not rerun.
 
-The sequence is:
+`results/confirmation_audit.json` passed: all16 evaluation files,4,360 forecast records, exact cases/budgets/ensemble sizes, finite metrics,12 training-stage archives, and the four original frozen model/config hashes. Each student's matching standalone and rollout lead-one metrics agree exactly. The original frozen manifest remains unchanged.
 
-1. Seed0 forecasts on all20 held-out trajectories180–199, origins5/45/85, ensemble16. Maps use1/2/4/8 evaluations; existing SI/FM solvers use1/4/16/64/128 steps. Outputs: `results/test_one_step/`.
-2. Seed0 autoregressive10-new-step physical forecasts on those20 trajectories from origin45, ensemble16. Maps use1/8 evaluations per physical step; solvers use64. Outputs: `results/test_rollout/`.
-3. Saved qualitative forecast comparison, with outputs in `results/test_qualitative/`.
-4. Complete independent student training for seeds1 and2, both model families and both stages, using unchanged frozen settings. Script: `experiments/train_replications.sh`. Teacher pretraining is shared and not rerun.
-5. Seeds1/2 held-out evaluation at map budgets1/8 for the same one-step and10-step physical-forecast protocols, followed by provenance archiving.
+The held-out protocol uses20 trajectories180–199 and16 ensemble members. One-step forecasts cover origins5/45/85; autoregressive forecasts start at45 and generate10 new snapshot intervals. Seed0 includes full budget curves (maps1/2/4/8, solvers1/4/16/64/128); all three student seeds have map budgets1/8. Rollout solver references use64 steps. Test scores were not used to change the frozen settings.
 
-At launch, root estimated roughly40minutes for initial seed0 evaluation and about75minutes for additional training, with further evaluation afterward; these estimates are not completion guarantees. The live log and output artifacts are authoritative.
+Across three independently trained students, with the same fixed teacher pair:
 
-### Latest completed test evidence (still seed0 only)
+| Comparison | Student CRPS mean ± training-seed SD | Fixed teacher CRPS | Relative CRPS change |
+|---|---:|---:|---:|
+| Itô8, one step, versusSI64 |0.27139 ±0.00168|0.26780|+1.34%|
+| FlowMap1, one step, versusFM64 |0.26663 ±0.00076|0.26501|+0.61%|
+| Itô8, physical lead10, versusSI64 |0.54222 ±0.00148|0.53293|+1.74%|
+| FlowMap1, physical lead10, versusFM64 |0.53353 ±0.00048|0.53308|+0.08%|
 
-All one-step curves are complete. See `notes/heldout_seed0_assessment.md` and
-`results/final_report/one_step/`. Itô8 CRPS0.27052 versusSI64 0.26780 at7.15x
-lower latency; Itô1 CRPS0.27287 versusSI16 0.28802 at13.30x lower latency.
-FlowMap1 CRPS0.26656 versusFM64 0.26501 at56.3x lower latency. Proper-score
-proximity does **not** establish calibration retention: Itô8 has10.66% less
-RMS spread thanSI64 and5.19percentage points less empirical coverage. Both
-map families remain underdispersed relative to their high-step teachers.
+One-step ensemble latency averages0.3401s forItô8 versus2.4345s forSI64 (7.16x faster), and0.04349s forFlowMap1 versus2.4491s forFM64 (56.32x faster), on one RTX3090. These are measured ensemble-generation times, not end-to-end forecast scoring times. NFE counts actual network calls.
 
-All seed0 rollouts and the fixed qualitative example have completed. At physical lead10,
-Itô8 CRPS0.54316 versusSI64 0.53293; full10-lead ensemble generation costs
-3.386 versus24.597seconds. FlowMap1 lead10 CRPS0.53396 versusFM64 0.53308.
-The full seed0 report is in `results/final_report/`; the manuscript builds to13
-total pages with main text ending on8. Itô8's lead10 spectral discrepancy is
-15.8% higher thanSI64, so broad physical-quality retention is also unproven.
-Additional full training seeds remain pending. Both seed1 models have completed
-and been archived. Seed2 Itô PSD reached1,700/2,000 updates at11:14 local time;
-its refinement and both seed2 flow stages precede evaluation of all repetitions. Do not
-present seed0 as a three-seed result. Root verified every map's initial rollout
-forecast against its matching standalone origin45 forecast, with identical
-proper scores/calibration metrics for all40 cases per map.
+Against the moderate16-step SI budget, one-step Itô maps improve mean CRPS by4.73% at13.24x lower latency. The higher-step reference remains the principal comparison. The efficiency result is accompanied by residual distributional errors. Itô8 one-step RMS spread is10.64% belowSI64, and its physical-lead10 CRPS excess has a paired trajectory-bootstrap interval wholly above zero. Spectral discrepancy also worsens at later leads. The deterministic flow map is a strong comparator; the experiment does not establish an Itô advantage or distributional equivalence. Data-trajectory bootstrap intervals and student-seed SD/range are separate uncertainties; no48-member ensembles are formed by pooling seeds.
 
-An optional user question is pending about the archive's original generation
-settings (snapshot spacing, viscosity, forcing and creation script/revision).
-Continue using stored-snapshot lead units unless actual provenance is supplied.
+The full interpretation is in `notes/heldout_three_seed_assessment.md`; implementation/test hashes are in `notes/final_validation.json`. Detailed results are under `results/final_report/`, including full seed0 curves, all physical leads, persistence, per-seed values and fixed-teacher comparisons. The fixed qualitative example is test trajectory180, origin45, first member; no visual selection was performed. Development-only compression/K16 evidence remains labeled separately.
 
-## Remaining work after the sequence
+## Reproduce and verify completed artifacts
 
-- Confirm every frozen run completed, inspect failures/nonfinite values, and archive all training metadata/history/configurations/hashes with `experiments/archive_training.py`. Run `experiments/verify_confirmation.py`, then `experiments/rebuild_confirmation_report.sh`, then `make -C research/ito_maps/paper replication-artifacts`.
-- Aggregate measured test quality, calibration, spectra, latency and long-rollout behavior. Distinguish trajectory uncertainty from independently trained seed variation; no test-driven checkpoint or hyperparameter changes.
-- Include the negative K16 ablation, conditional compression experiment and actual computational costs; pre-existing teacher pretraining cost remains unavailable.
-- Reconcile manuscript and figures/tables against completed raw artifacts, compile the paper, review numerical/mathematical claims, and run final relevant checks.
-- Root makes final commits and provides the user with the paper/code/results and remaining submission limitations. Manuscript submission is not authorized by this work.
+From the repository root:
+
+```bash
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 .venv/bin/python -m pytest -q
+.venv/bin/python research/ito_maps/experiments/verify_confirmation.py
+bash research/ito_maps/experiments/rebuild_confirmation_report.sh
+make -C research/ito_maps/paper replication-artifacts
+make -C research/ito_maps/paper
+```
+
+The report and audit commands use saved artifacts and do not run models. Large dataset/checkpoint files and the generated PDF remain local and ignored by Git; metadata, configs, numerical results, scientific figures and source are tracked. Do not rerun `run_confirmation.sh` over these archives merely to rebuild tables. The original teachers/data were preserved.
+
+## Remaining human research and submission decisions
+
+The user has not supplied the archive's original generation settings (snapshot spacing, viscosity, forcing, script/revision). Continue reporting physical leads in stored-snapshot intervals. Teacher-pretraining histories/costs are also unavailable. Broader external distillation baselines, additional datasets and larger physical conditional reference ensembles are not part of the completed experiment. These limits constrain ICML positioning; they are documented rather than replaced by unsupported claims.
+
+The manuscript uses the official ICML2026 anonymous template. The intended future-cycle author instructions must be checked when available. Human authors must review scientific claims, authorship and substantial AI-assistance disclosure before any submission. No submission, push or publication has occurred.
 
 ## Important scientific and compatibility limits
 

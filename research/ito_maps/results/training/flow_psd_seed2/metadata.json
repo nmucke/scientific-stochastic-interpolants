@@ -1,0 +1,14 @@
+{
+  "seed": 2,
+  "git_revision": "5e68cb305e71c5c17753cbb9947711ef9012ecfb",
+  "git_dirty": false,
+  "torch_version": "2.9.1+cu128",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "parameters": 12960100,
+  "train_examples": 15040,
+  "val_examples": 1880,
+  "teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
+  "initial_student_checkpoint": null,
+  "validation_objective": "fixed_noise_full_interval_teacher_rollout"
+}

@@ -1,6 +1,6 @@
 # Candid scientific review of the current study
 
-Review date: 2026-10-07. This assesses the documented method and frozen study, not an acceptance probability. Seed-zero one-interval and ten-lead held-out runs are complete; student training replications remain underway. The paper distinguishes development, seed-zero confirmation, and pending replication evidence.
+Review date: 2026-10-07. This assesses the documented method and frozen study, not an acceptance probability. All frozen one-interval and ten-lead runs are complete for three student-training seeds. The paper distinguishes development, seed-zero full budget curves, and three-student confirmation evidence.
 
 ## Strongest defensible contribution
 
@@ -27,7 +27,7 @@ The basic mathematical machinery is inherited. Pan et al. already define Brownia
 | Unequal model capacity or training procedures | Matching backbone family, explicit parameter counts, same two-stage student schedule, frozen teachers | SI and flow students inherit different pretrained teachers; original teacher training costs/seeds are unavailable |
 | Cherry-picking map budget/checkpoint | One checkpoint per trained model used across budgets; K chosen by recorded one-step validation criterion | Selection uses only four development trajectories, so it can be noisy |
 | Weak solver reference | 64-versus-128-step sensitivity check and full low/high-budget curves | Numerical agreement is not proof of learned-SDE correctness; do not call 64 steps converged without the actual comparison |
-| One random student initialization | Three complete student seeds planned independently of their outcomes | Until all finish, only completed seeds count; fixed teachers do not quantify teacher-seed variation |
+| One random student initialization | Three complete student seeds, with both stages and frozen-budget evaluations | Only three students with fixed teachers; this does not quantify teacher-seed variation |
 | Test-driven refinement | Trajectory split and feature choice recorded before held-out evaluation | Future tuning based on test outputs would invalidate this interpretation; avoid it |
 | Comparing marginal scores only | Fair CRPS plus normalized energy score, ranks/spread, spectral diagnostics | Energy score can have limited sensitivity in high dimensions; these checks do not identify a full spatial law |
 | Forecast uncertainty inferred from one truth | Proper scores across contexts; finite-ensemble caveats; matched ensemble sizes | No large physical conditional reference ensembles, unlike StocBench; spectral comparison is to a realized target |
@@ -58,7 +58,7 @@ The closest external benchmark comparison is literature-only. The frozen experim
 5. Use the compression diagnostic and negative K16 ablation to explain why path information and forecast quality must be evaluated separately. Do not make the one-history Monte Carlo experiment carry a broad mechanistic claim.
 6. Include a short “what this study establishes” paragraph scaled to completed evidence: one stochastic-fluid dataset, fixed teacher pair, actual completed student seeds, measured one-step and ten-lead performance. Do not describe this as weather forecasting, physical solver replacement, or general calibrated uncertainty without evidence.
 
-No extra architecture search or small percentage optimization is recommended here. The substantive outstanding work is completing the already frozen confirmations, recovering available physical-data provenance, and making the claims match the observed evidence.
+No extra architecture search or small percentage optimization is recommended here. The frozen confirmations are complete and claims match their scope. The remaining substantive limitations include uncertified physical-data provenance, fixed teachers, external baseline coverage, and generality beyond this one benchmark.
 
 ## Citation and source audit
 
@@ -71,4 +71,9 @@ Two concrete wording corrections were made during this audit: the Gaussian regre
 
 ## Update after complete seed-zero confirmation
 
-The observed results strengthen the efficiency claim but sharpen the novelty/usefulness question: the one-step deterministic map is a particularly strong speed/score comparator, while the eight-step Itô map retains close proper scores with residual underdispersion and measurable final-lead degradation. The final-lead spectral discrepancy is also worse than SI64. A paper that claimed full distribution retention or stochastic superiority would misrepresent this evidence. The useful scientific observation is the combined speed/quality/calibration tradeoff and the separation of Brownian path fidelity from endpoint forecasting quality; its external generality remains limited to the completed study and eventual training replications.
+The observed results strengthen the efficiency claim but sharpen the novelty/usefulness question: the one-step deterministic map is a particularly strong speed/score comparator, while the eight-step Itô map retains close proper scores with residual underdispersion and measurable final-lead degradation. The final-lead spectral discrepancy is also worse than SI64. A paper that claimed full distribution retention or stochastic superiority would misrepresent this evidence. The useful scientific observation is the combined speed/quality/calibration tradeoff and the separation of Brownian path fidelity from endpoint forecasting quality; its external generality remains limited to this one benchmark and the three completed student replications with fixed teachers.
+
+
+## Final three-student confirmation
+
+All twelve training stages and 4,360 frozen forecast rows passed the confirmation audit. The three-student means retain the seed-zero interpretation: Ito8 has 1.34% higher one-interval CRPS and 1.74% higher lead-ten CRPS than SI64 at roughly sevenfold lower sampling latency, with residual underdispersion and 14.90% worse final spectral discrepancy. The final-lead score difference has a positive paired data interval. Flow1 remains the strongest speed/score comparator, with +0.61% one-interval and +0.08% lead-ten CRPS relative to FM64 and roughly 56×/59× lower latency. Its one-interval data interval barely excludes zero; its final-lead interval includes zero. Neither is an equivalence claim. Three student seeds support repeatability for the selected fixed teachers, not a universal superiority or calibration-retention claim. The manuscript now presents these aggregate results separately from the full seed-zero budget curves.

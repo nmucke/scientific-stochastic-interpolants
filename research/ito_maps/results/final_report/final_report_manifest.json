@@ -13,8 +13,18 @@
       "research/ito_maps/results/test_rollout/flow_matching/evaluation.json"
     ],
     "output": "research/ito_maps/results/final_report",
-    "seed_one_step": [],
-    "seed_rollout": [],
+    "seed_one_step": [
+      "research/ito_maps/results/test_one_step/ito_rollout_seed1/evaluation.json",
+      "research/ito_maps/results/test_one_step/flow_rollout_seed1/evaluation.json",
+      "research/ito_maps/results/test_one_step/ito_rollout_seed2/evaluation.json",
+      "research/ito_maps/results/test_one_step/flow_rollout_seed2/evaluation.json"
+    ],
+    "seed_rollout": [
+      "research/ito_maps/results/test_rollout/ito_rollout_seed1/evaluation.json",
+      "research/ito_maps/results/test_rollout/flow_rollout_seed1/evaluation.json",
+      "research/ito_maps/results/test_rollout/ito_rollout_seed2/evaluation.json",
+      "research/ito_maps/results/test_rollout/flow_rollout_seed2/evaluation.json"
+    ],
     "persistence_one_step": "research/ito_maps/results/test_persistence/one_step/evaluation.json",
     "persistence_rollout": "research/ito_maps/results/test_persistence/rollout/evaluation.json",
     "ensemble": 16,
@@ -5282,6 +5292,38 @@
         "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed0/evaluation.json",
         "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
         "sampling_seed": 20261007
+      },
+      {
+        "model": "F\u00f6llmer It\u00f4 map",
+        "training_seed": 1,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed1/evaluation.json",
+        "checkpoint_sha256": "7ee32b4028987a1f7044b4f21cbcdbc43c5c0d70d02e49db98530ab53e78bb40",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "Flow map",
+        "training_seed": 1,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed1/evaluation.json",
+        "checkpoint_sha256": "c10f3d08178ea7db50a7bb331a9031d84a9b8995a314393f9a2457316d2ae875",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "F\u00f6llmer It\u00f4 map",
+        "training_seed": 2,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed2/evaluation.json",
+        "checkpoint_sha256": "13106dc2e677c18de6155c86f545e6bcd67ce7550ab969b2ee31c30815e78619",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "Flow map",
+        "training_seed": 2,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed2/evaluation.json",
+        "checkpoint_sha256": "b602d5c810d32b6afbfe3985f524febda65070d31d6f8d593c9781005e617f0c",
+        "sampling_seed": 20261007
       }
     ],
     "rollout": [
@@ -5299,6 +5341,38 @@
         "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
         "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed0/evaluation.json",
         "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "F\u00f6llmer It\u00f4 map",
+        "training_seed": 1,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/ito_rollout_seed1/evaluation.json",
+        "checkpoint_sha256": "7ee32b4028987a1f7044b4f21cbcdbc43c5c0d70d02e49db98530ab53e78bb40",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "Flow map",
+        "training_seed": 1,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed1/evaluation.json",
+        "checkpoint_sha256": "c10f3d08178ea7db50a7bb331a9031d84a9b8995a314393f9a2457316d2ae875",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "F\u00f6llmer It\u00f4 map",
+        "training_seed": 2,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/ito_rollout_seed2/evaluation.json",
+        "checkpoint_sha256": "13106dc2e677c18de6155c86f545e6bcd67ce7550ab969b2ee31c30815e78619",
+        "sampling_seed": 20261007
+      },
+      {
+        "model": "Flow map",
+        "training_seed": 2,
+        "fixed_teacher_checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching",
+        "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed2/evaluation.json",
+        "checkpoint_sha256": "b602d5c810d32b6afbfe3985f524febda65070d31d6f8d593c9781005e617f0c",
         "sampling_seed": 20261007
       }
     ]

@@ -78,9 +78,13 @@ table = [r'\begin{table}[t]',
          r'Model & Steps & One interval & Physical lead 10 \\',r'\midrule']
 detail = [r'\begin{table*}[t]',
           r'\caption{Individual student-training replications under the frozen protocol. The evaluation sampling seed and test cases are shared; each student repeats both training stages with its own training seed. Coverage is the finite-ensemble empirical interval coverage, not a population 90\% criterion.}',
-          r'\label{tab:individual-seeds}',r'\centering',r'\begin{tabular}{lrrrrrr}',r'\toprule',
+          r'\label{tab:individual-seeds}',r'\centering',r'\setlength{\tabcolsep}{4pt}',r'\begin{tabular}{lrrrrrr}',r'\toprule',
           r'Model & Steps & Training seed & One-interval CRPS & Lead-10 CRPS & Lead-10 RMS spread & Lead-10 coverage (\%) \\',r'\midrule']
 macros = ['% Three trained students, fixed teacher checkpoints; point estimates only.']
+paired = [r'\begin{table*}[t]',
+          r'\caption{Three-student mean CRPS differences from each fixed 64-step teacher. Intervals resample the same 20 test trajectories after averaging student scores; they condition on these trained students and do not include teacher-training uncertainty. The final column reports reference-to-student measured latency ratios, using cumulative costs for physical lead 10.}',
+          r'\label{tab:replication-paired}',r'\centering',r'\begin{tabular}{lrrrrr}',r'\toprule',
+          r'Model & Steps & Physical lead & CRPS difference [95\% interval] & Change (\%) & Speedup \\',r'\midrule']
 for model, (label, family, key) in MODELS.items():
     for budget, word in [(1, 'One'), (8, 'Eight')]:
         first, last = aggregate(1, model, budget), aggregate(10, model, budget)
@@ -94,9 +98,9 @@ for model, (label, family, key) in MODELS.items():
                               r['num_steps'] == budget and r['lead'] == horizon and r['metric'] == 'crps')
             assert comparison['reference_steps'] == 64
             for metric, suffix, places in [
-                    ('difference_student_mean_minus_reference', 'Difference', 4),
-                    ('difference_data_cluster_ci95_lower', 'Lower', 4),
-                    ('difference_data_cluster_ci95_upper', 'Upper', 4),
+                    ('difference_student_mean_minus_reference', 'Difference', 5),
+                    ('difference_data_cluster_ci95_lower', 'Lower', 5),
+                    ('difference_data_cluster_ci95_upper', 'Upper', 5),
                     ('relative_change_percent', 'Percent', 2)]:
                 macros.append('\\newcommand{\\rep'+key+word+name+suffix+'}{'+f'{comparison[metric]:.{places}f}'+'}')
             reference = next(r for r in teacher_rows[horizon] if
@@ -106,11 +110,18 @@ for model, (label, family, key) in MODELS.items():
                                r['model'] == model and r['num_steps'] == budget)
             reference_cost = float(reference['seconds' if horizon == 1 else 'cumulative_seconds'])
             macros.append('\\newcommand{\\rep'+key+word+name+'Speed}{'+f'{reference_cost/student_cost:.2f}'+'}')
+            paired.append(f"{label} & {budget} & {horizon} & {comparison['difference_student_mean_minus_reference']:.5f} [{comparison['difference_data_cluster_ci95_lower']:.5f}, {comparison['difference_data_cluster_ci95_upper']:.5f}] & {comparison['relative_change_percent']:.2f} & {reference_cost/student_cost:.2f}"+r'\\')
         for seed in (0, 1, 2):
             a, b = individual(1, model, budget, seed), individual(10, model, budget, seed)
             detail.append(f"{label} & {budget} & {seed} & {float(a['crps']):.5f} & {float(b['crps']):.5f} & {float(b['rms_spread']):.4f} & {100*float(b['coverage90']):.2f} "+r'\\')
 table += [r'\bottomrule',r'\end{tabular}',r'\end{table}','']
 detail += [r'\bottomrule',r'\end{tabular}',r'\end{table*}','']
+paired += [r'\bottomrule',r'\end{tabular}',r'\end{table*}','']
+ito_one = aggregate(1, 'Föllmer Itô map', 1)
+si_sixteen = next(r for r in teacher_rows[1] if r['model'] == 'Föllmer SI' and int(r['num_steps']) == 16)
+macros += [
+    r'\newcommand{\repItoOneModerateGain}{'+f"{100*(1-ito_one['crps']/float(si_sixteen['crps'])):.2f}"+'}',
+    r'\newcommand{\repItoOneModerateSpeed}{'+f"{float(si_sixteen['seconds'])/ito_one['seconds']:.2f}"+'}']
 
 cost = [r'\begin{table}[t]',r'\caption{Recorded training-and-validation time for each complete two-stage student replication. These times exclude model/data initialization and original teacher pretraining.}',
         r'\label{tab:replication-time}',r'\centering',r'\begin{tabular}{lrrr}',r'\toprule',
@@ -130,6 +141,7 @@ OUTPUT.mkdir(exist_ok=True)
 for filename, lines in [('replication_table.tex', table),
                         ('replication_individuals.tex', detail),
                         ('replication_claims.tex', macros),
+                        ('replication_paired.tex', paired),
                         ('replication_training_cost.tex', cost)]:
     (OUTPUT / filename).write_text('\n'.join(lines)+'\n')
 (OUTPUT / 'replication_sources.json').write_text(json.dumps(sources, indent=2)+'\n')

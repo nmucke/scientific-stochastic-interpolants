@@ -1,0 +1,25 @@
+{
+  "recorded_utc": "2026-10-07T10:05:15.146662+00:00",
+  "branch": "research/ito-map-forecasting",
+  "test_command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 .venv/bin/python -m pytest -q",
+  "tests_passed": 105,
+  "tests_failed": 0,
+  "test_seconds": 23.42,
+  "test_warning": "Inherited CUDA autocast context disabled during explicitly CPU-only tests.",
+  "confirmation_audit": "research/ito_maps/results/confirmation_audit.json",
+  "confirmation_audit_sha256": "eb6630cafd28f6da255da1d6e06cdce2306daf14ed425c1d374ef515ed1c6325",
+  "source_sha256": {
+    "src/scisi/architectures/map_conditioning.py": "38ac1b355358dd2ce580cfdf5156ec843a63c5197628d3296219889dcff17c37",
+    "src/scisi/models/flow_map_model.py": "359be196cf580a3fb83f2020c5ca7e7ea6c03f8c2fd9b6cf885cc09362c7d7b2",
+    "src/scisi/models/follmer_ito_map_model.py": "e1e1ad71e4dbb2a2de05cd92b3d65bfcabfe013fbcfcdeb510ba5dbebae69e10",
+    "src/scisi/models/base_map_model.py": "584d7e47971e91c5821f0bf4ea69524e0ba91004d3d10c0927ec96c72e78cf94",
+    "src/scisi/training/map_trainer.py": "0e9ce164456bf13859f72f744dfb93288842b7f61f8c2be334ec0c68b6920681",
+    "src/scisi/bin/main_map_model_test.py": "3c893feef5288d86bbcbff2f21cc3c5a342ca5786fe06a4e54940586ca5bbfcd",
+    "src/scisi/bin/main_map_model_train.py": "69dfdd157db0ba91d9bbad883b7c1e7900daf1054d43cb769c0c7f7775e3dcb9",
+    "src/scisi/sampling/brownian_path.py": "6284d984cba5bea7be1a5a505c80917b5ccf2e3e94c2c20951c8166d46888ba9",
+    "config/map_stochastic_navier_stokes_common.yaml": "e678f44b7b69244925e483fbf5a2060daee2e4aef5aea83aac7225f6c2cddaf8",
+    "config/follmer_ito_map_stochastic_navier_stokes.yaml": "3679f7b8e5386398359cd2de742fa1d3387828a482a8117d48dce1688934670b",
+    "config/flow_map_stochastic_navier_stokes.yaml": "2b05496102d44e42e822d0e2d069e0ba145d2a7a4d16f0672b97db21ccfb06b4"
+  },
+  "scope": "Final implementation/test record. Does not replace or modify the original frozen protocol or post-freeze source-change addendum."
+}

@@ -305,6 +305,7 @@ def generate(evaluations, output, *, steps=(1, 8), replicates=10000, seed=712):
             writer = csv.DictWriter(
                 handle,
                 fieldnames=list(dict.fromkeys(key for row in rows for key in row)),
+                lineterminator="\n",
             )
             writer.writeheader()
             writer.writerows(rows)
@@ -325,7 +326,9 @@ def generate(evaluations, output, *, steps=(1, 8), replicates=10000, seed=712):
     provenance["fixed_teacher_comparisons"] = comparisons
     if comparisons:
         with (output / "fixed_teacher_comparison.csv").open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(comparisons[0]))
+            writer = csv.DictWriter(
+                handle, fieldnames=list(comparisons[0]), lineterminator="\n"
+            )
             writer.writeheader()
             writer.writerows(comparisons)
         (output / "fixed_teacher_comparison.json").write_text(

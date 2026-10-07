@@ -13,7 +13,7 @@ specifications = [
 ]
 expected = {(t,o) for t in range(180,200) for o in (5,45,85)}
 lines = [r'\begin{table}[t]',
-    r'\caption{Seed-zero one-interval test measurements: 20 held-out trajectories, three origins each, and 16 ensemble members. Student checkpoints were selected before testing. Values average the 60 contexts; paired trajectory intervals appear in the text. Additional training seeds remain pending.}',
+    r'\caption{Seed-zero one-interval test measurements: 20 held-out trajectories, three origins each, and 16 ensemble members. Student checkpoints were selected before testing. Values average the 60 contexts. Table~\ref{tab:replication} separately reports all three student-training seeds at the frozen confirmation budgets.}',
     r'\label{tab:seed0-test}',r'\centering',r'\begin{tabular}{lrrr}',r'\toprule',
     r'Model & NFE & CRPS $\downarrow$ & Seconds $\downarrow$ \\',r'\midrule']
 provenance=[]

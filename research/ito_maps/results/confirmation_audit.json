@@ -1,0 +1,352 @@
+{
+  "success": true,
+  "checked_utc": "2026-10-07T09:57:11.806064+00:00",
+  "protocol_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/frozen_protocol.json",
+  "protocol_sha256": "4e118b3223453318df11a75c5486511fbb1071ce3bb7f2c067d419b8e20c0eeb",
+  "audit_script_sha256": "144ff5330846ca69e9844e7942d6b077e9a26311b5ef9ef6085b5e7157cd18cb",
+  "frozen_artifacts": [
+    {
+      "name": "ito_rollout_seed0",
+      "path": "checkpoints/stochastic_navier_stokes/ito_rollout_seed0",
+      "model_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "config_sha256": "40e9da081827d3b520891922639a2cfa48e607e106fa8c5b60b6f8008819e1dd"
+    },
+    {
+      "name": "flow_rollout_seed0",
+      "path": "checkpoints/stochastic_navier_stokes/flow_rollout_seed0",
+      "model_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "config_sha256": "d3e5eacf2293959dace0b074aa3dcf9d5466f8aa72cf8a1bbdca032fbc0958d3"
+    },
+    {
+      "name": "stochastic_interpolant",
+      "path": "checkpoints/stochastic_navier_stokes/stochastic_interpolant",
+      "model_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "config_sha256": "c91619d866fd45310301bb8712c393a858c9f3a7b77710f47796147fd8f7b1d8"
+    },
+    {
+      "name": "flow_matching",
+      "path": "checkpoints/stochastic_navier_stokes/flow_matching",
+      "model_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "config_sha256": "9e8f2269abb3eae99d3d9a1f26679fe18642f243a041e52a97325b4df0c2add6"
+    }
+  ],
+  "evaluations": [
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed0/evaluation.json",
+      "sha256": "44878f389abbfbf324cdd6725ab0ea22a048976e09aceb8ddfdb1dbc6b293d11",
+      "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "rows": 240,
+      "budgets": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed0/evaluation.json",
+      "sha256": "40033985ada54eca36cddfabcf00ad486737f1a26633d8e5335196d8e576f66e",
+      "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "rows": 240,
+      "budgets": [
+        1,
+        2,
+        4,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed1/evaluation.json",
+      "sha256": "9889196870a5e449e14b052da30de26b79eefdbca576afe659583400e869ca2a",
+      "checkpoint_sha256": "7ee32b4028987a1f7044b4f21cbcdbc43c5c0d70d02e49db98530ab53e78bb40",
+      "rows": 120,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed1/evaluation.json",
+      "sha256": "20daa8dfa975bc5f90e7ff56109f9047b4663356aba8a3575090e51c4393027f",
+      "checkpoint_sha256": "c10f3d08178ea7db50a7bb331a9031d84a9b8995a314393f9a2457316d2ae875",
+      "rows": 120,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed2/evaluation.json",
+      "sha256": "c868630aa44dac2651ae8186c2b31cff6971fc0dcb48a85ba2e6fd9b2253c0f3",
+      "checkpoint_sha256": "13106dc2e677c18de6155c86f545e6bcd67ce7550ab969b2ee31c30815e78619",
+      "rows": 120,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed2/evaluation.json",
+      "sha256": "724bc732f7c4f12f8aacce3aaaba51e710c33391c3da60302104b870a3fb4123",
+      "checkpoint_sha256": "b602d5c810d32b6afbfe3985f524febda65070d31d6f8d593c9781005e617f0c",
+      "rows": 120,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/stochastic_interpolant/evaluation.json",
+      "sha256": "0642e2c697c97ae8547a0ff07d40f3a1934f27dc7d043c47b99976b0b8983545",
+      "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "rows": 300,
+      "budgets": [
+        1,
+        4,
+        16,
+        64,
+        128
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_matching/evaluation.json",
+      "sha256": "76ee320ad988164e153a4200b5d96f9228be0c3703ccd1f73c804488841c7918",
+      "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "rows": 300,
+      "budgets": [
+        1,
+        4,
+        16,
+        64,
+        128
+      ],
+      "horizon": 1
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/ito_rollout_seed0/evaluation.json",
+      "sha256": "54a7862fbae572236cfd39c2269b224968002f1a77fdb07d2443ff3b0080073f",
+      "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed0/evaluation.json",
+      "sha256": "5d912b40b48ea22498ce808ef0ecd407cb670769a1670f348bd318a4a43d5095",
+      "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/ito_rollout_seed1/evaluation.json",
+      "sha256": "09ca91514d20ced7ff160ab048c039dd1807e738b2ee9a98ba60ba866c76e4f8",
+      "checkpoint_sha256": "7ee32b4028987a1f7044b4f21cbcdbc43c5c0d70d02e49db98530ab53e78bb40",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed1/evaluation.json",
+      "sha256": "215237338c4f2eba57ce6e8fdf4726eb31f7f36686f0244fe1ee7b441f209865",
+      "checkpoint_sha256": "c10f3d08178ea7db50a7bb331a9031d84a9b8995a314393f9a2457316d2ae875",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/ito_rollout_seed2/evaluation.json",
+      "sha256": "522aa47fa14c5a62b2fcca7394b0970329424191a367421ef5a11556a8b69675",
+      "checkpoint_sha256": "13106dc2e677c18de6155c86f545e6bcd67ce7550ab969b2ee31c30815e78619",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_rollout_seed2/evaluation.json",
+      "sha256": "e4567e67b49da4e6e9f1a299adfd10a8246e9ecc9c3199f6c4744616f31a5474",
+      "checkpoint_sha256": "b602d5c810d32b6afbfe3985f524febda65070d31d6f8d593c9781005e617f0c",
+      "rows": 400,
+      "budgets": [
+        1,
+        8
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/stochastic_interpolant/evaluation.json",
+      "sha256": "babd2028b0fd216d2603df61c7657b36bf7fa634e02507d19f590c50e47b328c",
+      "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "rows": 200,
+      "budgets": [
+        64
+      ],
+      "horizon": 10
+    },
+    {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_rollout/flow_matching/evaluation.json",
+      "sha256": "79a0fdd3203838f9588372b8e1860e7cca2c2c9e30bca57d2f71726fea2906a7",
+      "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "rows": 200,
+      "budgets": [
+        64
+      ],
+      "horizon": 10
+    }
+  ],
+  "total_forecast_rows": 4360,
+  "exact_lead_one_matches_by_student": {
+    "ito_rollout_seed0": 40,
+    "flow_rollout_seed0": 40,
+    "ito_rollout_seed1": 40,
+    "flow_rollout_seed1": 40,
+    "ito_rollout_seed2": 40,
+    "flow_rollout_seed2": 40
+  },
+  "training_runs": [
+    {
+      "run": "ito_psd_seed0",
+      "seed": 0,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "a3ca8d0e94bea377912203e0bdca00bb99471e13000ae2db79a0e7ff7c999cd6",
+      "config_sha256": "11438493c2dd6f645f80798f9508155a3c1c5e26a2c5da6475584d63480a4a41",
+      "provenance_sha256": "64fd994f695b5693343e5e23ed02a15f83c82de27cbb737f1a7577e9f0df4a1a"
+    },
+    {
+      "run": "ito_psd_seed1",
+      "seed": 1,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "3c1f97b2c67cdd446d8c41a82c91fb3734036da080b951a6ea72c7efdd1569c5",
+      "config_sha256": "309cdfbf1f452a098a3d47e95462d27462e393e63b7c622c312127d2ac4ec48c",
+      "provenance_sha256": "7c2f4737d1edf992ecce7608baa78388047433ef9aa1b1567d72e674985b2471"
+    },
+    {
+      "run": "ito_psd_seed2",
+      "seed": 2,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "40fb7d0de62a6f1cdda7b0b213a71e569bdbf3cf9ff872bea09608d10a3359ac",
+      "config_sha256": "7da60f6705881b084e02762d60925078449cc10b19fcc1fed78ef605d2291940",
+      "provenance_sha256": "c8b65efca9c8942e1a0acd9f3e7f73860f85449215f95c4fd8971aae1d5bc467"
+    },
+    {
+      "run": "ito_rollout_seed0",
+      "seed": 0,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "config_sha256": "40e9da081827d3b520891922639a2cfa48e607e106fa8c5b60b6f8008819e1dd",
+      "provenance_sha256": "cfd8284d0716efa1ef6b4afa360fdc22e061f23b1aa033f4461e9ba5581dd8c2"
+    },
+    {
+      "run": "ito_rollout_seed1",
+      "seed": 1,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "7ee32b4028987a1f7044b4f21cbcdbc43c5c0d70d02e49db98530ab53e78bb40",
+      "config_sha256": "9b785b35e0b729ae54f3919c9ba6fc208916fa1e15a38423134d85b9f6a16eeb",
+      "provenance_sha256": "0995d1cec19d493a0a7ca5d58d376c914e548b886e276d76f8fcfa6b185f90af"
+    },
+    {
+      "run": "ito_rollout_seed2",
+      "seed": 2,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "13106dc2e677c18de6155c86f545e6bcd67ce7550ab969b2ee31c30815e78619",
+      "config_sha256": "8e226308e83b54e8d874e947412ea008cf0d4fffe9c2e2b7eeb715bbd12cf181",
+      "provenance_sha256": "b1930d7f35c8c3606b2c84e6559fb868c524bae66c70ced5293749db7e9bc223"
+    },
+    {
+      "run": "flow_psd_seed0",
+      "seed": 0,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "67005c7e1ad8beb9ffd2b172d6b6f5f20488604839d12beb185038d1b1e8e06b",
+      "config_sha256": "eb98379c9de3ddf30fe1fac1f9bbd03f00d0d912773c1e4190f91b67155e7ce0",
+      "provenance_sha256": "34d4a5d83ab079c0044f0c87f5a12181cdbc239336105be39a5864978e741ee3"
+    },
+    {
+      "run": "flow_psd_seed1",
+      "seed": 1,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "a77db122bf679b31b7b6deee9fdd1face7864db251912aca276da67a25e88aae",
+      "config_sha256": "2d9236744d822fb5bc11844126d9b289c4e0a64a99a65e3f174808500ea425f4",
+      "provenance_sha256": "6928977272659e44a2284024073b41c4bba8c83aec4f16ef080e4e45f318c3f4"
+    },
+    {
+      "run": "flow_psd_seed2",
+      "seed": 2,
+      "stage": "psd",
+      "updates": 2000,
+      "cumulative_updates": 2000,
+      "checkpoint_sha256": "b4874fcce4af61604b80d0d6f70d96f2ba1cf63066dcc143c1d9970ed75d1ba9",
+      "config_sha256": "a00ecf35515238a02eae34bcd5cae0c6a265bf3fb01541b6bb84ec1f1b266e5f",
+      "provenance_sha256": "8a81ff55ac785e5f110a7dab5f453d7a0a9ec9438fd01ace774b8217527fd479"
+    },
+    {
+      "run": "flow_rollout_seed0",
+      "seed": 0,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "config_sha256": "d3e5eacf2293959dace0b074aa3dcf9d5466f8aa72cf8a1bbdca032fbc0958d3",
+      "provenance_sha256": "30dd8fe3c0dfee4fd4b7258ebd63f7e2e961a419732eee30bdb3afdf6faceb5a"
+    },
+    {
+      "run": "flow_rollout_seed1",
+      "seed": 1,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "c10f3d08178ea7db50a7bb331a9031d84a9b8995a314393f9a2457316d2ae875",
+      "config_sha256": "cd8fdea3a786aae4fc5af6aeee55aa936f8101473b00d515332dc86ec37c29e3",
+      "provenance_sha256": "d626b8b6871c4653ec6897546233735126dca18f37c33afbbd23b7be5307a6f0"
+    },
+    {
+      "run": "flow_rollout_seed2",
+      "seed": 2,
+      "stage": "rollout",
+      "updates": 500,
+      "cumulative_updates": 2500,
+      "checkpoint_sha256": "b602d5c810d32b6afbfe3985f524febda65070d31d6f8d593c9781005e617f0c",
+      "config_sha256": "c9ef977cea7e6af45587794aa851ef9cfaa195fa9e8284db65098c23a8c2947b",
+      "provenance_sha256": "e92550e9a3e0639569c0600e3953d0157ae09c22eaa0990364c044dcf69e5891"
+    }
+  ],
+  "scope": "Artifact integrity and matched frozen protocol; no test-informed model selection or assertion of statistical superiority.",
+  "source_hash_policy": "Original model/config hashes enforced. Source hash list excluded because separately documented API guards were added after freezing without changing NS dynamics."
+}

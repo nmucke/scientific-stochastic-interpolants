@@ -1,0 +1,20 @@
+\begin{table*}[t]
+\caption{Three-student mean CRPS differences from each fixed 64-step teacher. Intervals resample the same 20 test trajectories after averaging student scores; they condition on these trained students and do not include teacher-training uncertainty. The final column reports reference-to-student measured latency ratios, using cumulative costs for physical lead 10.}
+\label{tab:replication-paired}
+\centering
+\begin{tabular}{lrrrrr}
+\toprule
+Model & Steps & Physical lead & CRPS difference [95\% interval] & Change (\%) & Speedup \\
+\midrule
+It\^o map & 1 & 1 & 0.00659 [-0.00059, 0.01395] & 2.46 & 52.58\\
+It\^o map & 1 & 10 & 0.02874 [0.01873, 0.03913] & 5.39 & 54.88\\
+It\^o map & 8 & 1 & 0.00360 [-0.00024, 0.00744] & 1.34 & 7.16\\
+It\^o map & 8 & 10 & 0.00929 [0.00270, 0.01636] & 1.74 & 7.26\\
+Flow map & 1 & 1 & 0.00161 [0.00001, 0.00303] & 0.61 & 56.32\\
+Flow map & 1 & 10 & 0.00045 [-0.00236, 0.00317] & 0.08 & 58.92\\
+Flow map & 8 & 1 & 0.00368 [0.00118, 0.00597] & 1.39 & 7.75\\
+Flow map & 8 & 10 & 0.00829 [0.00259, 0.01390] & 1.56 & 7.89\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
