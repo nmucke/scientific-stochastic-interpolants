@@ -1,0 +1,40 @@
+{
+  "stage": "flow_map",
+  "model_class": "FlowMapModel",
+  "seed": 0,
+  "recorded_updates": 500,
+  "recorded_epochs": 10,
+  "recorded_stage_seconds": 321.81184706185013,
+  "minimum_recorded_validation_loss": 0.0005242712359176949,
+  "teacher_checkpoint": "checkpoints/video/clevrer/flow_matching",
+  "initial_student_checkpoint": "checkpoints/video/clevrer/flow_map_psd/model.pth",
+  "artifacts": {
+    "config.yaml": {
+      "path": "checkpoints/video/clevrer/flow_map/config.yaml",
+      "sha256": "c553ef44912cee7cb37d4a8bdef019868af0ece4ff65b9c3a4bb4217d19617b9",
+      "bytes": 3851
+    },
+    "metadata.json": {
+      "path": "checkpoints/video/clevrer/flow_map/metadata.json",
+      "sha256": "9c8f26895bd7de87f4f061b203865ae7323497ce9bce10ca60d2d8af661c2469",
+      "bytes": 726
+    },
+    "history.json": {
+      "path": "checkpoints/video/clevrer/flow_map/history.json",
+      "sha256": "8005835e2a5b4ea67835fb0e78f0703d7704d3a6d1a604a55d029c7ebaccefe8",
+      "bytes": 2864
+    },
+    "model.pth": {
+      "path": "checkpoints/video/clevrer/flow_map/model.pth",
+      "sha256": "0b1bc5a1058a8a440db98ee99110f7f23ad9ad120d342176fa7347dd8be24f2e",
+      "bytes": 11829811
+    },
+    "ema.pth": {
+      "path": "checkpoints/video/clevrer/flow_map/ema.pth",
+      "sha256": "f2328f68a3a7a9df7f88dd851892cb0cad2e08b8c2975f85e235a71892fc963d",
+      "bytes": 11829287
+    }
+  },
+  "weights_copied": false,
+  "cost_scope": "This stage's training and validation wall time; excludes initialization and data loading before trainer creation."
+}

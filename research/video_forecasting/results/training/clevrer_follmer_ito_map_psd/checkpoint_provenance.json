@@ -1,0 +1,40 @@
+{
+  "stage": "follmer_ito_map_psd",
+  "model_class": "FollmerItoMapModel",
+  "seed": 0,
+  "recorded_updates": 2000,
+  "recorded_epochs": 20,
+  "recorded_stage_seconds": 506.6506601839792,
+  "minimum_recorded_validation_loss": 0.0041182515560649335,
+  "teacher_checkpoint": "checkpoints/video/clevrer/follmer_stochastic_interpolant",
+  "initial_student_checkpoint": null,
+  "artifacts": {
+    "config.yaml": {
+      "path": "checkpoints/video/clevrer/follmer_ito_map_psd/config.yaml",
+      "sha256": "b4563a423fc5a3e0df3aa30f444c8a4c56bc80e511ae8ceba05a5edd6562550c",
+      "bytes": 3930
+    },
+    "metadata.json": {
+      "path": "checkpoints/video/clevrer/follmer_ito_map_psd/metadata.json",
+      "sha256": "b51ccda8299287eb797840fd9defdfbf49119b92837831fceade4a16eacf8985",
+      "bytes": 698
+    },
+    "history.json": {
+      "path": "checkpoints/video/clevrer/follmer_ito_map_psd/history.json",
+      "sha256": "3e82d5f7bb1a5ae577b9a1cd3186789d12e4dcb860ae003b70d0e092e617c11e",
+      "bytes": 5665
+    },
+    "model.pth": {
+      "path": "checkpoints/video/clevrer/follmer_ito_map_psd/model.pth",
+      "sha256": "28ef390423f96a7dd7930feb468cde20ba10eb904243d19f9e4a078d3f1b0862",
+      "bytes": 11831215
+    },
+    "ema.pth": {
+      "path": "checkpoints/video/clevrer/follmer_ito_map_psd/ema.pth",
+      "sha256": "c53113548d175daaad77e40cec74e7e94ed7c347f48d2d38256089429b251f77",
+      "bytes": 11830689
+    }
+  },
+  "weights_copied": false,
+  "cost_scope": "This stage's training and validation wall time; excludes initialization and data loading before trainer creation."
+}

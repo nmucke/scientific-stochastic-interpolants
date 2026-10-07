@@ -1,0 +1,35 @@
+{
+  "stage": "follmer_stochastic_interpolant",
+  "model_class": "FollmerStochasticInterpolant",
+  "seed": 0,
+  "recorded_updates": 20000,
+  "recorded_epochs": 200,
+  "recorded_stage_seconds": 845.8103458529804,
+  "minimum_recorded_validation_loss": 0.004465026424441021,
+  "teacher_checkpoint": null,
+  "initial_student_checkpoint": null,
+  "artifacts": {
+    "config.yaml": {
+      "path": "checkpoints/video/clevrer/follmer_stochastic_interpolant/config.yaml",
+      "sha256": "c0a64ddfb67591d84a276df70c1c75ee56319885f60cfe5defc6351d94e4f646",
+      "bytes": 3409
+    },
+    "metadata.json": {
+      "path": "checkpoints/video/clevrer/follmer_stochastic_interpolant/metadata.json",
+      "sha256": "b5a4f7d070956e7ef9800f7fc5a3ee30b3979f24783fbdb4b8fc6c33c4d96f4f",
+      "bytes": 486
+    },
+    "history.json": {
+      "path": "checkpoints/video/clevrer/follmer_stochastic_interpolant/history.json",
+      "sha256": "450a4235709666d81efa0596629cea17be7aa480f7a5cef3acfde44e19135c78",
+      "bytes": 32778
+    },
+    "model.pth": {
+      "path": "checkpoints/video/clevrer/follmer_stochastic_interpolant/model.pth",
+      "sha256": "43173b0d06e814889e128aeb787eef0ab41f7893150b9abb9dc0f4a1b376bddc",
+      "bytes": 11757319
+    }
+  },
+  "weights_copied": false,
+  "cost_scope": "This stage's training and validation wall time; excludes initialization and data loading before trainer creation."
+}

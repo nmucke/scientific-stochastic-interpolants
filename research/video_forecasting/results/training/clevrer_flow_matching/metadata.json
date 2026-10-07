@@ -1,0 +1,16 @@
+{
+  "seed": 0,
+  "git_revision": "bb273667fba0c012f565e3d8e1247f666d803dd7",
+  "git_dirty": true,
+  "torch_version": "2.9.1+cu128",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "parameters": 2917498,
+  "train_examples": 240000,
+  "val_examples": 15000,
+  "validation_objective": "fixed_noise_interpolant_drift_regression",
+  "data_manifest": "data/video_forecasting/clevrer_64/manifest.json",
+  "pixel_space": true,
+  "len_field_history": 2,
+  "initialization": "random"
+}

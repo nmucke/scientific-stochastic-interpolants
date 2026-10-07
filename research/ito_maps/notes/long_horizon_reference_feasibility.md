@@ -47,3 +47,23 @@ Reproduction:
   --output /tmp/ns_assumed_diagnostic_check --viscosity .001 --drag .1 \
   --forcing-scale 1 --inner-steps 2 --horizon 2 --members 2 --grid 128 --save-every 1
 ```
+
+## Independent production-unit audit
+
+`audit_long_horizon_units.py` independently recomputed every saved raw FlowMap snapshot available in the committed 2,064-lead production snapshot. It uses NumPy and the frozen affine scale, rather than calling the runner's metric functions. All raw-file hashes verified. Mean/member enstrophy, enstrophy quantiles, enstrophy of the mean field, unbiased RMS spread, paired-truth RMSE, and finite-ensemble-corrected spread–skill agreed to at most 1.8e-15. The independent identity `mean_member_enstrophy = enstrophy_of_mean + 0.5*(E-1)/E * RMS_spread**2` also passed. Truth index alignment is `origin + lead - 1`; truth-dependent fields are null after lead 95. The production timestamp-audit hash remains unchanged. Evidence is stored in `results/long_horizon/independent_flow_unit_audit.json`.
+
+The tiny assumed-parameter PDE helper check also verified bitwise-identical common prefixes for requested horizons 2 and 3, identical initial conditions across members, distinct future forcing draws, and finite outputs. These are implementation checks using only two numerical substeps per lead, not long-horizon physics validation; see `assumed_reference_helper_validation.json`.
+
+### Completed-map audit
+
+A separate final audit, `results/long_horizon/independent_completed_map_audit.json`, covers both completed 4,096-lead maps: 8,192 scalar rows and all 700 saved raw files. Independent physical-metric differences are at most 1.8e-15. Data/model/config/time-audit hashes, input histories and truth ordering, journals, cumulative timing/NFE, and the final plus lead-1,024 restart states are consistent. Restart-history endpoints exactly equal the corresponding saved normalized states. CPU Torch/NumPy/Python RNG payloads restore into local generators, and CUDA RNG payload structures are valid; no GPU RNG replay or model inference was performed. The earlier 2,064-lead FlowMap audit remains unchanged as a historical artifact.
+
+```bash
+OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 .venv/bin/python \
+  research/ito_maps/experiments/audit_long_horizon_units.py \
+  --run-dirs research/ito_maps/results/long_horizon/flow_map \
+             research/ito_maps/results/long_horizon/follmer_ito_map \
+  --output /tmp/ns_completed_map_audit.json
+```
+
+The final audit accepts multiple completed, finite NS runs and requires a new output filename, protecting prior audit evidence. It independently rescores saved raw fields and checks scalar identities at the remaining leads; it cannot reconstruct unsaved full fields from scalar summaries.

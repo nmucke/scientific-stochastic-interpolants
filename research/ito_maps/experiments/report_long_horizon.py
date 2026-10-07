@@ -209,6 +209,9 @@ def build_report(directories, output_dir, reference_path=None):
     if any(run["result"].get("status") not in ("complete", "nonfinite") for run in runs):
         lines[2:2] = ["**Partial development snapshot:** at least one run is still in progress. "
                       "Do not interpret the recorded endpoint as the requested final horizon.", ""]
+    if {run["family"] for run in runs} != set(LABELS):
+        lines[2:2] = ["**Partial model comparison:** this development report omits one or more of the four "
+                      "prespecified model families. Completed curves do not constitute the complete study.", ""]
     def fmt(value):
         return "—" if value is None else f"{value:.5g}" if isinstance(value, (float, int)) else str(value)
     for row in summary:

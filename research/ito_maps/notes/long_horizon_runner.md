@@ -38,3 +38,7 @@ Example production invocation (root schedules GPU jobs):
 Use the same command plus `--resume` to continue. A first16-lead check can add `--stop-after-lead 16` while keeping the originally planned `--horizon 4096`. The512/1,024/4,096 horizon milestones require no retraining; each interval is one autonomous next-frame forecast.
 
 Five focused CPU tests passed: enstrophy/spread identity, truthful skill cutoff, continued finite excursions and sparse raw storage, bit-exact restarted forecasts across all three RNG streams, horizon extension, and nonfinite failure preservation. Actual E8 checkpoint CPU feasibility checks with two threads measured approximately1.469seconds/lead for FlowMap1 and11.940seconds/lead for ItôMap8. These are short uncontrolled feasibility profiles, not performance benchmarks; records are in `results/long_horizon/cpu_setup_profile.json`. Their roughly1.67-hour and13.6-hour projected4,096-lead costs favor GPU execution. No production GPU jobs were launched by the implementation agent.
+
+## Active queue scheduling (2026-10-07)
+
+Root session32086 owns the production queue. FlowMap4096 completed. The queue shell PID2126968 is temporarily SIGSTOPped while its Itô child PID2130505 continues to4096. After that child finishes, no NS GPU work runs until root sends `kill -CONT 2126968`; this is planned after exclusive-GPU video evaluation. Both4096-step solver baselines remain required. This scheduler pause changes no generated trajectory or RNG state.
