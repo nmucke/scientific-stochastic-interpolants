@@ -1,0 +1,23 @@
+\begin{table*}[t]
+\caption{Preliminary validation only: four trajectories (160--163), three origins (5, 45, 85), eight ensemble members, one physical forecast interval, and one student training seed. CRPS is in normalized coordinates. Brackets show trajectory-bootstrap 95\% intervals; these do not describe training-seed uncertainty. Latency is seconds per ensemble forecast on one RTX 3090. Refined maps use 2,000 PSD updates followed by 500 simulation-based teacher-rollout updates. These development cases were used for methodological selection and are not held-out test evidence.}
+\label{tab:validation-development}
+\centering
+\begin{tabular}{lrll}
+\toprule
+Model & NFE & CRPS $\downarrow$ [95\% interval] & Latency (s) $\downarrow$ \\
+\midrule
+SI teacher & 16 & 0.3177 [0.2671, 0.3660] & 0.375 \\
+SI teacher & 64 & 0.2830 [0.2328, 0.3326] & 1.457 \\
+Flow-matching teacher & 16 & 0.2960 [0.2512, 0.3428] & 0.375 \\
+Flow-matching teacher & 64 & 0.2865 [0.2465, 0.3362] & 1.461 \\
+It\^o map, PSD & 1 & 0.3661 [0.3243, 0.4166] & 0.028 \\
+It\^o map, PSD & 8 & 0.3056 [0.2580, 0.3544] & 0.212 \\
+Flow map, PSD & 1 & 0.3088 [0.2581, 0.3660] & 0.026 \\
+Flow map, PSD & 8 & 0.2926 [0.2474, 0.3453] & 0.195 \\
+It\^o map, refined & 1 & 0.3047 [0.2525, 0.3593] & 0.028 \\
+It\^o map, refined & 8 & 0.2942 [0.2426, 0.3455] & 0.212 \\
+Flow map, refined & 1 & 0.2885 [0.2492, 0.3377] & 0.027 \\
+Flow map, refined & 8 & 0.2932 [0.2482, 0.3476] & 0.198 \\
+\bottomrule
+\end{tabular}
+\end{table*}

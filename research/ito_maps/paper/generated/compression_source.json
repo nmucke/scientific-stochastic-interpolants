@@ -1,0 +1,7 @@
+{
+  "source": "results/ns_path_compression/results.json",
+  "sha256": "fb0edfcb5cf63ef4334479c57aa59bb9d5b8e2839fd1bbb70696c1c566b442e9",
+  "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+  "figure": "figures/ns_compression.pdf",
+  "error_bars": "One standard error across 8 coarse Brownian groups; not across pixels or histories"
+}

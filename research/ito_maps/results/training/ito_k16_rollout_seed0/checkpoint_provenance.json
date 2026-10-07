@@ -1,0 +1,54 @@
+{
+  "checkpoint": "checkpoints/stochastic_navier_stokes/ito_k16_rollout_seed0/model.pth",
+  "sha256": "3e6633d5356d3a1874be63bc41a8424132ea6279d8d67aade3548f885e921e26",
+  "weight_artifacts": {
+    "model.pth": {
+      "sha256": "3e6633d5356d3a1874be63bc41a8424132ea6279d8d67aade3548f885e921e26",
+      "size_bytes": 51959167
+    },
+    "ema.pth": {
+      "sha256": "6ed0c5d1b7be675483b99c410c0b33f3ad5365de55f8a09a4770169c3fadce9a",
+      "size_bytes": 51958521
+    }
+  },
+  "metadata_artifact_sha256": {
+    "metadata.json": "def56e5070eb88cd61b38e1c810e1e30bcbc389e1cdebdc5bd3becb5d415901a",
+    "history.json": "1e018861590bd598c9a1468b5ceada191a0f77f76fbdbc8c5974c0ade71c4302",
+    "config.yaml": "16166308bde4a5593adc2ef4d780d58dbc69190972b3255d9f56011c9807163f"
+  },
+  "completed_epochs": 10,
+  "recorded_final_step": 500,
+  "recorded_best_validation_loss": 0.015831442084163427,
+  "initialization_lineage": [
+    {
+      "checkpoint_dir": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_k16_rollout_seed0",
+      "artifacts_available": true,
+      "kind": "training",
+      "recorded_updates": 500,
+      "recorded_epochs": 10,
+      "recorded_training_seconds": 525.082302469993,
+      "seed": 0
+    },
+    {
+      "checkpoint_dir": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_psd_k16_init",
+      "artifacts_available": true,
+      "kind": "feature_refinement",
+      "recorded_updates": 0,
+      "source_num_path_features": 4,
+      "num_path_features": 16
+    },
+    {
+      "checkpoint_dir": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_psd_seed0",
+      "artifacts_available": true,
+      "kind": "training",
+      "recorded_updates": 2000,
+      "recorded_epochs": 20,
+      "recorded_training_seconds": 617.8968033520505,
+      "seed": 0
+    }
+  ],
+  "cumulative_recorded_student_updates": 2500,
+  "cumulative_recorded_student_stage_seconds": 1142.9791058220435,
+  "cost_caveat": "Recorded stage times include their teacher evaluations. Teacher pretraining cost and absent ancestor records remain unavailable; listed totals include only available student-stage records.",
+  "weights_copied": false
+}

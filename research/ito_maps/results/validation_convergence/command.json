@@ -1,0 +1,26 @@
+{
+  "argv": [
+    "research/ito_maps/experiments/compare.py",
+    "--split",
+    "validation",
+    "--checkpoints",
+    "stochastic_interpolant",
+    "flow_matching",
+    "--steps",
+    "64",
+    "128",
+    "--origins",
+    "5",
+    "45",
+    "85",
+    "--trajectories",
+    "4",
+    "--ensemble",
+    "8",
+    "--output",
+    "research/ito_maps/results/validation_convergence"
+  ],
+  "split": "validation",
+  "offset": 160,
+  "seed": 20261007
+}

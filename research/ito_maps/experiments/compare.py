@@ -62,6 +62,12 @@ def main():
             else Path("checkpoints/stochastic_navier_stokes") / name
         )
         model, cfg = load_teacher(path, "cuda")
+        if int(cfg.len_field_history) != int(config.len_field_history):
+            raise ValueError(f"History length differs for checkpoint {path}")
+        if OmegaConf.to_container(
+            cfg.preprocesser, resolve=True
+        ) != OmegaConf.to_container(config.preprocesser, resolve=True):
+            raise ValueError(f"Preprocessing differs for checkpoint {path}")
         result = evaluate_model(
             model,
             dataset,

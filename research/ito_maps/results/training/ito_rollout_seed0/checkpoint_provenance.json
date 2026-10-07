@@ -1,0 +1,46 @@
+{
+  "checkpoint": "checkpoints/stochastic_navier_stokes/ito_rollout_seed0/model.pth",
+  "sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+  "weight_artifacts": {
+    "model.pth": {
+      "sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "size_bytes": 51958399
+    },
+    "ema.pth": {
+      "sha256": "9fba1fc52e04f7c59e1eecf6d755bd2478c0b47a918b61570e31d6b58a7bd8f0",
+      "size_bytes": 51957753
+    }
+  },
+  "metadata_artifact_sha256": {
+    "metadata.json": "9ed5649ceadef68df7cc29fd932d9018945554c85303040d768969928f33ffab",
+    "history.json": "5264741e440ed7a759cebbedf1fa35ba541e47023041f0d1fcfcdceffa699e40",
+    "config.yaml": "40e9da081827d3b520891922639a2cfa48e607e106fa8c5b60b6f8008819e1dd"
+  },
+  "completed_epochs": 10,
+  "recorded_final_step": 500,
+  "recorded_best_validation_loss": 0.019374367780983448,
+  "initialization_lineage": [
+    {
+      "checkpoint_dir": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_rollout_seed0",
+      "artifacts_available": true,
+      "kind": "training",
+      "recorded_updates": 500,
+      "recorded_epochs": 10,
+      "recorded_training_seconds": 521.8015843459871,
+      "seed": 0
+    },
+    {
+      "checkpoint_dir": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_psd_seed0",
+      "artifacts_available": true,
+      "kind": "training",
+      "recorded_updates": 2000,
+      "recorded_epochs": 20,
+      "recorded_training_seconds": 617.8968033520505,
+      "seed": 0
+    }
+  ],
+  "cumulative_recorded_student_updates": 2500,
+  "cumulative_recorded_student_stage_seconds": 1139.6983876980375,
+  "cost_caveat": "Recorded stage times include their teacher evaluations. Teacher pretraining cost and absent ancestor records remain unavailable; listed totals include only available student-stage records.",
+  "weights_copied": false
+}
