@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 
 class MapTrainer(Trainer):
-    """Reuse Trainer's optimizer, clipping and epoch lifecycle for map losses."""
+    """Reuse Trainer's optimizer, clipping and epoch lifecycle for map losses.
+
+    Training currently supports unmasked dynamics only. A nontrivial sampling
+    mask would change the map without changing its interpolant/teacher targets,
+    so such configurations are rejected before initialization.
+    """
 
     def __init__(
         self,
@@ -56,6 +61,12 @@ class MapTrainer(Trainer):
         validation_seed=1937,
         resume_from=None,
     ):
+        mask = getattr(model, "mask", None)
+        if mask is not None and not torch.all(torch.as_tensor(mask) == 1):
+            raise ValueError(
+                "MapTrainer requires an identically-one mask: current interpolant "
+                "and teacher targets do not implement masked dynamics."
+            )
         if objective not in {"progressive", "teacher_rollout"}:
             raise ValueError("objective must be progressive or teacher_rollout")
         if not 0 <= ema_decay < 1 or not 0 <= endpoint_probability <= 1:

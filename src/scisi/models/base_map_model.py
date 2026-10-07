@@ -25,7 +25,12 @@ def spatial_time(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 
 class BaseMapModel(nn.Module, ABC):
-    """Map counterpart of BaseModel, retaining its forecasting tensor contract."""
+    """Map counterpart of BaseModel for normalized 2D forecasting fields.
+
+    Use keyword sampling arguments: solver and map positional signatures differ.
+    Models neither normalize inputs nor reconstruct tendency targets. Sampling
+    returns CPU tensors; callers select evaluation mode explicitly.
+    """
 
     gaussian_base = False
 
@@ -141,6 +146,12 @@ class BaseMapModel(nn.Module, ABC):
         brownian_path=None,
         generator=None,
     ):
+        """Generate normalized states [B,C,H,W] from history [B,C,H,W,L].
+
+        Singleton conditioning batches expand to the requested total batch.
+        Spatial conditioning is [B,C_cond,H,W], parameters are [B,D]. Neither
+        solver steppers nor alternate diffusion schedules are accepted.
+        """
         if not isinstance(num_steps, int) or num_steps < 1:
             raise ValueError("num_steps must be a positive integer.")
         if not isinstance(batch_size, int) or batch_size < 1:
@@ -194,7 +205,18 @@ class BaseMapModel(nn.Module, ABC):
         pars_cond=None,
         generator=None,
     ):
-        """Forecast a total trajectory length including the supplied history."""
+        """Forecast a total trajectory length including the supplied history.
+
+        Spatial conditioning may be static [B,C_cond,H,W] or future fields
+        [B,C_cond,H,W,T_future]. The inherited parameter convention is a scalar
+        time series [B,T_future], one value per newly generated step. General
+        static parameter vectors or [B,T_future,D] sequences are not supported
+        here; use repeated sample calls with explicit [B,D] parameters instead.
+
+        Generated outputs are appended directly to history. This requires full
+        next-state targets in the same normalized coordinates as the history.
+        Reconstruct tendencies or change coordinates externally when necessary.
+        """
         length = field_history.shape[-1]
         if num_physical_steps < length:
             raise ValueError(

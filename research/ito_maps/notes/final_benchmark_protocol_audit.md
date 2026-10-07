@@ -40,3 +40,24 @@ For score summaries, average origins within each trajectory and bootstrap comple
 ## Limits retained deliberately
 
 The evaluator is currently scoped to unconditional-field Navier–Stokes conditioning: it does not forward time-varying external field/parameter conditions from other datasets. This does not affect the proposed benchmark. No claim of identical Brownian sample paths across different NFE budgets is made: repeated seeds give common random seeds, while path query order differs. Distillation training cost and checkpoint provenance must accompany inference speed comparisons.
+
+## Reporting and sanity-baseline entry points
+
+`experiments/final_report.py` reads completed seed-0 one-step and rollout evaluation JSONs. It rejects missing cases/budgets and checkpoint changes between the two tasks. It creates the primary budget curves, per-lead tables and plots, cumulative rollout-cost curves, and predeclared paired CRPS comparisons. The SI16 and SI128 reference comparisons are explicitly listed as skipped in rollout reporting because that frozen rollout protocol evaluates SI64 only; they are never silently replaced by another reference.
+
+The optional `--seed-one-step` and `--seed-rollout` arguments add complete student training seeds 1 and 2, evaluated at budgets 1 and 8. `training_seed_report.py` reads the training seed from checkpoint metadata/configuration, never the sampling seed. Per-student trajectory CIs, across-student sample standard deviation/range, and a trajectory-cluster CI for the seed-averaged score are separate fields. With only seed 0, student-seed standard deviation is explicitly unavailable. The teachers are fixed, so these quantities do not describe teacher-training variation.
+
+`persistence_baseline.py` requires the actual freeze manifest before test evaluation and runs entirely on CPU. It reuses the evaluator/metrics, copies each path's latest field, and records zero neural evaluations. One-step invocation uses origins 5/45/85, E16 and 20 trajectories; the rollout invocation uses origin 45 and horizon 10. Optional `--persistence-one-step` and `--persistence-rollout` inputs add these sanity checks to final-report score tables/rollout curves. Their CPU bookkeeping times are excluded from generative-model speedup comparisons.
+
+Example reporting command, substituting the actual evaluation files:
+
+```bash
+.venv/bin/python research/ito_maps/experiments/final_report.py \
+  --one-step ONE_STEP_ITO.json ONE_STEP_FLOW_MAP.json ONE_STEP_SI.json ONE_STEP_FM.json \
+  --rollout ROLLOUT_ITO.json ROLLOUT_FLOW_MAP.json ROLLOUT_SI.json ROLLOUT_FM.json \
+  --persistence-one-step research/ito_maps/results/test_persistence/one_step/evaluation.json \
+  --persistence-rollout research/ito_maps/results/test_persistence/rollout/evaluation.json \
+  --output research/ito_maps/results/final_report
+```
+
+Add the extra-seed inputs to the same command after those experiments complete. The initial seed-0-only report remains valid as a clearly labeled single-student result. The larger SI128 reference is retained because SI64 should not be described as a fully converged solver reference.

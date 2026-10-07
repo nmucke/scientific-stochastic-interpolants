@@ -1,44 +1,63 @@
 # Handover status
 
-Updated 2026-10-07 during initial implementation session.
+Updated 2026-10-07 after configuration freeze and launch of the serialized confirmation sequence. Read the live log before starting work: this snapshot records a running experiment, not its completion.
 
-## Branch and scope
-Branch `research/ito-map-forecasting`. User authorized long research, manuscript, implementation, tests and experiments with delegated agents. Work remains local; no submission/publication is authorized or performed.
+## Branch and authority
+
+Branch: `research/ito-map-forecasting`. The user authorized extensive delegated research, manuscript development, implementation, tests and experiments. Root owns final integration/commits. All work remains local; no conference submission or publication has occurred. Do not start competing GPU jobs.
 
 ## Complete
-- Full-text research on three requested papers, broader prior-art/novelty review.
-- ICML2026 official template and guidelines checked;2027 requirements unverified.
-- Compiling manuscript `paper/main.tex`; proposal/methods plus planned experiments, no forecast superiority asserted.
-- BaseMapModel, FollmerItoMapModel, FlowMapModel, MapConditionedNetwork.
-- Exact shared weighted Brownian bridge queries, local path features.
-- MapTrainer (PSD and teacher rollout), offline checkpointing, exact epoch-boundary resume for deterministic datasets.
-- Hydra train/test entrypoints and Navier–Stokes configs.
-- Reused existing dataset, preprocessing, U-Net, optimizer/clipping and metric functions.
--63 tests passed in latest full suite (CPU), real GPU train/evaluate smoke succeeded.
-- Validation solver baseline measurements on trajectories160:164, origins5/45/85, ensemble8; not test data.
-- Analytic/Monte Carlo OU path-compression diagnostic, CPU only.
 
-## Running / latest results
-Completed both PSD pilots: `ito_psd_seed0` and `flow_psd_seed0`, each2000updates, batch8, same teacher/map backbone widths. Raw checkpoint configs/histories/provenance copied to `results/training/`. Itô validation forecast pilot:8maps CRPS0.3056 vsSI16 0.3177 at1.77x lower latency; SI64 remains better at0.2830. No one-step comparable-quality claim. See `notes/pilot_assessment_ito_psd_2000.md`.
+- Full-text research on the three requested papers, conditional derivations, related-work/novelty review, and documented implementation decisions.
+- Official ICML2026 template/guidelines checked and manuscript building; the intended future-cycle requirements remain unverified.
+- `BaseMapModel`, `FollmerItoMapModel`, `FlowMapModel`, compatible two-time/path conditioning adapters, and exact finite-query weighted-Brownian bridges.
+- `MapTrainer`: teacher-diagonal PSD and supervised same-path teacher-rollout objectives, offline artifacts, EMA, and tested epoch-boundary resume.
+- Hydra train/test entry points and NS configurations, reusing existing datasets, preprocessing, U-Net, losses/optimizer/clipping and metrics.
+- Latest completed whole-suite run reported by root:93 tests pass. The provenance archiver subsequently adds two separately passing tests. A focused mask-rejection test also passes within the14-test MapTrainer suite; no new combined-suite count is claimed here.
+- Real GPU training/evaluation smoke and all validation-only development comparisons.
+- Both seed0 PSD stages (2,000 updates each), followed by both teacher-rollout stages (500 updates each). Frozen teacher grids use32 drift substeps during supervised training/validation.
+- Analytic/Monte Carlo OU compression experiment and actual frozen-NS conditional-bridge diagnostic (CPU).
+- Controlled K4→K16 initialization and matching500-update K16 refinement ablation, plus64/128-step solver validation comparisons.
+- Lightweight reproducibility archives under `results/training/`, including selected weight hashes and cumulative student-stage lineage/cost.
 
-Active serialized job: deterministic PSD forecast evaluation, then `experiments/train_rollout_stage.sh` (500teacher-rollout updates each for Itô and Flow,32teacher substeps, initialized from PSD checkpoints), with forecast validation between stages. Log `results/rollout_stage_train.log`. Outputs `checkpoints/stochastic_navier_stokes/{ito,flow}_rollout_seed0` and `results/validation_rollout`.
+## Frozen selection and actual validation findings
 
-Prepared but not trained: `ito_psd_k16_init` refines four to sixteen path features while preserving the initial projection; use only if the K4 rollout stage leaves a meaningful path bottleneck. Script and tests under `experiments/refine_path_features.py`.
+The immutable pre-test manifest is `results/frozen_protocol.json` (freeze timestamp2026-10-07T07:42:18Z). Its historical `test_forecasts_started:false` records the state when frozen; it is not a live progress indicator.
 
-Latest full test suite:76 tests pass. GPU reserved for serialized experiments; all agents' diagnostics useCPU.
+Selected Itô representation:K4. The K16 ablation reduced the information-theoretic teacher path bottleneck in the separate diagnostic but did not improve trained one-step forecasts: validation CRPS0.308603 versus K4 0.304729, with greater latency. This negative result is retained. Do not change the selected feature count after viewing test data.
 
-## Next actions
-1. Finish supervised refinement; evaluate forecast quality on validation using `experiments/compare.py`.
-2. If needed, improve main methodology/training (e.g. labeled same-path teacher-rollout distillation stage, more iterations or path-feature ablation); do not tune on test.
-3. Freeze selected configurations, evaluate all20 held-out test trajectories with matched ensembles/budgets and physical autoregressive rollout.
-4. Record complete raw scores, checkpoint hashes, configs/training histories and costs; report uncertainty over trajectories.
-5. Update figures/tables/manuscript with actual results, rebuild PDF, audit claims against evidence.
+Validation-only evidence: after teacher-rollout refinement, one-step Itô CRPS0.304729 and eight-step0.294158; deterministic flow-map one-step0.288475 and eight-step0.293202. The deterministic map is stronger at one-step generation. Initial PSD and refinement histories, matched validation cases and paired trajectory differences are in `notes/validation_iteration_log.md`. No unsupported claim of stochastic-map superiority or fully simulation-free final training is warranted.
 
-## Important constraints and findings
-- Repository default FollmerStochasticInterpolant gamma diffusion is distinct from the strict KL-optimal Föllmer schedule.
-- Raw diagonal target excludes derivative of sqrt(t); for supplied teachers actual diagonal training uses frozen teacher drift.
-- Training teacher rollout uses exact integrated additive-noise increments plus Euler drift; baseline original solver uses Euler–Maruyama. Explain this numerical distinction.
-- Finite path features can shrink spread; exact Gaussian queried increments do not make the neural map exact.
-- Original archive physical dt/forcing provenance is incomplete; label lead times in stored snapshot intervals.
-- Teachers are existing pretrained models; original training budgets/seed history unavailable.
-- New work must show more than first few-step scientific forecasting (close prior art StocBench/RecFM/Swift).
+The NS conditional-path diagnostic at one validation history found approximately9.68% omitted teacher endpoint variance withK4 and0.66% withK16. It establishes a finite-feature same-path information limit for that teacher/history, not a guarantee that training exploits the added information or improves forecast scores.
+
+## Live serialized confirmation job
+
+Root tool session: **53576**. Script: `experiments/run_confirmation.sh`. Live log: `results/confirmation.log`. One RTX3090 is reserved for this sequence. Other agents should use CPU only. Sessions may be owned by the root tool context; inspect the log/process state rather than launching a duplicate job if the session is unavailable to a child agent.
+
+The sequence is:
+
+1. Seed0 forecasts on all20 held-out trajectories180–199, origins5/45/85, ensemble16. Maps use1/2/4/8 evaluations; existing SI/FM solvers use1/4/16/64/128 steps. Outputs: `results/test_one_step/`.
+2. Seed0 autoregressive10-new-step physical forecasts on those20 trajectories from origin45, ensemble16. Maps use1/8 evaluations per physical step; solvers use64. Outputs: `results/test_rollout/`.
+3. Saved qualitative forecast comparison, with outputs in `results/test_qualitative/`.
+4. Complete independent student training for seeds1 and2, both model families and both stages, using unchanged frozen settings. Script: `experiments/train_replications.sh`. Teacher pretraining is shared and not rerun.
+5. Seeds1/2 held-out evaluation at map budgets1/8 for the same one-step and10-step physical-forecast protocols, followed by provenance archiving.
+
+At launch, root estimated roughly40minutes for initial seed0 evaluation and about75minutes for additional training, with further evaluation afterward; these estimates are not completion guarantees. The live log and output artifacts are authoritative.
+
+## Remaining work after the sequence
+
+- Confirm every frozen run completed, inspect failures/nonfinite values, and archive all training metadata/history/configurations/hashes with `experiments/archive_training.py`.
+- Aggregate measured test quality, calibration, spectra, latency and long-rollout behavior. Distinguish trajectory uncertainty from independently trained seed variation; no test-driven checkpoint or hyperparameter changes.
+- Include the negative K16 ablation, conditional compression experiment and actual computational costs; pre-existing teacher pretraining cost remains unavailable.
+- Reconcile manuscript and figures/tables against completed raw artifacts, compile the paper, review numerical/mathematical claims, and run final relevant checks.
+- Root makes final commits and provides the user with the paper/code/results and remaining submission limitations. Manuscript submission is not authorized by this work.
+
+## Important scientific and compatibility limits
+
+- Repository default FSI gamma diffusion differs from the strict KL-optimal corrected Föllmer process. Maps here preserve the former.
+- Stochastic diagonal target excludes the derivative of sqrt(t); supplied-teacher runs supervise against frozen teacher drift.
+- Teacher rollouts add exact integrated generative noise plus Euler drift; the existing solver baseline uses Euler–Maruyama. State this distinction.
+- Finite Brownian features can remove same-path information; exact queried Gaussian increments do not make the learned map exact.
+- The original NS archive's physical timestep/forcing provenance is incomplete; lead times are stored snapshot intervals.
+- The new map API is compatible with the unmasked normalized2D NS setup. Nontrivial masks and general parameter-conditioned trajectory inputs require further work; see `notes/map_api_compatibility.md`. Root authorized a post-freeze guard rejecting nontrivial masks in MapTrainer, plus API docstrings. The frozen mask1 NS numerics are unchanged; see `notes/post_freeze_api_guard.json` for source hashes and test evidence.
+- Close related work includes StocBench, Recursive Flow Matching and Swift. Claims must concern the conditional path-preserving adaptation and measured quality/cost tradeoff, not first few-step scientific forecasting.

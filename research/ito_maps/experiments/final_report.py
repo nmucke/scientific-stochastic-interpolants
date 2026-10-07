@@ -199,7 +199,11 @@ def plot_rollout(rows, labels, metadata, output):
             leads = np.array([row["lead"] for row in selected])
             color = COLORS[index % len(COLORS)]
             style = "--" if len(budgets) > 1 and budget == min(budgets) else "-"
-            curve_label = f"{label}, {budget} steps/transition"
+            curve_label = (
+                "Persistence (0 NFE)"
+                if all(row["nfe"] == 0 for row in selected)
+                else f"{label}, {budget} steps/transition"
+            )
             for axis, (metric, ylabel) in zip(axes.flat, metrics):
                 values = [row[metric] for row in selected]
                 lower = [row[metric + "_ci95_lower"] for row in selected]
@@ -258,7 +262,7 @@ def plot_rollout(rows, labels, metadata, output):
     fig.legend(
         handles,
         legend_labels,
-        loc="outside upper center",
+        loc="outside lower center",
         ncol=2,
         frameon=False,
         fontsize=8,

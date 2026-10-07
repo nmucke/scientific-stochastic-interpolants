@@ -292,3 +292,21 @@ def test_resume_restores_explicit_loader_generators_and_rejects_wrong_objective(
             "progressive",
             resume_from=tmp_path / "first/last.pth",
         )
+
+
+def test_nontrivial_mask_is_rejected_before_training_initialization(tmp_path):
+    model = FlowMapModel(LinearDeterministicInterpolation(), ConstantMapNetwork())
+    model.mask = torch.tensor([[[[1.0, 0.0]]]])
+    with pytest.raises(ValueError, match="identically-one mask"):
+        MapTrainer(
+            1,
+            model,
+            [batch()],
+            [batch()],
+            torch.optim.SGD(model.parameters(), lr=0.01),
+            None,
+            EarlyStopping(),
+            device="cpu",
+            checkpoint_dir=tmp_path / "masked",
+        )
+    assert not (tmp_path / "masked").exists()
