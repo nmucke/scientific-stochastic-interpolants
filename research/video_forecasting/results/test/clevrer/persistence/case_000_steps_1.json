@@ -1,0 +1,16 @@
+{
+  "clip_id": "video_17574",
+  "future_leads": [
+    1,
+    4,
+    8,
+    11,
+    14
+  ],
+  "rows": [
+    "truth",
+    "member_0",
+    "member_1"
+  ],
+  "selection": "first fixed selected cases, first two members"
+}

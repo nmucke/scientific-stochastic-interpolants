@@ -1,0 +1,428 @@
+{
+  "dataset": "clevrer",
+  "status": "passed",
+  "created_utc": "2026-10-07T14:49:03.606147+00:00",
+  "audit_method": "Independent NumPy proper scores/PSNR, SciPy Gaussian SSIM, dense covariance-eigen FVD; no production metric imports",
+  "protocol_sha256": "677bbc6c610729173ac7e6b56864c1ddea2672ab641cb75605070ef2fdefd592",
+  "manifest_sha256": "5896f34ce27dbe750a6d9b9f9dd4be150745a65c7368e57015bfa9a6b35c2a4d",
+  "report_sha256": "f293923d3fcf4f3111d7dcd8a7472cb0e916d9995b16d84b2b6650dd476558ce",
+  "eligible_test_clips": 5000,
+  "selected_test_clips": 128,
+  "selected_source_videos": 128,
+  "heldout_subjects": null,
+  "future_only_indices": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "saved_cases_checked": [
+    "video_17574",
+    "video_18641",
+    "video_16984"
+  ],
+  "metric_max_absolute_errors": {
+    "crps": 5.204170427930421e-18,
+    "energy_score": 5.689893001203927e-16,
+    "rmse": 1.3877787807814457e-17,
+    "rms_spread": 6.938893903907228e-18,
+    "spread_skill_ratio": 4.440892098500626e-16,
+    "coverage_90": 0.0,
+    "out_of_range_fraction": 0.0,
+    "psnr_sample_mean": 7.105427357601002e-15,
+    "psnr_oracle_best": 7.105427357601002e-15,
+    "psnr_ensemble_mean": 7.105427357601002e-15,
+    "ssim_sample_mean": 2.220446049250313e-16,
+    "ssim_oracle_best": 3.3306690738754696e-16,
+    "ssim_ensemble_mean": 3.3306690738754696e-16
+  },
+  "runs": [
+    {
+      "model": "FlowMapModel",
+      "steps": 1,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -0.9249066114425659,
+        0.3488515615463257
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 5.689893001203927e-16,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 3.3306690738754696e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 3.552713678800501e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 2.478827809682116e-09,
+      "independent_fvd_pooled": 402.1555434742543,
+      "independent_fvd_members": [
+        438.8325280014078,
+        450.7971671269984,
+        440.4520703384742,
+        440.9132693094962
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "614791cb8da138ad2f2c8c25cdc2e0d74ce85601ff99f6210a7cfbe21eba0460",
+      "evaluation_sha256": "4608c775303e0f9e0735072953b6ed283be0d8f60853c65e553b01b8f10e6bbe",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/flow_map/case_000_steps_1.npz": "4b8443c0e147b4d0c9badd6e33f8324905e12038133a1b755e81b8f292187090",
+        "research/video_forecasting/results/test/clevrer/flow_map/case_001_steps_1.npz": "3a0eabe30447f5b2eeba4e8a7555be161c3c5cfb9fe55d04284b7e0935453064",
+        "research/video_forecasting/results/test/clevrer/flow_map/case_002_steps_1.npz": "1e0cd4cc782cba7d3a6cc6edc0d69d5c5dbd27286b4e0b24843ab547dc54214d"
+      }
+    },
+    {
+      "model": "FlowMapModel",
+      "steps": 8,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -1.1400697231292725,
+        0.38251110911369324
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 3.469446951953614e-18,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 1.0408340855860843e-16,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 2.220446049250313e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 3.639115675468929e-09,
+      "independent_fvd_pooled": 320.44743973190134,
+      "independent_fvd_members": [
+        365.74534710479975,
+        371.8270642374107,
+        364.57322296059806,
+        337.36870920159686
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "e575922627989d7259a0b7adb51668fb339438800636d29c9c82280c8d5162df",
+      "evaluation_sha256": "4608c775303e0f9e0735072953b6ed283be0d8f60853c65e553b01b8f10e6bbe",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/flow_map/case_000_steps_8.npz": "0be5ecdeecc134fba483d954dbbc557b70e7ac03ab86fc603b5546b1217c5b34",
+        "research/video_forecasting/results/test/clevrer/flow_map/case_001_steps_8.npz": "ffa150df94b2168ea3625d54eee2117ad957e3c416cb6071dd7e300b397eb3ac",
+        "research/video_forecasting/results/test/clevrer/flow_map/case_002_steps_8.npz": "3fd0bd44d18446c2a67a3703b255fc2f407b4c94a5f2328cb7704e4a5c25e339"
+      }
+    },
+    {
+      "model": "FlowMatchingModel",
+      "steps": 16,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -1.030800461769104,
+        0.33647969365119934
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 1.1796119636642288e-16,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 4.440892098500626e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 3.3306690738754696e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 7.484140951419249e-08,
+      "independent_fvd_pooled": 323.01335885456274,
+      "independent_fvd_members": [
+        368.94253113924606,
+        378.8419598170931,
+        364.99024563742955,
+        334.5021885285871
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "dad129238679f5c7ae42e6ef67b78ecdae0c667040ec263c3c7d226dfb2aae89",
+      "evaluation_sha256": "f7499c249e1d759d8fceb330b884ccd0ee9349566ce44c9d6faefada41201b71",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_000_steps_16.npz": "9780c085834a2abd91c761740dcdae13b3e1a6caa9497dd64b8fe60e59d1bd85",
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_001_steps_16.npz": "9cf02dfc2a6814458536a0ff00291eb43c1a29d95dbfe0b03aa232aded942073",
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_002_steps_16.npz": "9fb175010f5a91c249227d3fd1fdf569d8201b9a62fce8413c653f99fcc63066"
+      }
+    },
+    {
+      "model": "FlowMatchingModel",
+      "steps": 64,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -1.106778860092163,
+        0.37911468744277954
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 3.469446951953614e-18,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 1.0408340855860843e-16,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 2.220446049250313e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 1.470652932766825e-09,
+      "independent_fvd_pooled": 329.97519517801516,
+      "independent_fvd_members": [
+        378.97482797200337,
+        388.6284402807996,
+        377.54997271732077,
+        343.39724983662654
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "193efc9e47833f8fd9f2905df903f7c6b1ad924577d466ba409b00ded6dde546",
+      "evaluation_sha256": "f7499c249e1d759d8fceb330b884ccd0ee9349566ce44c9d6faefada41201b71",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_000_steps_64.npz": "39293e0371bd4586ec299fc0be49c3bb505ea9d87708cbb688be942e13f54856",
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_001_steps_64.npz": "3e3fa533929c1c66f733a25b50770464dceb9ed191091536391406220f4f6b4a",
+        "research/video_forecasting/results/test/clevrer/flow_matching/case_002_steps_64.npz": "2510589db082bf92ff74129448cc085345b75a90aeb23f4078ebd13227bedb51"
+      }
+    },
+    {
+      "model": "FollmerItoMapModel",
+      "steps": 1,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -0.947266697883606,
+        0.37397047877311707
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 5.204170427930421e-18,
+        "energy_score": 1.8388068845354155e-16,
+        "rmse": 1.3877787807814457e-17,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 4.440892098500626e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 3.552713678800501e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 1.1102230246251565e-16,
+        "ssim_oracle_best": 1.1102230246251565e-16,
+        "ssim_ensemble_mean": 3.3306690738754696e-16
+      },
+      "fvd_max_absolute_error": 1.0854819265659899e-09,
+      "independent_fvd_pooled": 1080.031335807149,
+      "independent_fvd_members": [
+        1105.2882910655176,
+        1101.4195353833738,
+        1143.2368009037891,
+        1119.7741801105824
+      ],
+      "report_max_absolute_error": 7.105427357601002e-15,
+      "features_sha256": "98ebc012a8eeb77d6fa1bcf0981ac429a93e74075abc92ce05a6297e18845ed1",
+      "evaluation_sha256": "5936faf0a7409f5b9989b4e3a03915554da113dd0f69dc0882a02fd18a12987e",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_000_steps_1.npz": "7eb375bfd41c68297a254fad7eed9da851d34de555a0d6c2449f79a84087d334",
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_001_steps_1.npz": "b0b3a8d6ce0d94a19cd2011310b48a6c3b8b219de6fe742127148015cd4145d5",
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_002_steps_1.npz": "82e620648e0b387f7513540c5e8e72b85136d76a95333a5c89f00c21fe1b99a9"
+      }
+    },
+    {
+      "model": "FollmerItoMapModel",
+      "steps": 8,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -1.0171278715133667,
+        0.20757253468036652
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 5.204170427930421e-18,
+        "energy_score": 1.1102230246251565e-16,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 3.469446951953614e-18,
+        "spread_skill_ratio": 3.3306690738754696e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 3.552713678800501e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 1.1102230246251565e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 9.099949238589033e-09,
+      "independent_fvd_pooled": 317.3236693182282,
+      "independent_fvd_members": [
+        367.42097635164146,
+        356.33203591363235,
+        354.7069876761316,
+        363.4740459010727
+      ],
+      "report_max_absolute_error": 2.220446049250313e-16,
+      "features_sha256": "f010f7b54d2cb58cb21f3ea2aad56b9ea0f8229ccec8bf84258f14e1d2bd60b5",
+      "evaluation_sha256": "5936faf0a7409f5b9989b4e3a03915554da113dd0f69dc0882a02fd18a12987e",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_000_steps_8.npz": "0333a68ef8b432f626504d22a4bed51a3ad5474feec891193d224d2b77ea7013",
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_001_steps_8.npz": "387787e231001e5a1316c853b96d50904a40ce9e6cb49251a7b701244eec4b62",
+        "research/video_forecasting/results/test/clevrer/follmer_ito_map/case_002_steps_8.npz": "8e12398763ddaa666073ae62eae3924a8178d7bed751b265b2cb86d315d29019"
+      }
+    },
+    {
+      "model": "FollmerStochasticInterpolant",
+      "steps": 16,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -0.9612692594528198,
+        0.22260351479053497
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 7.28583859910259e-17,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 2.220446049250313e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 7.105427357601002e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 3.3306690738754696e-16
+      },
+      "fvd_max_absolute_error": 3.566356099327095e-09,
+      "independent_fvd_pooled": 436.05749610795465,
+      "independent_fvd_members": [
+        504.9504304026466,
+        491.48511123655135,
+        468.648599811567,
+        475.94878327751235
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "563aa4bd2ebc9ece8b1dcdae88f0721700deb39fa2eca6f5723836fb1c60c13c",
+      "evaluation_sha256": "a6a14076ae1068eae3d4bb03cfe286c077a46eac62463f0433361db186175a3f",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_000_steps_16.npz": "ff5da6d6e8d9b367331e5bb5d7d346068c884a9fea3ff218b2397feae45a25ff",
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_001_steps_16.npz": "f60bbd9002c3ee5e348e073e82ed0311c944d45302989581ed085d95ad885393",
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_002_steps_16.npz": "7c8f19d9b0bcb14c7b5971288445c39ac84c1c660e30e3ac0cac1f61d090d062"
+      }
+    },
+    {
+      "model": "FollmerStochasticInterpolant",
+      "steps": 64,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -1.251948356628418,
+        0.22638416290283203
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 1.734723475976807e-18,
+      "metric_max_absolute_errors": {
+        "crps": 3.469446951953614e-18,
+        "energy_score": 7.632783294297951e-17,
+        "rmse": 6.938893903907228e-18,
+        "rms_spread": 6.938893903907228e-18,
+        "spread_skill_ratio": 4.440892098500626e-16,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 7.105427357601002e-15,
+        "psnr_oracle_best": 3.552713678800501e-15,
+        "psnr_ensemble_mean": 7.105427357601002e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 3.7996869650669396e-08,
+      "independent_fvd_pooled": 222.25151625297121,
+      "independent_fvd_members": [
+        268.7875370800491,
+        280.05034727135535,
+        254.4947629444673,
+        272.1140319710323
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "264fae027723913887474670167b734aa66bc18cc409a0b0dbaab43b4b754cb8",
+      "evaluation_sha256": "a6a14076ae1068eae3d4bb03cfe286c077a46eac62463f0433361db186175a3f",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_000_steps_64.npz": "a32ba59435cec67b2013276486dc38aeb2e54daaebc683a6340775a56320e5c8",
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_001_steps_64.npz": "4c4c2502d79dea996cc56bbc3cca50e43020d84b5c6b5aeb05c15558493d742f",
+        "research/video_forecasting/results/test/clevrer/follmer_stochastic_interpolant/case_002_steps_64.npz": "6c77620a6d85024998f665df8f919e0f53a390767cbdf61d0ff18e7a1af7ad45"
+      }
+    },
+    {
+      "model": "persistence",
+      "steps": 1,
+      "rows_recomputed": 42,
+      "raw_prediction_range": [
+        -0.8980392217636108,
+        0.23921573162078857
+      ],
+      "max_unclipped_vs_clipped_crps_difference": 0.0,
+      "metric_max_absolute_errors": {
+        "crps": 0.0,
+        "energy_score": 2.498001805406602e-16,
+        "rmse": 1.3877787807814457e-17,
+        "rms_spread": 0.0,
+        "spread_skill_ratio": 0.0,
+        "coverage_90": 0.0,
+        "out_of_range_fraction": 0.0,
+        "psnr_sample_mean": 3.552713678800501e-15,
+        "psnr_oracle_best": 3.552713678800501e-15,
+        "psnr_ensemble_mean": 3.552713678800501e-15,
+        "ssim_sample_mean": 2.220446049250313e-16,
+        "ssim_oracle_best": 2.220446049250313e-16,
+        "ssim_ensemble_mean": 2.220446049250313e-16
+      },
+      "fvd_max_absolute_error": 7.337348506553099e-10,
+      "independent_fvd_pooled": 1072.236733305735,
+      "independent_fvd_members": [
+        1071.5158065893297,
+        1071.5158065893297,
+        1071.5158065893297,
+        1071.5158065893297
+      ],
+      "report_max_absolute_error": 3.552713678800501e-15,
+      "features_sha256": "d1997f9f2ffd6def0628310ef4d241dc754246e409455440fca37a4c215a5995",
+      "evaluation_sha256": "8c27b378abbb31be976ac5db4fb918e6b7eb1c9468237800d4d63cdccedf6ac1",
+      "raw_saved_case_sha256": {
+        "research/video_forecasting/results/test/clevrer/persistence/case_000_steps_1.npz": "1d63fd04b96f81542beccef9f5e69a86fe423e696ea1560320ea91924310dee7",
+        "research/video_forecasting/results/test/clevrer/persistence/case_001_steps_1.npz": "0d090656e6632dca1667a594023e351b39878fac51c19ac17d755441d6737a76",
+        "research/video_forecasting/results/test/clevrer/persistence/case_002_steps_1.npz": "bfaec935f1913c42767e51e6ec9b8dbb9cba4fe47f4ab791858e4ed89abb4f72"
+      }
+    }
+  ],
+  "reconstruction": "Saved truth roundtrips byte-exactly to source frames; all 27 contact sheets match first frozen cases, first two members pixel-exactly.",
+  "fvd": "All 9 feature files have identical real features (128x400), generated 128x4x400; pooled 512 vs128 real, each member128 vs128 real. FVD includes observed2-frame prefix and14future frames.",
+  "limitations": [
+    "Raw forecast arithmetic is checked for the three saved cases (378 future rows), not unsaved125cases.",
+    "LPIPS and I3D neural features are not re-extracted; saved features and detector/config provenance were checked by the existing strict audit.",
+    "Bootstrap confidence intervals are not independently recomputed here; report point estimates are checked from every row."
+  ],
+  "issues_found": []
+}

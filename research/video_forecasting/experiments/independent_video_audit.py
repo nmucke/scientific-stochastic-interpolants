@@ -48,7 +48,8 @@ def metrics(pred, target):
     spread = np.sqrt(x.var(0, ddof=1).mean())
     lo, hi = np.quantile(x, [.05,.95], axis=0)
     result = dict(crps=float(crps), energy_score=float(energy), rmse=float(rmse),
-                  rms_spread=float(spread), spread_skill_ratio=float(spread*np.sqrt((e+1)/e)/rmse),
+                  rms_spread=float(spread),
+                  spread_skill_ratio=float(spread*np.sqrt((e+1)/e)/rmse) if rmse>0 else None,
                   coverage_90=float(((y>=lo)&(y<=hi)).mean()),
                   out_of_range_fraction=float(((x<0)|(x>1)).mean()))
     clipped, truth, clipped_mean = np.clip(x,0,1), np.clip(y,0,1), np.clip(mean,0,1)
@@ -157,6 +158,10 @@ def main():
                     calculated, difference = metrics(pred[:,lead-1],truth[history+lead-1])
                     recorded = rows[steps,case['clip_id'],lead]
                     for key,value in calculated.items():
+                        if value is None or recorded[key] is None:
+                            assert value is None and recorded[key] is None
+                            errors[key]=max(errors[key],0.)
+                            continue
                         error=abs(value-recorded[key])
                         errors[key]=max(errors[key],error)
                         assert error<1e-10,(model_dir,steps,case_number,lead,key,error)
@@ -199,13 +204,18 @@ def main():
                         if r['num_steps']==steps and r['lead']==lead:
                             bysource[r['source_video']].append(r[key])
                     assert len(bysource)==source_count
-                    bylead.append(float(np.mean([np.mean(v) for v in bysource.values()])))
+                    bylead.append(None if any(value is None for values in bysource.values() for value in values)
+                                  else float(np.mean([np.mean(v) for v in bysource.values()])))
                 if key in ('seconds','nfe'):
                     checks={f'rollout_{key}':sum(bylead)}
                 else:
-                    checks={f'mean_{key}':np.mean(bylead),f'last_{key}':bylead[-1]}
+                    checks={f'mean_{key}':None if any(v is None for v in bylead) else np.mean(bylead),
+                            f'last_{key}':bylead[-1]}
                 for column,value in checks.items():
-                    report_error=max(report_error,abs(float(csvrow[column])-value))
+                    if value is None:
+                        assert csvrow[column]==''
+                    else:
+                        report_error=max(report_error,abs(float(csvrow[column])-value))
             assert report_error<1e-10,report_error
             for key,value in errors.items(): global_errors[key]=max(global_errors[key],value)
             findings.append(dict(model=ev['model_class'],steps=steps,rows_recomputed=inspected,

@@ -1,0 +1,28 @@
+{
+  "kth": {
+    "rows": 9,
+    "summary_sha256": "8377bd4c69bcbb5399682cb275607efa4a7f9c408b50c0d403f04aae1b1dd53b",
+    "report_manifest_sha256": "55b6dbf44d76c6a67c92c1610ffa04394041e0f82fc0d496dd000e398efbcb7c",
+    "all_table_cells_match_report_formatter": true,
+    "cost_plot_exact_copy": true,
+    "unrounded_csv_exact_copy": true
+  },
+  "clevrer": {
+    "rows": 9,
+    "summary_sha256": "f293923d3fcf4f3111d7dcd8a7472cb0e916d9995b16d84b2b6650dd476558ce",
+    "report_manifest_sha256": "7350eb1e945a5c4a43cec8fe0696740fc909bb1b04dc89ca32274d152678f03c",
+    "all_table_cells_match_report_formatter": true,
+    "cost_plot_exact_copy": true,
+    "unrounded_csv_exact_copy": true
+  },
+  "main_table_matches_reports": true,
+  "status": "passed",
+  "checked_utc": "2026-10-07T14:51:44.248662+00:00",
+  "visual_review": {
+    "main": "Both datasets; marked observed context; truth and all4model rows; no label overlaps; exact retained frame indices",
+    "appendix": "Both datasets; truth/all4models/persistence; all five declared future times; titles and row labels present in PDF text and PNG raster",
+    "cost_figures": "Both datasets copied from strict reporter; pooled and member-count labels; logarithmic generation-time axes; completion SD explicitly not confidence interval",
+    "limitations": "Individual fixed samples exhibit blur/deformation or object mismatch; no visual quality-selection or replacement was made; metric conclusions remain separate from these illustrative single samples"
+  },
+  "paper_results_manifest_sha256": "d611ed757c20edcb89bbf326c112e779e9a559f61af15b37a52606a89fadf183"
+}

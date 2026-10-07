@@ -14,7 +14,7 @@ After a dataset's full evaluation and report are complete:
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .venv/bin/python \
   research/video_forecasting/experiments/independent_video_audit.py \
   --dataset clevrer \
-  --report research/video_forecasting/results/clevrer_completed_report/clevrer/summary.csv
+  --report research/video_forecasting/results/report/clevrer/summary.csv
 ```
 
 The default output is `results/clevrer_independent_audit.json`. A custom report
@@ -38,3 +38,10 @@ reconstruct pixel-exactly from fixed first members and future leads 1, 4, 8, 11,
 
 This interim artifact makes no claim about unfinished configurations, FVD, or
 final report aggregation. Those are checked only by the full command above.
+
+## Completed CLEVRER audit
+
+All nine configurations subsequently passed the full independent audit against
+`results/report/clevrer/summary.csv`. See `clevrer_independent_audit.md` and
+`results/clevrer_independent_audit.json` for the final evidence. The partial RGB
+record above remains a historical checkpoint, not the final audit.
