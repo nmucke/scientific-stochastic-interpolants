@@ -93,3 +93,15 @@ paper_experiments/results_full/*
 
 # Downloaded and decoded video forecasting datasets
 /data/video_forecasting/
+
+# Retain the compact audited video paper bundle for data-free LaTeX builds.
+# Other generated figure folders and raw NPZ/checkpoint payloads remain ignored.
+!/research/ito_maps/paper/figures/
+/research/ito_maps/paper/figures/*
+!/research/ito_maps/paper/figures/video_results/
+/research/ito_maps/paper/figures/video_results/*
+!/research/ito_maps/paper/figures/video_results/*.tex
+!/research/ito_maps/paper/figures/video_results/*.csv
+!/research/ito_maps/paper/figures/video_results/*.png
+!/research/ito_maps/paper/figures/video_results/*.pdf
+!/research/ito_maps/paper/figures/video_results/*.json

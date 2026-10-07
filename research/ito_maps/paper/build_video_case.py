@@ -15,10 +15,48 @@ PAPER = Path(__file__).resolve().parent
 ROOT = PAPER.parents[2]
 VIDEO = ROOT / "research/video_forecasting"
 OUTPUT = PAPER / "figures/video_case"
+DATA_SUMMARY = VIDEO / "notes/data_summary.json"
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def split_counts_for_protocol(
+    name, protocol, repo_root=ROOT, summary_path=DATA_SUMMARY
+):
+    """Use the tracked preparation audit; additionally check local data if present."""
+    summary = json.loads(Path(summary_path).read_text())
+    matches = [item for item in summary["datasets"] if item["dataset"] == name]
+    if len(matches) != 1:
+        raise ValueError(f"Expected one preparation summary for {name}")
+    item = matches[0]
+    if (
+        item["manifest_sha256"] != protocol["manifest"]["sha256"]
+        or item["manifest_path"] != protocol["manifest"]["path"]
+    ):
+        raise ValueError(f"Preparation summary differs from frozen manifest: {name}")
+    counts = {
+        split: item["split_summary"][split]["clips"]
+        for split in ("train", "validation", "test")
+    }
+    if (
+        any(type(value) is not int or value < 0 for value in counts.values())
+        or sum(counts.values()) != item["clips"]
+    ):
+        raise ValueError(f"Invalid preparation split counts: {name}")
+    manifest_path = Path(repo_root) / protocol["manifest"]["path"]
+    if manifest_path.exists():
+        if digest(manifest_path) != protocol["manifest"]["sha256"]:
+            raise ValueError(f"Local manifest differs from frozen manifest: {name}")
+        manifest = json.loads(manifest_path.read_text())
+        local_counts = {
+            split: sum(clip["split"] == split for clip in manifest["clips"])
+            for split in counts
+        }
+        if counts != local_counts:
+            raise ValueError(f"Preparation counts differ from local manifest: {name}")
+    return counts
 
 
 def main():
@@ -27,13 +65,7 @@ def main():
     for name in ("kth", "clevrer"):
         protocol_path = VIDEO / f"results/{name}_protocol.json"
         protocol = json.loads(protocol_path.read_text())
-        manifest_path = ROOT / protocol["manifest"]["path"]
-        assert digest(manifest_path) == protocol["manifest"]["sha256"]
-        manifest = json.loads(manifest_path.read_text())
-        split_counts = {
-            split: sum(clip["split"] == split for clip in manifest["clips"])
-            for split in ("train", "validation", "test")
-        }
+        split_counts = split_counts_for_protocol(name, protocol)
         stages = {}
         for family in protocol["models"]:
             stage = protocol["training_stages"][family]
@@ -123,6 +155,10 @@ def main():
         json.dumps(
             {
                 "purpose": "Dataset/setup figure and actual training-budget tables, not forecast results",
+                "data_summary": {
+                    "path": str(DATA_SUMMARY.relative_to(ROOT)),
+                    "sha256": digest(DATA_SUMMARY),
+                },
                 "datasets": datasets,
                 "preview_inputs": [
                     {"path": str(path.relative_to(ROOT)), "sha256": digest(path)}

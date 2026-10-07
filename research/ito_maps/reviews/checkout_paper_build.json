@@ -1,0 +1,59 @@
+{
+  "checkout_path": "/tmp/scisi_paper_checkout_drwqzu5x",
+  "head_commit": "86af4342bb8d22140c9b5b1cdb7c035d4c79432b",
+  "overlaid_current_sources": [
+    ".gitignore",
+    "research/ito_maps/paper/Makefile",
+    "research/ito_maps/paper/build_video_case.py"
+  ],
+  "assets": {
+    "research/ito_maps/paper/figures/video_results/kth_fixed_forecast.pdf": "6b9b0f619695ef1e78cff5f5931a40a79d843fe0362d19ff59628baedc6fde89",
+    "research/ito_maps/paper/figures/video_results/main_forecast_sequences.png": "1d8b9c248613a507ba148a8836cc626ea56c6888da4370a6bcb5cffafb66cd2b",
+    "research/ito_maps/paper/figures/video_results/kth_images_table.tex": "b2914d0a0ca9674c683954a0773693185e8e537b6e46a48be984f6f9281f0cc2",
+    "research/ito_maps/paper/figures/video_results/clevrer_fixed_forecast.pdf": "7a342e41da83287e5fc41ed4be1fc55ef785997a20a63769a07b1874d89eee6b",
+    "research/ito_maps/paper/figures/video_results/clevrer_fixed_forecast.png": "0434ae0d7f2c944345875ecbfc7bba0021e32ab66d8dbf815a68959f1ed16b68",
+    "research/ito_maps/paper/figures/video_results/kth_quality_table.tex": "5aee00c09a048d912c59fb1ed0298bc4e6eb8691f4266177a3641f5527b2b9ae",
+    "research/ito_maps/paper/figures/video_results/kth_unrounded_summary.csv": "8377bd4c69bcbb5399682cb275607efa4a7f9c408b50c0d403f04aae1b1dd53b",
+    "research/ito_maps/paper/figures/video_results/kth_fixed_forecast.png": "55e5eb11f3fe146873398f17b31adb3246893400a4072dc1a2668655d76ef4e6",
+    "research/ito_maps/paper/figures/video_results/paper_results_manifest.json": "d611ed757c20edcb89bbf326c112e779e9a559f61af15b37a52606a89fadf183",
+    "research/ito_maps/paper/figures/video_results/clevrer_images_table.tex": "961ea09b89d093c50564bd886872a2ff1dcd2c645ee4021c48eea3ac8812ac0e",
+    "research/ito_maps/paper/figures/video_results/kth_calibration_table.tex": "2707eedd8c8da1c75aadeba744f93591a8fcf43d6ad7daf5604eec8b0700f0bd",
+    "research/ito_maps/paper/figures/video_results/clevrer_fvd_vs_cost.png": "c55e7744b841ed58360bad3f8dd14f1d1a65970e58290f8f7d49d44a00f8153d",
+    "research/ito_maps/paper/figures/video_results/clevrer_calibration_table.tex": "d81cd971a4a26a739380f1a62db3937338b9c953fd28a1ffad927a4aa6fb1e8a",
+    "research/ito_maps/paper/figures/video_results/main_forecast_sequences.pdf": "f557422a4066355fcd2cb7f6aa88001988c1539ad257c66f056b776d5b532abb",
+    "research/ito_maps/paper/figures/video_results/kth_fvd_vs_cost.png": "8ff986180c7873f3f328aab7cf529f565390a4df0372878020ecfbaa185d678c",
+    "research/ito_maps/paper/figures/video_results/clevrer_quality_table.tex": "c68d7ac25afbd237f625c6a137083397e13e7bc6d48e3ffee0afdbd3a3230a64",
+    "research/ito_maps/paper/figures/video_results/clevrer_unrounded_summary.csv": "f293923d3fcf4f3111d7dcd8a7472cb0e916d9995b16d84b2b6650dd476558ce",
+    "research/ito_maps/paper/figures/video_results/main_fvd_table.tex": "1424206e69e362150e47bb63a95782df6a6b81568111b6ff5bc87584d47748eb"
+  },
+  "python": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/.venv/bin/python",
+  "absent": [
+    "data/video_forecasting",
+    "checkpoints",
+    "all *.npz"
+  ],
+  "method": "git checkout-index --all then explicitly overlay pending source edits and existing audited bundle",
+  "build_exit_code": 0,
+  "log_path": "/tmp/scisi_paper_checkout_drwqzu5x/isolated_build.log",
+  "retained_asset_hashes_unchanged": true,
+  "built_pdf_sha256": "c358139211dcd214ef53f90cbc471fe723ff2468e0018e187e7aff57daf7a33b",
+  "verified_utc": "2026-10-07T16:04:25.358085+00:00",
+  "status": "passed",
+  "bundle_file_count": 18,
+  "bundle_total_bytes": 1608351,
+  "source_hashes": {
+    ".gitignore": "293f170e9eb3b97149aeec9fe057348ba16af56c523407c747544225c0902b3f",
+    "research/ito_maps/paper/Makefile": "8e18b7f902bbfc301abc0d4d01cb8146bb279250ac0542e1e27f47193c8f025c",
+    "research/ito_maps/paper/build_video_case.py": "8ab200cd09b5b0b66e3e68bd27adee46eb519089b5a5cc54a6ae88e9251663c1"
+  },
+  "build_command": [
+    "make",
+    "all",
+    "PYTHON=/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/.venv/bin/python"
+  ],
+  "working_tree_pdf_sha256": "1bb6478e96beba803a534a237c4137a9d5a9a6bd5deacd2cf371611be1d09f40",
+  "extracted_pdf_text_equal": true,
+  "isolated_build_log_sha256": "307c5aa7243fc7e8a5b35642427a3286af4418d66b46f127de85e9452ec72bdf",
+  "other_builder_dependencies": "Validation, seed0, replication, path-compression and long-horizon figures read tracked compact JSON/CSV diagnostics/protocols/spectra only; video setup now uses tracked preparation summary and preview images.",
+  "focused_tests": "4 passed: absent dataset, frozen-manifest mismatch, present local-manifest mismatch, local split-count consistency"
+}
