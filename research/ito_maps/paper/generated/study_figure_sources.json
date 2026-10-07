@@ -1,0 +1,34 @@
+[
+  {
+    "source": "results/final_report/one_step/summary.csv",
+    "sha256": "ed6075502b33c2265c54ecc3fd1df2e83c767340386941fb16d87a9c6442fb36"
+  },
+  {
+    "source": "results/final_report/rollout/all_leads.csv",
+    "sha256": "33e6b71dea1439dd479f47175c8c1b2f34ae34510de01fefe804deb13701093b"
+  },
+  {
+    "source": "results/final_report/one_step/paired_crps.json",
+    "sha256": "634a2d3ef738a5355f1a8554e2034b60b209ce58bb4dbcabb3d8c2e9c7a17921"
+  },
+  {
+    "source": "results/final_report/rollout/paired_crps.json",
+    "sha256": "a04b9e7c13705405d4e5bbbd6056935748322432e7f3e9bc907e5dd759299b42"
+  },
+  {
+    "source": "results/training/ito_psd_seed0/history.json",
+    "sha256": "c101cbfb892096f51dd27abe7610c740cec2c6788f04e898b5d25259d6b4f220"
+  },
+  {
+    "source": "results/training/ito_rollout_seed0/history.json",
+    "sha256": "5264741e440ed7a759cebbedf1fa35ba541e47023041f0d1fcfcdceffa699e40"
+  },
+  {
+    "source": "results/training/flow_psd_seed0/history.json",
+    "sha256": "04d19b22f775af5f8c822a518fde41e7673dd18225a97f589fb6552b0198f384"
+  },
+  {
+    "source": "results/training/flow_rollout_seed0/history.json",
+    "sha256": "2085ecb036186eda86df92ac6f2d094fa908a85bb84967200762329d3e107e38"
+  }
+]

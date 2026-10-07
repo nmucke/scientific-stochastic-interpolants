@@ -13,7 +13,7 @@ Branch: `research/ito-map-forecasting`. The user authorized extensive delegated 
 - `BaseMapModel`, `FollmerItoMapModel`, `FlowMapModel`, compatible two-time/path conditioning adapters, and exact finite-query weighted-Brownian bridges.
 - `MapTrainer`: teacher-diagonal PSD and supervised same-path teacher-rollout objectives, offline artifacts, EMA, and tested epoch-boundary resume.
 - Hydra train/test entry points and NS configurations, reusing existing datasets, preprocessing, U-Net, losses/optimizer/clipping and metrics.
-- Latest completed whole-suite run reported by root:93 tests pass. The provenance archiver subsequently adds two separately passing tests. A focused mask-rejection test also passes within the14-test MapTrainer suite; no new combined-suite count is claimed here.
+- Latest completed whole-suite run:96 tests pass, including provenance archiving and the nontrivial-mask guard.
 - Real GPU training/evaluation smoke and all validation-only development comparisons.
 - Both seed0 PSD stages (2,000 updates each), followed by both teacher-rollout stages (500 updates each). Frozen teacher grids use32 drift substeps during supervised training/validation.
 - Analytic/Monte Carlo OU compression experiment and actual frozen-NS conditional-bridge diagnostic (CPU).
@@ -43,6 +43,28 @@ The sequence is:
 5. Seeds1/2 held-out evaluation at map budgets1/8 for the same one-step and10-step physical-forecast protocols, followed by provenance archiving.
 
 At launch, root estimated roughly40minutes for initial seed0 evaluation and about75minutes for additional training, with further evaluation afterward; these estimates are not completion guarantees. The live log and output artifacts are authoritative.
+
+### Latest completed test evidence (still seed0 only)
+
+All one-step curves are complete. See `notes/heldout_seed0_assessment.md` and
+`results/final_report/one_step/`. Itô8 CRPS0.27052 versusSI64 0.26780 at7.15x
+lower latency; Itô1 CRPS0.27287 versusSI16 0.28802 at13.30x lower latency.
+FlowMap1 CRPS0.26656 versusFM64 0.26501 at56.3x lower latency. Proper-score
+proximity does **not** establish calibration retention: Itô8 has10.66% less
+RMS spread thanSI64 and5.19percentage points less empirical coverage. Both
+map families remain underdispersed relative to their high-step teachers.
+
+Both map rollouts and the SI64 rollout have completed. At physical lead10,
+Itô8 CRPS0.54316 versusSI64 0.53293; full10-lead ensemble generation costs
+3.386 versus24.597seconds. FlowMap1 lead10 CRPS0.53396. The FM64 rollout and
+additional full training seeds are still pending in this snapshot. Do not
+present seed0 as a three-seed result. Root verified every map's initial rollout
+forecast against its matching standalone origin45 forecast, with identical
+proper scores/calibration metrics for all40 cases per map.
+
+An optional user question is pending about the archive's original generation
+settings (snapshot spacing, viscosity, forcing and creation script/revision).
+Continue using stored-snapshot lead units unless actual provenance is supplied.
 
 ## Remaining work after the sequence
 

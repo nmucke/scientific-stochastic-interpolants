@@ -6,6 +6,12 @@
     "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810"
   },
   {
+    "source": "results/test_one_step/flow_matching/evaluation.json",
+    "sha256": "76ee320ad988164e153a4200b5d96f9228be0c3703ccd1f73c804488841c7918",
+    "checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching/model.pth",
+    "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3"
+  },
+  {
     "source": "results/test_one_step/ito_rollout_seed0/evaluation.json",
     "sha256": "44878f389abbfbf324cdd6725ab0ea22a048976e09aceb8ddfdb1dbc6b293d11",
     "checkpoint": "checkpoints/stochastic_navier_stokes/ito_rollout_seed0/model.pth",

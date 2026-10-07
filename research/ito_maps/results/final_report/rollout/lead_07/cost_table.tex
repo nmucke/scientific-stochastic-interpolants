@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Measured sampling cost and enstrophy-spectrum error. Test split; $E=16$, physical lead 7. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-cost}
+\begin{tabular}{lrrr}
+\toprule
+Model & NFE & Ensemble latency (ms) & Relative spectrum error \\
+\midrule
+Föllmer Itô map & 1 & 44.127 [44.003, 44.252] & 0.502 [0.443, 0.561] \\
+Föllmer Itô map & 8 & 337.985 [337.642, 338.373] & 0.390 [0.326, 0.456] \\
+\addlinespace
+Flow map & 1 & 41.607 [41.466, 41.751] & 0.318 [0.263, 0.374] \\
+Flow map & 8 & 314.074 [313.506, 314.631] & 0.394 [0.327, 0.462] \\
+\addlinespace
+Föllmer SI & 64 & 2459.270 [2453.644, 2464.667] & 0.348 [0.294, 0.404] \\
+\addlinespace
+Flow matching & 64 & 2482.098 [2480.670, 2483.537] & 0.366 [0.292, 0.450] \\
+\bottomrule
+\end{tabular}
+\end{table*}

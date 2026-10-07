@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "research/ito_maps/experiments/compare.py",
+    "--split",
+    "test",
+    "--trajectories",
+    "20",
+    "--ensemble",
+    "16",
+    "--checkpoints",
+    "stochastic_interpolant",
+    "flow_matching",
+    "--steps",
+    "64",
+    "--origins",
+    "45",
+    "--horizon",
+    "10",
+    "--output",
+    "research/ito_maps/results/test_rollout"
+  ],
+  "split": "test",
+  "offset": 180,
+  "seed": 20261007
+}

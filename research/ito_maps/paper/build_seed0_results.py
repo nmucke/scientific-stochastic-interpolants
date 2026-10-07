@@ -7,12 +7,13 @@ paper = Path(__file__).resolve().parent
 root = paper.parent / 'results/test_one_step'
 specifications = [
     ('Forecasting SI', 'stochastic_interpolant', (16, 64, 128)),
+    ('Flow matching', 'flow_matching', (64, 128)),
     (r'It\^o map', 'ito_rollout_seed0', (1, 8)),
     ('Flow map', 'flow_rollout_seed0', (1, 8)),
 ]
 expected = {(t,o) for t in range(180,200) for o in (5,45,85)}
 lines = [r'\begin{table}[t]',
-    r'\caption{Completed seed-zero one-interval test measurements: 20 held-out trajectories, three origins each, and 16 ensemble members. Student checkpoints were selected before testing. Values average the 60 contexts; paired trajectory intervals appear in the text. The full flow-matching reference curve, additional training seeds, and physical rollouts remain pending at this manuscript revision.}',
+    r'\caption{Seed-zero one-interval test measurements: 20 held-out trajectories, three origins each, and 16 ensemble members. Student checkpoints were selected before testing. Values average the 60 contexts; paired trajectory intervals appear in the text. Additional training seeds remain pending.}',
     r'\label{tab:seed0-test}',r'\centering',r'\begin{tabular}{lrrr}',r'\toprule',
     r'Model & NFE & CRPS $\downarrow$ & Seconds $\downarrow$ \\',r'\midrule']
 provenance=[]

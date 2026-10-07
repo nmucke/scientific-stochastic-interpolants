@@ -1,6 +1,6 @@
-# Partial held-out seed-0 assessment
+# Complete held-out seed-0 assessment
 
-**Status: complete for seed-0 one-step curves; overall assessment remains partial.** All four one-step model curves are now complete, including flow matching. Ten-lead rollouts and student training seeds 1 and 2 remain pending. No model, feature count, hyperparameter, or forecast case was changed after viewing these scores.
+**Status: complete for seed-0 one-step curves and ten-lead autoregressive rollouts.** All four models and the persistence sanity baseline are reported. Student training seeds 1 and 2 remain pending, so training-seed robustness is not yet established. No model, feature count, hyperparameter, or forecast case was changed after viewing these scores.
 
 Sources are `results/test_one_step/{ito_rollout_seed0,flow_rollout_seed0,stochastic_interpolant,flow_matching}/evaluation.json`. Their checkpoint hashes match the selections in `results/frozen_protocol.json`. Each budget uses all 20 test trajectories 180–199, origins 5/45/85, E=16, and the frozen sampling seed. Thus there are 60 matched one-step forecasts per budget. Scores below use the evaluator's normalized coordinates; times are seconds per E=16 ensemble forecast.
 
@@ -78,4 +78,46 @@ All 18 seed-0 one-step model/budget summaries and the full curves are now report
 
 ## Appropriate provisional claim
 
-A defensible description of these partial results is: **a one-step conditional Itô map improves proper scores over a 16-step Föllmer sampler at roughly 13-fold lower latency; an eight-step map approaches the proper scores of 64- and 128-step references while retaining less ensemble spread and weaker calibration.** The current numbers do not show general superiority over deterministic flow maps. Full conclusions should await the frozen ten-lead and additional-student-seed results without revising model selection from these test outcomes.
+A defensible description of the one-step results is: **a one-step conditional Itô map improves proper scores over a 16-step Föllmer sampler at roughly 13-fold lower latency; an eight-step map approaches the proper scores of 64- and 128-step references while retaining less ensemble spread and weaker calibration.** The current numbers do not show general superiority over deterministic flow maps. Ten-lead results below further qualify quality retention; training-seed conclusions should await the frozen additional-student-seed results without revising model selection from these test outcomes.
+
+
+## Complete ten-lead autoregression
+
+Sources are `results/test_rollout/{ito_rollout_seed0,flow_rollout_seed0,stochastic_interpolant,flow_matching}/evaluation.json`, with the same frozen checkpoints. Each budget contains 20 held-out trajectories, origin 45, ten physical leads and E=16. Every ensemble member feeds its own generated state back into its own history; no future truth is supplied. One-step averages above include three origins, whereas rollout lead 1 uses origin 45 only; they must not be treated as identical estimates. Persistence inputs are `results/test_persistence/{one_step,rollout}/evaluation.json`.
+
+The full report is in `results/final_report/`, including `rollout/all_leads.csv`, per-lead score tables and figures, `rollout/paired_crps.{csv,json,tex}`, `rollout/rollout_quality_calibration.{pdf,png}`, and `rollout/rollout_cumulative_cost.{pdf,png}`. Fifty paired CRPS comparisons cover five preregistered pairs at ten leads. The SI16 and SI128 comparisons are explicitly recorded as one-step-only skips because those budgets are absent from the frozen rollout protocol. Persistence appears in score plots and tables but is excluded from latency comparisons. Student-seed reports currently have one seed and therefore no estimated between-seed standard deviation.
+
+| Model | Steps per transition | Lead-10 CRPS | Lead-10 energy | Lead-10 RMSE | Lead-10 spectral error | Total 10-lead seconds | Total NFE |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Itô map | 1 | 0.55937 | 0.70301 | 0.96432 | 0.55810 | 0.4483 | 10 |
+| Itô map | 8 | 0.54316 | 0.68278 | 0.96425 | 0.44961 | 3.3861 | 80 |
+| Flow map | 1 | 0.53397 | 0.66909 | 0.96895 | 0.35462 | 0.4221 | 10 |
+| Flow map | 8 | 0.54280 | 0.68122 | 0.96353 | 0.43212 | 3.1500 | 80 |
+| Föllmer SI | 64 | 0.53293 | 0.66941 | 0.95853 | 0.38827 | 24.5966 | 640 |
+| Flow matching | 64 | 0.53308 | 0.66805 | 0.97415 | 0.40111 | 24.8192 | 640 |
+| Persistence | 0 NFE | 1.09906 | — | 1.37416 | — | excluded | 0 |
+
+All learned models remain substantially better than persistence. Their errors rise rapidly over early leads and then largely plateau; there is no numerical rollout explosion in these ten leads. This is a limited-horizon observation, not a proof of stability.
+
+**Itô8 versus SI64 retains a useful speed/quality tradeoff, but the lead-10 discrepancy is measurable.** CRPS is +1.92%, with paired difference +0.01023 [0.00364, 0.01719]; energy is +2.00%, difference +0.01337 [0.00513, 0.02237]. The mean-RMSE difference is +0.00572 [−0.00347, 0.01574]. Total rollout latency is 7.26 times lower and neural evaluations are eight times fewer. At lead 5 the CRPS difference is only +0.00256 [−0.00624, 0.01119]; the lead-10 interval should not be replaced by that more favorable intermediate comparison. Relative spectral error also worsens by 15.80%, difference +0.06133 [0.01370, 0.10061], so the one-step spectral proximity does not persist unchanged through autoregression.
+
+**Flow-map1 is the strongest speed/score baseline in these seed-0 rollouts.** Against FM64, lead-10 CRPS differs by +0.17%, +0.00089 [−0.00214, 0.00381], and energy by +0.15%, +0.00103 [−0.00259, 0.00460]. Mean RMSE is 0.53% lower. The complete rollout is 58.80 times faster with 64 times fewer neural evaluations. This is useful evidence for the general conditional-map idea, but does not demonstrate an advantage of the stochastic map over its deterministic counterpart. Flow-map8 has lead-10 CRPS +1.82% relative to FM64, difference +0.00972 [0.00352, 0.01560], and is 7.88 times faster in total latency.
+
+**Itô1 is weaker than flow-map1 after repeated physical transitions.** Lead-10 CRPS is +4.76%, difference +0.02540 [0.01506, 0.03590], and energy is +5.07%. Their mean RMSE is similar (−0.48% for Itô1), while Itô1's spectral error is 57.38% higher. At eight steps the two maps have nearly identical lead-10 CRPS: Itô minus flow +0.00035 [−0.00628, 0.00716], with similar RMSE, spread and coverage. Thus a stochastic-map superiority claim is not supported by the observed comparison.
+
+### Uncertainty through ten leads
+
+| Model | Steps | Lead-10 RMS spread | Corrected RMS spread/skill | Empirical 90% coverage | Extreme-rank fraction |
+|---|---:|---:|---:|---:|---:|
+| Itô map | 1 | 0.60326 | 0.65370 | 61.55% | 28.62% |
+| Itô map | 8 | 0.72125 | 0.78237 | 69.41% | 21.13% |
+| Flow map | 1 | 0.88881 | 0.95768 | 78.36% | 13.68% |
+| Flow map | 8 | 0.72538 | 0.78635 | 69.66% | 21.00% |
+| Föllmer SI | 64 | 0.78998 | 0.86031 | 73.78% | 17.40% |
+| Flow matching | 64 | 0.98618 | 1.05575 | 82.29% | 10.63% |
+
+Itô1's corrected RMS spread/skill falls from 0.762 at lead 1 to 0.654 at lead 10, while Itô8 moves from 0.834 to 0.782. At lead 10, Itô8 has 8.70% less RMS spread than SI64; coverage is lower by 4.38 percentage points [−5.27, −3.55], and extreme-rank fraction is higher by 3.74 pp [3.02, 4.53]. Flow-map1 is closer to FM64 but retains 9.87% less RMS spread and coverage lower by 3.93 pp [−4.33, −3.54]. Itô1's coverage is 16.81 pp lower than flow-map1 [−18.04, −15.49]. These complementary diagnostics show that close proper scores do not imply equally well-calibrated ensembles. As above, empirical E=16 coverage has a finite-ensemble reference caveat, and pointwise bootstrap intervals are not simultaneous confidence bands.
+
+The rollout quality/calibration and cumulative-cost figures were visually inspected. The cumulative-cost legend was moved outside the axes to avoid covering the solver curves. Each cost sums the measured transitions from lead 1 through the displayed lead within each trajectory before resampling; lead-10 timings are full rollout costs, not single-transition latencies. No evaluation data, model settings or training decisions were modified.
+
+The complete seed-0 conclusion is therefore: **conditional maps provide large sampling speedups; the eight-step stochastic map maintains close proper scores over ten physical leads with modest but detectable degradation, reduced spread, and worse final spectral discrepancy relative to SI64. The one-step deterministic flow map is a particularly strong competing method.** Additional student training seeds are required before asserting robustness of these outcomes.

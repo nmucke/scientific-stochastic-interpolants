@@ -10,6 +10,7 @@
 \newcommand{\N}{\mathcal{N}}
 \newcommand{\sg}{\operatorname{stopgrad}}
 \newcommand{\Law}{\operatorname{Law}}
+\input{generated/seed0_claims}
 \icmltitlerunning{Conditional Stochastic Forecast Maps}
 \begin{document}
 \twocolumn[
@@ -24,7 +25,7 @@
 ]
 \printAffiliationsAndNotice{}
 \begin{abstract}
-Probabilistic forecasting requires ensembles of plausible futures, making the cost of each generated sample consequential. We develop conditional It\^o maps for the forecasting stochastic interpolants of Chen et al., replacing numerical integration over many generative time steps with a learned map conditioned on Brownian information. The construction preserves a deterministic observed initial state while introducing forecast uncertainty through the driving path, and includes deterministic flow maps as a common implementation baseline. We derive the appropriate diagonal regression and a path-consistent composition objective, distinguishing the forecasting drift from Gaussian-base image-generation objectives. Initial held-out Navier--Stokes results show substantially lower sampling costs and close proper forecast scores, but residual underdispersion relative to the more resolved stochastic sampler. The deterministic map has the stronger observed one-step score. Additional training seeds and physical rollouts remain pending, so these results are provisional.
+Probabilistic forecasting requires ensembles of plausible futures, making the cost of each generated sample consequential. We develop conditional It\^o maps for forecasting stochastic interpolants, replacing numerical integration over many generative time steps with a learned map conditioned on Brownian information. The construction preserves a deterministic observed initial state and includes deterministic flow maps under a common interface. We derive the appropriate diagonal regression and shared-path composition objective, then use teacher-supervised refinement. In a held-out Navier--Stokes study, eight map evaluations give a \szItoEightSIPercent\% higher CRPS point estimate than 64 stochastic-interpolant steps at \szItoEightSISpeed$\times$ lower latency. Over ten autoregressive physical leads, final-lead CRPS is \szItoEightRollPercent\% higher at \szItoEightRollSpeed$\times$ lower total latency. Residual underdispersion and final spectral error qualify this tradeoff; the deterministic map is a strong competing method. These initial results use one student training seed, with further replications pending.
 \end{abstract}
 
 \section{Introduction}
@@ -202,7 +203,7 @@ where $\tau$ denotes physical time. The available array has 200 trajectories, 10
 
 The repository's current simulator specifies a periodic $[0,2\pi]^2$ domain, viscosity $10^{-3}$, drag $0.1$, and independent sine/cosine forcing at modes $(6,0),(7,0),(5,5),(8,8)$. However, that script currently generates a different array shape, while the supplied archive contains only state values. Its time step and forcing settings therefore cannot yet be certified as the provenance of these exact data. Until generation metadata is recovered, we report lead time in stored snapshot intervals and retain this limitation explicitly.
 
-We compare the existing stochastic interpolant and flow-matching samplers to the conditional It\^o map and deterministic flow map. Evaluate maps at $1,2,4,8$ steps and solver baselines at 64- and 128-step reference budgets as well as matched smaller budgets, checking numerical sensitivity before describing either reference as converged. A solver step and a network evaluation are distinct; report actual network evaluations and wall time. Use matched ensemble sizes and hardware, warm up devices, synchronize accelerator timing, and include Brownian-feature construction in end-to-end costs. Training and teacher-generation costs are reported separately.
+We compare the existing stochastic interpolant and flow-matching samplers to the conditional It\^o map and deterministic flow map. Maps use $1,2,4,8$ generative steps, and Euler solver baselines use $1,4,16,64,128$ steps. Each step uses one backbone evaluation in these implementations. The 64- and 128-step measurements check numerical sensitivity; we do not presume either distribution is fully converged. All methods use 16-member ensembles on the same RTX 3090, with accelerator warmup and synchronized timing, including Brownian-feature construction. Ten-lead autoregressive evaluations use map budgets one and eight and solver budget 64, fixed before testing. Training costs are recorded separately.
 
 \subsection{Two-Stage Training and Model Selection}
 Both students reuse compatible pretrained teacher backbones with widths $[16,32,64,128]$. The It\^o student uses $K=4$ Brownian feature channels per scalar field by default; the deterministic student uses none. Added conditioning branches start at zero. We use batch size eight on a single NVIDIA RTX 3090 and keep the teacher frozen.
@@ -220,10 +221,10 @@ The primary forecast-quality measure is spatially averaged fair ensemble CRPS. F
 \end{equation}
 For the reported energy score, the norm is the Euclidean norm divided by the square root of the state dimension. We also report ensemble-mean RMSE, empirical interval coverage, and spread. These diagnostics have finite-ensemble effects: in particular, an empirical 5--95\% interval from a small ensemble does not have 90\% expected coverage even when sampling is calibrated. Appendix~\ref{app:metrics} defines the metrics and their interpretation. Normalized errors must specify their denominator. Enstrophy spectra and selected low-dimensional projections assess physical structure that marginal scores can miss. Multi-step physical rollouts test error accumulation and stability.
 
-Report differences over shared held-out histories, with confidence intervals from resampling trajectories or temporal blocks. Bootstrap over independent pixels would overstate precision. The planned confirmation uses three student training seeds; the completed single-seed pilot is labeled accordingly. Checkpoints and hyperparameters are selected using validation data only. The desired result is a quality--cost frontier on which few-step maps maintain or improve forecast quality, rather than a single favorable score.
+We report differences over shared held-out histories, with 95\% confidence intervals from 10,000 trajectory-bootstrap resamples. Origins are averaged within trajectories before resampling; pixels are not treated as independent replicates. These pointwise intervals are descriptive and not adjusted for multiple comparisons. The planned confirmation uses three student training seeds; the completed seed-zero study is labeled accordingly. Checkpoints and hyperparameters were selected using validation data only. We report the full quality--cost curves and complementary uncertainty diagnostics.
 
-\subsection{Required Ablations and Failure Checks}
-The main ablations vary Brownian resolution, map step count, diagonal warmup, and composition weight. An endpoint-noise-only map tests whether the learned drift uses path information. A same-path teacher comparison separates distillation error from forecast-model error. Zero diffusion recovers the deterministic map algebra. Exact additive-noise tests verify variance and shared-path composition before the fluid experiment.
+\subsection{Ablations and Failure Checks}
+The study varies Brownian resolution, map step count, and the use of teacher-rollout refinement. A separate same-path conditional-variance diagnostic quantifies omitted Brownian information for a fixed learned teacher. Exact additive-noise tests verify variance and shared-path composition, and zero diffusion recovers the deterministic map algebra. A full sensitivity study of loss weights and diagonal warmup, and a separately trained endpoint-noise-only fluid model, remain outside this experimental scope.
 
 \input{results}
 
@@ -247,6 +248,10 @@ The implemented map family is restricted to the existing affine diffusion schedu
 \paragraph{Training interval distribution.} At maximum curriculum length $L$, sample a gap uniformly from $[0.01L,L]$ and a start time uniformly from the valid range. An additional endpoint atom uses $(s,t)=(0,L)$. The split fraction $(u-s)/(t-s)$ is uniform on $[0.25,0.75]$. Thus the sampling is not uniform over the time triangle; off-diagonal gaps below 0.01 are excluded after the curriculum, while the diagonal has its own regression loss. Stage two uses $L=1$ and endpoint-atom probability 0.5.
 
 The experiment record must store the git revision, command, resolved configuration, random seeds, data paths and splits, software versions, device type, checkpoint selection rule, and raw evaluation outputs. A smoke run demonstrates execution only; it is not evidence for the forecasting claim.
+
+\subsection{Recorded Distillation Compute}\label{app:compute}
+\input{generated/seed0_training_cost}
+Training time starts inside the training loop after model and dataset initialization. The recorded elapsed time includes optimization, checkpoint validation, and teacher evaluations. The table sums the complete executed stages, including updates after the ultimately selected checkpoint where applicable. It is not total end-to-end job time. Original teacher pretraining cost is unavailable; preprocessing, evaluation, development pilots, and the $K=16$ ablation are also outside the selected-student training totals.
 
 \section{Development Ablation}\label{app:development}
 \input{generated/validation_table}
@@ -279,11 +284,28 @@ For an elementary example with independent uniform draws, the expected linear-qu
 
 \paragraph{Proper scores and spectra.} The fair CRPS estimator subtracts $[2M(M-1)]^{-1}\sum_{m\ne n}|x_{mi}-x_{ni}|$ from the mean absolute error at each coordinate and then averages coordinates. With independent ensemble draws, it estimates the distribution-level score without the finite-ensemble bias from retaining diagonal pairs. The multivariate energy score uses the analogous expression with Euclidean norm divided by $\sqrt D$. The spectrum diagnostic is $\|M^{-1}\sum_m Z(x_m)-Z(y)\|_2/\|Z(y)\|_2$, where $Z$ is the radial enstrophy spectrum. It compares to one realized future; it is neither an exact conditional-spectrum error nor a direct test of invariant-measure equality.
 
+\subsection{Why Close Scores Need Not Mean Equal Dispersion}
+An elementary Gaussian example clarifies the different sensitivities. Let the truth be $Y\sim\N(0,1)$ and the forecast $F_\sigma=\N(0,\sigma^2)$. Independent Gaussian differences give
+\begin{equation}
+ S(\sigma)=\E_Y\mathrm{CRPS}(F_\sigma,Y)
+ =\frac{\sqrt{2(1+\sigma^2)}-\sigma}{\sqrt\pi}.
+\end{equation}
+The calibrated forecast minimizes this proper score: $S'(1)=0$ and $S''(1)=1/(2\sqrt\pi)$. Its excess score is therefore second order in a small spread error. In contrast, coverage of the forecast's central population 90\% interval is $C(\sigma)=2\Phi(1.64485\sigma)-1$, which has nonzero derivative at one. At $\sigma=0.84$, expected CRPS increases by only 0.69\%, while population-interval coverage falls to 83.29\%. This is an illustration, not a fit to the fluid forecasts. It concerns exact distribution quantiles and must not be equated with the empirical intervals from 16 ensemble members.
+
 \section{Seed-Zero Held-Out Uncertainty Diagnostics}\label{app:seed0-calibration}
 \input{generated/test_seed0_calibration}
 All comparisons use the same 60 forecast contexts and ensemble size $M=16$. The extreme-rank fraction is the proportion of targets below every ensemble member or above every ensemble member, with randomized ties. Its expectation under conditional exchangeability and continuous outcomes is $2/(M+1)=11.76\%$. The elevated extreme-rank frequencies, smaller spread, and reduced coverage together indicate that the eight-step It\^o map does not fully retain the uncertainty of the more resolved SI reference. Coverage is interpreted comparatively at fixed ensemble size, not against a nominal 90\% target.
 
 Paired intervals resample the 20 trajectories after averaging their three origins, using 10,000 bootstrap draws. The eight-step map's RMS-spread difference from SI at 64 steps is $-0.04354$ with interval $[-0.04583,-0.04122]$. Against SI at 128 steps its coverage difference is $-7.65$ percentage points with interval $[-9.02,-6.38]$, and extreme-rank difference is $6.48$ points with interval $[5.33,7.72]$. By contrast, one map step versus 16 SI steps improves coverage by $6.01$ points, interval $[4.96,7.10]$, and reduces extreme ranks by $5.52$ points, interval $[-6.66,-4.43]$. These are descriptive paired intervals without correction for inspecting multiple metrics, and do not include student-training variation. More generative steps do not monotonically improve either map's forecast scores.
+
+\section{Preselected Qualitative Forecast}
+\begin{figure*}[p]
+\centering
+\includegraphics[width=\textwidth,height=.8\textheight,keepaspectratio]{../results/test_qualitative/forecast_fields.png}
+\caption{A case fixed before evaluation: test trajectory 180, origin 45, 16 ensemble members, and the first generated sample. The latest observed field is snapshot 44 and the target is snapshot 45. Each method uses its frozen checkpoint and displayed generative budget. Shared field and spread color scales use the original vorticity units. No sample or case was selected by forecast quality. This qualitative example complements, rather than replaces, the all-trajectory scores and uncertainty diagnostics.}
+\label{fig:qualitative}
+\end{figure*}
+Figure~\ref{fig:qualitative} displays ensemble means, ensemble standard deviations, and individual samples for the eight-step It\^o map, one-step flow map, and 64-step teachers. The archived image and provenance metadata preserve the selected case, checkpoint hashes, normalization, color limits, and sampling seed.
 
 \input{compression_diagnostic}
 

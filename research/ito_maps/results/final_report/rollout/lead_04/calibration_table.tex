@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Ensemble calibration and spread. Nominal interval coverage is 90\%. Test split; $E=16$, physical lead 4. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-calibration}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & Spread & Spread/skill & Coverage (\%) \\
+\midrule
+Föllmer Itô map & 1 & 0.546 [0.533, 0.560] & 0.628 [0.584, 0.670] & 61.190 [57.790, 64.391] \\
+Föllmer Itô map & 8 & 0.619 [0.604, 0.633] & 0.728 [0.684, 0.770] & 67.954 [64.733, 70.937] \\
+\addlinespace
+Flow map & 1 & 0.727 [0.710, 0.745] & 0.854 [0.798, 0.908] & 74.704 [71.483, 77.748] \\
+Flow map & 8 & 0.602 [0.584, 0.622] & 0.712 [0.664, 0.759] & 66.424 [62.994, 69.704] \\
+\addlinespace
+Föllmer SI & 64 & 0.691 [0.674, 0.708] & 0.806 [0.759, 0.853] & 72.757 [69.828, 75.522] \\
+\addlinespace
+Flow matching & 64 & 0.807 [0.788, 0.826] & 0.941 [0.880, 1.000] & 79.012 [76.011, 81.819] \\
+\bottomrule
+\end{tabular}
+\end{table*}

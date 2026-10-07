@@ -1,0 +1,16 @@
+[
+  {
+    "candidate": "F\u00f6llmer It\u00f4 map",
+    "candidate_steps": 1,
+    "reference": "F\u00f6llmer SI",
+    "reference_steps": 16,
+    "reason": "One-step-only comparison: this budget is absent from the frozen rollout protocol"
+  },
+  {
+    "candidate": "F\u00f6llmer It\u00f4 map",
+    "candidate_steps": 8,
+    "reference": "F\u00f6llmer SI",
+    "reference_steps": 128,
+    "reason": "One-step-only comparison: this budget is absent from the frozen rollout protocol"
+  }
+]

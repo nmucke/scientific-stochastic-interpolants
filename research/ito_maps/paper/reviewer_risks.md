@@ -1,6 +1,6 @@
 # Candid scientific review of the current study
 
-Review date: 2026-10-07. This assesses the documented method and frozen study, not an acceptance probability. Some held-out runs are still underway; their outcomes are not assumed. The paper must distinguish completed development observations from eventual confirmation results.
+Review date: 2026-10-07. This assesses the documented method and frozen study, not an acceptance probability. Seed-zero one-interval and ten-lead held-out runs are complete; student training replications remain underway. The paper distinguishes development, seed-zero confirmation, and pending replication evidence.
 
 ## Strongest defensible contribution
 
@@ -67,3 +67,8 @@ The locally stored primary HTML was checked for titles, author order, abstracts,
 Claim checks: Boffi's text includes progressive distillation; Pan includes PSD and Brownian representations; Swift's abstract states single-step consistency with autoregressive CRPS; RecFM states cross-scale consistency and scientific few-step forecasting; PixelFlowCast states pixel mean-flow nowcasting; StocBench explicitly includes consistency/adversarial distillation and stochastic Kolmogorov-flow distribution/spectrum evaluation. The manuscript makes only these narrow claims. It does not copy PixelFlowCast's overly broad abstract assertion that conditional flow matching inherently needs latent compression.
 
 Two concrete wording corrections were made during this audit: the Gaussian regression target was incorrectly called “bounded”; it has nonsingular time coefficients but unbounded Gaussian realizations. The experimental plan also called its reference budget “converged” before the sensitivity evidence was complete; this is now described as 64/128-step reference budgets with convergence checked empirically. Neither correction changes the algorithm.
+
+
+## Update after complete seed-zero confirmation
+
+The observed results strengthen the efficiency claim but sharpen the novelty/usefulness question: the one-step deterministic map is a particularly strong speed/score comparator, while the eight-step Itô map retains close proper scores with residual underdispersion and measurable final-lead degradation. The final-lead spectral discrepancy is also worse than SI64. A paper that claimed full distribution retention or stochastic superiority would misrepresent this evidence. The useful scientific observation is the combined speed/quality/calibration tradeoff and the separation of Brownian path fidelity from endpoint forecasting quality; its external generality remains limited to the completed study and eventual training replications.

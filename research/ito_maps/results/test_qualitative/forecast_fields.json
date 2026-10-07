@@ -1,0 +1,86 @@
+{
+  "split": "test",
+  "trajectory": 180,
+  "origin": 45,
+  "history_length": 5,
+  "ensemble_size": 16,
+  "base_seed": 20261007,
+  "effective_case_seed": 20265507,
+  "units": "physical",
+  "sample_index": 0,
+  "selection": "Fixed trajectory, origin, seed, and first sample; no quality-based selection",
+  "conditioning_indices": [
+    40,
+    41,
+    42,
+    43,
+    44
+  ],
+  "truth_index": 45,
+  "preprocesser": {
+    "_target_": "scisi.preprocessing.preprocessor.Preprocesser",
+    "base": {
+      "mean": [
+        0.0
+      ],
+      "std": [
+        3.09969
+      ]
+    },
+    "target": {
+      "mean": [
+        0.0
+      ],
+      "std": [
+        3.09969
+      ]
+    }
+  },
+  "sources": [
+    {
+      "label": "Ito map (8)",
+      "steps": 8,
+      "checkpoint": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/ito_rollout_seed0/model.pth",
+      "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "model_class": "scisi.models.follmer_ito_map_model.FollmerItoMapModel",
+      "parameters": 12960164
+    },
+    {
+      "label": "Flow map (1)",
+      "steps": 1,
+      "checkpoint": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/flow_rollout_seed0/model.pth",
+      "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "model_class": "scisi.models.flow_map_model.FlowMapModel",
+      "parameters": 12960100
+    },
+    {
+      "label": "SI (64)",
+      "steps": 64,
+      "checkpoint": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/stochastic_interpolant/model.pth",
+      "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "model_class": "scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant",
+      "parameters": 12893796
+    },
+    {
+      "label": "FM (64)",
+      "steps": 64,
+      "checkpoint": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/checkpoints/stochastic_navier_stokes/flow_matching/model.pth",
+      "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "model_class": "scisi.models.flow_matching_model.FlowMatchingModel",
+      "parameters": 12893796
+    }
+  ],
+  "device": "cuda",
+  "torch_version": "2.9.1+cu128",
+  "hardware": "NVIDIA GeForce RTX 3090",
+  "field_color_limits": [
+    -10.332103729248047,
+    10.332103729248047
+  ],
+  "std_color_limits": [
+    0,
+    3.1458239555358887
+  ],
+  "field_colormap": "RdBu_r",
+  "std_colormap": "viridis"
+}

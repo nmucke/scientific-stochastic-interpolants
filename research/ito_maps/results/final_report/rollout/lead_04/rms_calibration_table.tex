@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Auxiliary calibration diagnostics using unbiased ensemble variance. A dash denotes an older evaluation without the metric. Test split; $E=16$, physical lead 4. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-rms-calibration}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & RMS spread & RMS spread/skill & Extreme ranks (\%) \\
+\midrule
+Föllmer Itô map & 1 & 0.560 [0.546, 0.575] & 0.664 [0.618, 0.708] & 29.165 [26.045, 32.502] \\
+Föllmer Itô map & 8 & 0.635 [0.619, 0.650] & 0.770 [0.723, 0.815] & 22.673 [20.003, 25.591] \\
+\addlinespace
+Flow map & 1 & 0.746 [0.727, 0.765] & 0.903 [0.844, 0.959] & 16.649 [14.163, 19.310] \\
+Flow map & 8 & 0.620 [0.601, 0.641] & 0.755 [0.703, 0.804] & 24.080 [21.085, 27.295] \\
+\addlinespace
+Föllmer SI & 64 & 0.708 [0.690, 0.726] & 0.852 [0.801, 0.901] & 18.152 [15.677, 20.784] \\
+\addlinespace
+Flow matching & 64 & 0.827 [0.807, 0.848] & 0.994 [0.930, 1.056] & 13.120 [11.003, 15.380] \\
+\bottomrule
+\end{tabular}
+\end{table*}

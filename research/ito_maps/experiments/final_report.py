@@ -271,7 +271,15 @@ def plot_rollout(rows, labels, metadata, output):
         f"Test autoregression · E={metadata['ensemble_size']} · {len(metadata['trajectory_ids'])} trajectories · pointwise 95% CIs",
         fontsize=10,
     )
-    cost_axes[0].legend(frameon=False, fontsize=7)
+    cost_handles, cost_labels = cost_axes[0].get_legend_handles_labels()
+    cost_fig.legend(
+        cost_handles,
+        cost_labels,
+        loc="outside lower center",
+        ncol=2,
+        frameon=False,
+        fontsize=7,
+    )
     for figure, name in (
         (fig, "rollout_quality_calibration"),
         (cost_fig, "rollout_cumulative_cost"),

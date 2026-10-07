@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Forecast quality in dataset normalized coordinates. Test split; $E=16$, physical lead 8. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-quality}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & CRPS & Energy score & RMSE \\
+\midrule
+Föllmer Itô map & 1 & 0.553 [0.515, 0.595] & 0.693 [0.645, 0.745] & 0.954 [0.898, 1.015] \\
+Föllmer Itô map & 8 & 0.535 [0.499, 0.574] & 0.670 [0.625, 0.719] & 0.948 [0.893, 1.007] \\
+\addlinespace
+Flow map & 1 & 0.526 [0.493, 0.561] & 0.658 [0.617, 0.702] & 0.953 [0.898, 1.010] \\
+Flow map & 8 & 0.537 [0.502, 0.575] & 0.673 [0.628, 0.720] & 0.951 [0.896, 1.009] \\
+\addlinespace
+Föllmer SI & 64 & 0.531 [0.496, 0.568] & 0.666 [0.623, 0.712] & 0.951 [0.896, 1.010] \\
+\addlinespace
+Flow matching & 64 & 0.525 [0.494, 0.559] & 0.657 [0.617, 0.699] & 0.958 [0.902, 1.015] \\
+\bottomrule
+\end{tabular}
+\end{table*}
