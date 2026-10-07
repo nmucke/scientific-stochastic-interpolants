@@ -19,6 +19,10 @@
     {
       "path": "research/ito_maps/results/long_horizon/reference_enstrophy.json",
       "sha256": "40c212509b01497ac8258f35c377d1d7ace4c5f5b464052d7211e0330b14394d"
+    },
+    {
+      "path": "research/ito_maps/results/long_horizon/spatial_enstrophy_spectra_maps_preview.json",
+      "sha256": "970a3e421f1cdda673cd0b5d3baaee122fec2890f9566d99d8f488e3cb8a5da0"
     }
   ],
   "summary": [

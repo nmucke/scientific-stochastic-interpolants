@@ -198,12 +198,75 @@ def plot_runs(runs, destination, reference=None):
     plt.close(fig)
 
 
-def build_report(directories, output_dir, reference_path=None):
+def plot_spatial_spectra(spectra, destination, extensions=("png",), figsize=(8, 4)):
+    """Plot audited shell sums, separately for the first and last forecast step."""
+    from matplotlib.ticker import FixedLocator, FuncFormatter
+
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    k = np.asarray(spectra["k"])
+    if k.ndim != 1 or not np.array_equal(k, np.arange(len(k))):
+        raise ValueError("Expected consecutive integer frequency shells including DC")
+    entries = spectra["models"]
+    leads = sorted({entry["lead"] for entry in entries})
+    if len(leads) != 2 or leads[0] != 1:
+        raise ValueError("Expected first and last step spectra")
+    filenames = []
+    for lead, stem in zip(leads, ("first_step_enstrophy_spectrum", "last_step_enstrophy_spectrum")):
+        fig, axis = plt.subplots(figsize=figsize, layout="constrained")
+        for entry in entries:
+            if entry["lead"] != lead:
+                continue
+            member_spectra = np.asarray(entry["spectrum_members"], dtype=float)
+            if member_spectra.shape != (entry["ensemble_size"], len(k)) or not np.isfinite(member_spectra).all() or np.any(member_spectra < 0):
+                raise ValueError("Invalid member spectra")
+            if not np.allclose(member_spectra.sum(axis=1), entry["enstrophy_members"], rtol=1e-10, atol=1e-12):
+                raise ValueError("Spectral shell sum violates Parseval enstrophy identity")
+            mean = np.asarray(entry["spectrum_mean"])
+            if not np.allclose(mean, member_spectra.mean(axis=0), rtol=1e-10, atol=1e-14):
+                raise ValueError("Spectrum mean does not match member spectra")
+            family = entry["model_class"]
+            color = COLORS[family]
+            axis.plot(k[1:], mean[1:], color=color, label=f"{LABELS[family]} ({entry['num_steps']})", linewidth=1.3)
+            axis.fill_between(k[1:], np.asarray(entry["spectrum_q05"])[1:],
+                              np.asarray(entry["spectrum_q95"])[1:], color=color, alpha=.13)
+        truth = spectra.get("truth")
+        if truth and truth["lead"] == lead:
+            axis.plot(k[1:], np.asarray(truth["spectrum"])[1:], color="black", label="Matching truth", linewidth=1.2)
+        axis.set_xscale("log", nonpositive="mask")
+        axis.set_yscale("log", nonpositive="mask")
+        axis.set(xlim=(1, k[-1]), xlabel="Spatial frequency k (cycles per grid domain)",
+                 ylabel="Shell-summed enstrophy", title=f"{'First' if lead == 1 else 'Last'} forecast step (lead {lead:,})")
+        axis.xaxis.set_major_locator(FixedLocator([value for value in (1, 2, 4, 8, 16, 32, 64) if value <= k[-1]]))
+        axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
+        axis.xaxis.set_minor_formatter(FuncFormatter(lambda value, _: ""))
+        axis.axvline(spectra["axis_nyquist"], color="gray", linestyle=":", linewidth=.8, label="Axis Nyquist")
+        axis.grid(alpha=.2)
+        axis.legend(fontsize="small", frameon=False)
+        for extension in extensions:
+            filename = f"{stem}.{extension}"
+            fig.savefig(destination / filename, dpi=180)
+            filenames.append(filename)
+        plt.close(fig)
+    return filenames
+
+
+def build_report(directories, output_dir, reference_path=None, spectra_path=None):
     runs = load_runs(directories)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     reference = json.loads(Path(reference_path).read_text()) if reference_path else None
     plot_runs(runs, output, reference)
+    if spectra_path:
+        spectra = json.loads(Path(spectra_path).read_text())
+        expected = {(run["family"], lead, run["protocol"]["trajectories"][0],
+                     run["protocol"]["ensemble_size"], run["protocol"]["num_steps"])
+                    for run in runs for lead in (1, run["protocol"]["horizon"])}
+        actual = {(entry["model_class"], entry["lead"], entry["trajectory"],
+                   entry["ensemble_size"], entry["num_steps"]) for entry in spectra["models"]}
+        if actual != expected:
+            raise ValueError("Spatial spectra do not match the report runs")
+        plot_spatial_spectra(spectra, output)
     summary = [summarize_run(run) for run in runs]
     with (output / "summary.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(summary[0]), lineterminator="\n")
@@ -238,7 +301,15 @@ def build_report(directories, output_dir, reference_path=None):
         lines.append("| " + " | ".join(fmt(row[key]) for key in
                       ("model", "status", "recorded_last_lead", "last_all_finite_lead", "first_nonfinite_lead",
                        "last_finite_enstrophy", "last_finite_rms_spread", "cumulative_seconds")) + " |")
-    lines += ["", "![Autonomous enstrophy and spread](autonomous_enstrophy_spread.png)", "",
+    if spectra_path:
+        lines += ["", "The requested spatial spectra use log-log spatial-frequency axes and shell-summed enstrophy, "
+                  "not shell-averaged power. All square-grid modes enter the Parseval sum; DC is retained in the audit "
+                  "but omitted on the logarithmic axis. Shells above axis Nyquist contain corner modes only. "
+                  "The first-step truth is matched; no last-step truth is available.", "",
+                  "![First-step spatial enstrophy spectrum](first_step_enstrophy_spectrum.png)", "",
+                  "![Last-step spatial enstrophy spectrum](last_step_enstrophy_spectrum.png)", ""]
+    lines += ["", "The following scalar-over-lead plots are supplemental stability diagnostics, not spatial spectra.", "",
+              "![Autonomous scalar enstrophy and spread](autonomous_enstrophy_spread.png)", "",
               "![Truth-supported spread and skill](truth_supported_spread_skill.png)", "",
               "Numerical boundedness over this one rollout does not establish stability for all initial conditions, "
               "correct invariant statistics, or accuracy beyond available truth. Generated trajectories are never clipped, "
@@ -256,6 +327,9 @@ def build_report(directories, output_dir, reference_path=None):
     if reference_path:
         path = Path(reference_path)
         inputs.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    if spectra_path:
+        path = Path(spectra_path)
+        inputs.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
     (output / "report_manifest.json").write_text(json.dumps({"inputs": inputs, "summary": summary}, indent=2, allow_nan=False) + "\n")
     return summary
 
@@ -265,8 +339,9 @@ def main(argv=None):
     parser.add_argument("--inputs", type=Path, nargs="+", required=True, help="Per-model run directories")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference", type=Path, help="Optional archive-context enstrophy JSON")
+    parser.add_argument("--spectra", type=Path, help="Audited first/last-step spatial enstrophy spectra JSON")
     args = parser.parse_args(argv)
-    build_report(args.inputs, args.output, args.reference)
+    build_report(args.inputs, args.output, args.reference, args.spectra)
 
 
 if __name__ == "__main__":

@@ -85,3 +85,18 @@ def test_build_report_with_archive_context(tmp_path):
     assert "first 2 forecast leads" in text
     assert "not a reference continuation" in text
     assert "nonfinite" in text
+
+
+def test_spatial_spectra_reject_incorrect_parseval_normalization(tmp_path):
+    entries = [dict(model_class="FlowMapModel", num_steps=1, ensemble_size=2,
+                    lead=lead, spectrum_members=[[.1, .2, .3], [.2, .3, .4]],
+                    spectrum_mean=[.15, .25, .35], spectrum_q05=[.1, .2, .3],
+                    spectrum_q95=[.2, .3, .4], enstrophy_members=[.6, .9])
+               for lead in (1, 4096)]
+    spectra = dict(k=[0, 1, 2], axis_nyquist=2, models=entries, truth=None)
+    files = report.plot_spatial_spectra(spectra, tmp_path)
+    assert files == ["first_step_enstrophy_spectrum.png", "last_step_enstrophy_spectrum.png"]
+    assert all((tmp_path / filename).exists() for filename in files)
+    entries[0]["enstrophy_members"][0] = 1.2
+    with pytest.raises(ValueError, match="Parseval"):
+        report.plot_spatial_spectra(spectra, tmp_path)

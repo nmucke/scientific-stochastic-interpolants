@@ -12,7 +12,9 @@ The plots use denormalized archive vorticity. Enstrophy is half the spatial mean
 |---|---|---:|---:|---:|---:|---:|---:|
 | Flow map (1) | running | 2576 | 2576 | — | 3.9817 | 2.8219 | 127.36 |
 
-![Autonomous enstrophy and spread](autonomous_enstrophy_spread.png)
+The following scalar-over-lead plots are supplemental stability diagnostics, not spatial spectra.
+
+![Autonomous scalar enstrophy and spread](autonomous_enstrophy_spread.png)
 
 ![Truth-supported spread and skill](truth_supported_spread_skill.png)
 

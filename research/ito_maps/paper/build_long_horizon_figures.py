@@ -31,12 +31,20 @@ for run in runs:
 reference_path = DATA / "reference_enstrophy.json"
 reference = json.loads(reference_path.read_text())
 sources.append(reference_path)
+spectra_path = DATA / "spatial_enstrophy_spectra_maps_preview.json"
+spectra = json.loads(spectra_path.read_text())
+assert {(entry["model_class"], entry["lead"], entry["trajectory"], entry["ensemble_size"], entry["num_steps"])
+        for entry in spectra["models"]} == {
+    (run["family"], lead, run["protocol"]["trajectories"][0], run["protocol"]["ensemble_size"], run["protocol"]["num_steps"])
+    for run in runs for lead in (1, 4096)}
+sources.append(spectra_path)
 FIGURES, GENERATED = PAPER / "figures", PAPER / "generated"
 FIGURES.mkdir(exist_ok=True)
 GENERATED.mkdir(exist_ok=True)
 plt.rcParams.update({"font.size": 8, "axes.labelsize": 8, "legend.fontsize": 7,
                      "xtick.labelsize": 7, "ytick.labelsize": 7,
                      "pdf.fonttype": 42, "ps.fonttype": 42})
+report.plot_spatial_spectra(spectra, FIGURES, extensions=("pdf", "png"), figsize=(6.7, 2.8))
 
 fig, axes = plt.subplots(1, 2, figsize=(6.7, 2.65), layout="constrained")
 for run in runs:

@@ -11,7 +11,16 @@ The plots use denormalized archive vorticity. Enstrophy is half the spatial mean
 | Itô map (8) | complete | 4096 | 4096 | — | 1.4472 | 1.6348 | 1791.3 |
 | Flow map (1) | complete | 4096 | 4096 | — | 4.0026 | 2.8317 | 203.36 |
 
-![Autonomous enstrophy and spread](autonomous_enstrophy_spread.png)
+The requested spatial spectra use log-log spatial-frequency axes and shell-summed enstrophy, not shell-averaged power. All square-grid modes enter the Parseval sum; DC is retained in the audit but omitted on the logarithmic axis. Shells above axis Nyquist contain corner modes only. The first-step truth is matched; no last-step truth is available.
+
+![First-step spatial enstrophy spectrum](first_step_enstrophy_spectrum.png)
+
+![Last-step spatial enstrophy spectrum](last_step_enstrophy_spectrum.png)
+
+
+The following scalar-over-lead plots are supplemental stability diagnostics, not spatial spectra.
+
+![Autonomous scalar enstrophy and spread](autonomous_enstrophy_spread.png)
 
 ![Truth-supported spread and skill](truth_supported_spread_skill.png)
 

@@ -18,15 +18,33 @@ where $S_{\mathrm{RMS}}$ uses unbiased sample variance as in Appendix~\ref{app:m
 \input{generated/long_horizon_maps_table}
 
 \paragraph{Observed behavior.}
-Both maps remain finite through all 4,096 intervals, but their amplitude and uncertainty differ substantially (Table~\ref{tab:long-maps}; Figure~\ref{fig:long-maps}). The It\^o trajectory loses member enstrophy and approaches a lower-amplitude range. Over the final 512 intervals its mean enstrophy is 1.4047, compared with 3.8366 for the flow map. The contextual mean across 2,000 stored held-out fields is 4.6654; this archive statistic is not an independently verified long-time target distribution. More directly, mean enstrophy of the available paired truth over leads 1--95 is 4.3526, whereas the corresponding It\^o and flow-map values are 1.9777 and 3.8592. Thus the It\^o amplitude loss is already visible where reference data exist.
+Both maps remain finite through all 4,096 intervals, but their amplitude and uncertainty differ substantially (Table~\ref{tab:long-maps}). The It\^o trajectory loses member enstrophy and approaches a lower-amplitude range. Over the final 512 intervals its mean enstrophy is 1.4047, compared with 3.8366 for the flow map. The contextual mean across 2,000 stored held-out fields is 4.6654; this archive statistic is not an independently verified long-time target distribution. More directly, mean enstrophy of the available paired truth over leads 1--95 is 4.3526, whereas the corresponding It\^o and flow-map values are 1.9777 and 3.8592. Thus the It\^o amplitude loss is already visible where reference data exist.
 
 The ratio of pooled corrected spread to pooled RMSE over those 95 leads is 0.6709 for the It\^o map and 0.9387 for the flow map (Figure~\ref{fig:long-maps-skill}). Their pooled ensemble-mean RMSE values are relatively close, 3.0148 and 3.0789, despite the spread difference. Low error of an ensemble mean therefore does not establish retained forecast variability. These correlated leads from one initial condition do not provide an independent-case calibration estimate. The observation supports numerical boundedness of these two runs, with marked It\^o dissipation; it does not establish accurate invariant statistics or stability for other initial conditions. The pending teacher trajectories are needed to separate inherited teacher behavior from additional map error. No mechanistic attribution or new timing-based speedup claim is made from this extension.
 
+\paragraph{Spatial enstrophy spectra.}
+To resolve the scales of the first and last generated fields, let
+$\widehat\omega_e(q)=P^{-1}\sum_p\omega_{ep}\exp(-2\pi i\,q\cdot p/n)$
+for the $n\times n$ grid, and group integer wavevectors by nearest radial shell. The shell-summed enstrophy is
+\begin{equation}
+\mathcal Z_e(k)=\frac12\sum_{q:\,\lfloor\lVert q\rVert+1/2\rfloor=k}
+|\widehat\omega_e(q)|^2.
+\end{equation}
+Parseval's identity gives $\sum_{k\ge0}\mathcal Z_e(k)=Z_e$.
+This is a sum over modes in each shell, not a radially averaged power spectrum; it does not redefine the earlier spectral-error metric. The spectra describe the observed $128^2$ grid without additional filtering. Frequencies are cycles per grid domain; no physical domain length is assumed. Figures~\ref{fig:long-spectrum-first} and~\ref{fig:long-spectrum-last} show separate first- and last-step spectra on log--log axes. The zero-frequency component is retained in the audit but omitted from these logarithmic axes. All square-grid modes are included; shells above the axis Nyquist frequency $k=64$ contain only corner modes. No spectral values are floored. Reference truth is available for the first forecast step only. At lead 4,096 the It\^o map has lower mean shell enstrophy than the flow map in every shell $1\le k\le64$. This resolves their amplitude difference by spatial scale, but does not identify a correct terminal spectrum without a matching reference.
+
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{figures/long_horizon_maps.pdf}
-\caption{Completed 4,096-interval map rollouts from the same held-out history, with eight members. Left: mean member enstrophy and empirical member 5--95\% bands on log--log axes, beginning at lead one without modifying the recorded values. The gray band pools 2,000 held-out archive fields and provides context, not a continuation or stationary confidence interval. Right: unbiased RMS spread on linear axes. The dotted line at lead 95 marks the end of available truth. Both maps remain finite, while the It\^o map exhibits substantial amplitude loss. Solver-reference trajectories remain pending.}
-\label{fig:long-maps}
+\includegraphics[width=.82\textwidth]{figures/first_step_enstrophy_spectrum.pdf}
+\caption{Spatial enstrophy spectrum at the first forecast step (lead 1). Curves are means of eight member shell-summed spectra, with member 5--95\% bands, in archive vorticity units. The black curve is the matching observed field. Both axes are logarithmic; $k$ denotes radial spatial frequency in cycles per grid domain. The dotted line marks the axis Nyquist frequency 64; higher shells contain square-grid corner modes. This is a partial two-map comparison; solver references remain pending.}
+\label{fig:long-spectrum-first}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=.82\textwidth]{figures/last_step_enstrophy_spectrum.pdf}
+\caption{Spatial enstrophy spectrum at the last forecast step (lead 4,096), using the same normalization and log--log spatial-frequency axes as Figure~\ref{fig:long-spectrum-first}. Member-mean spectra and 5--95\% member bands describe generated fields only: no reference continuation is available at this lead. Differences between maps therefore show different retained spatial variability, not verified long-time spectral accuracy. Solver references remain pending.}
+\label{fig:long-spectrum-last}
 \end{figure*}
 
 \begin{figure*}[t]
