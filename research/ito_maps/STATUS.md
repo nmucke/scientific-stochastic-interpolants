@@ -54,10 +54,15 @@ proximity does **not** establish calibration retention: Itô8 has10.66% less
 RMS spread thanSI64 and5.19percentage points less empirical coverage. Both
 map families remain underdispersed relative to their high-step teachers.
 
-Both map rollouts and the SI64 rollout have completed. At physical lead10,
+All seed0 rollouts and the fixed qualitative example have completed. At physical lead10,
 Itô8 CRPS0.54316 versusSI64 0.53293; full10-lead ensemble generation costs
-3.386 versus24.597seconds. FlowMap1 lead10 CRPS0.53396. The FM64 rollout and
-additional full training seeds are still pending in this snapshot. Do not
+3.386 versus24.597seconds. FlowMap1 lead10 CRPS0.53396 versusFM64 0.53308.
+The full seed0 report is in `results/final_report/`; the manuscript builds to13
+total pages with main text ending on8. Itô8's lead10 spectral discrepancy is
+15.8% higher thanSI64, so broad physical-quality retention is also unproven.
+Additional full training seeds remain pending. Seed1 Itô PSD is complete and
+archived; its500-update supervised stage started at10:36 local time. The queue
+then trains FlowMap seed1 and both seed2 models before evaluating all repetitions. Do not
 present seed0 as a three-seed result. Root verified every map's initial rollout
 forecast against its matching standalone origin45 forecast, with identical
 proper scores/calibration metrics for all40 cases per map.

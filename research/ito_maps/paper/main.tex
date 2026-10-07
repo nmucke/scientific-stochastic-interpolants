@@ -239,6 +239,7 @@ This work seeks to reduce the cost of probabilistic scientific simulation and fo
 \bibliography{references}
 \bibliographystyle{icml2026}
 
+\clearpage
 \appendix
 \section{Implementation and Reproducibility Record}
 The implementation introduces \texttt{BaseMapModel}, \texttt{FollmerItoMapModel}, \texttt{FlowMapModel}, and \texttt{MapTrainer}. Existing datasets, loaders, history conditioning, normalization, and forecast metrics are reused. The model adds a learned interval embedding to the backbone's starting-time embedding and injects Brownian feature channels through a bias-free $1\times1$ convolution after the original input block. Both added branches initialize to zero, allowing compatible pretrained drift weights to initialize the complete backbone. On the diagonal, the interval and Brownian branches vanish exactly. The Hydra train and test entry points use the existing configuration mechanism.
