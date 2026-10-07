@@ -28,5 +28,11 @@ All four model families are trained separately on each dataset. The stochastic-i
 
 The frozen evaluation compares map budgets $1,8$ with solver budgets $16,64$ and a persistence baseline on identical cases. FVD uses the same pretrained 400-dimensional I3D detector for every model and embeds observed context followed by the generated future. We report 128 real versus 512 generated clips, together with four equal-count 128-versus-128 FVD values, one for each completion index. This differs from the much larger completion count in \citet{chen2024forecasting}; no latent-reconstruction correction is applied. Future-only diagnostics include fair CRPS and energy score, ensemble-mean RMSE, spread/coverage, PSNR, SSIM and LPIPS. Source-video grouping accounts for multiple KTH segments from one original video. Image metrics and display clip their copies to the pixel range, while autoregressive feedback and proper scores retain unmodified predictions.
 
+All eight dataset/model combinations have completed training, and checkpoint hashes, metric weights and test cases were frozen before held-out evaluation. Training wall times include periods of shared GPU use with the separately requested stability study. Video sampling-time comparisons use GPU-exclusive evaluation.
+
+\IfFileExists{generated/video_results.tex}{%
+\input{generated/video_results}%
+}{%
 \paragraph{Current status.}
-All eight dataset/model combinations have completed training, and checkpoint hashes, metric weights and test cases were frozen before held-out evaluation. Evaluation is in progress. Tables~\ref{tab:video-setup}--\ref{tab:video-training} and Figure~\ref{fig:video-dataset-preview} document the completed setup; no video forecast-quality or acceleration claim is made at this stage. Training wall times include periods of shared GPU use with the separately requested stability study. Video sampling-time comparisons will use GPU-exclusive evaluation.
+Evaluation is in progress. Tables~\ref{tab:video-setup}--\ref{tab:video-training} and Figure~\ref{fig:video-dataset-preview} document the completed setup; no video forecast-quality or acceleration claim is made at this stage. The complete matched comparison will be included after both datasets pass artifact verification.
+}

@@ -42,3 +42,9 @@ Five focused CPU tests passed: enstrophy/spread identity, truthful skill cutoff,
 ## Active queue scheduling (2026-10-07)
 
 Root session32086 owns the production queue. FlowMap4096 completed. The queue shell PID2126968 is temporarily SIGSTOPped while its Itô child PID2130505 continues to4096. After that child finishes, no NS GPU work runs until root sends `kill -CONT 2126968`; this is planned after exclusive-GPU video evaluation. Both4096-step solver baselines remain required. This scheduler pause changes no generated trajectory or RNG state.
+
+## Requested figures (latest user clarification)
+
+The paper now shows spatial enstrophy spectra against spatial frequency on log–log axes, in separate first-lead and final-lead figures. See `spatial_enstrophy_spectrum_definition.md` and `spatial_enstrophy_spectra.py`. Keep scalar enstrophy-versus-lead curves as supplemental diagnostics, not substitutes for the requested spectra. Both map4096 runs and their independent audit are complete; both64-step teacher runs remain pending behind video evaluation. The paper currently labels the two-map comparison as partial.
+
+Root watcher session5222 now automatically resumes queue PID2126968 after video evaluation process2150609 exits and both video audits pass. It checks exact process identity before signalling. Inspect `research/video_forecasting/results/ns_resume_watch.log`; if the watcher fails, resume manually only after confirming video GPU work is finished.

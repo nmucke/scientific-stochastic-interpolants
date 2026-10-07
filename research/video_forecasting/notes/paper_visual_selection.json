@@ -1,0 +1,22 @@
+{
+  "recorded_utc": "2026-10-07T13:31:49.452940+00:00",
+  "scope": "Both video datasets; choice fixed before completed all-model comparisons",
+  "case_index_in_frozen_selection": 0,
+  "ensemble_member": 0,
+  "budgets": {
+    "FollmerStochasticInterpolant": 64,
+    "FlowMatchingModel": 64,
+    "FollmerItoMapModel": 8,
+    "FlowMapModel": 1,
+    "persistence": 1
+  },
+  "future_lead_indices_zero_based": "sorted(set([0, horizon//4, horizon//2, 3*horizon//4, horizon-1]))",
+  "display_clipping_only": true,
+  "selection_reason": "Use the first preselected case/member and prespecified solver64/Itomap8/Flowmap1 budgets; all evaluated budgets remain in numeric tables.",
+  "completed_evaluations_available_when_recorded": [
+    {
+      "path": "research/video_forecasting/results/test/kth/follmer_stochastic_interpolant/evaluation.json",
+      "sha256": "414acb97c6d4e281f1750952acb946f209c23a205d7c15fa1d13a40c0c38b799"
+    }
+  ]
+}

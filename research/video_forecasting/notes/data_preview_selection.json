@@ -1,0 +1,27 @@
+{
+  "purpose": "Exact provenance of preexisting dataset previews; these are observed training/data examples, not model forecasts",
+  "kth": {
+    "png": "research/video_forecasting/notes/kth_data_preview.png",
+    "actions_in_order": ["boxing", "handclapping", "handwaving", "jogging", "running", "walking"],
+    "clip_id_pattern": "person21_{action}_d1_s00",
+    "prepared_segment_frame_index_zero_based": 10,
+    "source_frame_index_zero_based": 10,
+    "source_segment_starts": 0,
+    "prepared_resolution": [64, 64],
+    "display_resolution_per_frame": [128, 128],
+    "display_resize": "nearest-neighbor",
+    "header": "16-pixel white PIL label strip"
+  },
+  "clevrer": {
+    "png": "research/video_forecasting/notes/clevrer_data_preview.png",
+    "clip_id": "video_00579",
+    "source_member": "video_00000-01000/video_00579.mp4",
+    "selection": "First physical MP4 member in training ZIP; source CRC checked during preparation",
+    "prepared_frame_indices_zero_based": [0, 1, 2, 5, 10, 15],
+    "source_frame_indices_zero_based": [0, 5, 10, 25, 50, 75],
+    "prepared_resolution": [64, 64],
+    "display_resolution_per_frame": [128, 128],
+    "display_resize": "nearest-neighbor",
+    "header": "16-pixel white PIL label strip"
+  }
+}
