@@ -1,0 +1,94 @@
+{
+  "split": "validation",
+  "ensemble_size": 8,
+  "forecast_horizon": 1,
+  "coordinate_system": "dataset normalized coordinates",
+  "lead": 1,
+  "trajectory_ids": [
+    160,
+    161,
+    162,
+    163
+  ],
+  "forecast_cases": [
+    [
+      160,
+      5
+    ],
+    [
+      160,
+      45
+    ],
+    [
+      160,
+      85
+    ],
+    [
+      161,
+      5
+    ],
+    [
+      161,
+      45
+    ],
+    [
+      161,
+      85
+    ],
+    [
+      162,
+      5
+    ],
+    [
+      162,
+      45
+    ],
+    [
+      162,
+      85
+    ],
+    [
+      163,
+      5
+    ],
+    [
+      163,
+      45
+    ],
+    [
+      163,
+      85
+    ]
+  ],
+  "bootstrap": {
+    "unit": "trajectory",
+    "origin_aggregation": "mean within trajectory",
+    "confidence": 0.95,
+    "replicates": 2000,
+    "seed": 712,
+    "paired_resampling_across_models": true
+  },
+  "latency_unit": "seconds per ensemble forecast at this physical lead",
+  "nfe_unit": "backbone evaluations per ensemble forecast",
+  "interval_limitation": "Trajectory bootstrap intervals do not capture training-seed variation; small trajectory counts give coarse intervals.",
+  "sources": [
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_baselines/flow_matching/evaluation.json",
+      "source_sha256": "4aed2a09d380f7ab6862914d148acdaee8266aa0f8ad4ddd2ea47f3a3f5417df",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching/model.pth",
+      "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "parameters": 12893796,
+      "seed": 20261007,
+      "model_class": "scisi.models.flow_matching_model.FlowMatchingModel"
+    },
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_baselines/stochastic_interpolant/evaluation.json",
+      "source_sha256": "0a7fc6391f9992a1e949c371f85af2d82b3baad0f6a86342cee106d2effc38c4",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant/model.pth",
+      "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "parameters": 12893796,
+      "seed": 20261007,
+      "model_class": "scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant"
+    }
+  ]
+}

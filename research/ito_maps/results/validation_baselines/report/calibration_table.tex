@@ -1,0 +1,22 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Ensemble calibration and spread. Nominal interval coverage is 90\%. Validation split; $E=8$, physical lead 1. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-calibration}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & Spread & Spread/skill & Coverage (\%) \\
+\midrule
+Flow matching & 1 & 0.040 [0.039, 0.043] & 0.089 [0.081, 0.101] & 8.307 [7.269, 9.851] \\
+Flow matching & 4 & 0.116 [0.111, 0.123] & 0.252 [0.226, 0.285] & 23.061 [20.482, 26.682] \\
+Flow matching & 16 & 0.285 [0.273, 0.305] & 0.599 [0.543, 0.661] & 50.478 [46.239, 55.831] \\
+Flow matching & 64 & 0.386 [0.370, 0.412] & 0.791 [0.723, 0.860] & 62.958 [58.872, 67.554] \\
+\addlinespace
+Föllmer SI & 1 & 0.958 [0.957, 0.958] & 0.905 [0.865, 0.931] & 72.085 [69.962, 73.423] \\
+Föllmer SI & 4 & 0.181 [0.177, 0.187] & 0.301 [0.278, 0.324] & 27.423 [25.201, 29.589] \\
+Föllmer SI & 16 & 0.293 [0.284, 0.301] & 0.575 [0.513, 0.637] & 49.227 [44.100, 54.355] \\
+Föllmer SI & 64 & 0.380 [0.363, 0.390] & 0.788 [0.701, 0.915] & 63.232 [57.985, 70.191] \\
+\bottomrule
+\end{tabular}
+\end{table*}

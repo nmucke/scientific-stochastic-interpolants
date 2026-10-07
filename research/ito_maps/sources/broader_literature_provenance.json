@@ -1,0 +1,22 @@
+[
+  {
+    "url": "https://arxiv.org/html/2608.22309v1",
+    "retrieved": "2026-10-07",
+    "sha256": "e27c132be398108d625fa58cd8e98748fe8c4da8005073575393a49d0207743a"
+  },
+  {
+    "url": "https://arxiv.org/html/2605.26535v1",
+    "retrieved": "2026-10-07",
+    "sha256": "e43c989167934be2f3ca602981e7cc29313781d046c987fa62365d6c991c07ac"
+  },
+  {
+    "url": "https://arxiv.org/html/2509.25631v1",
+    "retrieved": "2026-10-07",
+    "sha256": "66805a51a5e88cf39b356f6204bf431401e300c3332bf3f19958471fe2d35ed6"
+  },
+  {
+    "url": "https://arxiv.org/html/2605.10046v1",
+    "retrieved": "2026-10-07",
+    "sha256": "51727bcb52baf2df196893ad326b927f242e1a8ba5c3f3b71401fb364740b62a"
+  }
+]

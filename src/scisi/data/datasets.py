@@ -124,12 +124,13 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
         base = sample[:, :, :, -2]
         target = sample[:, :, :, -1]
 
+        sample = {
+            "base": base,
+            "target": target,
+            "field_history": field_history,
+        }
         if self.preprocesser is not None:
-            sample = self.preprocesser.transform(
-                base=base,
-                target=target,
-                field_history=field_history,
-            )
+            sample = self.preprocesser.transform(**sample)
 
         return {
             "field_history": sample["field_history"],

@@ -1,0 +1,48 @@
+defaults:
+- map_stochastic_navier_stokes_common
+- _self_
+model:
+  _target_: scisi.models.flow_map_model.FlowMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  map_model:
+    _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
+    backbone:
+      _target_: scisi.architectures.u_net.UNet
+      in_channels: 1
+      out_channels: 1
+      hidden_channels:
+      - 16
+      - 32
+      - 64
+      - 128
+      cond_dim: 1
+      cond_embedding_dim: 256
+      len_field_history: ${len_field_history}
+      field_cond_channels: null
+      pars_cond_dim: null
+      pars_cond_embedding_dim: null
+      multiplier: 2
+      num_blocks: 2
+      dropout_rate: 0.0
+      padding: torch.nn.CircularPad2d
+      attention_in_layers:
+      - false
+      - false
+      - false
+      - true
+      attention:
+        target: scisi.architectures.attention.SpatialAttention
+        pos_embedding_type: rotary
+        heads: 4
+        patch_size: 2
+        dropout_rate: 0.0
+        embedding_dim: 512
+    path_channels: 0
+teacher:
+  checkpoint_dir: checkpoints/stochastic_navier_stokes/flow_matching
+  initialize_student: true
+trainer:
+  checkpoint_dir: checkpoints/stochastic_navier_stokes/flow_map
+evaluation:
+  output_dir: research/ito_maps/results/flow_map

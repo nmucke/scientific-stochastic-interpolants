@@ -370,3 +370,41 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) for detai
 
 - Create an issue on GitHub
 - Contact: nmucke@gmail.com
+
+## Conditional flow and Itô maps
+
+`BaseMapModel` provides the map equivalent of `BaseModel`, with the same field
+history, conditioning, ensemble sampling, and physical trajectory conventions.
+`FlowMapModel` starts each forecast from Gaussian noise. `FollmerItoMapModel`
+starts from the last observed or generated state and conditions on a shared
+Brownian path. Both support choosing the number of map evaluations at inference.
+
+The new models reuse the existing Navier–Stokes dataset, preprocessing and UNet.
+`MapConditionedNetwork` adds interval and Brownian inputs and can initialize from
+an existing drift checkpoint. `MapTrainer` implements diagonal regression and
+progressive self-distillation; `objective=teacher_rollout` selects an explicitly
+simulation-based alternative. Experiment results and methodology notes live in
+[research/ito_maps](research/ito_maps).
+
+```bash
+# Train the Föllmer Itô map; tracking is disabled by default.
+python -m scisi.bin.main_map_model_train \
+  --config-name follmer_ito_map_stochastic_navier_stokes
+
+# Train the deterministic flow map.
+python -m scisi.bin.main_map_model_train \
+  --config-name flow_map_stochastic_navier_stokes
+
+# Evaluate the saved map on held-out trajectories at several sampling budgets.
+python -m scisi.bin.main_map_model_test \
+  --config-name follmer_ito_map_stochastic_navier_stokes \
+  'evaluation.num_steps=[1,2,4,8]' evaluation.forecast_horizon=5
+```
+
+The supplied configurations initialize from the existing forecast checkpoints.
+For training from scratch, set `teacher.checkpoint_dir=null`; for CPU execution,
+set `trainer.device=cpu` when training and `evaluation.device=cpu` when testing.
+Choose a fresh `trainer.checkpoint_dir` for each training run. Evaluation reports
+fair CRPS and energy scores, ensemble-mean RMSE, coverage, spectra, measured
+network evaluations and elapsed sampling time. Its confidence intervals resample
+whole trajectories, and physical rollouts condition on generated forecasts.

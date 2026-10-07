@@ -1,0 +1,13 @@
+# Generated TeX intermediates; keep source, build recipe, tables and figures.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+# Downloaded original article bodies are reproducible from source notes.
+sources/*.html
+sources/*.txt
+paper/template/*.zip
+# Local checkpoint/data payloads are outside this folder.

@@ -1,0 +1,3 @@
+model,parameters,source_path,checkpoint,checkpoint_sha256
+Flow matching,12893796,/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_baselines/flow_matching/evaluation.json,checkpoints/stochastic_navier_stokes/flow_matching/model.pth,9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3
+Föllmer SI,12893796,/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_baselines/stochastic_interpolant/evaluation.json,checkpoints/stochastic_navier_stokes/stochastic_interpolant/model.pth,cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810
