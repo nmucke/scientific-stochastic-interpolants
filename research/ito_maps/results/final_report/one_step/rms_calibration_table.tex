@@ -1,0 +1,34 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Auxiliary calibration diagnostics using unbiased ensemble variance. A dash denotes an older evaluation without the metric. Test split; $E=16$, physical lead 1. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-rms-calibration}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & RMS spread & RMS spread/skill & Extreme ranks (\%) \\
+\midrule
+Föllmer Itô map & 1 & 0.332 [0.329, 0.334] & 0.765 [0.718, 0.814] & 24.839 [22.211, 27.484] \\
+Föllmer Itô map & 2 & 0.310 [0.307, 0.312] & 0.722 [0.676, 0.771] & 27.578 [24.771, 30.414] \\
+Föllmer Itô map & 4 & 0.284 [0.282, 0.286] & 0.661 [0.618, 0.705] & 31.481 [28.526, 34.457] \\
+Föllmer Itô map & 8 & 0.365 [0.361, 0.369] & 0.841 [0.786, 0.897] & 20.886 [18.254, 23.617] \\
+\addlinespace
+Flow map & 1 & 0.374 [0.370, 0.377] & 0.859 [0.813, 0.907] & 19.607 [17.502, 21.808] \\
+Flow map & 2 & 0.319 [0.316, 0.322] & 0.739 [0.701, 0.779] & 25.875 [23.595, 28.234] \\
+Flow map & 4 & 0.277 [0.275, 0.280] & 0.646 [0.613, 0.681] & 32.018 [29.630, 34.466] \\
+Flow map & 8 & 0.319 [0.316, 0.321] & 0.741 [0.703, 0.781] & 25.930 [23.640, 28.312] \\
+\addlinespace
+Föllmer SI & 1 & 1.000 [1.000, 1.001] & 1.046 [1.023, 1.073] & 10.848 [10.152, 11.481] \\
+Föllmer SI & 4 & 0.191 [0.190, 0.192] & 0.361 [0.340, 0.385] & 57.028 [54.571, 59.310] \\
+Föllmer SI & 16 & 0.304 [0.301, 0.307] & 0.678 [0.634, 0.724] & 30.355 [27.331, 33.412] \\
+Föllmer SI & 64 & 0.409 [0.404, 0.413] & 0.936 [0.877, 0.994] & 16.347 [13.989, 18.833] \\
+Föllmer SI & 128 & 0.435 [0.431, 0.438] & 0.994 [0.932, 1.053] & 14.403 [12.277, 16.637] \\
+\addlinespace
+Flow matching & 1 & 0.043 [0.042, 0.043] & 0.101 [0.096, 0.106] & 87.171 [86.474, 87.878] \\
+Flow matching & 4 & 0.126 [0.125, 0.127] & 0.296 [0.281, 0.312] & 64.601 [62.823, 66.438] \\
+Flow matching & 16 & 0.305 [0.302, 0.307] & 0.707 [0.670, 0.746] & 27.975 [25.636, 30.394] \\
+Flow matching & 64 & 0.413 [0.409, 0.416] & 0.944 [0.892, 0.999] & 15.973 [13.950, 18.049] \\
+Flow matching & 128 & 0.432 [0.429, 0.436] & 0.986 [0.931, 1.044] & 14.410 [12.487, 16.384] \\
+\bottomrule
+\end{tabular}
+\end{table*}

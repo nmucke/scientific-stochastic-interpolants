@@ -1,0 +1,93 @@
+{
+  "metric": "crps",
+  "split": "test",
+  "lead": 1,
+  "ensemble_size": 16,
+  "trajectory_ids": [
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    188,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    198,
+    199
+  ],
+  "num_trajectories": 20,
+  "origins": [
+    5,
+    45,
+    85
+  ],
+  "candidate_steps": 1,
+  "reference_steps": 16,
+  "candidate_mean": 0.2728677734732628,
+  "candidate_ci95": [
+    0.25476368410512806,
+    0.2916121867236992
+  ],
+  "reference_mean": 0.28802298878630006,
+  "reference_ci95": [
+    0.2685006785951555,
+    0.3080000508700808
+  ],
+  "difference_candidate_minus_reference": -0.01515521531303724,
+  "difference_ci95": [
+    -0.020888283513486386,
+    -0.009492793263246636
+  ],
+  "per_trajectory_differences": [
+    -0.013387163480122921,
+    -0.009461462497711182,
+    -0.025444393356641115,
+    -0.027749170859654726,
+    -0.04374272127946216,
+    -0.019487574696540833,
+    -0.008424609899520874,
+    -0.009059508641560854,
+    0.006395886341730744,
+    0.0075455556313196726,
+    -0.028558552265167236,
+    -0.022106523315111815,
+    0.0009226202964782715,
+    -0.01590313514073688,
+    0.0026628871758778705,
+    -0.012219170729319273,
+    -0.012046297391255734,
+    -0.01808372139930725,
+    -0.029605547587076814,
+    -0.02535170316696167
+  ],
+  "candidate_nfe": 1.0,
+  "reference_nfe": 16.0,
+  "candidate_seconds": 0.04609133570144573,
+  "reference_seconds": 0.6129276917199603,
+  "bootstrap_replicates": 10000,
+  "bootstrap_seed": 712,
+  "bootstrap_unit": "paired trajectory; origins averaged before resampling",
+  "candidate_source": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed0/evaluation.json",
+  "reference_source": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/stochastic_interpolant/evaluation.json",
+  "candidate_checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+  "reference_checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+  "limitations": "Paired intervals exclude training-seed variability; small trajectory counts yield coarse intervals.",
+  "relative_change_percent": -5.261807530329376,
+  "relative_change_percent_ci95": [
+    -7.146972804948745,
+    -3.39861954157843
+  ],
+  "latency_speedup_reference_over_candidate": 13.298110857323989,
+  "candidate_label": "Candidate",
+  "reference_label": "Reference"
+}

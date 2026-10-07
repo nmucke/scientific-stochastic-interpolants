@@ -1,0 +1,34 @@
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\caption{Measured sampling cost and enstrophy-spectrum error. Test split; $E=16$, physical lead 1. Brackets show 95\% trajectory-bootstrap intervals.}
+\label{tab:map-cost}
+\begin{tabular}{lrrr}
+\toprule
+Model & NFE & Ensemble latency (ms) & Relative spectrum error \\
+\midrule
+Föllmer Itô map & 1 & 46.091 [45.903, 46.283] & 0.270 [0.243, 0.298] \\
+Föllmer Itô map & 2 & 88.379 [88.113, 88.648] & 0.264 [0.236, 0.291] \\
+Föllmer Itô map & 4 & 172.363 [172.173, 172.548] & 0.270 [0.242, 0.299] \\
+Föllmer Itô map & 8 & 340.536 [340.365, 340.731] & 0.252 [0.224, 0.278] \\
+\addlinespace
+Flow map & 1 & 43.480 [43.315, 43.641] & 0.263 [0.224, 0.303] \\
+Flow map & 2 & 82.564 [82.405, 82.723] & 0.259 [0.225, 0.292] \\
+Flow map & 4 & 160.740 [160.558, 160.927] & 0.259 [0.229, 0.288] \\
+Flow map & 8 & 316.065 [315.845, 316.265] & 0.257 [0.225, 0.287] \\
+\addlinespace
+Föllmer SI & 1 & 41.812 [41.669, 41.942] & 0.980 [0.979, 0.981] \\
+Föllmer SI & 4 & 157.561 [157.420, 157.704] & 0.526 [0.493, 0.558] \\
+Föllmer SI & 16 & 612.928 [612.571, 613.298] & 0.321 [0.284, 0.357] \\
+Föllmer SI & 64 & 2434.474 [2432.614, 2436.451] & 0.247 [0.216, 0.277] \\
+Föllmer SI & 128 & 4899.576 [4894.158, 4905.257] & 0.252 [0.218, 0.289] \\
+\addlinespace
+Flow matching & 1 & 40.897 [40.775, 41.025] & 0.286 [0.252, 0.319] \\
+Flow matching & 4 & 156.245 [156.162, 156.349] & 0.281 [0.248, 0.313] \\
+Flow matching & 16 & 613.069 [612.696, 613.450] & 0.260 [0.228, 0.291] \\
+Flow matching & 64 & 2449.063 [2446.510, 2451.711] & 0.278 [0.232, 0.327] \\
+Flow matching & 128 & 4947.881 [4940.035, 4955.451] & 0.287 [0.238, 0.340] \\
+\bottomrule
+\end{tabular}
+\end{table*}

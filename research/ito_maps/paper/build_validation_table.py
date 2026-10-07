@@ -10,9 +10,11 @@ specifications = [
     ('Flow-matching teacher', 'validation_baselines/flow_matching', (16, 64)),
     (r'It\^o map, PSD', 'validation_psd/ito_psd_seed0', (1, 8)),
     ('Flow map, PSD', 'validation_psd/flow_psd_seed0', (1, 8)),
-    (r'It\^o map, refined', 'validation_rollout/ito_rollout_seed0', (1, 8)),
+    (r'It\^o map, refined $K=4$', 'validation_rollout/ito_rollout_seed0', (1, 8)),
     ('Flow map, refined', 'validation_rollout/flow_rollout_seed0', (1, 8)),
+    (r'It\^o map, refined $K=16$', 'validation_rollout/ito_k16_rollout_seed0', (1, 8)),
 ]
+(paper / 'generated').mkdir(exist_ok=True)
 lines = [
     r'\begin{table*}[t]',
     r'\caption{Preliminary validation only: four trajectories (160--163), three origins (5, 45, 85), eight ensemble members, one physical forecast interval, and one student training seed. CRPS is in normalized coordinates. Brackets show trajectory-bootstrap 95\% intervals; these do not describe training-seed uncertainty. Latency is seconds per ensemble forecast on one RTX 3090. Refined maps use 2,000 PSD updates followed by 500 simulation-based teacher-rollout updates. These development cases were used for methodological selection and are not held-out test evidence.}',

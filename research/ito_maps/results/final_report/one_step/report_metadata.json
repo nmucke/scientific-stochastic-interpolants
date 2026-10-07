@@ -1,0 +1,352 @@
+{
+  "split": "test",
+  "ensemble_size": 16,
+  "forecast_horizon": 1,
+  "coordinate_system": "dataset normalized coordinates",
+  "lead": 1,
+  "trajectory_ids": [
+    180,
+    181,
+    182,
+    183,
+    184,
+    185,
+    186,
+    187,
+    188,
+    189,
+    190,
+    191,
+    192,
+    193,
+    194,
+    195,
+    196,
+    197,
+    198,
+    199
+  ],
+  "forecast_cases": [
+    [
+      180,
+      5
+    ],
+    [
+      180,
+      45
+    ],
+    [
+      180,
+      85
+    ],
+    [
+      181,
+      5
+    ],
+    [
+      181,
+      45
+    ],
+    [
+      181,
+      85
+    ],
+    [
+      182,
+      5
+    ],
+    [
+      182,
+      45
+    ],
+    [
+      182,
+      85
+    ],
+    [
+      183,
+      5
+    ],
+    [
+      183,
+      45
+    ],
+    [
+      183,
+      85
+    ],
+    [
+      184,
+      5
+    ],
+    [
+      184,
+      45
+    ],
+    [
+      184,
+      85
+    ],
+    [
+      185,
+      5
+    ],
+    [
+      185,
+      45
+    ],
+    [
+      185,
+      85
+    ],
+    [
+      186,
+      5
+    ],
+    [
+      186,
+      45
+    ],
+    [
+      186,
+      85
+    ],
+    [
+      187,
+      5
+    ],
+    [
+      187,
+      45
+    ],
+    [
+      187,
+      85
+    ],
+    [
+      188,
+      5
+    ],
+    [
+      188,
+      45
+    ],
+    [
+      188,
+      85
+    ],
+    [
+      189,
+      5
+    ],
+    [
+      189,
+      45
+    ],
+    [
+      189,
+      85
+    ],
+    [
+      190,
+      5
+    ],
+    [
+      190,
+      45
+    ],
+    [
+      190,
+      85
+    ],
+    [
+      191,
+      5
+    ],
+    [
+      191,
+      45
+    ],
+    [
+      191,
+      85
+    ],
+    [
+      192,
+      5
+    ],
+    [
+      192,
+      45
+    ],
+    [
+      192,
+      85
+    ],
+    [
+      193,
+      5
+    ],
+    [
+      193,
+      45
+    ],
+    [
+      193,
+      85
+    ],
+    [
+      194,
+      5
+    ],
+    [
+      194,
+      45
+    ],
+    [
+      194,
+      85
+    ],
+    [
+      195,
+      5
+    ],
+    [
+      195,
+      45
+    ],
+    [
+      195,
+      85
+    ],
+    [
+      196,
+      5
+    ],
+    [
+      196,
+      45
+    ],
+    [
+      196,
+      85
+    ],
+    [
+      197,
+      5
+    ],
+    [
+      197,
+      45
+    ],
+    [
+      197,
+      85
+    ],
+    [
+      198,
+      5
+    ],
+    [
+      198,
+      45
+    ],
+    [
+      198,
+      85
+    ],
+    [
+      199,
+      5
+    ],
+    [
+      199,
+      45
+    ],
+    [
+      199,
+      85
+    ]
+  ],
+  "bootstrap": {
+    "unit": "trajectory",
+    "origin_aggregation": "mean within trajectory",
+    "confidence": 0.95,
+    "replicates": 10000,
+    "seed": 712,
+    "paired_resampling_across_models": true
+  },
+  "latency_unit": "seconds per ensemble forecast at this physical lead",
+  "nfe_unit": "backbone evaluations per ensemble forecast",
+  "interval_limitation": "Trajectory bootstrap intervals do not capture training-seed variation; small trajectory counts give coarse intervals.",
+  "sources": [
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/ito_rollout_seed0/evaluation.json",
+      "source_sha256": "44878f389abbfbf324cdd6725ab0ea22a048976e09aceb8ddfdb1dbc6b293d11",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/ito_rollout_seed0/model.pth",
+      "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb",
+      "parameters": 12960164,
+      "seed": 20261007,
+      "model_class": "scisi.models.follmer_ito_map_model.FollmerItoMapModel",
+      "device": "cuda",
+      "hardware": {
+        "machine": "x86_64",
+        "processor": "",
+        "platform": "Linux-6.10.5-200.fc40.x86_64-x86_64-with-glibc2.39",
+        "gpu": "NVIDIA GeForce RTX 3090"
+      },
+      "torch_version": "2.9.1+cu128"
+    },
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_rollout_seed0/evaluation.json",
+      "source_sha256": "40033985ada54eca36cddfabcf00ad486737f1a26633d8e5335196d8e576f66e",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/flow_rollout_seed0/model.pth",
+      "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af",
+      "parameters": 12960100,
+      "seed": 20261007,
+      "model_class": "scisi.models.flow_map_model.FlowMapModel",
+      "device": "cuda",
+      "hardware": {
+        "machine": "x86_64",
+        "processor": "",
+        "platform": "Linux-6.10.5-200.fc40.x86_64-x86_64-with-glibc2.39",
+        "gpu": "NVIDIA GeForce RTX 3090"
+      },
+      "torch_version": "2.9.1+cu128"
+    },
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/stochastic_interpolant/evaluation.json",
+      "source_sha256": "0642e2c697c97ae8547a0ff07d40f3a1934f27dc7d043c47b99976b0b8983545",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant/model.pth",
+      "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+      "parameters": 12893796,
+      "seed": 20261007,
+      "model_class": "scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant",
+      "device": "cuda",
+      "hardware": {
+        "machine": "x86_64",
+        "processor": "",
+        "platform": "Linux-6.10.5-200.fc40.x86_64-x86_64-with-glibc2.39",
+        "gpu": "NVIDIA GeForce RTX 3090"
+      },
+      "torch_version": "2.9.1+cu128"
+    },
+    {
+      "source_path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/test_one_step/flow_matching/evaluation.json",
+      "source_sha256": "76ee320ad988164e153a4200b5d96f9228be0c3703ccd1f73c804488841c7918",
+      "checkpoint": "checkpoints/stochastic_navier_stokes/flow_matching/model.pth",
+      "checkpoint_sha256": "9d4e8f330d05790a783c60e46a3fba5b59e5d6c53094813c49d0ab74beeaa2c3",
+      "parameters": 12893796,
+      "seed": 20261007,
+      "model_class": "scisi.models.flow_matching_model.FlowMatchingModel",
+      "device": "cuda",
+      "hardware": {
+        "machine": "x86_64",
+        "processor": "",
+        "platform": "Linux-6.10.5-200.fc40.x86_64-x86_64-with-glibc2.39",
+        "gpu": "NVIDIA GeForce RTX 3090"
+      },
+      "torch_version": "2.9.1+cu128"
+    }
+  ]
+}

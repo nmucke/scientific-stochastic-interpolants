@@ -408,3 +408,28 @@ Choose a fresh `trainer.checkpoint_dir` for each training run. Evaluation report
 fair CRPS and energy scores, ensemble-mean RMSE, coverage, spectra, measured
 network evaluations and elapsed sampling time. Its confidence intervals resample
 whole trajectories, and physical rollouts condition on generated forecasts.
+
+The recorded research runs use two stages: `research/ito_maps/experiments/train_psd_pilots.sh`
+followed by `research/ito_maps/experiments/train_rollout_stage.sh`. Run these with
+`bash` from the repository root on a free GPU; existing output checkpoints are
+protected against accidental replacement. The selected seed-0 checkpoints are
+`checkpoints/stochastic_navier_stokes/ito_rollout_seed0` and
+`checkpoints/stochastic_navier_stokes/flow_rollout_seed0`.
+
+```bash
+# Evaluate the trained Itô checkpoint supplied by the research run.
+python -m scisi.bin.main_map_model_test \
+  --config-name follmer_ito_map_stochastic_navier_stokes \
+  evaluation.checkpoint_dir=checkpoints/stochastic_navier_stokes/ito_rollout_seed0 \
+  evaluation.output_dir=research/ito_maps/results/manual_evaluation \
+  'evaluation.num_steps=[1,8]'
+
+# Rebuild the manuscript, including generated tables and figures.
+make -C research/ito_maps/paper
+```
+
+See the [handover status](research/ito_maps/STATUS.md) for completed experiments,
+the frozen protocol, and the current manuscript status. The
+[API compatibility notes](research/ito_maps/notes/map_api_compatibility.md) specify
+normalization, conditioning, and rollout contracts. Training currently requires
+an identically-one spatial mask.

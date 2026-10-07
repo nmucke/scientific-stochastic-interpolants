@@ -1,15 +1,20 @@
-% Final held-out numbers belong here only after the frozen evaluation completes.
-\subsection{Preliminary Validation and Results Status}
-Both map families completed the same two-stage training procedure. On the shared development subset, teacher-rollout refinement improved the one-step It\^o map CRPS from 0.3661 to 0.3047 and the one-step deterministic flow map from 0.3088 to 0.2885. The deterministic flow map therefore has the stronger observed one-step validation score. At eight steps, the refined map scores are closer: 0.2942 for the It\^o map and 0.2932 for the flow map. Table~\ref{tab:validation-development} reports these preliminary measurements with the teacher references and uncertainty intervals.
+\subsection{Held-Out One-Interval Forecasts: Seed Zero}
+\input{generated/test_seed0_table}
+The frozen seed-zero It\^o map and SI reference have completed one-interval evaluation on all 20 held-out trajectories, with three origins per trajectory and 16 ensemble members. One map evaluation achieved CRPS 0.27287, compared with 0.28802 for 16 SI steps, while reducing mean ensemble latency from 0.613 to 0.046 seconds ($13.3\times$). The paired trajectory-mean CRPS difference was $-0.0152$ with a 95\% bootstrap interval $[-0.0209,-0.0095]$, a 5.26\% lower point estimate. This supports an improvement over that finite-budget SI reference for this trained model and test set.
 
-Both maps reduced measured sampling time. However, their quality depends on the reference budget: the one-step It\^o map improved on the 16-step SI teacher's CRPS (0.3177) while remaining worse than its 64-step score (0.2830). The eight-step It\^o score was about 3.9\% worse than SI64 with about $6.9\times$ lower measured latency on this subset. These comparisons support studying a quality--cost tradeoff; they do not establish superior stochastic-map forecasting or equality with a converged teacher.
+Against the more resolved SI reference, eight map evaluations gave CRPS 0.27052 versus 0.26780 at 64 SI steps: a 1.02\% higher point estimate, with ensemble latency 0.341 versus 2.434 seconds ($7.15\times$ lower). The paired difference was $0.0027$ with interval $[-0.0013,0.0067]$. This interval does not establish equivalence: no equivalence margin was declared, and it does not include variation between trained student seeds. Increasing the SI budget to 128 steps changed CRPS to 0.26718, a further 0.23\% reduction; numerical sensitivity in other diagnostics must also be considered.
 
-These results use only four validation trajectories, eight ensemble members, and one training seed. They were used to guide development and must not be interpreted as held-out test performance. Final configuration selection is ongoing; held-out testing has not started. The planned final evaluation covers all 20 test trajectories with one-interval forecasts and ten-lead autoregressive forecasts, using frozen checkpoints and configurations. A controlled $K=16$ refinement is being compared with $K=4$ using the same 500-update budget; feature count will be selected by one-step validation CRPS, with one checkpoint retained for every sampling budget. Two additional complete student training seeds are planned after this selection. These future results are not yet included.
+Similar proper scores do not imply preserved uncertainty. Relative to SI at 64 steps, the eight-step It\^o map reduced RMS ensemble spread by 10.66\%, empirical interval coverage by 5.19 percentage points, and increased the fraction of extreme ranks by 4.54 percentage points. Paired 95\% trajectory-bootstrap intervals for these last two differences were $[-6.03,-4.39]$ and $[3.75,5.32]$ percentage points, respectively. These diagnostics indicate residual underdispersion relative to the more resolved reference (Appendix~\ref{app:seed0-calibration}); the spread deficit grows to 16.05\% against SI at 128 steps. Conversely, the one-step map improves coverage and extreme-rank frequency relative to the coarse 16-step SI sampler, alongside its lower proper scores. The supported tradeoff is therefore close proper forecast scores at substantially lower cost, with reduced uncertainty relative to the more resolved sampler, rather than general distribution or calibration retention.
 
-% Final layout after test evaluation:
-% 1. Main table: all four model families; sampling NFE, CRPS, energy score,
-%    RMSE, ensemble latency, trajectory bootstrap intervals.
-% 2. CRPS-vs-NFE and CRPS-vs-latency frontier; paired model differences.
-% 3. Ten physical leads: CRPS/rank/spread and spectral-error curves;
-%    no teacher-forced truth inserted after initialization.
-% 4. Keep this development comparison in appendix after final test narrative.
+The completed deterministic map has one-step CRPS 0.26656 and eight-step CRPS 0.26905, with mean ensemble latencies 0.043 and 0.316 seconds, respectively (Table~\ref{tab:seed0-test}). Its observed one-step score is lower than the It\^o map's. The complete flow-matching reference curve, additional student training seeds, and ten-lead autoregressive comparisons remain pending at this revision. We therefore defer a final model-family ranking and any claim of general quality retention or long-horizon stability.
+
+\subsection{Development and Feature Ablations}
+The two-stage procedure improved one-step validation CRPS from 0.3661 to 0.3047 for the It\^o map and from 0.3088 to 0.2885 for the deterministic flow map. These four-trajectory, eight-member development evaluations are reported separately in Appendix~\ref{app:development}. They guided the method and are not independent confirmation.
+
+Increasing the It\^o representation from $K=4$ to $K=16$ reduced the teacher-supervised validation objective but did not improve one-step validation CRPS (0.3086 versus 0.3047). The recorded selection rule retained $K=4$ before testing, with one checkpoint used for all inference budgets. This exploratory ablation controls checkpoint ancestry and optimization budget, but not identical stochastic minibatch or Brownian streams: constructing different path-projection shapes consumes randomness differently. It does not establish that more Brownian features intrinsically worsen forecasts.
+
+% Full final result integration still requires:
+% - complete FM reference and paired deterministic-vs-stochastic comparisons;
+% - seeds 1/2, with per-seed and across-seed summaries;
+% - ten physical leads, without truth inserted after initialization;
+% - quality/cost frontier and calibrated uncertainty diagnostics.

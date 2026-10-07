@@ -34,5 +34,11 @@
     "sha256": "3b992c42661262936c2ec4d8042058af61dd534b70d836700f6fa12d78e2c824",
     "checkpoint": "checkpoints/stochastic_navier_stokes/flow_rollout_seed0/model.pth",
     "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af"
+  },
+  {
+    "source": "results/validation_rollout/ito_k16_rollout_seed0/evaluation.json",
+    "sha256": "b364278d077163050a04bb3fa4e36e7b5c500b0475d306128db2d2baec8fe7d4",
+    "checkpoint": "checkpoints/stochastic_navier_stokes/ito_k16_rollout_seed0/model.pth",
+    "checkpoint_sha256": "3e6633d5356d3a1874be63bc41a8424132ea6279d8d67aade3548f885e921e26"
   }
 ]

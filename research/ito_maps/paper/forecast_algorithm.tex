@@ -1,0 +1,21 @@
+\begin{algorithm}[t]
+\caption{Map Steps Within an Autoregressive Forecast}
+\label{alg:forecast}
+\begin{algorithmic}[1]
+\REQUIRE Observed history $h_0$, ensemble size $M$, physical leads $L$, generative steps $N$, trained map $G_\theta$.
+\STATE Set each member's history $h_0^{(m)}=h_0$.
+\FOR{physical lead $\ell=1,\ldots,L$}
+  \FOR{ensemble member $m=1,\ldots,M$}
+    \STATE Fix $h=h_{\ell-1}^{(m)}$ throughout generation.
+    \STATE Set $x=c(h)$ and sample one fresh Brownian path.
+    \FOR{generative step $j=0,\ldots,N-1$}
+      \STATE $s=j/N$, $t=(j+1)/N$.
+      \STATE Read features $\Psi_{s,t}$ and increment $\Delta M_{s,t}$ from that same path.
+      \STATE $x\gets x+(t-s)G_\theta(s,t,x,h;\Psi_{s,t})+\Delta M_{s,t}$.
+    \ENDFOR
+    \STATE Store forecast $y_\ell^{(m)}=x$ and append it to $h$ to obtain $h_\ell^{(m)}$.
+  \ENDFOR
+\ENDFOR
+\STATE \textbf{return} ensembles $\{y_\ell^{(m)}\}_{m=1}^M$ for each physical lead.
+\end{algorithmic}
+\end{algorithm}

@@ -1,0 +1,20 @@
+[
+  {
+    "source": "results/test_one_step/stochastic_interpolant/evaluation.json",
+    "sha256": "0642e2c697c97ae8547a0ff07d40f3a1934f27dc7d043c47b99976b0b8983545",
+    "checkpoint": "checkpoints/stochastic_navier_stokes/stochastic_interpolant/model.pth",
+    "checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810"
+  },
+  {
+    "source": "results/test_one_step/ito_rollout_seed0/evaluation.json",
+    "sha256": "44878f389abbfbf324cdd6725ab0ea22a048976e09aceb8ddfdb1dbc6b293d11",
+    "checkpoint": "checkpoints/stochastic_navier_stokes/ito_rollout_seed0/model.pth",
+    "checkpoint_sha256": "331682757f20ebcd37db6e86d1201f99bcec7c2b6878ecbdce9e192b46ddaccb"
+  },
+  {
+    "source": "results/test_one_step/flow_rollout_seed0/evaluation.json",
+    "sha256": "40033985ada54eca36cddfabcf00ad486737f1a26633d8e5335196d8e576f66e",
+    "checkpoint": "checkpoints/stochastic_navier_stokes/flow_rollout_seed0/model.pth",
+    "checkpoint_sha256": "9a916ffdf89ecd51126d45fad502102f8843a517e2211990fa9f161fe30e11af"
+  }
+]

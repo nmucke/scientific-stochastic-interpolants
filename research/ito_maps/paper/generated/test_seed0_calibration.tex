@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{Seed-zero held-out uncertainty diagnostics, averaged over the same 60 contexts as Table~\ref{tab:seed0-test}. RMS spread uses unbiased sample variance; coverage and extreme ranks are percentages. At this finite ensemble size, nominal 90\% coverage is not a calibration target.}
+\label{tab:seed0-calibration}
+\centering
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{lrrrr}
+\toprule
+Model & NFE & Spread & Coverage & Extremes \\
+\midrule
+Forecasting SI & 16 & 0.3038 & 59.55 & 30.36 \\
+Forecasting SI & 64 & 0.4086 & 74.89 & 16.35 \\
+Forecasting SI & 128 & 0.4348 & 77.35 & 14.40 \\
+It\^o map & 1 & 0.3315 & 65.56 & 24.84 \\
+It\^o map & 8 & 0.3650 & 69.70 & 20.89 \\
+Flow map & 1 & 0.3735 & 71.07 & 19.61 \\
+Flow map & 8 & 0.3186 & 64.16 & 25.93 \\
+\bottomrule
+\end{tabular}
+\end{table}
