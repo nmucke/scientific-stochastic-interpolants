@@ -31,4 +31,16 @@ Research and a first manuscript draft precede implementation. Keep exact-vs-disc
 - paper: current ICML instructions/template and manuscript.
 
 ## Status
-Initial literature and repository inspection in progress. No implementation or measured results yet.
+Main literature review and first manuscript draft were completed before implementation. The manuscript now builds with the official ICML 2026 template; next-cycle requirements remain to be rechecked. Conditional Itô/flow map classes, Brownian bridge features, trainer, entry points, configs, and tests are implemented. Initial student GPU training and validation-only development comparisons are in progress. No held-out-test superiority claim has been established.
+
+## Handover reading order
+1. `notes/methodology.md`: conditional derivation, path construction, and scope limits.
+2. `notes/flow_maps_and_code_design.md`: deterministic map connection and integration design.
+3. `notes/code_equation_audit.md`: current code-to-math mapping, compressed PSD caveat, scoring/timing boundaries.
+4. `notes/experiment_protocol.md`: trajectory splits, baseline and validation/test discipline.
+5. `notes/navier_stokes_provenance.md`: what is known and still unverified about physical data generation.
+6. `notes/broader_literature.md`: nearest prior work and defensible novelty boundary.
+7. `paper/guidelines.md`, then `paper/main.tex`: venue requirements and current manuscript.
+8. `experiments/train_psd_pilots.sh`, run-specific configs/checkpoints, and saved results: inspect actual executed commands and completed updates before reporting anything.
+
+Analytical compression diagnostic: `experiments/brownian_compression.py` with recorded outputs in `experiments/results/brownian_compression/`. It checks finite-feature conditional projection for a linear SDE; its analytic and Monte Carlo values are not Navier–Stokes forecast results. Development baseline measurements live under `results/validation_baselines/`; smoke outputs under `results/smoke/` prove execution only. The root agent owns the live experiment sequence and final checkpoint selection.

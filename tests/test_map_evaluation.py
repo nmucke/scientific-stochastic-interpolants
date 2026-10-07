@@ -203,3 +203,58 @@ def test_entrypoint_preserves_source_trajectory_offset(monkeypatch, tmp_path):
     assert result["coordinate_system"] == "dataset original coordinates"
     assert result["tested_config"]["test_data"]["tajectories_ids"] == "(180, 200)"
     assert result["model_class"].endswith("RecordingMap")
+
+
+def test_rms_spread_matches_gaussian_location_scale_moments():
+    ensemble_size = 17
+    draws = torch.randn(
+        ensemble_size, 1, 2, 2, generator=torch.Generator().manual_seed(17)
+    )
+    # Fix the sample moments of a Gaussian draw to expose the exact formula.
+    standardized = (draws - draws.mean(0)) / draws.std(0, unbiased=True)
+    scale = torch.tensor([1.0, 2.0, 3.0, 4.0]).reshape(1, 2, 2)
+    ensemble = standardized * scale
+    metrics = forecast_metrics(ensemble, torch.ones(1, 2, 2))
+    expected = scale.square().mean().sqrt().item()
+    assert metrics["rms_spread"] == pytest.approx(expected, rel=1e-6)
+    assert metrics["rms_spread_skill"] == pytest.approx(
+        ((ensemble_size + 1) / ensemble_size) ** 0.5 * expected, rel=1e-6
+    )
+
+
+def test_rank_extreme_fraction_uses_both_histogram_edges():
+    ensemble = torch.tensor([-1.0, 1.0])[:, None, None, None].expand(2, 1, 2, 2)
+    target = torch.tensor([-2.0, 0.0, 2.0, 0.0]).reshape(1, 2, 2)
+    metrics = forecast_metrics(ensemble, target)
+    assert metrics["rank_counts"] == [1, 2, 1]
+    assert metrics["rank_extreme_fraction"] == 0.5
+
+
+def test_optional_metric_aggregation_preserves_legacy_bootstrap_intervals():
+    model = RecordingMap()
+    result = evaluate_model(
+        model,
+        TinyDataset(),
+        None,
+        num_steps=[1, 2],
+        ensemble_size=2,
+        origins=[2],
+        forecast_horizon=1,
+        device="cpu",
+    )
+    legacy_rows = [
+        {
+            k: v
+            for k, v in row.items()
+            if k not in ("rms_spread", "rms_spread_skill", "rank_extreme_fraction")
+        }
+        for row in result["rows"]
+    ]
+    legacy = aggregate_rows(legacy_rows)
+    for old, new in zip(legacy, result["summary"]):
+        for key, value in old.items():
+            assert value == new[key]
+        assert "rms_spread_ci95" in new
+    assert result["device"] == "cpu"
+    assert result["hardware"]["gpu"] is None
+    assert result["torch_version"] == str(torch.__version__)

@@ -1,0 +1,61 @@
+{
+  "metric": "crps",
+  "split": "validation",
+  "lead": 1,
+  "ensemble_size": 8,
+  "trajectory_ids": [
+    160,
+    161,
+    162,
+    163
+  ],
+  "num_trajectories": 4,
+  "origins": [
+    5,
+    45,
+    85
+  ],
+  "candidate_steps": 8,
+  "reference_steps": 16,
+  "candidate_mean": 0.3056495996812979,
+  "candidate_ci95": [
+    0.25799456611275673,
+    0.354375292857488
+  ],
+  "reference_mean": 0.3177320770919323,
+  "reference_ci95": [
+    0.2671119471391042,
+    0.3659884991745154
+  ],
+  "difference_candidate_minus_reference": -0.012082477410634361,
+  "difference_ci95": [
+    -0.01601061969995493,
+    -0.00804038842519128
+  ],
+  "per_trajectory_differences": [
+    -0.011029988527297974,
+    -0.01767083009084064,
+    -0.013362859686215756,
+    -0.006266231338183076
+  ],
+  "candidate_nfe": 8.0,
+  "reference_nfe": 16.0,
+  "candidate_seconds": 0.21175182538960752,
+  "reference_seconds": 0.3754371758938457,
+  "bootstrap_replicates": 10000,
+  "bootstrap_seed": 712,
+  "bootstrap_unit": "paired trajectory; origins averaged before resampling",
+  "candidate_source": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_psd/ito_psd_seed0/evaluation.json",
+  "reference_source": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/research/ito_maps/results/validation_baselines/stochastic_interpolant/evaluation.json",
+  "candidate_checkpoint_sha256": "a3ca8d0e94bea377912203e0bdca00bb99471e13000ae2db79a0e7ff7c999cd6",
+  "reference_checkpoint_sha256": "cdb28038e89a6a49757260169fe4043f39e7959d61d4ab6ac363089c1c84e810",
+  "limitations": "Paired intervals exclude training-seed variability; small trajectory counts yield coarse intervals.",
+  "relative_change_percent": -3.8027250887666786,
+  "relative_change_percent_ci95": [
+    -4.847563016289547,
+    -2.74222489531325
+  ],
+  "latency_speedup_reference_over_candidate": 1.7730056173214535,
+  "candidate_label": "Ito PSD",
+  "reference_label": "SI"
+}

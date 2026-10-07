@@ -51,3 +51,10 @@ Network hooks count batched backbone forward calls; this corresponds to NFE per 
 - Report teacher pretraining cost/provenance as unavailable when original logs cannot be recovered.
 - Keep validation pilot artifacts separate from final held-out test results. Freeze selected training and sampling choices before interpreting test results.
 - Keep data-generation provenance uncertainty explicit; the current simulator cannot certify the supplied archive's physical time interval.
+
+
+## Metric caveat follow-up
+
+The paper now states the exact existing spread definition: sqrt((M+1)/M) times the spatial mean of population ensemble standard deviations. The code docstring's claim that calibration implies ratio one is not mathematically exact. Population-variance bias, the nonlinear square root, spatially varying uncertainty, and the random denominator all matter. A conventional squared RMS spread based on unbiased sample variances obeys an expected second-moment equality under conditionally iid truth/ensemble; even its finite-sample ratio need not have expectation one. No baseline is called underdispersed solely from the compatibility ratio or empirical coverage.
+
+An empirical 5–95% interval lies inside the ensemble min/max, whose expected coverage is (M−1)/(M+1) for exchangeable continuous forecasts. Therefore empirical coverage is at most 77.78% for M=8 or 88.24% for M=16 even for a calibrated distribution. The exact expected coverage for uniform iid truth/ensemble with linear quantile interpolation is 0.9(M−1)/(M+1): 70.00%, 79.41%, 84.55% at M=8,16,32. The appendix gives the short order-statistic derivation. This caveat does not invalidate matched-M comparisons, but rules out comparison to 90% as an exact calibration criterion. Rank histograms and fair CRPS provide complementary evidence.

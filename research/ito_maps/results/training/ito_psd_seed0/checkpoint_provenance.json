@@ -1,0 +1,4 @@
+{
+  "checkpoint": "checkpoints/stochastic_navier_stokes/ito_psd_seed0/model.pth",
+  "sha256": "a3ca8d0e94bea377912203e0bdca00bb99471e13000ae2db79a0e7ff7c999cd6"
+}

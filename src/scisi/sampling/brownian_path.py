@@ -60,6 +60,29 @@ class WeightedBrownianPath:
         """Sample a driver with the batch, state shape, device and dtype of x."""
         return cls(x, gamma_multiplier=gamma_multiplier, generator=generator)
 
+    def fork(
+        self, generator: Optional[torch.Generator] = None
+    ) -> "WeightedBrownianPath":
+        """Copy the observed path values, then independently refine between them.
+
+        Cached tensors are shared and treated as immutable; the time/value lists
+        are copied so new queries cannot modify the parent or sibling caches.
+        The provided generator is used only for new queries. With ``None``, use
+        the global torch RNG, advancing it normally; the parent's generator
+        state is never copied or reset. For independent reproducible forks,
+        provide differently seeded generators or one generator advanced across
+        calls. Identically reseeding each fork would duplicate its refinements.
+        """
+        child = object.__new__(type(self))
+        child.shape = self.shape
+        child.device = self.device
+        child.dtype = self.dtype
+        child.gamma_multiplier = self.gamma_multiplier
+        child.generator = generator
+        child._times = [times.copy() for times in self._times]
+        child._values = [values.copy() for values in self._values]
+        return child
+
     def _randn(self, shape) -> torch.Tensor:
         return torch.randn(
             shape, device=self.device, dtype=self.dtype, generator=self.generator

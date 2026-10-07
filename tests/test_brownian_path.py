@@ -77,3 +77,42 @@ def test_fixed_generator_and_validation():
         a.features(0.1, 0.9, 0)
     with pytest.raises(ValueError):
         make_path(amplitude=-1)
+
+
+def test_forks_preserve_cached_values_and_independently_refine_exact_bridges():
+    parent = make_path((1, 40000), amplitude=0.7, seed=13)
+    left, right = parent.value(0.2), parent.value(0.8)
+    first = parent.fork(torch.Generator().manual_seed(21))
+    second = parent.fork(torch.Generator().manual_seed(22))
+    assert torch.equal(first.value(0.2), left)
+    assert torch.equal(second.value(0.8), right)
+    # A query on one fork must not silently condition either the other or parent.
+    middle1, middle2 = first.value(0.5), second.value(0.5)
+    assert parent._times[0] == [0.0, 0.2, 0.8, 1.0]
+    assert first._times[0] == second._times[0] == [0.0, 0.2, 0.5, 0.8, 1.0]
+    variance_left = float(parent.variance(0.2, 0.5))
+    variance_right = float(parent.variance(0.5, 0.8))
+    fraction = variance_left / (variance_left + variance_right)
+    conditional_mean = left + fraction * (right - left)
+    residual1 = (middle1 - conditional_mean).flatten()
+    residual2 = (middle2 - conditional_mean).flatten()
+    expected = variance_left * variance_right / (variance_left + variance_right)
+    covariance = torch.cov(torch.stack([residual1, residual2]))
+    torch.testing.assert_close(
+        covariance,
+        torch.eye(2, dtype=torch.float64) * expected,
+        rtol=0.03,
+        atol=expected * 0.02,
+    )
+    assert not torch.equal(middle1, middle2)
+    # Conditional refinements are immutable observations for their own descendants.
+    assert torch.equal(first.fork().value(0.5), middle1)
+
+
+def test_default_fork_generator_advances_global_stream_without_reseeding():
+    parent = make_path((2, 2), seed=5)
+    torch.manual_seed(302)
+    before = torch.random.get_rng_state().clone()
+    a, b = parent.fork(), parent.fork()
+    assert torch.equal(before, torch.random.get_rng_state())
+    assert not torch.equal(a.value(0.5), b.value(0.5))

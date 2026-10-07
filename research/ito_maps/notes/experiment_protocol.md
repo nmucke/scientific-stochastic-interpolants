@@ -31,3 +31,6 @@ Measure wall time after warmup, synchronize CUDA before and after, use equal ens
 
 ## Result labeling
 Smoke tests, short development pilots, and full experiments are separate. Do not state the central sample-quality claim unless measurements support it. An undertrained map is evidence about that run, not a general impossibility result. Validation-selected configurations evaluated on test are frozen for primary reporting; any test-informed change is exploratory and must be labeled.
+
+## Finite ensemble calibration caveat (identified before test evaluation)
+The existing repository spread/skill statistic uses the mean of pointwise standard deviations, which is not the RMS spread convention. Keep it for compatibility, and additionally report RMS unbiased ensemble spread with the finite-ensemble factor sqrt((E+1)/E). The empirical 5–95% interval is a diagnostic, not a calibrated 90% coverage target at small E: its endpoints lie inside the ensemble minimum and maximum, whose calibrated expected coverage is only (E−1)/(E+1). Rank histograms and fair CRPS therefore carry more weight than a naive comparison of empirical coverage to90%. These issues do not change the saved old metrics; new auxiliary metrics are added explicitly.

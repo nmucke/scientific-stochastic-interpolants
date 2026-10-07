@@ -18,11 +18,17 @@ Branch `research/ito-map-forecasting`. User authorized long research, manuscript
 - Validation solver baseline measurements on trajectories160:164, origins5/45/85, ensemble8; not test data.
 - Analytic/Monte Carlo OU path-compression diagnostic, CPU only.
 
-## Running
-First Itô PSD pilot: `checkpoints/stochastic_navier_stokes/ito_psd_seed0`, 20 epochs x100 batches x8, teacher32-step validation on4 fixed-noise shuffled batches. Full160trajectory training split and20trajectory validation split. Source command in `experiments/train_psd_pilots.sh`; stdout `results/ito_psd_seed0_train.log` (ignored as generated log). After completion train matching `flow_psd_seed0` sequentially on single RTX3090. Epoch8 validation objective improved from0.343 to0.055; this is teacher-map error, not forecast CRPS.
+## Running / latest results
+Completed both PSD pilots: `ito_psd_seed0` and `flow_psd_seed0`, each2000updates, batch8, same teacher/map backbone widths. Raw checkpoint configs/histories/provenance copied to `results/training/`. Itô validation forecast pilot:8maps CRPS0.3056 vsSI16 0.3177 at1.77x lower latency; SI64 remains better at0.2830. No one-step comparable-quality claim. See `notes/pilot_assessment_ito_psd_2000.md`.
+
+Active serialized job: deterministic PSD forecast evaluation, then `experiments/train_rollout_stage.sh` (500teacher-rollout updates each for Itô and Flow,32teacher substeps, initialized from PSD checkpoints), with forecast validation between stages. Log `results/rollout_stage_train.log`. Outputs `checkpoints/stochastic_navier_stokes/{ito,flow}_rollout_seed0` and `results/validation_rollout`.
+
+Prepared but not trained: `ito_psd_k16_init` refines four to sixteen path features while preserving the initial projection; use only if the K4 rollout stage leaves a meaningful path bottleneck. Script and tests under `experiments/refine_path_features.py`.
+
+Latest full test suite:76 tests pass. GPU reserved for serialized experiments; all agents' diagnostics useCPU.
 
 ## Next actions
-1. Finish PSD pilots; evaluate forecast quality on validation using `experiments/compare.py`.
+1. Finish supervised refinement; evaluate forecast quality on validation using `experiments/compare.py`.
 2. If needed, improve main methodology/training (e.g. labeled same-path teacher-rollout distillation stage, more iterations or path-feature ablation); do not tune on test.
 3. Freeze selected configurations, evaluate all20 held-out test trajectories with matched ensembles/budgets and physical autoregressive rollout.
 4. Record complete raw scores, checkpoint hashes, configs/training histories and costs; report uncertainty over trajectories.

@@ -59,7 +59,7 @@ def run_training(cfg):
     val_loader = instantiate(cfg.val_data, dataset={"preprocesser": preprocesser})
     model = instantiate(cfg.model).to(device)
     teacher = None
-    teacher_cfg = cfg.get("teacher", {})
+    teacher_cfg = cfg.get("teacher") or {}
     if teacher_cfg.get("checkpoint_dir"):
         teacher, teacher_config = load_teacher(teacher_cfg.checkpoint_dir, device)
         if teacher_cfg.get("initialize_student", True):
@@ -84,7 +84,7 @@ def run_training(cfg):
         else None
     )
     tracker = None
-    tracking = cfg.get("experiment_tracking", {})
+    tracking = cfg.get("experiment_tracking") or {}
     if tracking.get("enabled", False):
         import trackio
 

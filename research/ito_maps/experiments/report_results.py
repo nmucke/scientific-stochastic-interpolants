@@ -33,6 +33,8 @@ METRICS = (
     "seconds",
     "nfe",
 )
+OPTIONAL_METRICS = ("rms_spread", "rms_spread_skill", "rank_extreme_fraction")
+
 MODEL_NAMES = {
     "FollmerStochasticInterpolant": "Föllmer SI",
     "FlowMatchingModel": "Flow matching",
@@ -161,7 +163,11 @@ def summarize(
                 "checkpoint_sha256": data.get("checkpoint_sha256"),
                 "source_sha256": data["source_sha256"],
             }
-            for metric in METRICS:
+            for metric in METRICS + tuple(
+                metric
+                for metric in OPTIONAL_METRICS
+                if all(metric in row for row in items)
+            ):
                 values = np.asarray(
                     [
                         np.mean(
@@ -213,6 +219,9 @@ def summarize(
                     "parameters",
                     "seed",
                     "model_class",
+                    "device",
+                    "hardware",
+                    "torch_version",
                 )
             }
             for data in evaluations
@@ -238,6 +247,8 @@ def tex_escape(value):
 
 
 def estimate_tex(row, metric, scale=1.0):
+    if metric not in row:
+        return "--"
     value = row[metric] * scale
     low = row[metric + "_ci95_lower"] * scale
     high = row[metric + "_ci95_upper"] * scale
@@ -331,7 +342,7 @@ def plot_quality(rows, metadata, destination, xkey):
             )
     axes[0].legend(frameon=False)
     fig.suptitle(
-        f"{metadata['split'].capitalize()} · physical lead {metadata['lead']} · {len(metadata['trajectory_ids'])} trajectories",
+        f"{metadata['split'].capitalize()} · E={metadata['ensemble_size']} · physical lead {metadata['lead']} · {len(metadata['trajectory_ids'])} trajectories",
         fontsize=10,
     )
     basename = "quality_vs_nfe" if xkey == "nfe" else "quality_vs_latency"
@@ -355,7 +366,8 @@ def create_report(
     destination = Path(output)
     destination.mkdir(parents=True, exist_ok=True)
     with (destination / "summary.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        fields = list(dict.fromkeys(key for row in rows for key in row))
+        writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
     (destination / "report_metadata.json").write_text(json.dumps(metadata, indent=2))
@@ -368,7 +380,7 @@ def create_report(
             ("Energy score", "energy_score", 1.0),
             ("RMSE", "rmse", 1.0),
         ],
-        "Forecast quality in normalized data coordinates.",
+        "Forecast quality in " + tex_escape(metadata["coordinate_system"]) + ".",
         "tab:map-quality",
     )
     write_table(
@@ -383,6 +395,24 @@ def create_report(
         "Ensemble calibration and spread. Nominal interval coverage is 90\\%.",
         "tab:map-calibration",
     )
+    optional_columns = [
+        ("RMS spread", "rms_spread", 1.0),
+        ("RMS spread/skill", "rms_spread_skill", 1.0),
+        ("Extreme ranks (\\%)", "rank_extreme_fraction", 100.0),
+    ]
+    optional_columns = [
+        column for column in optional_columns if any(column[1] in row for row in rows)
+    ]
+    if optional_columns:
+        write_table(
+            destination / "rms_calibration_table.tex",
+            rows,
+            metadata,
+            optional_columns,
+            "Auxiliary calibration diagnostics using unbiased ensemble variance. "
+            "A dash denotes an older evaluation without the metric.",
+            "tab:map-rms-calibration",
+        )
     write_table(
         destination / "cost_table.tex",
         rows,

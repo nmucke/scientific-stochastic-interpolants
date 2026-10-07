@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import platform
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -45,15 +46,27 @@ def forecast_metrics(ensemble, target):
     spectral_relative = torch.linalg.vector_norm(
         spectra.mean(0) - truth_spectrum
     ) / torch.linalg.vector_norm(truth_spectrum).clamp_min(1e-12)
+    rmse = ensemble_mean_rmse(ensemble, target)
+    rms_spread = (
+        ensemble.var(dim=0, unbiased=True).mean().sqrt()
+        if len(ensemble) > 1
+        else ensemble.new_zeros(())
+    )
+    rms_ratio = ((len(ensemble) + 1) / len(ensemble)) ** 0.5 * rms_spread / rmse
+    ranks = rank_histogram(ensemble, target)
+    extreme_fraction = (ranks[0] + ranks[-1]).double() / ranks.sum()
     return {
         "crps": float(crps(ensemble, target)),
-        "rmse": float(ensemble_mean_rmse(ensemble, target)),
+        "rmse": float(rmse),
         "energy_score": float(energy),
         "spread": float(spread["spread"]),
         "spread_skill": float(spread["ratio"]),
         "coverage90": float(((target >= lower) & (target <= upper)).float().mean()),
         "relative_enstrophy_error": float(spectral_relative),
-        "rank_counts": rank_histogram(ensemble, target).tolist(),
+        "rank_counts": ranks.tolist(),
+        "rms_spread": float(rms_spread),
+        "rms_spread_skill": float(rms_ratio),
+        "rank_extreme_fraction": float(extreme_fraction),
     }
 
 
@@ -68,6 +81,8 @@ def aggregate_rows(rows, bootstrap_seed=712, n_bootstrap=2000):
     for row in rows:
         groups[(row["num_steps"], row["lead"])].append(row)
     rng = np.random.default_rng(bootstrap_seed)
+    extra_rng = np.random.default_rng(bootstrap_seed + 1)
+    optional_metrics = ("rms_spread", "rms_spread_skill", "rank_extreme_fraction")
     result = []
     for (steps, lead), items in sorted(groups.items()):
         trajectories = sorted({r["trajectory"] for r in items})
@@ -87,15 +102,18 @@ def aggregate_rows(rows, bootstrap_seed=712, n_bootstrap=2000):
             "relative_enstrophy_error",
             "seconds",
             "nfe",
-        ):
+        ) + tuple(key for key in optional_metrics if all(key in r for r in items)):
             per_traj = np.array(
                 [
                     np.mean([r[key] for r in items if r["trajectory"] == tr])
                     for tr in trajectories
                 ]
             )
+            # Preserve the legacy metrics' bootstrap draws when optional fields
+            # are added; their uncertainty estimates remain byte-for-byte stable.
+            metric_rng = extra_rng if key in optional_metrics else rng
             boot = per_traj[
-                rng.integers(0, len(per_traj), (n_bootstrap, len(per_traj)))
+                metric_rng.integers(0, len(per_traj), (n_bootstrap, len(per_traj)))
             ].mean(1)
             summary[key] = float(per_traj.mean())
             summary[key + "_ci95"] = [
@@ -245,6 +263,18 @@ def evaluate_model(
             else "dataset original coordinates"
         ),
         "model_class": f"{type(model).__module__}.{type(model).__qualname__}",
+        "device": str(device),
+        "hardware": {
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+            "platform": platform.platform(),
+            "gpu": (
+                torch.cuda.get_device_name(device)
+                if torch.device(device).type == "cuda"
+                else None
+            ),
+        },
+        "torch_version": str(torch.__version__),
         "seed": seed,
         "ensemble_size": ensemble_size,
         "forecast_horizon": forecast_horizon,
