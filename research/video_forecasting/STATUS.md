@@ -5,10 +5,10 @@ Branch: `research/video-map-forecasting`, branched from the completed Navier–S
 ## Active work
 
 - Root coordinates implementation, GPU jobs, integration and commits. Only root launches GPU jobs.
-- video_data owns official acquisition/preprocessing and manifests. KTH is complete. CLEVRER official train/validation/test downloads and automatic decoding are active in data-agent session88878; inspect `data/video_forecasting/clevrer_prepare.log` and ask that agent before restarting.
+- video_data completed both official acquisitions and preprocessing. Canonical manifests: `data/video_forecasting/kth_64/manifest.json` (2,391 segments from599 source videos) and `data/video_forecasting/clevrer_64/manifest.json` (20,000 videos; official10,000/5,000/5,000 splits). All23,391 decoded-file SHA-256 hashes, shapes, source-video/subject split separation and CLEVRER raw-frame indices passed the full audit; `notes/data_summary.json` records manifest/archive hashes. All CLEVRER clips have26 retained RGB frames. Watcher session88878 exited0; no acquisition jobs remain. About30GB disk remains. One recoverable KTH source-video decode defect is documented in `notes/data_provenance.md`.
 - video_models owns baseline training/configuration and CPU evaluation review/tests.
 - video_protocol owns primary-source protocol, pretrained metrics and reporting/visualization.
-- The full KTH SI baseline completed20,000 updates and a four-case validation rollout audit. Root GPU session87640 now runs `train_all_video_models.sh kth`: KTH flow matching20,000 updates, then both map pipelines. Main log `results/kth_pipeline.log`; per-stage logs are in `results/`. The earlier100-update GPU smoke completed separately under `checkpoints/video/smoke/kth_si` and is not a reported model.
+- Both KTH baselines completed20,000 updates. The SI also completed a four-case validation rollout audit. Root GPU session87640 runs `train_all_video_models.sh kth`: Itô PSD/refinement and FlowMap PSD are complete; FlowMap refinement is the final KTH stage. Main log `results/kth_pipeline.log`; per-stage logs are in `results/`. The earlier100-update GPU smoke completed separately under `checkpoints/video/smoke/kth_si` and is not a reported model.
 
 ## Implemented
 
@@ -32,4 +32,4 @@ Root's `main_video_model_test` performs autoregression without future truth or f
 
 ## Current next steps
 
-Current whole-suite check:160 tests passed; more provenance tests are being added. Complete source/test integration, train the remaining three teachers and all four map students serially, freeze selected evaluation artifacts, compute all metrics, inspect visual rollouts, prepare matched reports and reproducibility archives, then commit. Preserve all original NS data/checkpoints/results. Do not restart or overwrite active runs.
+Current whole-suite check:175 tests passed (one expected CPU autocast warning). Complete source/test integration, finish both KTH map students, train both CLEVRER teachers and map students serially, freeze selected evaluation artifacts, compute all metrics, inspect visual rollouts, prepare matched reports and reproducibility archives, then commit. Preserve all original NS data/checkpoints/results. Do not restart or overwrite active runs.

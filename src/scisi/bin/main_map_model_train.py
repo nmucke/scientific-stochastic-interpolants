@@ -128,10 +128,18 @@ def run_training(cfg):
         "teacher_checkpoint": teacher_cfg.get("checkpoint_dir"),
         "initial_student_checkpoint": cfg.get("initial_student_checkpoint"),
         "validation_objective": (
-            "fixed_noise_full_interval_teacher_rollout"
+            "fixed_noise_full_range_teacher_rollout_with_weighted_diagonal"
             if teacher is not None
-            else "fixed_noise_full_interval_self_consistency"
+            else "fixed_noise_full_range_self_consistency_with_weighted_diagonal"
         ),
+        "validation_intervals": {
+            "description": "Intervals sampled across [0,1], with an atom at the full interval [0,1]",
+            "endpoint_probability": float(
+                cfg.trainer.get("endpoint_probability", 0.25)
+            ),
+            "diagonal_weight": float(cfg.trainer.get("diagonal_weight", 1.0)),
+            "consistency_weight": float(cfg.trainer.get("consistency_weight", 1.0)),
+        },
     }
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2))
     logger.info(

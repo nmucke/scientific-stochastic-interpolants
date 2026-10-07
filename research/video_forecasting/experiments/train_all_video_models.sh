@@ -5,19 +5,10 @@ set -euo pipefail
 python=.venv/bin/python
 result_root=research/video_forecasting/results
 mkdir -p "$result_root"
-complete_stage() {
-  "$python" - "$1" "$2" <<'PY'
-import json,sys
-from pathlib import Path
-p=Path(sys.argv[1]); expected=int(sys.argv[2])
-if not (p/'model.pth').exists():
-    raise SystemExit(1)
-h=json.loads((p/'history.json').read_text())
-if not h or h[-1]['step'] != expected:
-    raise RuntimeError(f'Existing stage {p} has incomplete/unexpected updates; inspect before resuming')
-print(f'Preserving complete stage {p}: {expected} updates',flush=True)
-PY
+stage_status() {
+  "$python" research/video_forecasting/experiments/training_stage_status.py "$1" "$2"
 }
+
 datasets=("$@")
 if [ ${#datasets[@]} -eq 0 ]; then datasets=(kth clevrer); fi
 for dataset in "${datasets[@]}"; do
@@ -32,23 +23,28 @@ for dataset in "${datasets[@]}"; do
   fi
   for kind in follmer_stochastic_interpolant flow_matching; do
     directory="checkpoints/video/$dataset/$kind"
-    if ! complete_stage "$directory" 20000; then
+    status="$(stage_status "$directory" 20000)"
+    if [[ "$status" == missing ]]; then
       "$python" -m scisi.bin.main_video_model_train --config-name "${kind}_${dataset}" \
         trainer.num_epochs=200 trainer.max_train_batches=100 trainer.max_val_batches=8 \
         trainer.early_stopping.patience=250 \
         > "$result_root/${dataset}_${kind}_train.log" 2>&1
+    else
+      echo "Preserving complete stage $directory: 20000 updates"
     fi
   done
   for kind in follmer_ito_map flow_map; do
     psd="checkpoints/video/$dataset/${kind}_psd"
     final="checkpoints/video/$dataset/$kind"
-    if ! complete_stage "$psd" 2000; then
+    status="$(stage_status "$psd" 2000)"
+    if [[ "$status" == missing ]]; then
       "$python" -m scisi.bin.main_video_model_train --config-name "${kind}_${dataset}" \
         trainer.num_epochs=20 trainer.max_train_batches=100 trainer.max_val_batches=8 \
         trainer.checkpoint_dir="$psd" trainer.teacher_steps=32 \
         > "$result_root/${dataset}_${kind}_psd.log" 2>&1
     fi
-    if ! complete_stage "$final" 500; then
+    status="$(stage_status "$final" 500)"
+    if [[ "$status" == missing ]]; then
       "$python" -m scisi.bin.main_video_model_train --config-name "${kind}_${dataset}" \
         initial_student_checkpoint="$psd/model.pth" trainer.checkpoint_dir="$final" \
         trainer.objective=teacher_rollout trainer.num_epochs=10 trainer.max_train_batches=50 \

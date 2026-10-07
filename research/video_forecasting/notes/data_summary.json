@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "ffmpeg_version": "ffmpeg version 6.1.2 Copyright (c) 2000-2024 the FFmpeg developers",
-  "preparation_script_sha256": "4c0287e89f4c48ccab2af92586c7e2ff4e00c55bd22dbf86404b93f07dfad27f",
+  "preparation_script_sha256": "065a994bedfab8c2ec4f3923bce3f39d4345a44ec28680db58b58e7b7c27ca6b",
   "datasets": [
     {
       "dataset": "kth",
@@ -52,6 +52,11 @@
           "sha256": "4fc2f5b7c07776b7caeeffb8276886d82e9c43bb7e41f60fe2143621102cb771"
         }
       ],
+      "sequence_annotations": {
+        "url": "https://www.csc.kth.se/cvap/actions/00sequences.txt",
+        "path": "data/video_forecasting/archives/kth/00sequences.txt",
+        "sha256": "4a1287ee0318ea6662c74fe66d4cfdadeb627996d1c34ac2fed38e628ab1eb4b"
+      },
       "decoded_file_hashes_checked": true,
       "history": 10,
       "forecast_horizon": 30,
@@ -134,6 +139,74 @@
             "running": 80,
             "walking": 80
           }
+        }
+      }
+    },
+    {
+      "dataset": "clevrer",
+      "manifest_path": "data/video_forecasting/clevrer_64/manifest.json",
+      "manifest_sha256": "5896f34ce27dbe750a6d9b9f9dd4be150745a65c7368e57015bfa9a6b35c2a4d",
+      "resolution": 64,
+      "channels": 3,
+      "frame_stride": 5,
+      "spatial_transform": "bilinear resize short side, center crop square",
+      "normalization": "minus_one_one",
+      "source_videos": 20000,
+      "clips": 20000,
+      "sources": [
+        {
+          "url": "https://data.csail.mit.edu/clevrer/videos/train/video_train.zip",
+          "archive": "video_train.zip",
+          "bytes": 12354893389,
+          "sha256": "c7401bc86f7ff230bda3b193619f41a79828bed1f0890948b16dd57c89dfdd3f"
+        },
+        {
+          "url": "https://data.csail.mit.edu/clevrer/videos/validation/video_validation.zip",
+          "archive": "video_validation.zip",
+          "bytes": 6206059321,
+          "sha256": "07f6d48bd708c80428684fcf17a7874f6c01fbb82a59b2f79ede199a63db7aae"
+        },
+        {
+          "url": "https://data.csail.mit.edu/clevrer/videos/test/video_test.zip",
+          "archive": "video_test.zip",
+          "bytes": 6149404859,
+          "sha256": "37b8900f5d01e5dc477747af31b1985b2c849b3e5bf9dacb11e2908811a94aab"
+        }
+      ],
+      "sequence_annotations": null,
+      "decoded_file_hashes_checked": true,
+      "history": 2,
+      "forecast_horizon": 14,
+      "split_summary": {
+        "train": {
+          "clips": 10000,
+          "frames_min": 26,
+          "frames_max": 26,
+          "frames_total": 260000,
+          "eligible_evaluation_clips": 10000,
+          "next_frame_windows_stride1": 240000,
+          "subjects": [],
+          "actions": {}
+        },
+        "validation": {
+          "clips": 5000,
+          "frames_min": 26,
+          "frames_max": 26,
+          "frames_total": 130000,
+          "eligible_evaluation_clips": 5000,
+          "next_frame_windows_stride1": 120000,
+          "subjects": [],
+          "actions": {}
+        },
+        "test": {
+          "clips": 5000,
+          "frames_min": 26,
+          "frames_max": 26,
+          "frames_total": 130000,
+          "eligible_evaluation_clips": 5000,
+          "next_frame_windows_stride1": 120000,
+          "subjects": [],
+          "actions": {}
         }
       }
     }
