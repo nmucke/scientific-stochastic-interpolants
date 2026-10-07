@@ -1,5 +1,7 @@
 # Handover status
 
+**Historical confirmation snapshot.** The later video and long-horizon extension is on `research/video-map-forecasting`; read [its current status](../video_forecasting/STATUS.md) before launching work. The following completion/page/test counts describe the original confirmation, not the active extension.
+
 Updated 2026-10-07 after the full frozen three-seed confirmation completed. All training and evaluation jobs finished successfully; no GPU job remains. The final manuscript includes the complete results and builds to14 total pages, with main text/impact ending on page8 and appendices starting on9. Numerical claims and key PDF pages were independently reviewed.
 
 ## Branch and authority

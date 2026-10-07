@@ -1,6 +1,6 @@
 # Itô maps for probabilistic forecasting
 
-Working branch: `research/ito-map-forecasting`. Started2026-10-07. Root leads research/integration and owns final commits. Read [STATUS.md](STATUS.md) for the completed experiment, reproducibility commands and handover limits.
+Original confirmation branch: `research/ito-map-forecasting`; current extension branch: `research/video-map-forecasting`. Started2026-10-07. Root leads research/integration and owns final commits. [STATUS.md](STATUS.md) records the original frozen confirmation. For current video results and active long-horizon fluid jobs, read [the extension status](../video_forecasting/STATUS.md).
 
 ## Objective and research discipline
 
@@ -12,11 +12,19 @@ Main research and the first manuscript draft preceded implementation. Keep exact
 
 Implementation and validation-only development are complete. All frozen held-out confirmations are also complete. The selection is frozen in [results/frozen_protocol.json](results/frozen_protocol.json), including checkpoint/config/source hashes. K4 was selected: controlled K16 refinement yielded worse validation one-step CRPS0.3086 versus0.3047 forK4. The deterministic flow map currently has stronger one-step validation quality. This is part of the result, not grounds to change the comparison after testing.
 
-The serialized [confirmation sequence](experiments/run_confirmation.sh) completed successfully for all three student seeds in both model families. The [confirmation audit](results/confirmation_audit.json) verifies all4,360 forecast records,16 evaluation artifacts,12 training stages and original frozen checkpoint hashes. No GPU job remains. All20 held-out trajectories were evaluated with ensemble16, one-step forecasts at origins5/45/85, and10-new-step autoregressive forecasts from origin45.
+The serialized [confirmation sequence](experiments/run_confirmation.sh) completed successfully for all three student seeds in both model families. The [confirmation audit](results/confirmation_audit.json) verifies all4,360 forecast records,16 evaluation artifacts,12 training stages and original frozen checkpoint hashes. That original confirmation queue is complete. All20 held-out trajectories were evaluated with ensemble16, one-step forecasts at origins5/45/85, and10-new-step autoregressive forecasts from origin45.
 
 The [final report](results/final_report/final_report_manifest.json) separates training-seed variability from trajectory-bootstrap uncertainty. Eight-step Itô maps have mean one-step CRPS0.27139 versus0.26780 forSI64 (+1.34%) at7.16x lower measured latency; one-step deterministic maps have0.26663 versus0.26501 forFM64 (+0.61%) at56.32x lower latency. The maps remain underdispersed, and later-lead Itô score/spectral degradation prevents a claim of full quality retention. The deterministic map is a strong baseline, not evidence of universal Itô superiority.
 
-The last completed whole-suite run reported105 passing tests on CPU. The nontrivial-mask constructor guard and API documentation do not alter the frozen unmasked NS numerics; its source-hash addendum is [notes/post_freeze_api_guard.json](notes/post_freeze_api_guard.json).
+The integrated extension suite currently reports212 passing CPU tests (the original confirmation suite had105). The nontrivial-mask constructor guard and API documentation do not alter the frozen unmasked NS numerics; its source-hash addendum is [notes/post_freeze_api_guard.json](notes/post_freeze_api_guard.json).
+
+## Video and long-horizon extension
+
+All eight pixel-space KTH/CLEVRER models are trained, and all18 dataset/model/budget comparisons (including persistence) are evaluated and independently audited. See the [matched report](../video_forecasting/results/report/README.md) and [video handover](../video_forecasting/STATUS.md). The paper includes the video case, FVD table and matched truth/prediction frame sequences in its seven-page main text; both cases retain detailed appendices. The video findings show metric-dependent quality costs alongside faster sampling.
+
+The 4,096-interval fluid extension has completed both maps; matched SI64 and FM64 references remain in the active serialized queue. Spatial enstrophy uses shell-summed Fourier power over space, with separate first/last-step log–log plots. Skill stops at the95 available truth leads. [Finalization instructions](notes/finalize_long_horizon.md) describe the independent audit and four-model report once both references finish. Do not describe the partial two-map preview as a completed four-model comparison.
+
+The [independent mathematical review](reviews/adversarial_method_math_2026-10-07.md), [response](reviews/adversarial_method_math_response_2026-10-07.md), and [compiled video-paper inspection](reviews/final_video_pdf_inspection.md) record assumptions, limitations and validation. The final NS evidence will require another manuscript build and visual inspection.
 
 ## Layout
 
