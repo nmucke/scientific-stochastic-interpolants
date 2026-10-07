@@ -13,7 +13,7 @@ Branch: `research/ito-map-forecasting`. The user authorized extensive delegated 
 - `BaseMapModel`, `FollmerItoMapModel`, `FlowMapModel`, compatible two-time/path conditioning adapters, and exact finite-query weighted-Brownian bridges.
 - `MapTrainer`: teacher-diagonal PSD and supervised same-path teacher-rollout objectives, offline artifacts, EMA, and tested epoch-boundary resume.
 - Hydra train/test entry points and NS configurations, reusing existing datasets, preprocessing, U-Net, losses/optimizer/clipping and metrics.
-- Latest completed whole-suite run:96 tests pass, including provenance archiving and the nontrivial-mask guard.
+- Latest completed whole-suite run:105 tests pass (CPU), including provenance, confirmation audits, paired seed reporting and the nontrivial-mask guard.
 - Real GPU training/evaluation smoke and all validation-only development comparisons.
 - Both seed0 PSD stages (2,000 updates each), followed by both teacher-rollout stages (500 updates each). Frozen teacher grids use32 drift substeps during supervised training/validation.
 - Analytic/Monte Carlo OU compression experiment and actual frozen-NS conditional-bridge diagnostic (CPU).
@@ -60,9 +60,9 @@ Itô8 CRPS0.54316 versusSI64 0.53293; full10-lead ensemble generation costs
 The full seed0 report is in `results/final_report/`; the manuscript builds to13
 total pages with main text ending on8. Itô8's lead10 spectral discrepancy is
 15.8% higher thanSI64, so broad physical-quality retention is also unproven.
-Additional full training seeds remain pending. Seed1 Itô PSD is complete and
-archived; its500-update supervised stage started at10:36 local time. The queue
-then trains FlowMap seed1 and both seed2 models before evaluating all repetitions. Do not
+Additional full training seeds remain pending. Both seed1 models have completed
+and been archived. Seed2 Itô PSD reached1,700/2,000 updates at11:14 local time;
+its refinement and both seed2 flow stages precede evaluation of all repetitions. Do not
 present seed0 as a three-seed result. Root verified every map's initial rollout
 forecast against its matching standalone origin45 forecast, with identical
 proper scores/calibration metrics for all40 cases per map.
@@ -73,7 +73,7 @@ Continue using stored-snapshot lead units unless actual provenance is supplied.
 
 ## Remaining work after the sequence
 
-- Confirm every frozen run completed, inspect failures/nonfinite values, and archive all training metadata/history/configurations/hashes with `experiments/archive_training.py`.
+- Confirm every frozen run completed, inspect failures/nonfinite values, and archive all training metadata/history/configurations/hashes with `experiments/archive_training.py`. Run `experiments/verify_confirmation.py`, then `experiments/rebuild_confirmation_report.sh`, then `make -C research/ito_maps/paper replication-artifacts`.
 - Aggregate measured test quality, calibration, spectra, latency and long-rollout behavior. Distinguish trajectory uncertainty from independently trained seed variation; no test-driven checkpoint or hyperparameter changes.
 - Include the negative K16 ablation, conditional compression experiment and actual computational costs; pre-existing teacher pretraining cost remains unavailable.
 - Reconcile manuscript and figures/tables against completed raw artifacts, compile the paper, review numerical/mathematical claims, and run final relevant checks.

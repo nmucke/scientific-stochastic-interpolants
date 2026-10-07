@@ -5,7 +5,7 @@ VALIDATION_SOURCES := $(wildcard ../results/validation_baselines/*/evaluation.js
 TEST_SEED0_SOURCES := $(wildcard ../results/test_one_step/*/evaluation.json)
 STUDY_SOURCES := ../results/final_report/one_step/summary.csv ../results/final_report/rollout/all_leads.csv ../results/final_report/one_step/paired_crps.json ../results/final_report/rollout/paired_crps.json $(wildcard ../results/training/*_seed0/history.json)
 
-.PHONY: all artifacts clean
+.PHONY: all artifacts clean replication-artifacts
 all: artifacts
 	TEXINPUTS=.:template: BSTINPUTS=.:template: latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 
@@ -26,3 +26,7 @@ generated/test_seed0_table.tex generated/test_seed0_calibration.tex &: build_see
 
 figures/seed0_quality_cost.pdf figures/seed0_rollout.pdf generated/seed0_claims.tex generated/seed0_training_cost.tex &: build_study_figures.py $(STUDY_SOURCES)
 	$(PYTHON) build_study_figures.py
+
+# Explicit opt-in until every frozen seed and training archive is complete.
+replication-artifacts:
+	$(PYTHON) build_replication_tables.py

@@ -14,7 +14,7 @@ Implementation and validation-only development are complete. The selection is fr
 
 A single serialized GPU sequence is running under root session **53576**, using [experiments/run_confirmation.sh](experiments/run_confirmation.sh) and logging to [results/confirmation.log](results/confirmation.log). It evaluates all20 held-out trajectories with ensemble16, one-step forecasts at origins5/45/85, and10-new-step autoregressive forecasts from origin45. It then trains complete unchanged student pipelines for seeds1 and2 and evaluates those replicas. Do not start another GPU job. All additional diagnostics should be CPU-only unless the root explicitly schedules otherwise.
 
-The last completed whole-suite run reported93 passing tests; the provenance archiver adds two separately passing tests. A subsequently authorized nontrivial-mask constructor guard passes a focused test within the14-test trainer suite. The guard and API documentation do not alter the frozen unmasked NS numerics; its source-hash addendum is [notes/post_freeze_api_guard.json](notes/post_freeze_api_guard.json). No new combined-suite total is asserted until it is run.
+The last completed whole-suite run reported105 passing tests on CPU. The nontrivial-mask constructor guard and API documentation do not alter the frozen unmasked NS numerics; its source-hash addendum is [notes/post_freeze_api_guard.json](notes/post_freeze_api_guard.json).
 
 ## Layout
 

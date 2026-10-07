@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 from omegaconf import OmegaConf
+from paired_comparison import compare
 
 from report_results import (
     METRICS,
@@ -43,6 +44,129 @@ def training_identity(data):
             f"Training seed is missing for {data['source_path']}; do not substitute the evaluation sampling seed"
         )
     return int(seed), teacher
+
+
+def fixed_teacher_comparisons(
+    evaluations, selected, names, identities, steps, replicates, seed
+):
+    """Compare mean student scores, never pooled ensemble members, to fixed teachers."""
+    teacher_classes = {
+        "Föllmer Itô map": "FollmerStochasticInterpolant",
+        "Flow map": "FlowMatchingModel",
+    }
+    results = []
+    for name in dict.fromkeys(names):
+        teachers = [
+            d
+            for d in evaluations
+            if d.get("model_class", "").split(".")[-1] == teacher_classes[name]
+        ]
+        if not teachers:
+            continue  # Map-only CLI inputs still support the original seed report.
+        if len(teachers) != 1:
+            raise ValueError(f"Expected one fixed teacher evaluation for {name}")
+        teacher = teachers[0]
+        if 64 not in {row["num_steps"] for row in teacher["rows"]}:
+            raise ValueError(f"Fixed teacher comparison requires 64 steps for {name}")
+        indices = [i for i, value in enumerate(names) if value == name]
+        group = [selected[i] for i in indices]
+        teacher_path = teacher.get("checkpoint")
+        if teacher_path:
+            actual_directory = Path(teacher_path).resolve().parent
+            for index in indices:
+                trained_with = identities[index][1]
+                if trained_with:
+                    expected_directory = Path(trained_with).resolve()
+                    if expected_directory.suffix == ".pth":
+                        expected_directory = expected_directory.parent
+                    if expected_directory != actual_directory:
+                        raise ValueError(
+                            f"Evaluation does not use the training teacher for {name}"
+                        )
+        # summarize performs complete split/horizon/ensemble/case compatibility checks.
+        for lead in range(1, group[0]["forecast_horizon"] + 1):
+            summarize(
+                group + [teacher],
+                lead=lead,
+                labels=[f"seed {identities[i][0]}" for i in indices] + ["teacher"],
+                split="test",
+                n_bootstrap=1,
+                seed=seed,
+            )
+            for budget in steps:
+                for metric in METRICS + OPTIONAL_METRICS:
+                    if not all(
+                        metric in row
+                        for data in group + [teacher]
+                        for row in data["rows"]
+                        if row["lead"] == lead
+                        and row["num_steps"] == (64 if data is teacher else budget)
+                    ):
+                        continue
+                    # Pair each seed separately, then use its per-trajectory differences
+                    # to average scores across training seeds before resampling data.
+                    pairs = [
+                        compare(
+                            data,
+                            teacher,
+                            budget,
+                            64,
+                            metric=metric,
+                            lead=lead,
+                            replicates=1,
+                            seed=seed,
+                        )
+                        for data in group
+                    ]
+                    differences = np.array(
+                        [pair["per_trajectory_differences"] for pair in pairs]
+                    )
+                    seed_means = np.array([pair["candidate_mean"] for pair in pairs])
+                    trajectory_mean = differences.mean(axis=0)
+                    rng = np.random.default_rng(seed)
+                    draws = rng.integers(
+                        0, differences.shape[1], (replicates, differences.shape[1])
+                    )
+                    low, high = np.quantile(
+                        trajectory_mean[draws].mean(axis=1), [0.025, 0.975]
+                    )
+                    reference = pairs[0]["reference_mean"]
+                    result = {
+                        "model": name,
+                        "num_steps": budget,
+                        "lead": lead,
+                        "metric": metric,
+                        "num_training_seeds": len(group),
+                        "training_seeds": [identities[i][0] for i in indices],
+                        "num_test_trajectories": differences.shape[1],
+                        "student_mean": float(seed_means.mean()),
+                        "student_seed_sd": (
+                            float(seed_means.std(ddof=1)) if len(group) > 1 else None
+                        ),
+                        "student_seed_min": float(seed_means.min()),
+                        "student_seed_max": float(seed_means.max()),
+                        "reference_model": MODEL_NAMES[teacher_classes[name]],
+                        "reference_steps": 64,
+                        "reference_mean": reference,
+                        "difference_student_mean_minus_reference": float(
+                            trajectory_mean.mean()
+                        ),
+                        "difference_data_cluster_ci95_lower": float(low),
+                        "difference_data_cluster_ci95_upper": float(high),
+                        "relative_change_percent": (
+                            float(100 * trajectory_mean.mean() / reference)
+                            if reference
+                            else None
+                        ),
+                        "reference_source": teacher["source_path"],
+                        "reference_checkpoint_sha256": teacher.get("checkpoint_sha256"),
+                        "student_sources": [data["source_path"] for data in group],
+                        "student_checkpoint_sha256": [
+                            data.get("checkpoint_sha256") for data in group
+                        ],
+                    }
+                    results.append(result)
+    return results
 
 
 def generate(evaluations, output, *, steps=(1, 8), replicates=10000, seed=712):
@@ -195,6 +319,53 @@ def generate(evaluations, output, *, steps=(1, 8), replicates=10000, seed=712):
         "single_seed": "Student-seed SD is unreported (null) when only seed 0 is available.",
         "across_seed": across_seed,
     }
+    comparisons = fixed_teacher_comparisons(
+        evaluations, selected, names, identities, steps, replicates, seed
+    )
+    provenance["fixed_teacher_comparisons"] = comparisons
+    if comparisons:
+        with (output / "fixed_teacher_comparison.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(comparisons[0]))
+            writer.writeheader()
+            writer.writerows(comparisons)
+        (output / "fixed_teacher_comparison.json").write_text(
+            json.dumps(
+                {
+                    "comparisons": comparisons,
+                    "bootstrap_replicates": replicates,
+                    "bootstrap_seed": seed,
+                    "uncertainty": "Paired trajectory bootstrap of the mean score over fixed trained students. Student-seed SD/range is reported separately. Ensembles are never pooled; teacher training uncertainty is not estimated.",
+                },
+                indent=2,
+            )
+        )
+        table = [
+            r"\begin{tabular}{lrrrrrr}",
+            r"\toprule",
+            r"Model & Steps & Lead & Mean CRPS & Seed SD & Teacher CRPS & Paired difference [95\% data CI] \\",
+            r"\midrule",
+        ]
+        for row in comparisons:
+            if row["metric"] != "crps":
+                continue
+            sd = (
+                "--"
+                if row["student_seed_sd"] is None
+                else f"{row['student_seed_sd']:.4f}"
+            )
+            table.append(
+                f"{tex_escape(row['model'])} & {row['num_steps']} & {row['lead']} & {row['student_mean']:.4f} & {sd} & {row['reference_mean']:.4f} & {row['difference_student_mean_minus_reference']:+.4f} [{row['difference_data_cluster_ci95_lower']:+.4f}, {row['difference_data_cluster_ci95_upper']:+.4f}]"
+                + r" \\"
+            )
+        table.extend(
+            [
+                r"\bottomrule",
+                r"\end{tabular}",
+                "% Reference is the fixed 64-step teacher; data CIs exclude student and teacher training uncertainty.",
+                "",
+            ]
+        )
+        (output / "fixed_teacher_comparison.tex").write_text("\n".join(table))
     (output / "training_seed_report.json").write_text(json.dumps(provenance, indent=2))
     lines = [
         r"\begin{tabular}{lrrrrr}",
