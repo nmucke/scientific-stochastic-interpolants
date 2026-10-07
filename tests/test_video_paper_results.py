@@ -48,10 +48,13 @@ def setup_report(
             evaluations.append(item)
             summary.extend(paper.REPORT.summarize_evaluation(item))
             budget = paper.VISUAL_BUDGETS[family]
+            channels = 1 if dataset == "kth" else 3
             np.savez(
                 directory / f"case_000_steps_{budget}.npz",
-                truth=np.zeros((4, 1, 8, 8), dtype=np.float32),
-                predictions=np.stack([np.zeros((2, 1, 8, 8)), np.ones((2, 1, 8, 8))]),
+                truth=np.zeros((4, channels, 8, 8), dtype=np.float32),
+                predictions=np.stack(
+                    [np.zeros((2, channels, 8, 8)), np.ones((2, channels, 8, 8))]
+                ),
                 history_length=2,
             )
             (directory / f"case_000_steps_{budget}.json").write_text(
@@ -94,6 +97,19 @@ def test_full_build_uses_report_values_and_predeclared_example(tmp_path):
     output, snippet = tmp_path / "assets", tmp_path / "results.tex"
     result = paper.build_results(reports, output, snippet, video_root=video)
     assert result["status"] == "complete_audited_comparison"
+    assert (tmp_path / "video_main_results.tex").exists()
+    assert (output / "main_forecast_sequences.pdf").exists()
+    main_table = (output / "main_fvd_table.tex").read_text()
+    assert "KTH pooled" in main_table and "CLEVRER pooled" in main_table
+    assert main_table.count("Persistence") == 1
+    assert result["main_frame_sequences"]["kth"]["displayed_retained_indices"] == [
+        1,
+        2,
+        3,
+    ]
+    assert result["predeclared_main_visual_selection"]["sha256"] == paper.sha256(
+        paper.MAIN_VISUAL_SELECTION
+    )
     assert result["predeclared_visual_selection"]["sha256"] == paper.sha256(
         paper.VISUAL_SELECTION
     )
@@ -177,3 +193,29 @@ def test_fixed_case_and_truth_must_match(tmp_path):
     sidecar.write_text(json.dumps({"clip_id": "clip_7"}))
     with pytest.raises(ValueError, match="first selected case"):
         paper.fixed_example("kth", report, output, True)
+
+
+def test_main_sequences_use_individual_member_not_ensemble_mean(tmp_path, monkeypatch):
+    from matplotlib.axes import Axes
+
+    reports, video = setup_report(tmp_path, datasets=("kth",), incomplete=True)
+    report = paper.load_dataset_report(reports, "kth", True, video)
+    shown = []
+    original = Axes.imshow
+
+    def capture(axis, values, *args, **kwargs):
+        shown.append(np.array(values))
+        return original(axis, values, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "imshow", capture)
+    output = tmp_path / "assets"
+    output.mkdir()
+    result = paper.main_frame_sequences({"kth": report}, output, True)
+    # Member zero and truth are zero -> display .5; the ensemble mean would display .75.
+    assert len(shown) == 15
+    assert all(np.array_equal(frame, np.full((8, 8), 0.5)) for frame in shown)
+    assert result["kth"]["future_leads"] == [1, 2]
+    assert result["kth"]["observed_retained_index"] == 1
+    assert [
+        entry["model_class"] for entry in result["kth"]["inputs"]
+    ] == paper.FAMILY_ORDER[:-1]

@@ -37,14 +37,14 @@ Stochastic-interpolant forecasting starts a generative diffusion at the observed
 Our contribution is a conditional formulation and implementation connecting these ingredients. We derive a two-time map for the existing forecasting SDE, explain how its loss differs from a Gaussian-base construction, and give a deterministic baseline under the same map interface. We separate errors due to drift estimation, Brownian compression, and map learning. The empirical question is whether a small number of learned transitions retains the forecast quality of a well-resolved SDE at lower inference cost. Fewer network evaluations alone do not establish this claim.
 
 \section{Conditional Forecasting Setup}
-Let $h_n=(y_{n-p+1},\ldots,y_n)$ denote the available history and $c(h_n)=y_n$ its latest state. The target is $p(y_{n+1}\mid h_n)$ for a fixed physical lead time $\Delta$. We use $s,t\in[0,1]$ exclusively for artificial generative time; one completed generative trajectory produces one physical forecast. A multi-step physical forecast repeatedly generates a future state and updates the history, using independent fresh randomness for each physical step and ensemble member. Algorithm~\ref{alg:forecast} separates these two loops: $N$ neural evaluations produce one physical forecast, and $L$ such forecasts form a rollout. For a deterministic flow map, the same algorithm starts each physical forecast from fresh Gaussian noise and sets the martingale increment to zero.
+Let $h_n=(y_{n-p+1},\ldots,y_n)$ denote the available history and $c(h_n)=y_n$ its latest state. The target is $p(y_{n+1}\mid h_n)$ for a fixed physical lead time $\Delta$. Iteration defines a finite-history surrogate; recovering the true joint trajectory law additionally requires sufficient history, correct kernels on encountered histories, and inclusion of relevant time dependence (Appendix~\ref{app:method-assumptions}). We use $s,t\in[0,1]$ exclusively for artificial generative time; one completed generative trajectory produces one physical forecast. A multi-step physical forecast repeatedly generates a future state and updates the history, using independent fresh randomness for each physical step and ensemble member. Algorithm~\ref{alg:forecast} separates these two loops: $N$ neural evaluations produce one physical forecast, and $L$ such forecasts form a rollout. For a deterministic flow map, the same algorithm starts each physical forecast from fresh Gaussian noise and sets the martingale increment to zero.
 
 \input{forecast_algorithm}
 
 We work in the normalized state coordinates used by the training pipeline. If the dataset uses tendencies, their reconstruction into physical states belongs to the data transform and must be identical for every compared model. Training, validation, and test data are separated by trajectory or contiguous temporal blocks before adjacent pairs are formed.
 
 \subsection{Forecasting Stochastic Interpolants}
-For $(h,y)$ drawn from observed forecast pairs, choose differentiable schedules satisfying $\alpha_0=1$, $\alpha_1=0$, $\beta_0=0$, $\beta_1=1$, and $\gamma_1=0$. Let
+For $(h,y)$ drawn from observed forecast pairs, choose differentiable schedules satisfying $\alpha_0=1$, $\alpha_1=0$, $\beta_0=0$, $\beta_1=1$, and $\gamma_1=0$. Let $W$ be standard Brownian motion independent of $(h,y)$, and define
 \begin{equation}
  I_t=\alpha_t c(h)+\beta_t y+\gamma_t W_t,
  \qquad W_t\sim\N(0,t\mathrm{Id}).
@@ -69,12 +69,12 @@ A useful schedule is $\alpha_t=1-t$, $\beta_t=t^2$, $\gamma_t=\varepsilon(1-t)$.
  R_t=-c(h)+2ty-\varepsilon\sqrt{t}z.
  \label{eq:target}
 \end{equation}
-This target has no singular time coefficient and differs from the Gaussian-base target in the image-generation setting of \citet{pan2026itomaps}. Substituting that target would change the learned process.
+This target has no singular time coefficient; this does not guarantee regularity of the conditional drift. It differs from the Gaussian-base target of \citet{pan2026itomaps}, whose substitution would change the process.
 
 \paragraph{Terminology.} The repository names this model family \texttt{FollmerStochasticInterpolant}. Its default diffusion $\gamma$ is the forecasting SDE above. The distinct KL-optimal F\"ollmer choice in \citet{chen2024forecasting} changes both diffusion and drift. We retain the class naming for compatibility and identify the actual diffusion in every experiment; we do not equate these two processes. Distilling an alternative diffusion requires its corresponding corrected drift.
 
 \section{Conditional It\^o Maps}
-For fixed history $h$, a solution of \eqref{eq:sde} is determined by the initial state and Brownian realization. Define its finite-time transition by
+For ideal map identities, fix $h$ and assume a regular drift version yielding a pathwise unique strong solution with finite second moments. We assume the stated diagonal extension on interior times; endpoint transitions require additional regularity (Appendix~\ref{app:method-assumptions}). Define the transition for $s<t$ by
 \begin{equation}
  \Phi_{s,t}(x,h;W)
  =x+(t-s)G_{s,t}(x,h;W)+M_t-M_s,
@@ -86,7 +86,7 @@ where $M_t=\int_0^t\gamma_r\,dW_r$ and
  \int_s^t b_r(X_r;h)\,dr.
  \label{eq:average}
 \end{equation}
-We learn $G_\theta(s,t,x,h;\Psi_{s,t})$, with $\Psi_{s,t}$ a finite description of the driving path. The known martingale displacement is added explicitly. The diagonal is $G_{t,t}(x,h)=b_t(x;h)$ and contains no Brownian dependence.
+We learn $G_\theta(s,t,x,h;\Psi_{s,t})$, with $\Psi_{s,t}$ a finite description of the driving path. The known martingale displacement is added explicitly. Where the continuous diagonal extension exists, $G_{t,t}(x,h)=b_t(x;h)$ has no Brownian dependence; its learned approximation need not equal the population drift.
 
 \subsection{Path Representation and Coupling}
 We represent the reweighted Brownian process in its variance clock
@@ -103,7 +103,7 @@ The map receives $K$ consecutive increments (initially $K=4$) at the local times
  \frac{A(D-A)}{D}\mathrm{Id}\right).
  \label{eq:bridge}
 \end{align}
-Cache every queried value; repeated times reuse it. Zero-variance intervals are deterministic. Thus a direct transition and its two subtransitions use the same sampled path even when their local query grids differ, and $\Delta M_{s,t}=\Delta M_{s,u}+\Delta M_{u,t}$ exactly up to floating-point arithmetic. Future Brownian inputs are independent of data and the state at the interval start.
+Cache every queried value; repeated times reuse it. Zero-variance intervals are deterministic. Thus a direct transition and its two subtransitions use the same sampled path even when their local query grids differ, and $\Delta M_{s,t}=\Delta M_{s,u}+\Delta M_{u,t}$ exactly up to floating-point arithmetic. Brownian increments after $s$ are independent of the state at $s$ and the forecast pair before conditioning on any revealed future bridge value.
 
 This construction samples exact finite-dimensional martingale distributions at the requested times. It does not make finitely many path features a complete description of a Brownian path, or make the learned drift integral exact. The feature count is therefore an approximation parameter, rather than an SDE discretization step count. Resampling unrelated paths on the two sides of a composition loss would instead penalize valid stochastic variability.
 
@@ -132,11 +132,9 @@ Here $\bar\theta$ denotes detached current parameters or an exponential moving a
  \E\|G_\theta(s,t,x,h;\Psi_{s,t})-\sg(\widetilde G)\|^2.
  \label{eq:psd}
 \end{equation}
-We combine \eqref{eq:diagonal} and \eqref{eq:psd}, sampling $x=I_s$ and an independent future Brownian path. A curriculum grows the trained interval lengths after diagonal warmup. The implementation also supports a frozen pretrained teacher. When present, its drift $b_{\mathrm T}(I_t;h)$ replaces $R_t$ on the diagonal; this is teacher distillation, rather than new regression against raw data targets. A supervised rollout objective uses the finite-time target $(X_t-x-\Delta M_{s,t})/(t-s)$ from a numerical teacher trajectory. Our empirical study uses two stages: teacher-diagonal progressive self-distillation, followed by refinement with this simulation-based same-path target. The second stage therefore does not retain a wholly simulation-free training claim. With a teacher supplied, validation uses the same-path rollout target even during composition training. This checks the selected map against the teacher dynamics and does not certify accuracy against the true conditional distribution.
+We combine \eqref{eq:diagonal} and \eqref{eq:psd}, sampling $x=I_s$ with independent future Brownian increments. Average-drift MSE weights the corresponding endpoint squared error by $(t-s)^{-2}$, aligning diagonal and finite-time supervision. Our teacher-initialized study uses no separate diagonal-only warmup; interval growth and loss ramping are recorded in Appendix~\ref{app:numerical-teacher}. The implementation also supports a frozen pretrained teacher. When present, its drift $b_{\mathrm T}(I_t;h)$ replaces $R_t$ on the diagonal; this is teacher distillation, rather than new regression against raw data targets. A supervised rollout objective uses the finite-time target $(X_t-x-\Delta M_{s,t})/(t-s)$ from a numerical teacher trajectory using Euler drift and exact increments of $M$, unlike the baseline's left-point Euler--Maruyama diffusion (Appendix~\ref{app:numerical-teacher}). Our study uses two stages: teacher-diagonal progressive self-distillation, followed by refinement with this simulation-based same-path target. The second stage therefore does not retain a wholly simulation-free training claim. With a teacher supplied, validation uses the same-path rollout target even during composition training. This checks the selected map against the teacher dynamics and does not certify accuracy against the true conditional distribution.
 
-The population composition identity follows from \citet{pan2026itomaps}; the conditional extension holds by fixing $h$ throughout the artificial-time transition. A numerical optimizer is not guaranteed to recover the desired solution from a finite set of intervals. Diagonal anchoring, explicit endpoint training, and teacher comparisons are therefore substantive checks.
-
-\paragraph{Why composition first?} The alternative Lagrangian residual is $G+(t-s)\partial_tG-b_t(\Phi_{s,t};h)$, where differentiation holds the underlying Brownian realization fixed. Time-dependent compressed features complicate that derivative. Composition avoids this additional implementation issue. Eulerian ODE identities cannot simply be copied to a noisy starting state.
+The full-path identity follows from \citet{pan2026itomaps}, with $h$ fixed. For finite features and restricted interval sampling, PSD is approximate self-distillation: we assert neither identifiability nor zero population residual, even with ideal optimization. Teacher comparisons are therefore substantive checks.
 
 \subsection{Deterministic Flow Map Baseline}
 A flow-matching forecast model instead uses an independent Gaussian base $z$ conditioned on $h$, for example $J_t=(1-t)z+ty$ with velocity target $y-z$. Its learned map is
@@ -145,9 +143,9 @@ A flow-matching forecast model instead uses an independent Gaussian base $z$ con
 \end{equation}
 Flow map matching \citep{boffi2025flowmaps} supplies its two-time training principle. The common implementation removes Brownian features and the martingale term, while keeping history conditioning, paired times, and map composition. We describe a composition-based training variant explicitly, rather than claim to reproduce every objective of the original paper. Its forecasts remain probabilistic because different base draws yield different futures. A deterministic map starting from the single fixed state $c(h)$, with no other noise input, could not represent a nondegenerate conditional law.
 
-\subsection{What the Approximation Guarantees}
+\subsection{Approximation Errors and Diagnostic Bounds}
 \begin{proposition}[Conditional endpoint error]
-Fix $h$ and suppose a reference solution $X_1$ of \eqref{eq:sde} and a learned endpoint $\widehat X_1$ use the same Brownian input. Then
+Fix $h$. Let a reference solution $X_1$ of \eqref{eq:sde} and a learned endpoint $\widehat X_1$ have finite second moments and share Brownian input. Then
 \begin{equation}
  W_2^2(\Law(\widehat X_1\mid h),\Law(X_1\mid h))
  \leq\E[\|\widehat X_1-X_1\|^2\mid h].
@@ -156,10 +154,10 @@ Fix $h$ and suppose a reference solution $X_1$ of \eqref{eq:sde} and a learned e
 \begin{proof}
 The joint same-path law is a coupling of the two endpoint distributions. The squared Wasserstein distance is the infimum of this cost over all couplings.
 \end{proof}
-This elementary bound motivates same-path error as a diagnostic. It compares to the selected reference SDE, not automatically to the true forecast law: drift estimation and numerical teacher error remain. A map can improve over a coarse Euler sampler by removing integration bias, but improvement over a well-resolved teacher requires empirical evidence. Finite Brownian compression and imperfect conditional regression can reduce ensemble spread.
+This elementary coupling bound motivates same-path diagnostics; it is not a bound from the implemented PSD loss to forecast-law error. It compares to the selected reference SDE, not automatically to the true forecast law: drift estimation and numerical teacher error remain. A future exact-diffusion solver control is needed to distinguish learned-map benefits from the teacher's different noise quadrature. Finite Brownian compression and imperfect conditional regression can reduce ensemble spread.
 
 \begin{proposition}[Information lost by path compression]\label{prop:compression}
-Fix $s,t,x,h$ and let $Y=\Phi_{s,t}(x,h;W)$ have finite second moment. For features $Z=\Psi_{s,t}(W)$ and any predictor $f(Z)$,
+Fix $s,t,x,h$ and let $Y=\Phi_{s,t}(x,h;W)$ have finite second moment. For features $Z=\Psi_{s,t}(W)$ and any square-integrable predictor $f(Z)$,
 \begin{align}
  \E\|Y-f(Z)\|^2={}&
  \E\|Y-\E[Y\mid Z]\|^2\nonumber\\
@@ -171,19 +169,14 @@ Consequently, the first term is an irreducible same-path regression error for th
 \begin{proof}
 Expand the square around $\E[Y\mid Z]$. The cross term vanishes because $Y-\E[Y\mid Z]$ has conditional mean zero.
 \end{proof}
-When the features include $M_t-M_s$, this statement applies equally to regression of the drift integral after subtracting the known displacement. At the population squared-loss optimum, total covariance satisfies
+When the features include $M_t-M_s$, this statement applies equally to regression of the drift integral after subtracting the known displacement. Still fixing $(s,t,x,h)$, total covariance at the squared-loss optimum satisfies
 \begin{equation}
  \operatorname{Cov}(Y)=\operatorname{Cov}(\E[Y\mid Z])
  +\E[\operatorname{Cov}(Y\mid Z)].
 \end{equation}
-Thus conditional-mean compression can remove spread. This is a statement about same-path squared-error training, not a claim that a low-dimensional random input cannot represent the endpoint distribution by another transport. Composition losses with different feature sets also need not vanish under compression. In particular, two child maps query $2K$ local increments, whereas the direct map sees $K$ increments on its own interval. These query grids are generally different when the split is random. Fixing the EMA parameters, the direct map regresses toward the conditional mean of the composed target given its own inputs. Unobserved path detail and imperfections in the child maps can both contribute to the residual. Consequently, diagonal correctness and a shared martingale alone do not guarantee an exact finite-feature semigroup or exact endpoint law.
+Thus conditional-mean compression can remove spread at this fixed conditioning; it does not directly quantify rollout spread after histories diverge. This is a statement about same-path squared-error training, not a claim that a low-dimensional random input cannot represent the endpoint distribution by another transport. Composition losses with different feature sets also need not vanish under compression. In particular, two child maps query $2K$ local increments, whereas the direct map sees $K$ increments on its own interval. These query grids are generally different when the split is random. Fixing the EMA parameters, the direct map regresses toward the conditional mean of the composed target given its own inputs. Unobserved path detail and imperfections in the child maps can both contribute to the residual. Consequently, diagonal correctness and a shared martingale alone do not guarantee an exact finite-feature semigroup or exact endpoint law.
 
-For intuition, consider the scalar process $dX_r=-X_r\,dr+dW_r$, $X_0=0$, on $[0,1]$. Its endpoint is $X_1=\int_0^1e^{-(1-r)}dW_r$. Observing only $Z=W_1$ leaves residual variance
-\begin{equation}
- \operatorname{Var}(X_1\mid W_1)
- =\frac{1-e^{-2}}{2}-(1-e^{-1})^2>0.
-\end{equation}
-The diffusion increment is known exactly, but the timing of the noise still changes the drift response. More subinterval increments reduce this ambiguity; Appendix~\ref{app:compression} gives the corresponding formula. A fixed-history experiment with the frozen fluid teacher also found measurable omitted variation: about 9.7\% of estimated endpoint variance at $K=4$ and 0.66\% at $K=16$. This small nested Monte Carlo diagnostic motivated testing a finer representation; it does not predict a forecast-score improvement (Appendix~\ref{app:ns-compression}).
+An Ornstein--Uhlenbeck example in Appendix~\ref{app:compression} shows nonzero same-path error even when the total noise increment is known. For a fixed fluid-teacher history, a nested Monte Carlo diagnostic found omitted variation of about 9.7\% of endpoint variance at $K=4$ and 0.66\% at $K=16$. It does not predict forecast-score improvement (Appendix~\ref{app:ns-compression}).
 
 \section{Related Scientific Forecasting Work}
 Dynamics-aware generative forecasting predates our construction. DYffusion couples a learned interpolator and forecaster to temporal dynamics \citep{cachay2023dyffusion}; GenCast demonstrates conditional diffusion ensembles for global weather \citep{price2025gencast}. These studies motivate probabilistic evaluation beyond deterministic forecast error.
@@ -193,46 +186,13 @@ Few-step scientific generation is also established. Swift studies single-step co
 Our proposed distinction is preservation of a specified forecasting SDE's transition under a shared Brownian realization, starting from the observed state. The aim is not a first one-step scientific forecaster, nor an inherent claim that stochastic maps outperform deterministic transports. Establishing practical value requires a strong deterministic map baseline and evidence that the path-conditioned formulation retains forecast uncertainty at lower sampling cost.
 
 \section{Experimental Study}
-\subsection{Stochastically Forced Navier--Stokes}
-The main benchmark is the repository's existing stochastic Navier--Stokes dataset. A two-dimensional vorticity description is
-\begin{equation}
- d\omega+v\cdot\nabla\omega\,d\tau
- =(\nu\Delta\omega-\kappa\omega)\,d\tau
- +\eta\,dB_\tau,
-\end{equation}
-where $\tau$ denotes physical time. The available array has 200 trajectories, 100 snapshots each, one vorticity channel, and $128\times128$ spatial resolution. The existing configuration uses trajectories 0--159 for training, 160--179 for validation, and 180--199 for testing, five history fields, and scaling by 3.09969 with zero centering. We reuse forecast pairs, transforms, and architecture family across models.
-
-A recovered companion archive contains $256\times256$ fields and timestamps. Every coarse field was verified as its exact stride-two spatial downsampling. The associated times span approximately 49.989998--99.480095, with mean increment 0.49989997016 in saved simulation-time units. We retain stored snapshot intervals as the primary lead coordinate. The original forcing, viscosity, drag and generating revision remain unverified; the repository's current simulator configuration alone does not certify them.
-
-We compare the existing stochastic interpolant and flow-matching samplers to the conditional It\^o map and deterministic flow map. Maps use $1,2,4,8$ generative steps, and Euler solver baselines use $1,4,16,64,128$ steps. Each step uses one backbone evaluation in these implementations. The 64- and 128-step measurements check numerical sensitivity; we do not presume either distribution is fully converged. All methods use 16-member ensembles on the same RTX 3090, with accelerator warmup and synchronized timing, including Brownian-feature construction. Ten-lead autoregressive evaluations use map budgets one and eight and solver budget 64, fixed before testing. Training costs are recorded separately.
-
-\subsection{Two-Stage Training and Model Selection}
-Both students reuse compatible pretrained teacher backbones with widths $[16,32,64,128]$. The It\^o student uses $K=4$ Brownian feature channels per scalar field by default; the deterministic student uses none. Added conditioning branches start at zero. We use batch size eight on a single NVIDIA RTX 3090 and keep the teacher frozen.
-
-Stage one runs 2,000 progressive self-distillation updates, with teacher drift supervision on the diagonal. The consistency weight ramps over 100 updates, the maximum interval grows over 500 updates, and the composition target uses an EMA decay of 0.95. Stage two starts from the validation-selected first-stage checkpoint and runs 500 updates of same-path teacher-rollout regression with 32 drift integration steps, a learning rate of $5\times10^{-5}$, and full interval sampling. Half of its intervals are the complete $[0,1]$ transition. Both stages retain diagonal supervision. The same procedure is applied to the deterministic flow map using its own flow-matching teacher and zero martingale increment.
-
-Checkpoint validation uses fixed random draws, the full interval range, and 32-step teacher trajectories on four batches from a fixed-seed shuffled validation loader, drawn from the 20 validation trajectories. Small ensemble forecasting pilots on four validation trajectories guide development; they are separate from the all-20-trajectory held-out test. Development uses seed zero. After feature selection, both complete student stages were repeated with seeds one and two, keeping teachers and settings fixed. All three students were evaluated at the preselected one- and eight-step budgets. Recorded training-and-validation time includes both stages and their teacher evaluations but excludes model/data initialization and original teacher pretraining, whose cost is unavailable.
-
-\subsection{Quality and Calibration}
-The primary forecast-quality measure is spatially averaged fair ensemble CRPS. For ensemble forecasts $x_1,\ldots,x_M$ and held-out target $y$, we additionally use the energy score
-\begin{equation}
- \widehat{\mathrm{ES}}=
- \frac1M\sum_i\|x_i-y\|
- -\frac{1}{2M(M-1)}\sum_{i\ne j}\|x_i-x_j\|.
-\end{equation}
-For the reported energy score, the norm is the Euclidean norm divided by the square root of the state dimension. We also report ensemble-mean RMSE, empirical interval coverage, and spread. These diagnostics have finite-ensemble effects: in particular, an empirical 5--95\% interval from a small ensemble does not have 90\% expected coverage even when sampling is calibrated. Appendix~\ref{app:metrics} defines the metrics and their interpretation. Normalized errors must specify their denominator. Enstrophy spectra and selected low-dimensional projections assess physical structure that marginal scores can miss. Multi-step physical rollouts test error accumulation and stability.
-
-We report differences over shared held-out histories, with 95\% intervals from 10,000 trajectory-bootstrap resamples. Origins are averaged within trajectories; pixels are not independent replicates. For the three-student comparison, student scores are averaged before paired trajectory resampling. These intervals condition on the trained students; sample standard deviations across training seeds are reported separately. Neither estimates teacher-training uncertainty. Intervals are pointwise, descriptive, and unadjusted for multiple comparisons. Checkpoints and hyperparameters were selected using validation data only. Full seed-zero budget curves complement confirmation at the frozen one- and eight-step budgets.
-
-\subsection{Ablations and Failure Checks}
-The study varies Brownian resolution, map step count, and the use of teacher-rollout refinement. A separate same-path conditional-variance diagnostic quantifies omitted Brownian information for a fixed learned teacher. Exact additive-noise tests verify variance and shared-path composition, and zero diffusion recovers the deterministic map algebra. A full sensitivity study of loss weights and diagonal warmup, and a separately trained endpoint-noise-only fluid model, remain outside this experimental scope.
-
-\input{results}
+\input{ns_main_case}
+\input{video_main}
 
 \section{Limitations and Discussion}
 The forecasting distribution is constrained by history and training coverage. Compressed Brownian inputs, map error and teacher bias require separate diagnostics. In a partial 4,096-interval extension, both maps remain finite, but the It\^o map loses substantial enstrophy and spread (Appendix~\ref{app:long-horizon}). Bounded trajectories do not establish distributional accuracy; the long solver references remain pending.
 
-The contribution is a conditional scientific-forecasting adaptation of existing map-learning principles, with a point-mass initial state and evidence about the quality--cost tradeoff. Confirmed comparative evidence covers one stochastic-fluid archive, three student trainings, and fixed teachers. Pixel-space KTH and CLEVRER models are now trained; their setup and pending evaluation are documented in Appendix~\ref{app:video-case}. Other consistency or adversarial-distillation baselines, independent teacher trainings and physical conditional reference ensembles remain necessary to assess generality.
+The contribution is a conditional scientific-forecasting adaptation of existing map-learning principles, with a point-mass initial state and evidence about the quality--cost tradeoff. The fluid confirmation uses one archive, three student trainings and fixed teachers. The main-text pixel-video case extends the evaluation to KTH and CLEVRER; full setup and additional diagnostics are in Appendix~\ref{app:video-case}. Other consistency or adversarial-distillation baselines, independent teacher trainings and physical conditional reference ensembles remain necessary to assess generality.
 
 \section*{Impact Statement}
 This work seeks to reduce the cost of probabilistic scientific simulation and forecasting. Faster ensembles may make uncertainty assessment more accessible, but poorly calibrated accelerated models could produce misleading confidence in downstream decisions. The study therefore reports calibration and physical diagnostics alongside speed, and does not establish suitability for safety-critical deployment. Training and distillation consume compute that should be included when assessing overall efficiency.
@@ -251,9 +211,13 @@ The implemented map family is restricted to the existing affine diffusion schedu
 
 The experiment archive records commands, resolved configurations, seeds, data splits, software/device metadata, checkpoint hashes, selection rules, and raw evaluation outputs. A confirmation audit checks 4,360 forecast rows against the frozen protocol and verifies all twelve completed training stages. The CPU test suite passes 105 tests; these verify implementation behavior separately from the held-out forecasting evidence.
 
+\input{method_assumptions}
+
 \subsection{Recorded Distillation Compute}\label{app:compute}
 \input{generated/replication_training_cost}
 Training time starts inside the training loop after model and dataset initialization. The recorded elapsed time includes optimization, checkpoint validation, and teacher evaluations. The table sums the complete executed stages, including updates after the ultimately selected checkpoint where applicable. It is not total end-to-end job time. Original teacher pretraining cost is unavailable; preprocessing, evaluation, development pilots, and the $K=16$ ablation are also outside the selected-student training totals.
+
+\input{ns_experimental_details}
 
 \section{Student-Training Replications}\label{app:replications}
 \input{generated/replication_individuals}

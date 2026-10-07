@@ -11,7 +11,7 @@ LONG_MAP_OUTPUTS := figures/long_horizon_maps.pdf figures/long_horizon_maps_skil
 VIDEO_CASE_SOURCES := ../../video_forecasting/results/kth_protocol.json ../../video_forecasting/results/clevrer_protocol.json $(wildcard ../../video_forecasting/results/training/*/metadata.json ../../video_forecasting/notes/*_data_preview.png)
 VIDEO_CASE_OUTPUTS := figures/video_case/setup_table.tex figures/video_case/training_table.tex figures/video_case/dataset_previews.pdf figures/video_case/asset_provenance.json
 
-.PHONY: all artifacts clean replication-artifacts
+.PHONY: all artifacts clean replication-artifacts video-results-artifacts
 all: artifacts
 	TEXINPUTS=.:template: BSTINPUTS=.:template: latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 
@@ -44,3 +44,7 @@ $(LONG_MAP_OUTPUTS) &: build_long_horizon_figures.py ../experiments/report_long_
 
 $(VIDEO_CASE_OUTPUTS) &: build_video_case.py $(VIDEO_CASE_SOURCES)
 	$(PYTHON) build_video_case.py
+
+# Explicit only: requires completed and audited reports for both video datasets.
+video-results-artifacts:
+	$(PYTHON) build_video_results.py --report-dir ../../video_forecasting/results/report

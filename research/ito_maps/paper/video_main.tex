@@ -1,0 +1,8 @@
+\subsection{Pixel-Space Video Forecasting}\label{sec:video-main}
+We also evaluate KTH human-action videos and CLEVRER object-motion videos, using FVD as in \citet{chen2024forecasting}. This pilot predicts $64\times64$ pixels directly and conditions on the last $N$ consecutive frames. KTH uses grayscale frames with $N=10$ observations and $30$ forecasts; CLEVRER uses RGB, $N=2$, and $14$ forecasts at stride five. All four model families are trained separately on each dataset. The stochastic-interpolant and flow-matching teachers start from scratch; each map is initialized and trained from its own newly trained teacher. The selected models use the same 128 frozen test clips and four sampled completions per clip. FVD embeds the observed prefix together with the future, using a fixed pretrained I3D detector. Our pooled comparison has 128 real and 512 generated clips, versus 256 and 25,600 in the original study; it is a smaller pixel-space pilot, not a numerical reproduction of the latent-space benchmark. Appendix~\ref{app:video-case} gives the training and metric protocol.
+
+\IfFileExists{generated/video_main_results.tex}{%
+\input{generated/video_main_results}%
+}{%
+All eight dataset/model combinations have completed training and were frozen before testing. The matched all-model evaluation is still running. Its FVD comparison and fixed truth-versus-prediction frame sequences for both datasets will be included only after both artifact audits pass; no video-quality conclusion is drawn from incomplete results.
+}

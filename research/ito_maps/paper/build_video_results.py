@@ -27,6 +27,8 @@ VIDEO = ROOT / "research/video_forecasting"
 DEFAULT_REPORT = VIDEO / "results/report"
 DEFAULT_OUTPUT = PAPER / "figures/video_results"
 DEFAULT_SNIPPET = PAPER / "generated/video_results.tex"
+DEFAULT_MAIN_SNIPPET = PAPER / "generated/video_main_results.tex"
+MAIN_VISUAL_SELECTION = VIDEO / "notes/paper_main_visual_selection.json"
 VISUAL_SELECTION = VIDEO / "notes/paper_visual_selection.json"
 SPEC = importlib.util.spec_from_file_location(
     "video_report_for_paper", VIDEO / "experiments/report_video_results.py"
@@ -254,8 +256,8 @@ def make_tables(rows):
     }
 
 
-def fixed_example(dataset, report, output, allow_incomplete=False):
-    """Always case_000 and member_0 at prespecified budgets and lead fractions."""
+def load_fixed_example(report, allow_incomplete=False):
+    """Read the fixed case/member, enforcing common observations and truth."""
     selections = []
     reference = None
     case_id = None
@@ -327,6 +329,14 @@ def fixed_example(dataset, report, output, allow_incomplete=False):
             }
         )
     require(reference is not None, "No qualitative artifacts available")
+    return reference, selections, case_id, inputs
+
+
+def fixed_example(dataset, report, output, allow_incomplete=False):
+    """Always case_000 and member_0 at prespecified budgets and lead fractions."""
+    reference, selections, case_id, inputs = load_fixed_example(
+        report, allow_incomplete
+    )
     horizon = report["protocol"]["forecast_horizon"]
     lead_indices = sorted(
         set([0, horizon // 4, horizon // 2, 3 * horizon // 4, horizon - 1])
@@ -383,6 +393,204 @@ def fixed_example(dataset, report, output, allow_incomplete=False):
         "inputs": inputs,
         "selection_rule": "Fixed before completed comparisons: first selected case/member0; SI64/FM64/Ito8/Flow1/persistence1",
     }
+
+
+def main_table(reports):
+    """Use report FVD values unchanged; display the same budgets for both datasets."""
+    datasets = [name for name in ("kth", "clevrer") if name in reports]
+    lookup = {
+        dataset: {
+            (r["model_class"], int(r["num_steps"])): r for r in reports[dataset]["rows"]
+        }
+        for dataset in datasets
+    }
+    grids = [set(value) for value in lookup.values()]
+    require(all(grid == grids[0] for grid in grids), "Main-table budget grids differ")
+    rows = []
+    for family, steps in sorted(
+        grids[0], key=lambda key: (FAMILY_ORDER.index(key[0]), key[1])
+    ):
+        counts = [
+            lookup[name][family, steps]["rollout_nfe"]
+            / reports[name]["protocol"]["forecast_horizon"]
+            for name in datasets
+        ]
+        require(
+            all(count == counts[0] for count in counts),
+            "Main-table per-frame NFE differs across datasets",
+        )
+        values = [LABELS[family], str(int(counts[0]))]
+        for dataset in datasets:
+            row = lookup[dataset][family, steps]
+            values.append(fmt(row["fvd_pooled"], 1))
+            values.append(
+                fmt(row["fvd_member_mean"], 1)
+                + r" $\pm$ "
+                + fmt(row["fvd_member_std"], 1)
+            )
+        rows.append(values)
+    return table(
+        [
+            "Model",
+            "NFE/frame",
+            *[
+                header
+                for name in datasets
+                for header in [
+                    name.upper() + " pooled",
+                    name.upper() + " member",
+                ]
+            ],
+        ],
+        rows,
+    )
+
+
+def main_frame_sequences(reports, output, allow_incomplete=False):
+    """Side-by-side datasets: observed last frame, then first/middle/last forecast."""
+    datasets = [name for name in ("kth", "clevrer") if name in reports]
+    families = FAMILY_ORDER[:-1]
+    labels = ["Truth", "SI (64)", "FM (64)", "Itô map (8)", "Flow map (1)"]
+    fig = plt.figure(figsize=(5.6 * len(datasets), 6.0))
+    outer = fig.add_gridspec(
+        1,
+        len(datasets),
+        left=0.11 / len(datasets),
+        right=0.998,
+        bottom=0.015,
+        top=0.88,
+        wspace=0.07,
+    )
+    metadata = {}
+    for index, dataset in enumerate(datasets):
+        report = reports[dataset]
+        truth, selections, case_id, inputs = load_fixed_example(
+            report, allow_incomplete
+        )
+        predictions = {
+            item["model_class"]: frames for item, (_, frames) in zip(inputs, selections)
+        }
+        history = report["protocol"]["history_length"]
+        horizon = report["protocol"]["forecast_horizon"]
+        stride = report["protocol"]["frame_stride"]
+        leads = sorted(set([0, horizon // 2, horizon - 1]))
+        columns = 1 + len(leads)
+        grid = outer[index].subgridspec(5, columns, wspace=0.035, hspace=0.04)
+        origin = read_json(
+            report["paths"][next(iter(report["paths"]))].parent / "cases.json"
+        )[0].get("source_frame_start", 0)
+        for row in range(5):
+            for column in range(columns):
+                axis = fig.add_subplot(grid[row, column])
+                if column == 0:
+                    frame = truth[history - 1]
+                elif row == 0:
+                    frame = truth[history + leads[column - 1]]
+                else:
+                    family = families[row - 1]
+                    if family not in predictions:
+                        require(allow_incomplete, "Missing main figure family")
+                        axis.set_axis_off()
+                        continue
+                    frame = predictions[family][leads[column - 1]]
+                pixels = np.clip((frame + 1) / 2, 0, 1)
+                axis.imshow(
+                    pixels[0] if pixels.shape[0] == 1 else pixels.transpose(1, 2, 0),
+                    cmap="gray" if pixels.shape[0] == 1 else None,
+                    vmin=0,
+                    vmax=1,
+                    interpolation="nearest",
+                )
+                axis.set_xticks([])
+                axis.set_yticks([])
+                if column == 0:
+                    for spine in axis.spines.values():
+                        spine.set_color("#0072B2")
+                        spine.set_linewidth(1.6)
+                if row == 0:
+                    retained = (
+                        history - 1 if column == 0 else history + leads[column - 1]
+                    )
+                    title = (
+                        "Observed" if column == 0 else f"Lead {leads[column - 1] + 1}"
+                    )
+                    axis.set_title(
+                        f"{title}\n$r={retained}$",
+                        fontsize=11,
+                        color="#0072B2" if column == 0 else "black",
+                        pad=5,
+                    )
+                if column == 0 and index == 0:
+                    axis.set_ylabel(
+                        labels[row],
+                        rotation=0,
+                        ha="right",
+                        va="center",
+                        fontsize=11,
+                        labelpad=6,
+                    )
+        box = outer[index].get_position(fig)
+        fig.text(
+            (box.x0 + box.x1) / 2,
+            0.988,
+            dataset.upper(),
+            ha="center",
+            va="top",
+            fontsize=12,
+            weight="bold",
+        )
+        metadata[dataset] = {
+            "case_index_in_selected_list": 0,
+            "clip_id": case_id,
+            "member": 0,
+            "observed_retained_index": history - 1,
+            "future_leads": [lead + 1 for lead in leads],
+            "displayed_retained_indices": [
+                history - 1,
+                *[history + lead for lead in leads],
+            ],
+            "displayed_source_frame_indices": [
+                origin + retained * stride
+                for retained in [history - 1, *[history + lead for lead in leads]]
+            ],
+            "source_frame_start": origin,
+            "frame_stride": stride,
+            "inputs": [item for item in inputs if item["model_class"] != "persistence"],
+            "predictions_are": "individual sampled completion, never ensemble mean",
+        }
+    fig.savefig(output / "main_forecast_sequences.pdf", bbox_inches="tight")
+    fig.savefig(output / "main_forecast_sequences.png", bbox_inches="tight", dpi=180)
+    plt.close(fig)
+    return metadata
+
+
+def main_latex_snippet(output, development=False):
+    prefix = (
+        str(output.resolve().relative_to(PAPER))
+        if output.resolve().is_relative_to(PAPER)
+        else str(output.resolve())
+    )
+    warning = (
+        r"\paragraph{Incomplete development preview.} Models or datasets are omitted; this is not a completed comparison."
+        if development
+        else ""
+    )
+    return (
+        "\n".join(
+            [
+                warning,
+                r"\begin{table*}[t]\centering\small",
+                rf"\input{{{prefix}/main_fvd_table.tex}}",
+                r"\caption{Pixel-video FVD (lower is better). Pooled FVD compares 128 real and 512 generated clips. Member FVD reports mean $\pm$ completion SD of four separate 128-versus-128 comparisons, not confidence intervals. All budgets use identical frozen cases and checkpoints. NFE is per generated frame and member; persistence uses none. Other metrics are in Appendix~\ref{app:video-results}.}\label{tab:video-main-fvd}",
+                r"\end{table*}",
+                r"\begin{figure*}[t]\centering",
+                rf"\includegraphics[width=\textwidth]{{{prefix}/main_forecast_sequences.pdf}}",
+                r"\caption{Matched observed and predicted frame sequences for both datasets. Rows show truth and one sampled completion from each model, never an ensemble average. The blue-bordered column repeats the last observed frame; remaining columns are forecasts. $r$ is the zero-based retained-frame index within the clip: KTH retains every frame; CLEVRER raw-frame index is $5r$. Cases are the first frozen selections, member zero, at prespecified budgets (parentheses). Display clipping does not alter feedback. The other observed history frames condition each model but are omitted for space.}\label{fig:video-main-sequences}",
+                r"\end{figure*}",
+            ]
+        )
+        + "\n"
+    )
 
 
 def latex_snippet(output, reports, development=False):
@@ -449,11 +657,18 @@ def build_results(
     snippet=DEFAULT_SNIPPET,
     allow_incomplete=False,
     video_root=VIDEO,
+    main_snippet=None,
 ):
     report_dir, output, snippet = Path(report_dir), Path(output_dir), Path(snippet)
+    main_snippet = (
+        Path(main_snippet)
+        if main_snippet is not None
+        else snippet.with_name("video_main_results.tex")
+    )
     if allow_incomplete and (
         output.resolve() == DEFAULT_OUTPUT.resolve()
         or snippet.resolve() == DEFAULT_SNIPPET.resolve()
+        or main_snippet.resolve() == DEFAULT_MAIN_SNIPPET.resolve()
     ):
         raise ValueError(
             "Incomplete development output requires separate noncanonical asset and snippet destinations"
@@ -477,11 +692,21 @@ def build_results(
         for dataset in datasets
     }
     selection = read_json(VISUAL_SELECTION)
+    main_selection = read_json(MAIN_VISUAL_SELECTION)
     require(
         selection["budgets"] == VISUAL_BUDGETS
         and selection["case_index_in_frozen_selection"] == 0
         and selection["ensemble_member"] == 0,
         "Qualitative selection disagrees with its predeclared record",
+    )
+    require(
+        main_selection["case_index_in_frozen_selection"] == 0
+        and main_selection["ensemble_member"] == 0
+        and main_selection["budgets"]
+        == {
+            key: value for key, value in VISUAL_BUDGETS.items() if key != "persistence"
+        },
+        "Main qualitative selection disagrees with its predeclared record",
     )
     for dataset, report in reports.items():
         require(
@@ -500,6 +725,11 @@ def build_results(
             "path": str(VISUAL_SELECTION.relative_to(ROOT)),
             "sha256": sha256(VISUAL_SELECTION),
             "recorded_utc": selection["recorded_utc"],
+        },
+        "predeclared_main_visual_selection": {
+            "path": str(MAIN_VISUAL_SELECTION.relative_to(ROOT)),
+            "sha256": sha256(MAIN_VISUAL_SELECTION),
+            "recorded_utc": main_selection["recorded_utc"],
         },
         "datasets": {},
     }
@@ -521,6 +751,12 @@ def build_results(
             "qualitative": qualitative,
             "protocol": report["protocol"],
         }
+    (output / "main_fvd_table.tex").write_text(main_table(reports))
+    manifest["main_frame_sequences"] = main_frame_sequences(
+        reports, output, allow_incomplete
+    )
+    main_snippet.parent.mkdir(parents=True, exist_ok=True)
+    main_snippet.write_text(main_latex_snippet(output, allow_incomplete))
     snippet.parent.mkdir(parents=True, exist_ok=True)
     snippet.write_text(latex_snippet(output, reports, allow_incomplete))
     (output / "paper_results_manifest.json").write_text(
@@ -534,10 +770,20 @@ def main():
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--snippet", type=Path, default=DEFAULT_SNIPPET)
+    parser.add_argument(
+        "--main-snippet",
+        type=Path,
+        default=None,
+        help="Defaults to video_main_results.tex beside --snippet",
+    )
     parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     result = build_results(
-        args.report_dir, args.output_dir, args.snippet, args.allow_incomplete
+        args.report_dir,
+        args.output_dir,
+        args.snippet,
+        args.allow_incomplete,
+        main_snippet=args.main_snippet,
     )
     print(
         json.dumps(

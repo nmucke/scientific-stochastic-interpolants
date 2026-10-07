@@ -48,3 +48,34 @@ SI report was rendered separately under `/tmp/video_paper_si_assets`; its figure
 was visually reviewed and its LaTeX fragment compiled at the manuscript text
 width without overfull/underfull warnings. These partial development assets are
 not manuscript results.
+
+## Main-text video comparison (user-requested update)
+
+The same strict builder now also writes `generated/video_main_results.tex`
+(default: beside `--snippet`) and `figures/video_results/main_fvd_table.tex`
+plus `main_forecast_sequences.{pdf,png}`. `video_main.tex` includes the main
+snippet only after it exists. Override with `--main-snippet` for an isolated
+layout preview; development builds cannot target either canonical snippet.
+
+The main table preserves pooled FVD as the estimator analogous to the original
+paper and reports equal-count member-FVD mean/SD alongside it. It retains all
+nine model/budget combinations for each dataset. Member SD is completion
+variability, not a confidence interval. Pixel resolution, observed-prefix
+inclusion and the smaller real/generated counts prevent numerical benchmark
+reproduction claims.
+
+The main figure has matched side-by-side KTH/CLEVRER panels. Each contains truth
+and all four model families. A blue-bordered observed column repeats the last
+observed frame; three future columns show first, middle and final leads from
+the previously fixed sequence. The smaller display subset and layout were
+recorded in `paper_main_visual_selection.json` before completed CLEVRER results.
+Case zero, member zero and original model budgets remain unchanged. Predictions
+are individual sampled completions, never ensemble-mean images. Retained-frame
+and original-source frame indices are saved in the generated provenance.
+Persistence and five future display times remain in the full appendix panel.
+
+A real completed KTH-only layout preview lives under `/tmp/video_main_kth_preview`
+and is explicitly incomplete. It is not included in the manuscript. CPU tests
+also verify that the main panel actually uses member zero rather than averaging
+members, produces both grayscale and RGB panels, and retains both datasets and
+all budgets in the main FVD table.

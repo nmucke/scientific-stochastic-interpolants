@@ -1,0 +1,32 @@
+\subsection{Ideal Identities and Finite-History Modeling}
+\label{app:method-assumptions}
+For the ideal marginal construction we assume the regular conditional-density and schedule conditions of \citet{chen2024forecasting}, not only the endpoint values listed in the main text. The map identities additionally require a specified regular version of $b_t(x;h)$ and a pathwise unique strong solution with finite second moments for the initial states under consideration. Local spatial Lipschitz continuity and appropriate growth or nonexplosion conditions on compact interior time intervals provide a familiar sufficient setting. We assume the continuity needed for the drift average to extend to $G_{t,t}=b_t$ on that interior domain. Existence of a forecast transition at time one is an additional endpoint assumption; we do not assert a continuous diagonal extension at both endpoints for every off-support state.
+
+A nonsingular regression target alone does not imply these properties: for deterministic zero endpoints the present schedule gives $b_t(x)=-x/(1-t)$ on interior times, whose spatial Lipschitz constant diverges at one. That example is outside the positive-density setting, but explains the need to qualify endpoint statements. Quantized pixel videos are not themselves smooth conditional densities. Their learned continuous predictive models and numerically integrated neural drifts are practical approximations; no smooth-density theorem is claimed for the empirical video distribution without a continuous observation model.
+
+The physical forecast loop defines a finite-history surrogate. For its joint law to equal the true future law, the chosen history must be sufficient:
+\begin{equation}
+\Law(Y_{n+1}\mid Y_{\le n})
+=\Law(Y_{n+1}\mid Y_{n-p+1:n}).
+\end{equation}
+The kernel must also be correct on generated histories, and either time-homogeneous or conditioned on relevant time dependence. Unobserved state, video occlusion and spatial coarsening can violate these requirements even when the fitted one-step conditional is exact. Fresh independent randomness samples the specified kernel correctly; it does not restore omitted memory. Neither the generative-time composition identity nor long-rollout boundedness proves joint physical forecast correctness.
+
+All conditional expectations and covariance identities in Proposition~\ref{prop:compression} fix $(s,t,x,h)$. Its projection argument requires square-integrable targets and predictors. The endpoint coupling inequality similarly requires finite second moments and is not specific to this optimizer. These elementary identities diagnose approximation and information loss; they are not new convergence or calibration theorems for the implemented training loss.
+
+\subsection{Numerical Teacher and Actual Training Objective}
+\label{app:numerical-teacher}
+Teacher-rollout supervision integrates the frozen neural drift by Euler steps but uses exact additive-diffusion increments:
+\begin{equation}
+X_{j+1}=X_j+\delta_j b_{\mathrm T}(X_j,t_j;h)
++M_{t_{j+1}}-M_{t_j}.
+\label{eq:numerical-teacher}
+\end{equation}
+The existing stochastic-interpolant comparator instead adds $\gamma(t_j)\sqrt{\delta_j}\,\xi_j$, the left-point Euler--Maruyama diffusion rule. The networks can therefore be identical while their finite-step numerical transitions differ. For zero drift and $n$ uniform steps, exact endpoint noise variance is $\varepsilon^2/3$, whereas the left-point rule gives $\varepsilon^2[1/3+1/(2n)+1/(6n^2)]$. This calculation concerns zero drift, not predicted fluid variance. An exact-diffusion solver comparison remains a future empirical control; existing frozen baselines and results are unchanged.
+
+The optimized objective is $\lambda_{\mathrm{diag}}\mathcal L_{\mathrm{diag}}+\lambda_{\mathrm{off}}\mathcal L_{\mathrm{off}}$, with $\mathcal L_{\mathrm{off}}=\mathcal L_{\mathrm{comp}}$ in stage one and same-path average-drift teacher MSE in stage two. Since the shared martingale cancels, endpoint residual equals $(t-s)$ times average-drift residual. Consequently, unweighted average-drift MSE weights endpoint squared error by $(t-s)^{-2}$ across the sampled intervals; it is not unweighted endpoint MSE. Average-drift units align finite-time and diagonal supervision, without removing this weighting.
+
+For the recorded Navier--Stokes stages, $\lambda_{\mathrm{diag}}=1$ and the maximum $\lambda_{\mathrm{off}}=1$. Stage one ramps the latter over 100 updates and grows maximum interval length from 0.125 to one over 500 updates. Its endpoint-atom probability is 0.25; its detached target parameters follow $\bar\theta\leftarrow0.95\bar\theta+0.05\theta$ after each update. Stage two uses unit weights immediately, full interval length and endpoint probability 0.5; its target is the frozen teacher, not its recorded EMA copy. Both stages use zero diagonal-only warmup steps. A separate warmup is an optional implementation feature, not part of these runs.
+
+The restricted final interval distribution excludes direct gaps below 0.01 and child gaps below 0.0025, while the diagonal is trained separately. Thus it does not enforce a refinement-to-zero identity on a complete time domain. Finite features also need not admit exact pathwise composition, even for conditional-mean teacher predictors. The EMA objective, restricted intervals and compressed representation do not meet the full-path identification assumptions of \citet{pan2026itomaps}; no identifiability, zero population residual, or forecast-law bound from PSD loss is asserted.
+
+Composition avoids differentiating time-dependent compressed features while holding a full Brownian realization fixed. An alternative Lagrangian residual would be $G+(t-s)\partial_tG-b_t(\Phi_{s,t};h)$; deterministic Eulerian identities cannot simply be applied to a noisy starting state. Brownian independence throughout refers to increments after the interval start, before conditioning on any revealed future bridge endpoint, rather than independence of absolute future Brownian values from an adapted state.
