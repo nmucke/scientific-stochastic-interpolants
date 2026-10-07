@@ -1,0 +1,88 @@
+{
+  "status": "passed",
+  "reviewed_utc": "2026-10-07T14:59:41.690592+00:00",
+  "reviewer": "video_models agent; independent PDF layout/claim pass after editor build",
+  "pdf": "research/ito_maps/paper/main.pdf",
+  "pdf_sha256": "1bb6478e96beba803a534a237c4137a9d5a9a6bd5deacd2cf371611be1d09f40",
+  "total_pages": 28,
+  "main_pages_including_figure_float": 7,
+  "main_limit_excluding_references": 8,
+  "page_locations": {
+    "video_case": 5,
+    "main_fvd_table": 6,
+    "main_matched_frame_series": 7,
+    "references": 8,
+    "video_appendix": 22,
+    "clevrer_full_case": 26,
+    "kth_full_case": 28
+  },
+  "visually_reviewed_pages": [
+    5,
+    6,
+    7,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28
+  ],
+  "abstract_review": "Extracted page1 text matches source-derived video penalties/speed statement; existing NS numerical claims agree with generated replication_claims.tex",
+  "layout": "Readable labels; observed/forecast separation clear; all four model rows in both main panels; no overlaps or overfull boxes; completion SD labeled as not confidence interval",
+  "source_equality_audit": "research/video_forecasting/results/paper_visual_audit.json",
+  "source_equality_audit_sha256": "c69f4f5ec5a995f67e481f38eb8e672e49cacab286c7b3b80535a94024c484d1",
+  "recomputed_claims": {
+    "kth": {
+      "ito8_speedup_vs_si64": 6.074759165258405,
+      "ito8_fvd_increase_percent": 14.82620388499296,
+      "ito8_crps_increase_percent": 0.12459758559744127,
+      "ito8_energy_increases": true,
+      "ito8_lpips_increases": true,
+      "flow8_speedup_vs_fm64": 7.388995878133385,
+      "flow8_speedup_vs_fm16": 1.86258146642679,
+      "flow8_crps_increase_percent": 5.24720067695108,
+      "best_pooled_fvd_family_and_budget": [
+        "FlowMapModel",
+        8
+      ],
+      "best_psnr_sample_family_and_budget": [
+        "persistence",
+        1
+      ],
+      "best_ssim_sample_family_and_budget": [
+        "persistence",
+        1
+      ],
+      "persistence_mean_coverage_percent": 18.662514641900934,
+      "ito1_mean_spread_skill": 0.8284997674724619
+    },
+    "clevrer": {
+      "ito8_speedup_vs_si64": 5.896556245005135,
+      "ito8_fvd_increase_percent": 42.77682990355003,
+      "ito8_crps_increase_percent": 17.08600570690684,
+      "ito8_energy_increases": true,
+      "ito8_lpips_increases": true,
+      "flow8_speedup_vs_fm64": 7.293584316569332,
+      "flow8_speedup_vs_fm16": 1.8250619144386102,
+      "flow8_crps_increase_percent": 5.385799255524737,
+      "best_pooled_fvd_family_and_budget": [
+        "FollmerStochasticInterpolant",
+        64
+      ],
+      "best_psnr_sample_family_and_budget": [
+        "persistence",
+        1
+      ],
+      "best_ssim_sample_family_and_budget": [
+        "persistence",
+        1
+      ],
+      "persistence_mean_coverage_percent": 80.83005178542365,
+      "ito1_mean_spread_skill": 1.0271022626890502
+    }
+  },
+  "minor_issue_resolved": "Oracle metrics location clarified from manuscript tables to accompanying reports by editor before final hash",
+  "timing_caveat": "Video generation times are four-member complete-rollout means from GPU-exclusive evaluation; operational shared-GPU training times are explicitly separate",
+  "scope": "No paper edits or GPU work by reviewer; target inspection is video results presentation, page limit, and abstract/main factual consistency."
+}
