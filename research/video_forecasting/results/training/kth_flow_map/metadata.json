@@ -1,0 +1,20 @@
+{
+  "seed": 0,
+  "git_revision": "f5dd12cb127a738567b2aabc4bed779460484604",
+  "git_dirty": true,
+  "torch_version": "2.9.1+cu128",
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "parameters": 2936960,
+  "train_examples": 145747,
+  "val_examples": 1758,
+  "teacher_checkpoint": "checkpoints/video/kth/flow_matching",
+  "initial_student_checkpoint": "checkpoints/video/kth/flow_map_psd/model.pth",
+  "validation_objective": "fixed_noise_full_range_teacher_rollout_with_weighted_diagonal",
+  "validation_intervals": {
+    "description": "Intervals sampled across [0,1], with an atom at the full interval [0,1]",
+    "endpoint_probability": 0.5,
+    "diagonal_weight": 1.0,
+    "consistency_weight": 1.0
+  }
+}

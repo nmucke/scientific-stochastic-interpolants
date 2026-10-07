@@ -1,0 +1,40 @@
+{
+  "stage": "flow_map",
+  "model_class": "FlowMapModel",
+  "seed": 0,
+  "recorded_updates": 500,
+  "recorded_epochs": 10,
+  "recorded_stage_seconds": 213.86829067603685,
+  "minimum_recorded_validation_loss": 0.0006812788524257485,
+  "teacher_checkpoint": "checkpoints/video/kth/flow_matching",
+  "initial_student_checkpoint": "checkpoints/video/kth/flow_map_psd/model.pth",
+  "artifacts": {
+    "config.yaml": {
+      "path": "checkpoints/video/kth/flow_map/config.yaml",
+      "sha256": "a386c7f018a6169a2bb2435fddb6c6a971f11a1910f0c28dd86b74a3cbc8b931",
+      "bytes": 3825
+    },
+    "metadata.json": {
+      "path": "checkpoints/video/kth/flow_map/metadata.json",
+      "sha256": "1c534e48af5e4a9341da3df26d8dc41cd562e40c8d3bd0f2bd8d0023f54f74aa",
+      "bytes": 717
+    },
+    "history.json": {
+      "path": "checkpoints/video/kth/flow_map/history.json",
+      "sha256": "3ed6d0997895507c76394030d6b9b169027049f84eca59cd4a6681167883bcfc",
+      "bytes": 2859
+    },
+    "model.pth": {
+      "path": "checkpoints/video/kth/flow_map/model.pth",
+      "sha256": "74e869b451ec698d0f780cc5a5428117a63cc24e5651081761a612d2e8858329",
+      "bytes": 11840499
+    },
+    "ema.pth": {
+      "path": "checkpoints/video/kth/flow_map/ema.pth",
+      "sha256": "76323812d0deb41e64e37fc0defa13c32f1f8b6214732015b56631f515485692",
+      "bytes": 11839975
+    }
+  },
+  "weights_copied": false,
+  "cost_scope": "This stage's training and validation wall time; excludes initialization and data loading before trainer creation."
+}

@@ -11,3 +11,12 @@ sources/*.html
 sources/*.txt
 paper/template/*.zip
 # Local checkpoint/data payloads are outside this folder.
+
+# Long-horizon raw states and resumable RNG/history payloads remain local.
+results/long_horizon/**/raw_states/
+results/long_horizon/**/*.pt
+results/long_rollout/**/raw_states/
+results/long_rollout/**/*.pt
+# Optional assumed-parameter PDE helper snapshots are local payloads as well.
+results/long_horizon/**/*.npy
+results/long_rollout/**/*.npy

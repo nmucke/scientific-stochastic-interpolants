@@ -1,0 +1,40 @@
+{
+  "stage": "follmer_ito_map",
+  "model_class": "FollmerItoMapModel",
+  "seed": 0,
+  "recorded_updates": 500,
+  "recorded_epochs": 10,
+  "recorded_stage_seconds": 234.53545284294523,
+  "minimum_recorded_validation_loss": 0.0034955901792272925,
+  "teacher_checkpoint": "checkpoints/video/kth/follmer_stochastic_interpolant",
+  "initial_student_checkpoint": "checkpoints/video/kth/follmer_ito_map_psd/model.pth",
+  "artifacts": {
+    "config.yaml": {
+      "path": "checkpoints/video/kth/follmer_ito_map/config.yaml",
+      "sha256": "a3222e7aa077430c39fdb2c8eec36891832b6356be939a61dbf8763ddca5e2aa",
+      "bytes": 3943
+    },
+    "metadata.json": {
+      "path": "checkpoints/video/kth/follmer_ito_map/metadata.json",
+      "sha256": "1bb9de3214e2603156413e067a9979f0ee03d904132e999d89c4d760da228cd9",
+      "bytes": 504
+    },
+    "history.json": {
+      "path": "checkpoints/video/kth/follmer_ito_map/history.json",
+      "sha256": "91be8913c3d665cb71ef75e61251c7ff5398765c4b46742a5f65e6e8c0e28df7",
+      "bytes": 2837
+    },
+    "model.pth": {
+      "path": "checkpoints/video/kth/follmer_ito_map/model.pth",
+      "sha256": "d246156082eda78f90c19f8681c6c96f014071b2a5390af7b7e2ffc70d3ba338",
+      "bytes": 11841391
+    },
+    "ema.pth": {
+      "path": "checkpoints/video/kth/follmer_ito_map/ema.pth",
+      "sha256": "5240a85db67cae415b3ccfba48976469a824175bcde16feaaaf759e0e36fa552",
+      "bytes": 11840865
+    }
+  },
+  "weights_copied": false,
+  "cost_scope": "This stage's training and validation wall time; excludes initialization and data loading before trainer creation."
+}
