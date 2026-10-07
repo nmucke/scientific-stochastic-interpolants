@@ -1,0 +1,157 @@
+{
+  "purpose": "Tiny CPU helper execution/RNG check; not physical forecast validation",
+  "first_run_shape": [
+    2,
+    3,
+    128,
+    128
+  ],
+  "longer_horizon_run_shape": [
+    2,
+    4,
+    128,
+    128
+  ],
+  "prefix_bitwise_equal_when_requested_horizon_changes": true,
+  "future_members_differ": true,
+  "initial_members_identical": true,
+  "all_states_finite": true,
+  "substeps_per_lead": 2,
+  "substep_dt": 0.0001,
+  "grid": 128,
+  "first_run_metadata": {
+    "label": "Assumed-parameter PDE diagnostic; not verified dataset continuation truth",
+    "is_verified_dataset_continuation": false,
+    "physical_parameters_status": "Caller supplied; not identified from archived data",
+    "configuration": {
+      "source": "data/stochastic_navier_stokes/data_file.pt",
+      "output": "/tmp/scisi_ns_reference_smoke",
+      "trajectory_id": 180,
+      "origin": 5,
+      "horizon": 2,
+      "members": 2,
+      "grid": 128,
+      "viscosity": 0.001,
+      "drag": 0.1,
+      "forcing_scale": 1.0,
+      "substep_dt": 0.0001,
+      "inner_steps": 2,
+      "save_every": 1,
+      "seed": 87301,
+      "cpu_cores": 4
+    },
+    "source_initial_frame_index": 4,
+    "source_initial_time": 51.989601135253906,
+    "source_stored_spacing_mean": 0.4998999701605903,
+    "diagnostic_snapshot_dt": 0.0002,
+    "domain": [
+      [
+        0.0,
+        6.283185307179586
+      ],
+      [
+        0.0,
+        6.283185307179586
+      ]
+    ],
+    "initial_state_sha256": "0f96ec010a38df170549fcb13e1b7711f87b2da977ddbb4f621d5232dec289ea",
+    "solver_sha256": "27f170066050cb330f106a19c089ded0780f85cb8ea11edd940175b77bce7441",
+    "integrator": "Existing pseudospectral explicit Euler-Maruyama with brick-wall advection filtering",
+    "forcing_modes": [
+      [
+        6,
+        0
+      ],
+      [
+        7,
+        0
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        8,
+        8
+      ]
+    ],
+    "rng_policy": "Independent fold_in(master_seed,member_id), then fold_in(member_key,lead); existing solver splits substeps",
+    "saved_leads": [
+      0,
+      1,
+      2
+    ],
+    "state_storage": "state_samples.npy [member,saved_lead,128,128], raw vorticity",
+    "completed_leads": 2,
+    "total_seconds_including_compilation": 0.5025390468072146,
+    "complete": true
+  },
+  "longer_run_metadata": {
+    "label": "Assumed-parameter PDE diagnostic; not verified dataset continuation truth",
+    "is_verified_dataset_continuation": false,
+    "physical_parameters_status": "Caller supplied; not identified from archived data",
+    "configuration": {
+      "source": "data/stochastic_navier_stokes/data_file.pt",
+      "output": "/tmp/scisi_ns_reference_smoke_repeat",
+      "trajectory_id": 180,
+      "origin": 5,
+      "horizon": 3,
+      "members": 2,
+      "grid": 128,
+      "viscosity": 0.001,
+      "drag": 0.1,
+      "forcing_scale": 1.0,
+      "substep_dt": 0.0001,
+      "inner_steps": 2,
+      "save_every": 1,
+      "seed": 87301,
+      "cpu_cores": 4
+    },
+    "source_initial_frame_index": 4,
+    "source_initial_time": 51.989601135253906,
+    "source_stored_spacing_mean": 0.4998999701605903,
+    "diagnostic_snapshot_dt": 0.0002,
+    "domain": [
+      [
+        0.0,
+        6.283185307179586
+      ],
+      [
+        0.0,
+        6.283185307179586
+      ]
+    ],
+    "initial_state_sha256": "0f96ec010a38df170549fcb13e1b7711f87b2da977ddbb4f621d5232dec289ea",
+    "solver_sha256": "27f170066050cb330f106a19c089ded0780f85cb8ea11edd940175b77bce7441",
+    "integrator": "Existing pseudospectral explicit Euler-Maruyama with brick-wall advection filtering",
+    "forcing_modes": [
+      [
+        6,
+        0
+      ],
+      [
+        7,
+        0
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        8,
+        8
+      ]
+    ],
+    "rng_policy": "Independent fold_in(master_seed,member_id), then fold_in(member_key,lead); existing solver splits substeps",
+    "saved_leads": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "state_storage": "state_samples.npy [member,saved_lead,128,128], raw vorticity",
+    "completed_leads": 3,
+    "total_seconds_including_compilation": 0.5378994361963123,
+    "complete": true
+  }
+}

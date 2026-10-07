@@ -1,0 +1,3 @@
+model,model_class,status,requested_horizon,recorded_last_lead,last_all_finite_lead,first_nonfinite_lead,last_finite_enstrophy,last_finite_enstrophy_of_mean,last_finite_rms_spread,last_finite_max_abs_vorticity,enstrophy_last_over_first_forecast,last_window_mean_enstrophy,last_window_first_lead,cumulative_seconds,cumulative_nfe
+Itô map (8),FollmerItoMapModel,complete,4096,4096,4096,,1.447175104571154,0.2779187447404755,1.6348045648722864,5.945680113702281,0.3289717247798772,1.4046979088514955,3585,1791.3340413414408,32768
+Flow map (1),FlowMapModel,complete,4096,4096,4096,,4.002637282266543,0.4944789969624876,2.831721651092567,14.158446160826315,0.8615945523456154,3.836605338518387,3585,203.35938642988913,4096

@@ -1,0 +1,2 @@
+model,model_class,status,requested_horizon,recorded_last_lead,last_all_finite_lead,first_nonfinite_lead,last_finite_enstrophy,last_finite_enstrophy_of_mean,last_finite_rms_spread,last_finite_max_abs_vorticity,enstrophy_last_over_first_forecast,last_window_mean_enstrophy,last_window_first_lead,cumulative_seconds,cumulative_nfe
+Flow map (1),FlowMapModel,running,4096,2576,2576,,3.9816885455441122,0.4977231789092494,2.8219407168562407,12.127647528318903,0.8570851960972902,3.920340550950108,2065,127.36183257238008,2576

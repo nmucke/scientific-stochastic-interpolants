@@ -1,0 +1,62 @@
+{
+  "inputs": [
+    {
+      "path": "research/ito_maps/results/long_horizon/follmer_ito_map/protocol.json",
+      "sha256": "a8e1d0f83b5353e6736e1b676339d1f467471224b696974f5ce465e4a2f918af"
+    },
+    {
+      "path": "research/ito_maps/results/long_horizon/follmer_ito_map/diagnostics.json",
+      "sha256": "96e380848b28aab76e778a88f8fa20cba28e7f511f050b39358ca3704a77cf8c"
+    },
+    {
+      "path": "research/ito_maps/results/long_horizon/flow_map/protocol.json",
+      "sha256": "2e20d63ded075f39dcf6a4c3a34a704a85109ac4d6af53cfab2afc829ec34e7a"
+    },
+    {
+      "path": "research/ito_maps/results/long_horizon/flow_map/diagnostics.json",
+      "sha256": "cf8852a5ad151119e9cbcb5af7b5dd4b767a8de46fd1757d1271cb501cc74922"
+    },
+    {
+      "path": "research/ito_maps/results/long_horizon/reference_enstrophy.json",
+      "sha256": "40c212509b01497ac8258f35c377d1d7ace4c5f5b464052d7211e0330b14394d"
+    }
+  ],
+  "summary": [
+    {
+      "model": "It\u00f4 map (8)",
+      "model_class": "FollmerItoMapModel",
+      "status": "complete",
+      "requested_horizon": 4096,
+      "recorded_last_lead": 4096,
+      "last_all_finite_lead": 4096,
+      "first_nonfinite_lead": null,
+      "last_finite_enstrophy": 1.447175104571154,
+      "last_finite_enstrophy_of_mean": 0.2779187447404755,
+      "last_finite_rms_spread": 1.6348045648722864,
+      "last_finite_max_abs_vorticity": 5.945680113702281,
+      "enstrophy_last_over_first_forecast": 0.3289717247798772,
+      "last_window_mean_enstrophy": 1.4046979088514955,
+      "last_window_first_lead": 3585,
+      "cumulative_seconds": 1791.3340413414408,
+      "cumulative_nfe": 32768
+    },
+    {
+      "model": "Flow map (1)",
+      "model_class": "FlowMapModel",
+      "status": "complete",
+      "requested_horizon": 4096,
+      "recorded_last_lead": 4096,
+      "last_all_finite_lead": 4096,
+      "first_nonfinite_lead": null,
+      "last_finite_enstrophy": 4.002637282266543,
+      "last_finite_enstrophy_of_mean": 0.4944789969624876,
+      "last_finite_rms_spread": 2.831721651092567,
+      "last_finite_max_abs_vorticity": 14.158446160826315,
+      "enstrophy_last_over_first_forecast": 0.8615945523456154,
+      "last_window_mean_enstrophy": 3.836605338518387,
+      "last_window_first_lead": 3585,
+      "cumulative_seconds": 203.35938642988913,
+      "cumulative_nfe": 4096
+    }
+  ]
+}

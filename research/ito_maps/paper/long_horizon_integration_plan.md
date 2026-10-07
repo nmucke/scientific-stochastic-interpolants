@@ -1,6 +1,6 @@
 # Planned manuscript integration of long autonomous rollouts
 
-Prepared while the four-model 4,096-lead study is running. This is an integration plan only; no manuscript result or claim is changed before all four runs terminate and their artifacts are reviewed.
+Prepared while the four-model 4,096-lead study is running. **Status update (2026-10-07):** the user subsequently requested a manuscript update while experiments continue. The draft now includes the two completed, independently audited map runs in `long_horizon_results.tex`, explicitly labeled as a partial comparison with solver references pending. Timestamp provenance has been corrected, and `build_long_horizon_figures.py` regenerates the two-map table and figures from audited artifacts. The PDF has 18 pages with main text and references ending on page 8. The plan below remains the guide for the later complete four-model update; its original wait-for-all-results gate has been superseded for this clearly labeled interim draft only.
 
 ## Immediate provenance correction to make during integration
 

@@ -202,7 +202,7 @@ The main benchmark is the repository's existing stochastic Navier--Stokes datase
 \end{equation}
 where $\tau$ denotes physical time. The available array has 200 trajectories, 100 snapshots each, one vorticity channel, and $128\times128$ spatial resolution. The existing configuration uses trajectories 0--159 for training, 160--179 for validation, and 180--199 for testing, five history fields, and scaling by 3.09969 with zero centering. We reuse forecast pairs, transforms, and architecture family across models.
 
-The repository's current simulator specifies a periodic $[0,2\pi]^2$ domain, viscosity $10^{-3}$, drag $0.1$, and independent sine/cosine forcing at modes $(6,0),(7,0),(5,5),(8,8)$. However, that script currently generates a different array shape, while the supplied archive contains only state values. Its time step and forcing settings therefore cannot yet be certified as the provenance of these exact data. Until generation metadata is recovered, we report lead time in stored snapshot intervals and retain this limitation explicitly.
+A recovered companion archive contains $256\times256$ fields and timestamps. Every coarse field was verified as its exact stride-two spatial downsampling. The associated times span approximately 49.989998--99.480095, with mean increment 0.49989997016 in saved simulation-time units. We retain stored snapshot intervals as the primary lead coordinate. The original forcing, viscosity, drag and generating revision remain unverified; the repository's current simulator configuration alone does not certify them.
 
 We compare the existing stochastic interpolant and flow-matching samplers to the conditional It\^o map and deterministic flow map. Maps use $1,2,4,8$ generative steps, and Euler solver baselines use $1,4,16,64,128$ steps. Each step uses one backbone evaluation in these implementations. The 64- and 128-step measurements check numerical sensitivity; we do not presume either distribution is fully converged. All methods use 16-member ensembles on the same RTX 3090, with accelerator warmup and synchronized timing, including Brownian-feature construction. Ten-lead autoregressive evaluations use map budgets one and eight and solver budget 64, fixed before testing. Training costs are recorded separately.
 
@@ -230,9 +230,9 @@ The study varies Brownian resolution, map step count, and the use of teacher-rol
 \input{results}
 
 \section{Limitations and Discussion}
-The forecasting distribution is constrained by the information in the history and the coverage of the training data. Long physical rollouts can leave that support. Compressed Brownian inputs can miss relevant path variation; self-distillation can converge to an inaccurate map; an accurate map can inherit bias from its drift teacher. These are separate limitations and require separate diagnostics.
+The forecasting distribution is constrained by history and training coverage. Compressed Brownian inputs, map error and teacher bias require separate diagnostics. In a partial 4,096-interval extension, both maps remain finite, but the It\^o map loses substantial enstrophy and spread (Appendix~\ref{app:long-horizon}). Bounded trajectories do not establish distributional accuracy; the long solver references remain pending.
 
-The contribution is a conditional scientific-forecasting adaptation of existing map-learning principles, with correct treatment of a point-mass initial state and evidence about the resulting quality--cost tradeoff. Its empirical scope is one stochastic-fluid archive, three student trainings, and one fixed teacher per model family. We do not directly benchmark other consistency or adversarial-distillation methods from the broader forecasting literature. Wider datasets, independent teacher trainings, and physical conditional reference ensembles remain necessary to assess generality.
+The contribution is a conditional scientific-forecasting adaptation of existing map-learning principles, with a point-mass initial state and evidence about the quality--cost tradeoff. Confirmed comparative evidence covers one stochastic-fluid archive, three student trainings, and fixed teachers. Pixel-space KTH and CLEVRER models are now trained; their setup and pending evaluation are documented in Appendix~\ref{app:video-case}. Other consistency or adversarial-distillation baselines, independent teacher trainings and physical conditional reference ensembles remain necessary to assess generality.
 
 \section*{Impact Statement}
 This work seeks to reduce the cost of probabilistic scientific simulation and forecasting. Faster ensembles may make uncertainty assessment more accessible, but poorly calibrated accelerated models could produce misleading confidence in downstream decisions. The study therefore reports calibration and physical diagnostics alongside speed, and does not establish suitability for safety-critical deployment. Training and distillation consume compute that should be included when assessing overall efficiency.
@@ -326,6 +326,11 @@ For $dX_r=-X_r\,dr+dW_r$, fixed $X_0=0$, and $0=r_0<\cdots<r_K=T$, let $Z_j=W_{r
  {r_{j+1}-r_j}.
 \end{align}
 The sum subtracts the part of the endpoint variance explained by the observed increments. For $T=1$ and equal subintervals, $K=1$ leaves approximately $0.03276$ residual variance; $K=4$ leaves approximately $0.00224$. These are analytic illustration values, not fluid-forecasting measurements. Refining nested features decreases expected residual variance by conditional-expectation projection. Our actual map uses increments of $M$ and a nonlinear learned drift, for which the residual is generally not available in closed form.
+
+\clearpage
+\input{long_horizon_results}
+\clearpage
+\input{video_case}
 
 \section{Draft and Conference Status}
 This manuscript is a research draft prepared on 7 October 2026. It uses the unmodified official ICML 2026 template as the latest verified available author kit. The ICML 2026 submission cycle has passed; requirements and deadlines for the intended future ICML cycle must be rechecked when available. This text is not an assertion that the manuscript is submitted or submission-ready.

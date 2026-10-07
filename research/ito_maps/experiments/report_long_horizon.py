@@ -111,6 +111,23 @@ def summarize_run(run):
             "cumulative_nfe": rows[-1].get("cumulative_nfe")}
 
 
+def log_enstrophy_axis(axis, horizon):
+    """Use true logarithmic axes; nonpositive values are omitted, never floored."""
+    from matplotlib.ticker import FixedLocator, FuncFormatter, LogLocator
+
+    axis.set_xscale("log", nonpositive="mask")
+    axis.set_yscale("log", nonpositive="mask")
+    axis.set_xlim(1, max(2, horizon))
+    ticks = [10 ** power for power in range(int(np.log10(max(2, horizon))) + 1)]
+    if horizon > 1 and horizon / ticks[-1] >= 2:
+        ticks.append(horizon)
+    axis.xaxis.set_major_locator(FixedLocator(ticks))
+    axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
+    axis.yaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+    axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
+    axis.yaxis.set_minor_formatter(FuncFormatter(lambda value, _: ""))
+
+
 def plot_runs(runs, destination, reference=None):
     protocol = runs[0]["protocol"]
     boundary = protocol["truth_leads"]
@@ -140,13 +157,15 @@ def plot_runs(runs, destination, reference=None):
     for axis, (key, _) in zip(axes.flat, metrics):
         values = np.concatenate([array(run["rows"], key) for run in runs])
         positive = values[np.isfinite(values) & (values > 0)]
-        # Keep ordinary numeric axes for bounded trajectories; only compress
-        # the axis when excursions actually span more than two decades.
-        if len(positive) and positive.max() > 100 * max(1e-3, positive.min()):
+        if key.startswith("enstrophy"):
+            log_enstrophy_axis(axis, max(horizon, boundary))
+        elif len(positive) and positive.max() > 100 * max(1e-3, positive.min()):
             axis.set_yscale("symlog", linthresh=max(1e-3, positive.min()))
+            axis.set_xlim(0, max(horizon, boundary))
+        else:
+            axis.set_xlim(0, max(horizon, boundary))
         axis.axvline(boundary, color="black", linestyle=":", linewidth=1)
         axis.grid(alpha=.2)
-        axis.set_xlim(0, max(horizon, boundary))
     axes[0, 0].text(boundary, .98, " End of available truth", rotation=90,
                     transform=axes[0, 0].get_xaxis_transform(), va="top", fontsize=8)
     handles, labels = axes[0, 0].get_legend_handles_labels()
@@ -187,13 +206,13 @@ def build_report(directories, output_dir, reference_path=None):
     plot_runs(runs, output, reference)
     summary = [summarize_run(run) for run in runs]
     with (output / "summary.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(summary[0]))
+        writer = csv.DictWriter(stream, fieldnames=list(summary[0]), lineterminator="\n")
         writer.writeheader()
         writer.writerows(summary)
     combined = [{"model": run["label"], **row} for run in runs for row in run["rows"]]
     fields = list(dict.fromkeys(key for row in combined for key in row))
     with (output / "all_diagnostics.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(combined)
     protocol = runs[0]["protocol"]
@@ -203,6 +222,7 @@ def build_report(directories, output_dir, reference_path=None):
              f"Truth supports only the first {protocol['truth_leads']} forecast leads.", "",
              "The plots use denormalized archive vorticity. Enstrophy is half the spatial mean of squared vorticity; "
              "member-mean enstrophy and enstrophy of the ensemble mean are distinct. Member bands show 5–95% ensemble quantiles, not confidence intervals. "
+             "Both enstrophy panels use log-log axes from lead 1, without positive floors or modified diagnostics; nonpositive values cannot be shown on logarithmic axes. "
              "The spread/skill ratio uses unbiased RMS spread with the sqrt((E+1)/E) finite-ensemble correction.", "",
              "| Model (steps/frame) | Status | Last recorded lead | Last all-finite lead | First nonfinite lead | Last finite enstrophy | Last finite RMS spread | Generation seconds |",
              "|---|---|---:|---:|---:|---:|---:|---:|"]
