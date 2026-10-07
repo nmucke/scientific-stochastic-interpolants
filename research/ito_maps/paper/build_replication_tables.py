@@ -143,6 +143,6 @@ for filename, lines in [('replication_table.tex', table),
                         ('replication_claims.tex', macros),
                         ('replication_paired.tex', paired),
                         ('replication_training_cost.tex', cost)]:
-    (OUTPUT / filename).write_text('\n'.join(lines)+'\n')
+    (OUTPUT / filename).write_text('\n'.join(lines).rstrip()+'\n')
 (OUTPUT / 'replication_sources.json').write_text(json.dumps(sources, indent=2)+'\n')
 print('Built complete three-student replication tables and point-estimate macros.')
