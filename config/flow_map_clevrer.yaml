@@ -1,0 +1,22 @@
+defaults:
+- video_common
+- video_map_common
+- _self_
+dataset_name: clevrer
+channels: 3
+len_field_history: 2
+manifest_path: data/video_forecasting/clevrer_64/manifest.json
+model:
+  _target_: scisi.models.flow_map_model.FlowMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  map_model:
+    _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
+    backbone: ${backbone}
+    path_channels: 0
+trainer:
+  checkpoint_dir: checkpoints/video/clevrer/flow_map
+evaluation:
+  forecast_horizon: 14
+teacher:
+  checkpoint_dir: checkpoints/video/clevrer/flow_matching

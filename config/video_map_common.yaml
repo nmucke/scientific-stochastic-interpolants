@@ -1,0 +1,16 @@
+# Progressive self-distillation, optionally followed by teacher_rollout refinement.
+trainer:
+  _target_: scisi.training.map_trainer.MapTrainer
+  num_epochs: 10
+  objective: progressive
+  diagonal_weight: 1.0
+  consistency_weight: 1.0
+  ema_decay: 0.95
+  diagonal_warmup_steps: 0
+  consistency_ramp_steps: 100
+  interval_curriculum_steps: 500
+  initial_max_interval: 0.125
+  endpoint_probability: 0.25
+  teacher_steps: 16
+teacher:
+  initialize_student: true

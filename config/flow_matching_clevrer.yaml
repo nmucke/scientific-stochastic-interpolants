@@ -1,0 +1,16 @@
+defaults:
+- video_common
+- _self_
+dataset_name: clevrer
+channels: 3
+len_field_history: 2
+manifest_path: data/video_forecasting/clevrer_64/manifest.json
+model:
+  _target_: scisi.models.flow_matching_model.FlowMatchingModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  drift_model: ${backbone}
+trainer:
+  checkpoint_dir: checkpoints/video/clevrer/flow_matching
+evaluation:
+  forecast_horizon: 14

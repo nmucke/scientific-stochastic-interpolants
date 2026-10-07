@@ -27,6 +27,13 @@ dependencies = [
     "aurora_lib",
 ]
 
+[project.optional-dependencies]
+video = [
+    "lpips==0.1.4",
+    "scikit-image>=0.25,<0.26",
+    "scipy>=1.15,<2",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3.5,<8.4.0",

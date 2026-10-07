@@ -1,0 +1,7 @@
+[
+  {
+    "source_member": "person01_boxing_d4_uncomp.avi",
+    "stderr": "[mpeg4 @ <decoder>] ac-tex damaged at 8 6\n[mpeg4 @ <decoder>] Error at MB: 74\n",
+    "exitcode": 0
+  }
+]

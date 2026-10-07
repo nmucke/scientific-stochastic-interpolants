@@ -1,0 +1,38 @@
+{
+  "source_url": "https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt?dl=1",
+  "local_path": "cache/video_metrics/i3d_torchscript.pt",
+  "bytes": 51235320,
+  "sha256": "bec6519f66ea534e953026b4ae2c65553c17bf105611c746d904657e5860a5e2",
+  "retrieved_date": "2026-10-07",
+  "primary_usage_source": "https://github.com/Araachie/river/blob/9ecde339e4c19713485fc1ab31bcb524d6772f6e/refinement/fvd.py",
+  "primary_conversion_source": "https://github.com/universome/stylegan-v/blob/master/src/metrics/frechet_video_distance.py",
+  "tensor_layout": "B,C,T,H,W",
+  "input_range": [
+    -1,
+    1
+  ],
+  "channels": 3,
+  "detector_kwargs": {
+    "rescale": false,
+    "resize": true,
+    "return_features": true
+  },
+  "feature_dimension": 400,
+  "cpu_smoke": {
+    "input_shape": [
+      1,
+      3,
+      16,
+      64,
+      64
+    ],
+    "output_shape": [
+      1,
+      400
+    ],
+    "all_finite": true,
+    "seconds": 1.0777769461274147
+  },
+  "torch_version": "2.9.1+cu128",
+  "caveat": "Converted Google TF-Hub I3D weights, not original I3D-repository weights. PyTorch spatial resize differs from original TensorFlow reference."
+}

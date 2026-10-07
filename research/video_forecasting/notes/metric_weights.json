@@ -1,0 +1,33 @@
+{
+  "created_utc": "2026-10-07T11:07:56.334037+00:00",
+  "versions": {
+    "torch": "2.9.1",
+    "torchvision": "0.24.1",
+    "lpips": "0.1.4",
+    "scikit-image": "0.25.2",
+    "scipy": "1.16.3",
+    "numpy": "2.2.6"
+  },
+  "artifacts": {
+    "alexnet_imagenet": {
+      "path": "/ufs/ntm/.cache/torch/hub/checkpoints/alexnet-owt-7be5be79.pth",
+      "bytes": 244408911,
+      "sha256": "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02"
+    },
+    "lpips_calibration": {
+      "path": "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/.venv/lib/python3.13/site-packages/lpips/weights/v0.1/alex.pth",
+      "bytes": 6009,
+      "sha256": "df73285e35b22355a2df87cdb6b70b343713b667eddbda73e1977e0c860835c0"
+    },
+    "i3d_google_conversion": {
+      "path": "cache/video_metrics/i3d_torchscript.pt",
+      "bytes": 51235320,
+      "sha256": "bec6519f66ea534e953026b4ae2c65553c17bf105611c746d904657e5860a5e2"
+    }
+  },
+  "sources": {
+    "alexnet_imagenet": "https://download.pytorch.org/models/alexnet-owt-7be5be79.pth",
+    "lpips_calibration": "https://github.com/richzhang/PerceptualSimilarity/blob/master/lpips/weights/v0.1/alex.pth",
+    "i3d_google_conversion": "https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt?dl=1"
+  }
+}

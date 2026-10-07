@@ -1,0 +1,16 @@
+{
+  "clip_id": "person20_walking_d4_s02",
+  "future_leads": [
+    1,
+    8,
+    16,
+    23,
+    30
+  ],
+  "rows": [
+    "truth",
+    "member_0",
+    "member_1"
+  ],
+  "selection": "first fixed selected cases, first two members"
+}

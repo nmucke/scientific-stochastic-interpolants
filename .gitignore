@@ -90,3 +90,6 @@ paper_experiments/results_full/*
 
 # Local presentation material
 /presentations/
+
+# Downloaded and decoded video forecasting datasets
+/data/video_forecasting/

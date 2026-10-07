@@ -1,0 +1,25 @@
+defaults:
+- video_common
+- video_map_common
+- _self_
+dataset_name: kth
+channels: 1
+len_field_history: 10
+manifest_path: data/video_forecasting/kth_64/manifest.json
+model:
+  _target_: scisi.models.follmer_ito_map_model.FollmerItoMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: 1.0
+    wiener_process: true
+  map_model:
+    _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
+    backbone: ${backbone}
+    path_channels: 4
+  num_path_features: 4
+trainer:
+  checkpoint_dir: checkpoints/video/kth/follmer_ito_map
+evaluation:
+  forecast_horizon: 30
+teacher:
+  checkpoint_dir: checkpoints/video/kth/follmer_stochastic_interpolant

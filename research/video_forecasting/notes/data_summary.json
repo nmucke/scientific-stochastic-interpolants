@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "ffmpeg_version": "ffmpeg version 6.1.2 Copyright (c) 2000-2024 the FFmpeg developers",
+  "preparation_script_sha256": "4c0287e89f4c48ccab2af92586c7e2ff4e00c55bd22dbf86404b93f07dfad27f",
+  "datasets": [
+    {
+      "dataset": "kth",
+      "manifest_path": "data/video_forecasting/kth_64/manifest.json",
+      "manifest_sha256": "028cf9e1bc3193f9940d155e2aa0c10294f89aa530f8e51fabb17f447bf6eb5d",
+      "resolution": 64,
+      "channels": 1,
+      "frame_stride": 1,
+      "spatial_transform": "bilinear resize square",
+      "normalization": "minus_one_one",
+      "source_videos": 599,
+      "clips": 2391,
+      "sources": [
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/boxing.zip",
+          "archive": "boxing.zip",
+          "bytes": 194498294,
+          "sha256": "09437744bd760b3ba628d0315d12e2b6a7f86f5fbd41a316583bb4e3d5f09f20"
+        },
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/handclapping.zip",
+          "archive": "handclapping.zip",
+          "bytes": 176901831,
+          "sha256": "37412445343d530bcaa273a14b4507eb9cc67b30d5cd1ceea42d6c1d6a4e20e4"
+        },
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/handwaving.zip",
+          "archive": "handwaving.zip",
+          "bytes": 218981954,
+          "sha256": "93f2274a27a576f353cf093f67bc4816f52b73950abc2e6b441fbf23d7e6fa14"
+        },
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/jogging.zip",
+          "archive": "jogging.zip",
+          "bytes": 168961290,
+          "sha256": "65c8d6e445e3e924b85d420b8c8677906d0267e345597274dc15d9938aa5fe1e"
+        },
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/running.zip",
+          "archive": "running.zip",
+          "bytes": 149756643,
+          "sha256": "80855a035fb7498b34bf8d6322d15f660378c9df85a6bf2e7473e5e697a2c7be"
+        },
+        {
+          "url": "https://www.csc.kth.se/cvap/actions/walking.zip",
+          "archive": "walking.zip",
+          "bytes": 242442411,
+          "sha256": "4fc2f5b7c07776b7caeeffb8276886d82e9c43bb7e41f60fe2143621102cb771"
+        }
+      ],
+      "decoded_file_hashes_checked": true,
+      "history": 10,
+      "forecast_horizon": 30,
+      "split_summary": {
+        "train": {
+          "clips": 1720,
+          "frames_min": 24,
+          "frames_max": 362,
+          "frames_total": 162947,
+          "eligible_evaluation_clips": 1649,
+          "next_frame_windows_stride1": 145747,
+          "subjects": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18
+          ],
+          "actions": {
+            "boxing": 286,
+            "handclapping": 284,
+            "handwaving": 286,
+            "jogging": 288,
+            "running": 288,
+            "walking": 288
+          }
+        },
+        "validation": {
+          "clips": 192,
+          "frames_min": 30,
+          "frames_max": 211,
+          "frames_total": 18631,
+          "eligible_evaluation_clips": 184,
+          "next_frame_windows_stride1": 16711,
+          "subjects": [
+            19,
+            20
+          ],
+          "actions": {
+            "boxing": 32,
+            "handclapping": 32,
+            "handwaving": 32,
+            "jogging": 32,
+            "running": 32,
+            "walking": 32
+          }
+        },
+        "test": {
+          "clips": 479,
+          "frames_min": 26,
+          "frames_max": 235,
+          "frames_total": 45994,
+          "eligible_evaluation_clips": 452,
+          "next_frame_windows_stride1": 41204,
+          "subjects": [
+            21,
+            22,
+            23,
+            24,
+            25
+          ],
+          "actions": {
+            "boxing": 79,
+            "handclapping": 80,
+            "handwaving": 80,
+            "jogging": 80,
+            "running": 80,
+            "walking": 80
+          }
+        }
+      }
+    }
+  ]
+}

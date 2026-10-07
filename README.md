@@ -433,3 +433,51 @@ the frozen protocol, and the current manuscript status. The
 [API compatibility notes](research/ito_maps/notes/map_api_compatibility.md) specify
 normalization, conditioning, and rollout contracts. Training currently requires
 an identically-one spatial mask.
+
+## Pixel-space KTH and CLEVRER forecasting
+
+The video pipeline supports the same four model families, including training new
+stochastic-interpolant and flow-matching baselines from scratch. It uses the last
+10 KTH frames or last 2 temporally subsampled CLEVRER frames as context. Both
+initial configurations use 64×64 pixels; CLEVRER preserves RGB channels. No
+latent autoencoder or randomly selected conditioning frame is used.
+
+Install the optional `video` dependencies in the project environment, and ensure
+system `ffmpeg` and `curl` are available. The dataset and pretrained metric
+preparation commands are:
+
+```bash
+uv pip install --python .venv/bin/python -e '.[video]'
+.venv/bin/python research/video_forecasting/data/prepare_videos.py --dataset kth
+.venv/bin/python research/video_forecasting/data/prepare_videos.py --dataset clevrer
+.venv/bin/python research/video_forecasting/experiments/prepare_metrics.py
+```
+
+Download/preprocessing is resumable. Official splits, raw archive checksums,
+frame indices, transformations and decoded-file hashes are retained. Data are
+memory-mapped instead of materializing every overlapping training window.
+
+```bash
+# Run these serially on an otherwise idle GPU, from the repository root.
+bash research/video_forecasting/experiments/train_all_video_models.sh
+bash research/video_forecasting/experiments/evaluate_all_video_models.sh
+
+# Individual model training uses the same Hydra conventions as the other models.
+.venv/bin/python -m scisi.bin.main_video_model_train \
+  --config-name flow_matching_clevrer
+
+# Individual evaluation works for either a map or a solver checkpoint.
+.venv/bin/python -m scisi.bin.main_video_model_test \
+  --checkpoint-dir checkpoints/video/kth/follmer_ito_map \
+  --output-dir research/video_forecasting/results/manual/kth_ito \
+  --steps 1 8 --num-clips 128 --ensemble-size 4
+```
+
+The first experiment uses 20,000 baseline updates, then 2,000 PSD and 500
+teacher-rollout updates per map. It forecasts 30 KTH frames and 14 CLEVRER frames.
+Evaluation records pretrained I3D FVD, LPIPS, PSNR, SSIM, fair CRPS/energy,
+ensemble accuracy/calibration, timings and actual network calls. FVD sample
+counts and best-of-ensemble image metrics are labeled explicitly. These initial
+pixel-space experiments are not a numerical reproduction of the reference's
+larger latent-space study. See the [video handover](research/video_forecasting/STATUS.md)
+and [protocol audit](research/video_forecasting/notes/paper_video_protocol.md).
