@@ -1,52 +1,43 @@
-# Rebuild report-derived figures; video forecast images are retained audited assets.
+# Build the manuscript. The paper currently has no results-dependent artifacts:
+# all Navier--Stokes results are \pending{} placeholders until the new runs land.
+#
+# To add generated tables/figures later, list them in ARTIFACTS and give each a
+# rule of the form
+#   generated/<name>.tex: build_<name>.py <sources>
+#   	$(PYTHON) build_<name>.py
+# and \input/\includegraphics them from the .tex sources.
+#
+# Archived (initial-stage results and the dropped second application): the
+# former build_*.py scripts, generated/ and figures/ outputs and the matching
+# .tex sources live in ../archive/paper/ (pre_placeholder_tex/ holds the
+# pre-placeholder versions of the current sources).
+# They read ../results, which has moved to ../archive/results, and are not built.
+
 PYTHON ?= $(if $(wildcard ../../../.venv/bin/python),../../../.venv/bin/python,python3)
-VALIDATION_SOURCES := $(wildcard ../results/validation_baselines/*/evaluation.json ../results/validation_psd/*/evaluation.json ../results/validation_rollout/*/evaluation.json)
+LATEX_ENV := TEXINPUTS=.:template: BSTINPUTS=.:template:
 
-TEST_SEED0_SOURCES := $(wildcard ../results/test_one_step/*/evaluation.json)
-STUDY_SOURCES := ../results/final_report/one_step/summary.csv ../results/final_report/rollout/all_leads.csv ../results/final_report/one_step/paired_crps.json ../results/final_report/rollout/paired_crps.json $(wildcard ../results/training/*_seed0/history.json)
-REPLICATION_SOURCES := $(wildcard ../results/final_report/*/student_training_seeds/*.json ../results/final_report/*/student_training_seeds/*.csv ../results/training/*/history.json) ../results/final_report/one_step/summary.csv ../results/final_report/rollout/all_leads.csv
-REPLICATION_OUTPUTS := generated/replication_table.tex generated/replication_individuals.tex generated/replication_claims.tex generated/replication_training_cost.tex generated/replication_paired.tex
-LONG_MAP_SOURCES := $(wildcard ../results/long_horizon/*/protocol.json ../results/long_horizon/*/diagnostics.json ../results/long_horizon/independent_all_model_audit.json ../results/long_horizon/spatial_enstrophy_spectra_all_models.json) ../results/long_horizon/independent_completed_map_audit.json ../results/long_horizon/reference_enstrophy.json ../results/long_horizon/spatial_enstrophy_spectra_maps_preview.json
-LONG_MAP_OUTPUTS := figures/long_horizon_maps.pdf figures/long_horizon_maps_skill.pdf figures/first_step_enstrophy_spectrum.pdf figures/last_step_enstrophy_spectrum.pdf generated/long_horizon_maps_table.tex generated/long_horizon_maps_provenance.json generated/long_horizon_status.tex
-VIDEO_CASE_SOURCES := ../../video_forecasting/results/kth_protocol.json ../../video_forecasting/results/clevrer_protocol.json ../../video_forecasting/notes/data_summary.json $(wildcard ../../video_forecasting/results/training/*/metadata.json ../../video_forecasting/notes/*_data_preview.png)
-VIDEO_CASE_OUTPUTS := figures/video_case/setup_table.tex figures/video_case/training_table.tex figures/video_case/dataset_previews.pdf figures/video_case/asset_provenance.json
-VIDEO_RESULT_ASSETS := $(foreach dataset,kth clevrer,$(addprefix figures/video_results/$(dataset)_,calibration_table.tex fixed_forecast.pdf fixed_forecast.png fvd_vs_cost.png images_table.tex quality_table.tex unrounded_summary.csv)) figures/video_results/main_forecast_sequences.pdf figures/video_results/main_forecast_sequences.png figures/video_results/main_fvd_table.tex figures/video_results/paper_results_manifest.json
+ARTIFACTS :=
 
-.PHONY: all artifacts clean replication-artifacts video-results-artifacts
+.PHONY: all artifacts clean overleaf
 all: artifacts
-	TEXINPUTS=.:template: BSTINPUTS=.:template: latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+	$(LATEX_ENV) latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 
-artifacts: generated/validation_table.tex figures/ns_compression.pdf generated/test_seed0_table.tex generated/test_seed0_calibration.tex figures/seed0_quality_cost.pdf figures/seed0_rollout.pdf generated/seed0_claims.tex generated/seed0_training_cost.tex $(REPLICATION_OUTPUTS) $(LONG_MAP_OUTPUTS) $(VIDEO_CASE_OUTPUTS) $(VIDEO_RESULT_ASSETS)
-
-generated/validation_table.tex: build_validation_table.py $(VALIDATION_SOURCES)
-	$(PYTHON) build_validation_table.py
-
-figures/ns_compression.pdf: build_compression_figure.py ../results/ns_path_compression/results.json
-	$(PYTHON) build_compression_figure.py
+artifacts: $(ARTIFACTS)
 
 clean:
-	latexmk -c main.tex
+	$(LATEX_ENV) latexmk -c main.tex
+	rm -rf overleaf overleaf.zip
 
-
-generated/test_seed0_table.tex generated/test_seed0_calibration.tex &: build_seed0_results.py $(TEST_SEED0_SOURCES)
-	$(PYTHON) build_seed0_results.py
-
-figures/seed0_quality_cost.pdf figures/seed0_rollout.pdf generated/seed0_claims.tex generated/seed0_training_cost.tex &: build_study_figures.py $(STUDY_SOURCES)
-	$(PYTHON) build_study_figures.py
-
-# Every frozen seed and training archive must be complete before rebuilding.
-replication-artifacts: $(REPLICATION_OUTPUTS)
-
-$(REPLICATION_OUTPUTS) &: build_replication_tables.py $(REPLICATION_SOURCES)
-	$(PYTHON) build_replication_tables.py
-
-$(LONG_MAP_OUTPUTS) &: build_long_horizon_figures.py ../experiments/report_long_horizon.py $(LONG_MAP_SOURCES)
-	$(PYTHON) build_long_horizon_figures.py
-
-$(VIDEO_CASE_OUTPUTS) &: build_video_case.py $(VIDEO_CASE_SOURCES)
-	$(PYTHON) build_video_case.py
-
-# Explicit only: regenerating retained video assets requires the local raw NPZs.
-# Ordinary `make all` checks their presence and never reruns this sampler-free builder.
-video-results-artifacts:
-	$(PYTHON) build_video_results.py --report-dir ../../video_forecasting/results/report
+# Self-contained Overleaf upload: sources plus the used ICML style files flattened
+# into the project root (Overleaf does not search template/). Test-compiled
+# without TEXINPUTS so a missing file fails here rather than on Overleaf.
+OVERLEAF_STYLES := template/icml2026.sty template/icml2026.bst template/algorithm.sty \
+	template/algorithmic.sty template/fancyhdr.sty
+overleaf: artifacts
+	rm -rf overleaf overleaf.zip && mkdir overleaf
+	cp -r main.tex macros.tex references.bib sections appendix $(OVERLEAF_STYLES) overleaf/
+	cd overleaf && latexmk -pdf -interaction=nonstopmode -halt-on-error -quiet main.tex >/dev/null \
+		&& latexmk -C main.tex >/dev/null && rm -f main.bbl
+	cd overleaf && zip -qr ../overleaf.zip .
+	rm -rf overleaf
+	@echo "wrote overleaf.zip"

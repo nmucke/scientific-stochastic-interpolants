@@ -42,9 +42,9 @@ model:
         embedding_dim: 512
     path_channels: 4
   num_path_features: 4
-teacher:
-  checkpoint_dir: checkpoints/stochastic_navier_stokes/stochastic_interpolant
-  initialize_student: true
+teacher: null
+  # checkpoint_dir: checkpoints/stochastic_navier_stokes/stochastic_interpolant
+  # initialize_student: true
 trainer:
   checkpoint_dir: checkpoints/stochastic_navier_stokes/follmer_ito_map
 evaluation:

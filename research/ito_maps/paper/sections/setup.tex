@@ -1,0 +1,56 @@
+\section{Conditional Forecasting Setup}
+Let $h_n=(y_{n-p+1},\ldots,y_n)$ denote the available history and $c(h_n)=y_n$ its latest state. The target is $p(y_{n+1}\mid h_n)$ for a fixed physical lead time $\Delta$. Iteration defines a finite-history surrogate; recovering the true joint trajectory law additionally requires sufficient history, correct kernels on encountered histories, and inclusion of relevant time dependence (Appendix~\ref{app:method-assumptions}). We use $s,t\in[0,1]$ exclusively for artificial generative time; one completed generative trajectory produces one physical forecast. A multi-step physical forecast repeatedly generates a future state and updates the history, using independent fresh randomness for each physical step and ensemble member. Algorithm~\ref{alg:forecast} separates these two loops: $N$ neural evaluations produce one physical forecast, and $L$ such forecasts form a rollout. For a deterministic flow map, the same algorithm starts each physical forecast from fresh Gaussian noise and sets the martingale increment to zero.
+
+\begin{algorithm}[t]
+\caption{Map Steps Within an Autoregressive Forecast}
+\label{alg:forecast}
+\begin{algorithmic}[1]
+\REQUIRE Observed history $h_0$, ensemble size $M$, physical leads $L$, generative steps $N$, trained map $G_\theta$.
+\STATE Set each member's history $h_0^{(m)}=h_0$.
+\FOR{physical lead $\ell=1,\ldots,L$}
+  \FOR{ensemble member $m=1,\ldots,M$}
+    \STATE Fix $h=h_{\ell-1}^{(m)}$ throughout generation.
+    \STATE Set $x=c(h)$ and sample one fresh Brownian path.
+    \FOR{generative step $j=0,\ldots,N-1$}
+      \STATE $s=j/N$, $t=(j+1)/N$.
+      \STATE Read features $\Psi_{s,t}$ and increment $\Delta M_{s,t}$ from that same path.
+      \STATE $x\gets x+(t-s)G_\theta(s,t,x,h;\Psi_{s,t})+\Delta M_{s,t}$.
+    \ENDFOR
+    \STATE Store forecast $y_\ell^{(m)}=x$ and append it to $h$ to obtain $h_\ell^{(m)}$.
+  \ENDFOR
+\ENDFOR
+\STATE \textbf{return} ensembles $\{y_\ell^{(m)}\}_{m=1}^M$ for each physical lead.
+\end{algorithmic}
+\end{algorithm}
+
+We work in the normalized state coordinates used by the training pipeline. If the dataset uses tendencies, their reconstruction into physical states belongs to the data transform and must be identical for every compared model. Training, validation, and test data are separated by trajectory or contiguous temporal blocks before adjacent pairs are formed.
+
+\subsection{Forecasting Stochastic Interpolants}
+For $(h,y)$ drawn from observed forecast pairs, choose differentiable schedules satisfying $\alpha_0=1$, $\alpha_1=0$, $\beta_0=0$, $\beta_1=1$, and $\gamma_1=0$. Let $W$ be standard Brownian motion independent of $(h,y)$, and define
+\begin{equation}
+ I_t=\alpha_t c(h)+\beta_t y+\gamma_t W_t,
+ \qquad W_t\sim\N(0,t\mathrm{Id}).
+ \label{eq:interpolant}
+\end{equation}
+The baseline drift is learned using the target
+\begin{equation}
+ R_t=\dot\alpha_t c(h)+\dot\beta_t y+\dot\gamma_t W_t,
+ \quad b_t(x;h)=\E[R_t\mid I_t=x,h].
+ \label{eq:drift}
+\end{equation}
+Under the assumptions of \citet{chen2024forecasting}, the SDE
+\begin{equation}
+ dX_t=b_t(X_t;h)\,dt+\gamma_t\,dW_t,
+ \qquad X_0=c(h),
+ \label{eq:sde}
+\end{equation}
+has the desired interpolant marginals and endpoint forecast law. In regression we sample $W_t=\sqrt{t}z$, $z\sim\N(0,\mathrm{Id})$. The derivative in \eqref{eq:drift} is $\dot\gamma_t\sqrt{t}z$, not the derivative of $\gamma_t\sqrt{t}$: the Brownian increment is already accounted for by the diffusion term in \eqref{eq:sde}.
+
+A useful schedule is $\alpha_t=1-t$, $\beta_t=t^2$, $\gamma_t=\varepsilon(1-t)$. Then
+\begin{equation}
+ R_t=-c(h)+2ty-\varepsilon\sqrt{t}z.
+ \label{eq:target}
+\end{equation}
+This target has no singular time coefficient; this does not guarantee regularity of the conditional drift. It differs from the Gaussian-base target of \citet{pan2026itomaps}, whose substitution would change the process.
+
+\paragraph{Terminology.} The repository names this model family \texttt{FollmerStochasticInterpolant}. Its default diffusion $\gamma$ is the forecasting SDE above. The distinct KL-optimal F\"ollmer choice in \citet{chen2024forecasting} changes both diffusion and drift. We retain the class naming for compatibility and identify the actual diffusion in every experiment; we do not equate these two processes. Distilling an alternative diffusion requires its corresponding corrected drift.

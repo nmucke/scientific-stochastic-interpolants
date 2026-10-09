@@ -1,0 +1,10 @@
+\section{Seed-Zero Held-Out Uncertainty Diagnostics}\label{app:seed0-calibration}
+\begin{table*}[t]
+\caption{Seed-zero held-out uncertainty diagnostics, averaged over the 60 one-interval test contexts. RMS spread uses unbiased sample variance; coverage and extreme ranks are percentages.}
+\label{tab:seed0-calibration}
+\centering
+\pendingbox{rows: SI and FM at 16/64/128 steps, It\^o and flow maps at 1/2/4/8 steps; columns: RMS spread, corrected spread--skill $Q_{\mathrm{RMS}}$, legacy $Q_{\mathrm{compat}}$, $C_{90}$, extreme-rank fraction.}
+\end{table*}
+All comparisons use the same 60 forecast contexts and ensemble size $M=16$. The extreme-rank fraction is the proportion of targets below every ensemble member or above every ensemble member, with randomized ties. Its expectation under conditional exchangeability and continuous outcomes is $2/(M+1)=11.76\%$. Coverage is interpreted comparatively at fixed ensemble size, not against a nominal 90\% target. \pending{interpretation of spread, coverage and extreme-rank differences between maps and solver references.}
+
+Paired intervals resample the 20 trajectories after averaging their three origins, using 10,000 bootstrap draws. They are descriptive, without correction for inspecting multiple metrics, and do not include student-training variation. \pending{paired differences in RMS spread, coverage and extreme-rank fraction for It\^o and flow maps against the 16-, 64- and 128-step references.}

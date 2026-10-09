@@ -75,6 +75,7 @@ class BaseMapModel(nn.Module, ABC):
         brownian_path=None,
     ):
         s, t = batch_time(s, x), batch_time(t, x)
+
         return self.map_model(
             x=x,
             cond=torch.cat([s, t], -1),

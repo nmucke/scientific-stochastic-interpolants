@@ -1,0 +1,34 @@
+\subsection{Complete Budget Curves: Seed Zero}
+\begin{figure*}[t]
+\centering
+\pendingbox{one-interval quality--cost curves for the seed-zero models: fair CRPS, energy score, corrected spread--skill and $C_{90}$ against ensemble latency, for SI and FM at 1/4/16/64/128 steps and It\^o and flow maps at 1/2/4/8 steps.}
+\caption{One-interval quality and sampling cost for the frozen seed-zero models. Each point averages 60 contexts from 20 held-out trajectories with 16 ensemble members; shading gives pointwise 95\% trajectory-bootstrap intervals. Latency includes noise and path-feature construction. Close score values do not establish equal calibration, and overlapping marginal intervals are not a test of paired differences.}
+\label{fig:quality-cost}
+\end{figure*}
+\begin{table*}[t]
+\caption{Seed-zero one-interval test measurements: 20 held-out trajectories, three origins each, and 16 ensemble members. Student checkpoints are selected before testing. Values average the 60 contexts.}
+\label{tab:seed0-test}
+\centering
+\pendingbox{rows: SI and FM at 1/4/16/64/128 steps, It\^o and flow maps at 1/2/4/8 steps, persistence; columns: fair CRPS, energy score, ensemble-mean RMSE, spectral discrepancy, neural evaluations, ensemble latency.}
+\end{table*}
+The frozen seed-zero models are evaluated on all 20 held-out trajectories, with three origins per trajectory and 16 ensemble members (Figure~\ref{fig:quality-cost}, Table~\ref{tab:seed0-test}). \pending{seed-zero budget-curve findings: map versus solver CRPS at matched and lower cost, paired differences with intervals, speedups, and whether quality improves monotonically with step count.}
+
+Similar proper scores need not imply preserved uncertainty, so spread, coverage and extreme-rank frequencies are reported alongside CRPS (Appendix~\ref{app:seed0-calibration}). \pending{seed-zero calibration findings relative to the 64- and 128-step references.}
+
+\subsection{Ten Physical Forecast Leads: Seed Zero}
+\begin{figure*}[t]
+\centering
+\pendingbox{ten-lead autoregressive curves from origin 45 on the 20 test trajectories: CRPS, corrected spread--skill, $C_{90}$ and spectral discrepancy per lead, and cumulative sampling cost, for It\^o and flow maps at 1 and 8 steps and SI/FM at 64 steps.}
+\caption{Seed-zero autoregressive forecasting from origin 45 on 20 test trajectories, with 16 ensemble members. Each member updates its own history with generated states; future truth is never supplied. Shading shows pointwise trajectory-bootstrap intervals; cumulative cost sums measured sampling costs through each physical lead. Coverage uses finite-ensemble empirical intervals, whose expected coverage is not exactly 90\%.}
+\label{fig:rollout}
+\end{figure*}
+Figure~\ref{fig:rollout} evaluates ten successive stored-snapshot leads. \pending{final-lead CRPS, spectral discrepancy and coverage of each map relative to its 64-step reference, paired intervals, and total rollout latency; comparison against persistence.}
+
+\subsection{Confirmation Across Three Student Seeds}
+Table~\ref{tab:replication} reports complete replications of both training stages at the preselected one- and eight-step budgets. Paired intervals average student scores before resampling trajectories (Appendix~\ref{app:replications}). \pending{three-student confirmation: mean CRPS and student SD at one interval and lead ten, paired intervals, speedups, and calibration across students.}
+
+\subsection{Development and Feature Ablations}
+The two-stage procedure and the Brownian feature count are assessed on four validation trajectories with eight members (Appendix~\ref{app:development}). These development evaluations guide the method and are not independent confirmation. The recorded selection rule fixes $K$ before testing, with one checkpoint used for all inference budgets. The feature ablation controls checkpoint ancestry and optimization budget, but not identical stochastic minibatch or Brownian streams. \pending{development and $K=4$ versus $K=16$ ablation outcomes.}
+
+\subsection{Cost of Learning the Maps}
+Both maps share the teacher backbone family, adding only the zero-initialized interval and path branches. Recorded two-stage training-and-validation time per student is reported in Appendix~\ref{app:compute}. This additional distillation cost excludes teacher pretraining and model/data initialization. Sampling speedups trade this upfront cost against future forecast ensembles; they are not an end-to-end training advantage. \pending{parameter counts of the It\^o map, flow map and teachers, and per-student training time ranges.}

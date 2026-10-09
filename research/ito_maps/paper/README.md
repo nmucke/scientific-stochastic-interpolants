@@ -1,49 +1,72 @@
-# Building the manuscript from a checkout
+# Building the manuscript
 
-From this directory:
-
-```sh
-make all PYTHON=/path/to/the/project/python
-```
-
-Use the project Python environment (NumPy, Matplotlib, Pillow) and a TeX
-installation with `latexmk`/`pdflatex`. The official ICML style files are retained
-under `template/`. The default Python path uses the repository's `.venv` when
-available. Datasets, model checkpoints, metric weights and forecast NPZ arrays
-are not needed for this manuscript build.
-
-Most figures and tables regenerate from tracked JSON/CSV reports. The video
-setup uses `research/video_forecasting/notes/data_summary.json`, whose dataset
-manifest identity must match the frozen protocol. If local dataset manifests
-exist, their hashes and split counts are additionally verified. No raw dataset
-manifest is required when building from a checkout.
-
-The audited `figures/video_results/` bundle is deliberately retained in Git:
-18 compact TeX/CSV/PNG/PDF/provenance files, about 1.6 MB. It includes the fixed
-main and appendix frame sequences, FVD/cost figures, formatted tables, unrounded
-summary copies and `paper_results_manifest.json`. Narrow `.gitignore` exceptions
-apply only to these file types in this exact directory. Other generated figures,
-raw NPZ arrays, checkpoints and datasets remain ignored. `make all` requires the
-bundle but never reruns its data-dependent figure generator.
-
-To regenerate that bundle after a new audited evaluation, use the explicit
-`make video-results-artifacts` target. This requires both complete strict video
-reports and their saved raw fixed-case NPZ arrays. It preserves the predeclared
-case/member/budget selections. Review the regenerated assets and stage the whole
-bundle together with its snippets/provenance:
+From the repository root:
 
 ```sh
-git add research/ito_maps/paper/figures/video_results \
-        research/ito_maps/paper/generated/video_results.tex \
-        research/ito_maps/paper/generated/video_main_results.tex
+make -C research/ito_maps/paper
 ```
 
-Run that `git add` from the repository root. No force-add is needed. Normal
-compilation and full scientific regeneration are separate operations: the
-retained images support a standalone checkout build without repeating inference.
+This runs `latexmk` with `TEXINPUTS=.:template:` and `BSTINPUTS=.:template:` so
+the unmodified official ICML 2026 style files under `template/` are found. Do not
+run bare `latexmk` without these variables; it corrupts the build cache. To
+recover, run from this directory:
 
-An isolated `git checkout-index` copy plus the pending source changes and exact
-retained bundle passed `make all` on 2026-10-07 with no dataset/checkpoint/NPZ
-files present. All 18 retained files remained byte-identical, and extracted PDF
-text matched the reviewed working-tree PDF exactly. See
-`../reviews/checkout_paper_build.json` for source and asset hashes.
+```sh
+TEXINPUTS=.:template: BSTINPUTS=.:template: latexmk -g -pdf -interaction=nonstopmode -halt-on-error main.tex
+```
+
+## Current state
+
+- Scope: stochastically forced Navier--Stokes forecasting only.
+- Method, theory, experimental protocol, metric definitions, related work and
+  the appendices on training modes and differences from the original Itô-map
+  construction are complete.
+- All Navier--Stokes results are pending. Every result-dependent statement,
+  table and figure is a red `\pending{...}` placeholder (macros `\pending` and
+  `\pendingbox` in `macros.tex`). Floats keep their captions and
+  labels, and the placeholder lists the planned rows/columns or panels, so the
+  new results can be dropped in without restructuring. `notes/results_plan.md` lists
+  every placeholder location.
+- The build needs no datasets, checkpoints, results or Python: there are no
+  generated tables or figures at present.
+
+## Layout
+
+```
+main.tex            preamble, title block, abstract; \input's everything below in order
+macros.tex          theorem environments, notation, \pending / \pendingbox placeholders
+references.bib
+sections/           main text, one file per section
+  introduction  setup (incl. Algorithm 1)  ito_maps  related_work
+  experiments (NS protocol + main results table)  limitations  impact_statement
+appendix/           one file per appendix section, in compiled order
+  implementation (incl. ideal identities, compute)  training_modes
+  ito_maps_differences  ns_experimental_details (\input's ns_results)
+  replications  development_ablation  metrics  seed0_uncertainty
+  qualitative_forecast  compression_diagnostic  linear_sde_compression
+  long_horizon  draft_status
+template/           unmodified official ICML 2026 kit
+notes/              planning notes, not compiled: guidelines, results_plan, reviewer_risks
+```
+
+## Overleaf
+
+`make -C research/ito_maps/paper overleaf` writes `overleaf.zip` (git-ignored):
+the sources plus the used ICML style files flattened into the root, test-compiled
+without `TEXINPUTS`. Upload it via *New Project → Upload Project*.
+
+## Adding results later
+
+Write a `build_<name>.py` that reads the new results and writes into
+`generated/` or `figures/`, add it to `ARTIFACTS` with a rule in the
+`Makefile`, and replace the corresponding `\pendingbox{...}` by the
+`\input`/`\includegraphics`.
+
+## Archive
+
+Initial-stage results were moved to `../archive/results/` and are not used. The
+manuscript assets derived from them, and the dropped second application, were
+moved to `../archive/paper/`: the former `build_*.py` scripts, `generated/`,
+`figures/`, the corresponding `.tex` sources, the old long-horizon integration
+plan, and `pre_placeholder_tex/` with the pre-placeholder versions of the current
+sources. `archive/` is ignored by Git.

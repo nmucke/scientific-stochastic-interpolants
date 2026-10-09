@@ -1,0 +1,30 @@
+\section{Metric Definitions and Finite-Ensemble Effects}\label{app:metrics}
+Let $x_{mi}$ denote ensemble member $m$ at spatial coordinate $i$, let $y_i$ be the held-out future, and let $D$ be the number of state coordinates. All following quantities use normalized dataset coordinates. Write $\bar x_i=M^{-1}\sum_m x_{mi}$ and $v_i=M^{-1}\sum_m(x_{mi}-\bar x_i)^2$. The existing repository's spread/skill diagnostic is
+\begin{align}
+ S_{\mathrm{compat}}&=\sqrt{\frac{M+1}{M}}
+ \frac1D\sum_{i=1}^D\sqrt{v_i},\\
+ R&=\sqrt{\frac1D\sum_{i=1}^D(\bar x_i-y_i)^2},\\
+ Q_{\mathrm{compat}}&=S_{\mathrm{compat}}/R.
+\end{align}
+This combines a mean of pointwise population standard deviations with an RMS error. Its value need not be one for a calibrated distribution: sample population variances are biased downward, square roots introduce another finite-sample effect, and a mean of spatial standard deviations differs from their RMS when uncertainty varies across space. We preserve the diagnostic for compatibility, but do not establish underdispersion from $Q_{\mathrm{compat}}<1$ alone.
+
+For reference, let $s_i^2=Mv_i/(M-1)$ be the unbiased sample variance. The reported RMS spread and its corrected spread/skill ratio are
+\begin{align}
+ S_{\mathrm{RMS}}^2&=\frac1D\sum_i s_i^2,\\
+ Q_{\mathrm{RMS}}&=\sqrt{(M+1)/M}\,S_{\mathrm{RMS}}/R.
+\end{align}
+If the ensemble and truth are conditionally independent draws from the same distribution with finite variance, then $(1+1/M)\E[S_{\mathrm{RMS}}^2]=\E[R^2]$. This follows from $\operatorname{Var}(\bar x_i-y_i)=(1+1/M)\operatorname{Var}(y_i)$. Equality of these second moments still does not give an exact expected ratio of one in finite samples. We report the uncorrected spread and corrected ratio separately, averaging the per-context diagnostics.
+
+\paragraph{Empirical interval coverage.} The reported $C_{90}$ is the spatial fraction of targets lying between linearly interpolated empirical ensemble quantiles at probabilities 0.05 and 0.95. The subscript describes the requested probabilities, not a finite-ensemble calibration guarantee. For exchangeable continuous truth and ensemble, the target's rank among $M+1$ values is uniform. Even the wider ensemble minimum-to-maximum interval covers the truth with probability only $(M-1)/(M+1)$; the empirical inner-quantile interval cannot exceed that expected coverage. These upper bounds are 77.78\% at $M=8$ and 88.24\% at $M=16$.
+
+For an elementary example with independent uniform draws, the expected linear-quantile interval coverage is exactly $0.9(M-1)/(M+1)$: 70.00\%, 79.41\%, and 84.55\% for $M=8,16,32$. This follows from $\E[X_{(j)}]=j/(M+1)$ and linear interpolation between order statistics. Other continuous distributions have different interpolation effects. Comparisons therefore use matched ensemble sizes, fair CRPS, and randomized-tie rank histograms alongside interval coverage. Uniform marginal ranks are a calibration diagnostic, not a proof of correct spatial dependence; uncertainty assessments must respect correlated grid cells and trajectories.
+
+\paragraph{Proper scores and spectra.} The fair CRPS estimator subtracts $[2M(M-1)]^{-1}\sum_{m\ne n}|x_{mi}-x_{ni}|$ from the mean absolute error at each coordinate and then averages coordinates. With independent ensemble draws, it estimates the distribution-level score without the finite-ensemble bias from retaining diagonal pairs. The multivariate energy score uses the analogous expression with Euclidean norm divided by $\sqrt D$. The spectrum diagnostic is $\|M^{-1}\sum_m Z(x_m)-Z(y)\|_2/\|Z(y)\|_2$, where $Z$ is the radial enstrophy spectrum. It compares to one realized future; it is neither an exact conditional-spectrum error nor a direct test of invariant-measure equality.
+
+\subsection{Why Close Scores Need Not Mean Equal Dispersion}
+An elementary Gaussian example clarifies the different sensitivities. Let the truth be $Y\sim\N(0,1)$ and the forecast $F_\sigma=\N(0,\sigma^2)$. Independent Gaussian differences give
+\begin{equation}
+ S(\sigma)=\E_Y\mathrm{CRPS}(F_\sigma,Y)
+ =\frac{\sqrt{2(1+\sigma^2)}-\sigma}{\sqrt\pi}.
+\end{equation}
+The calibrated forecast minimizes this proper score: $S'(1)=0$ and $S''(1)=1/(2\sqrt\pi)$. Its excess score is therefore second order in a small spread error. In contrast, coverage of the forecast's central population 90\% interval is $C(\sigma)=2\Phi(1.64485\sigma)-1$, which has nonzero derivative at one. At $\sigma=0.84$, expected CRPS increases by only 0.69\%, while population-interval coverage falls to 83.29\%. This is an illustration, not a fit to the fluid forecasts. It concerns exact distribution quantiles and must not be equated with the empirical intervals from 16 ensemble members.

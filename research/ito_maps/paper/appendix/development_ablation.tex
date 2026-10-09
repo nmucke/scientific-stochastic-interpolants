@@ -1,0 +1,12 @@
+\section{Development Ablation}\label{app:development}
+\begin{table}[t]
+\caption{Development validation only: four validation trajectories, three origins, eight ensemble members, one physical forecast interval and one student-training seed. CRPS in normalized coordinates.}
+\label{tab:validation-development}
+\centering
+\pendingbox{rows: stage-one (PSD) and refined checkpoints for the It\^o and flow maps, and the $K=16$ refinement; columns: teacher-supervised validation objective, fair CRPS at 1 and 8 steps, latency.}
+\end{table}
+Table~\ref{tab:validation-development} will compare selected first-stage and refined checkpoints on identical forecast cases. Comparing the two stages includes 500 additional updates and teacher trajectory computations; it does not isolate the objective from extra compute.
+
+The controlled feature ablation starts both $K=4$ and $K=16$ refinements from the same selected PSD model. For $K=16$, each coarse path-projection coefficient is copied to its four child increments without scaling, preserving the initial function because the children sum to their parent increment. All other initial weights, the 500-update budget, and the optimization schedule are shared. Both runs use the same seed identifier, but the larger projection consumes a different random sequence during construction, so subsequent minibatch and Brownian draws need not match. This is a single-seed exploratory ablation, not an estimate that isolates feature count under identical training randomness. A pre-recorded one-step validation CRPS rule selects $K$ before testing. \pending{ablation outcome: validation objective, one- and eight-step CRPS and latency for $K=4$ versus $K=16$, and the selected $K$.}
+
+The validation objective measures teacher regression fidelity, which need not coincide with forecasting quality, and the compression diagnostic of Appendix~\ref{app:ns-compression} concerns a different target, one history and a specified Brownian coupling. These are development measurements, not independent confirmation.

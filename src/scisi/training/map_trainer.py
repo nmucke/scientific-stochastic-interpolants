@@ -272,6 +272,8 @@ class MapTrainer(Trainer):
         return s, u, t
 
     def _compute_loss(self, batch):
+        
+        
         conditions = {
             k: batch[k]
             for k in ("field_history", "field_cond", "pars_cond")
