@@ -2,14 +2,12 @@
 *.lock
 
 # Data
-data/aurora/
 data/knmi/
 data/weather/
 data/udales/
 data/udales_old/
 data/stochastic_navier_stokes/
 data/xie_and_castro/
-external_libs/aurora_lib/data/
 *.npz
 
 # Logs
@@ -51,9 +49,6 @@ venv/
 .env
 .venv/
 
-# Aurora model weights
-aurora_model_weights/*
-
 # latex
 latex/
 
@@ -91,17 +86,5 @@ paper_experiments/results_full/*
 # Local presentation material
 /presentations/
 
-# Downloaded and decoded video forecasting datasets
-/data/video_forecasting/
-
-# Retain the compact audited video paper bundle for data-free LaTeX builds.
-# Other generated figure folders and raw NPZ/checkpoint payloads remain ignored.
-!/research/ito_maps/paper/figures/
-/research/ito_maps/paper/figures/*
-!/research/ito_maps/paper/figures/video_results/
-/research/ito_maps/paper/figures/video_results/*
-!/research/ito_maps/paper/figures/video_results/*.tex
-!/research/ito_maps/paper/figures/video_results/*.csv
-!/research/ito_maps/paper/figures/video_results/*.png
-!/research/ito_maps/paper/figures/video_results/*.pdf
-!/research/ito_maps/paper/figures/video_results/*.json
+# Generated paper figures
+/research/ito_maps/paper/figures/
