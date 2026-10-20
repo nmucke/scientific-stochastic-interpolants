@@ -1,0 +1,59 @@
+# @package _global_
+len_field_history: 5
+mask_path: data/udales/mask.npz
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [0.19050094485282898, 0.0495307594537735, -0.002269984222948551, 295.24749755859375]
+    std: [0.4428868293762207, 0.35734325647354126, 0.1339215785264969, 0.18053284287452698]
+  target:
+    mean: [0.19050094485282898, 0.0495307594537735, -0.002269984222948551, 295.24749755859375]
+    std: [0.4428868293762207, 0.35734325647354126, 0.1339215785264969, 0.18053284287452698]
+  field_cond:
+    mean: [0.0]
+    std: [1.0]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: true
+  dataset:
+    _target_: scisi.data.datasets.UDalesDataset
+    paths: [data/udales]
+    files: (0, 150)
+    len_field_history: ${len_field_history}
+    starting_time: 50
+    ending_time: 250
+    skip_steps: 1
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/udales/train
+    use_exisiting_cache: true
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: false
+  dataset:
+    _target_: scisi.data.datasets.UDalesDataset
+    paths: [data/udales]
+    files: (151, 170)
+    len_field_history: ${len_field_history}
+    starting_time: 50
+    ending_time: 250
+    skip_steps: 1
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/udales/val
+    use_exisiting_cache: true
+
+test_data:
+  _target_: scisi.data.datasets.UDalesDataset
+  paths: [data/udales]
+  files: (170, 178)
+  len_field_history: ${len_field_history}
+  starting_time: 50
+  ending_time: 250
+  skip_steps: 1
+  save_in_memory: true
+  use_exisiting_cache: false
+  train_or_test: test

@@ -48,7 +48,7 @@ This enables data assimilation by guiding the generative process toward states c
 ## Key Features
 
 - **Three generative model paradigms**: Stochastic Interpolants, Flow Matching, and Diffusion Models
-- **Multiple architectures**: U-Net (with ConvNext blocks and spatial attention), PDE Transformer, and Aurora weather model wrapper
+- **Multiple architectures**: U-Net (with ConvNext blocks and spatial attention) and PDE Transformer
 - **Flexible interpolation**: Linear and quadratic schemes, deterministic and stochastic variants
 - **Posterior sampling**: Gaussian likelihood models, observation operators, ensemble-based uncertainty quantification
 - **Hydra configuration**: Fully configurable experiments via YAML files
@@ -100,7 +100,6 @@ scientific-stochastic-interpolants/
 │   ├── architectures/               # Neural network architectures
 │   │   ├── u_net.py                 #   U-Net with ConvNext blocks
 │   │   ├── pde_transformer.py       #   PDE Transformer wrapper
-│   │   ├── aurora.py                #   Aurora weather model wrapper
 │   │   ├── attention.py             #   Spatial & rotary attention
 │   │   ├── conv_next.py             #   ConvNext blocks
 │   │   ├── embeddings.py            #   Fourier & conditional embeddings
@@ -109,18 +108,24 @@ scientific-stochastic-interpolants/
 │   │   ├── follmer_stochastic_interpolant.py
 │   │   ├── flow_matching_model.py
 │   │   ├── diffusion_model.py
+│   │   ├── flow_map_model.py        #   Deterministic flow map
+│   │   ├── follmer_ito_map_model.py #   Stochastic Itô map
 │   │   ├── interpolations.py        #   Interpolation schemes
-│   │   └── base_model.py            #   Abstract base class
+│   │   ├── base_model.py            #   Abstract base class
+│   │   └── base_map_model.py        #   Abstract base class for maps
 │   ├── data/                        # Dataset classes & loaders
 │   │   ├── datasets.py              #   All dataset implementations
 │   │   └── load_data.py
 │   ├── training/                    # Training loop & utilities
-│   │   ├── trainer.py               #   Trainer with early stopping
+│   │   ├── trainer.py               #   Base trainer: loop, checkpoints, resume
+│   │   ├── flow_trainer.py          #   Flow models (FM, SI, diffusion)
+│   │   ├── map_trainer.py           #   Map models (self-distillation)
 │   │   ├── loss_functions.py        #   Latitude-weighted MSE, etc.
 │   │   └── gradient_clipping.py     #   EMA-based gradient clipping
 │   ├── sampling/                    # SDE/ODE solvers
 │   │   ├── sde_solvers.py           #   Euler-Maruyama, Heun
-│   │   └── ode_solvers.py           #   Euler step (flow matching)
+│   │   ├── ode_solvers.py           #   Euler step (flow matching)
+│   │   └── brownian_path.py         #   Shared Brownian paths for Itô maps
 │   ├── posterior_models/            # Bayesian posterior sampling
 │   │   ├── base_posterior.py
 │   │   ├── stochastic_interpolant_posterior.py
@@ -133,6 +138,7 @@ scientific-stochastic-interpolants/
 │   ├── preprocessing/               # Data normalization
 │   ├── metrics/                     # LSiM, enstrophy spectrum
 │   ├── plotting/                    # Animation & field visualization
+│   │   └── cases.py                 #   Figures for each test case
 │   ├── particle_filter/             # Particle filtering methods
 │   ├── utils/                       # Device utilities
 │   └── bin/                         # Entry point scripts
@@ -141,11 +147,17 @@ scientific-stochastic-interpolants/
 │       ├── main_test_knmi.py
 │       ├── main_posterior.py
 │       └── ...
-├── config/                          # Hydra YAML configs (24 files)
+├── scripts/                         # train.py and test.py for all models
+├── config/                          # Hydra configs: one file per case, plus
+│   ├── data/                        #   datasets per case
+│   ├── models/                      #   model types
+│   ├── training/                    #   flow and map training
+│   ├── posterior/                   #   data assimilation
+│   └── test.yaml                    #   settings for scripts/test.py
+├── research/ito_maps/               # Itô-map notes, experiments and paper
 ├── external_libs/                   # Workspace member packages
 │   ├── torch_cfd_lib/              #   PyTorch CFD utilities
-│   ├── jax_cfd_lib/                #   JAX CFD utilities
-│   └── aurora_lib/                  #   Aurora weather model integration
+│   └── jax_cfd_lib/                #   JAX CFD utilities
 ├── paper_scripts/                   # Scripts for reproducing paper results
 ├── checkpoints/                     # Saved model weights
 ├── data/                            # Dataset storage
@@ -157,35 +169,33 @@ scientific-stochastic-interpolants/
 
 ### Training
 
-```bash
-cd src/scisi/bin
-python main_train.py
-```
-
-Override configuration via Hydra:
+Pick a case with `--config-name` and a model with `models=<name>`
+(`stochastic_interpolant`, `flow_matching`, `diffusion`, `flow_map`, `ito_map`).
+Run from the repository root:
 
 ```bash
-python main_train.py model.drift_model.hidden_channels=[64,128,256] trainer.num_epochs=500
+uv run scripts/train.py --config-name stochastic_navier_stokes models=flow_matching
+uv run scripts/train.py --config-name udales models=stochastic_interpolant trainer.num_epochs=500
 ```
 
-Use a different config file:
-
-```bash
-python main_train.py --config-name knmi_pde_transformer.yaml
-```
+Each run is saved to `checkpoints/<project>/<run name>/` (`model.pth`, `last.pth`,
+`history.json`, `config.yaml`). Continue an interrupted run with
+`trainer.resume_from=checkpoints/<project>/<run name>/last.pth`.
 
 ### Sampling from a Trained Model
 
 ```bash
-python main_test.py
+uv run scripts/test.py project=stochastic_navier_stokes name=<run name>
 ```
 
-This loads a checkpoint, generates ensemble trajectory predictions, computes evaluation metrics, and saves animations and plots to `figures/`.
+This loads a checkpoint, generates an ensemble forecast, logs LSiM and RMSE, and
+saves the case's animations and plots to `figures/<project>/<run name>/`.
+Settings are in `config/test.yaml`.
 
 ### Posterior Sampling
 
 ```bash
-python main_posterior.py
+uv run python -m scisi.bin.main_posterior
 ```
 
 Performs Bayesian inference by incorporating sparse observations into the generative sampling process, comparing prior and posterior predictions.
@@ -197,8 +207,7 @@ Performs Bayesian inference by incorporating sparse observations into the genera
 | **Stochastic Navier-Stokes** | Turbulent vorticity fields | 1 | 128 x 128 | `stochastic_navier_stokes*.yaml` |
 | **KNMI Weather** | KNMI meteorological data | 1 | Variable | `knmi*.yaml` |
 | **UDALES** | Large eddy simulation (u, v, w, T) | 4 | 256 x 256 | `udales*.yaml` |
-| **Aurora** | Global weather forecasting | Multiple | Global grid | `aurora.yaml` |
-| **Xie & Castro** | Atmospheric boundary layer | 1 | 128 x 128 | `xie_and_castro.yaml` |
+| **Xie & Castro** | Atmospheric boundary layer | 1 | 128 x 128 | `data/xie_and_castro.yaml` (no case file) |
 | **Weather (Global)** | Global weather reanalysis | 1 | 721 x 1440 | `weather*.yaml` |
 
 Data is expected in `.npz` format under the `data/` directory.
@@ -234,52 +243,41 @@ Multi-scale encoder-decoder with skip connections. Features include:
 
 Patch-based transformer architecture designed for structured grid data with periodic boundaries. Available in three sizes (PDE-S, PDE-B, PDE-L) via the external `pdetransformer` package.
 
-### Aurora Wrapper
-
-Integration with Microsoft's pre-trained Aurora weather forecasting model for global weather prediction tasks.
-
 ## Configuration
 
-The project uses [Hydra](https://hydra.cc/) for hierarchical configuration management. All configs live in `config/` and follow this structure:
+The project uses [Hydra](https://hydra.cc/). Configs in `config/` are split into
+groups that a case file combines:
+
+| Location | Contents |
+|----------|----------|
+| `data/<case>.yaml` | Datasets, preprocessing, field history length, mask |
+| `models/<model>.yaml` | Model type; wraps the case's `backbone` |
+| `training/default.yaml` | `FlowTrainer`, optimizer, scheduler, loss |
+| `training/map.yaml` | `MapTrainer` for `flow_map` and `ito_map` (selected automatically) |
+| `<case>.yaml` | Chooses the defaults and defines the backbone and case-specific settings |
 
 ```yaml
+# config/stochastic_navier_stokes.yaml
+defaults:
+  - data: stochastic_navier_stokes
+  - training: default
+  - models: stochastic_interpolant
+  - _self_
+
 experiment_tracking:
-  project: "stochastic_navier_stokes"
+  project: stochastic_navier_stokes
 
-preprocesser:
-  _target_: scisi.preprocessing.preprocessor.Preprocesser
-  mean: [0.0]
-  std: [1.0]
-
-model:
-  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
-  interpolation:
-    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
-    gamma_multiplier: 1.0
-    wiener_process: true
-  drift_model:
-    _target_: scisi.architectures.u_net.UNet
-    in_channels: 1
-    out_channels: 1
-    hidden_channels: [8, 16, 32, 64]
-    len_field_history: 5
-
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4
-
-scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: 1000
-
-trainer:
-  num_epochs: 1000
-  early_stopping:
-    patience: 25
-  mixed_precision_warmup: 50
+backbone:
+  _target_: scisi.architectures.u_net.UNet
+  in_channels: 1
+  out_channels: 1
+  hidden_channels: [16, 32, 64, 128]
+  len_field_history: ${len_field_history}
+  ...
 ```
 
-24 configuration files cover all combinations of datasets, architectures, and model types.
+Any value can be overridden on the command line, e.g. `backbone.dropout_rate=0`
+or `trainer.early_stopping.patience=25`.
 
 ## Posterior Sampling & Data Assimilation
 
@@ -379,105 +377,27 @@ history, conditioning, ensemble sampling, and physical trajectory conventions.
 starts from the last observed or generated state and conditions on a shared
 Brownian path. Both support choosing the number of map evaluations at inference.
 
-The new models reuse the existing Navier–Stokes dataset, preprocessing and UNet.
-`MapConditionedNetwork` adds interval and Brownian inputs and can initialize from
-an existing drift checkpoint. `MapTrainer` implements diagonal regression and
-progressive self-distillation; `objective=teacher_rollout` selects an explicitly
-simulation-based alternative. Experiment results and methodology notes live in
+`MapConditionedNetwork` adds interval and Brownian inputs to the UNet and can
+initialize from an existing drift checkpoint. `MapTrainer` combines diagonal
+regression with an off-diagonal self-distillation loss against an EMA copy of the
+model (`trainer.off_diagonal`, currently `progressive_self_distillation`). The
+off-diagonal loss can be delayed (`trainer.diagonal_epochs`) and ramped in
+(`trainer.warmup_epochs`). Map models currently require the UNet backbone and an
+identically-one spatial mask. Notes, experiments and the paper live in
 [research/ito_maps](research/ito_maps).
 
 ```bash
-# Train the Föllmer Itô map; tracking is disabled by default.
-python -m scisi.bin.main_map_model_train \
-  --config-name follmer_ito_map_stochastic_navier_stokes
+# Train the Föllmer Itô map or the deterministic flow map.
+uv run scripts/train.py --config-name stochastic_navier_stokes models=ito_map
+uv run scripts/train.py --config-name stochastic_navier_stokes models=flow_map
 
-# Train the deterministic flow map.
-python -m scisi.bin.main_map_model_train \
-  --config-name flow_map_stochastic_navier_stokes
+# Warm-start from a trained drift model.
+uv run scripts/train.py --config-name stochastic_navier_stokes models=flow_map \
+  teacher_checkpoint_dir=checkpoints/stochastic_navier_stokes/flow_matching
 
-# Evaluate the saved map on held-out trajectories at several sampling budgets.
-python -m scisi.bin.main_map_model_test \
-  --config-name follmer_ito_map_stochastic_navier_stokes \
-  'evaluation.num_steps=[1,2,4,8]' evaluation.forecast_horizon=5
+# Forecast and plot with a trained map (map steps per physical step: num_map_steps).
+uv run scripts/test.py project=stochastic_navier_stokes name=<run name> num_map_steps=1
 ```
 
-The supplied configurations initialize from the existing forecast checkpoints.
-For training from scratch, set `teacher.checkpoint_dir=null`; for CPU execution,
-set `trainer.device=cpu` when training and `evaluation.device=cpu` when testing.
-Choose a fresh `trainer.checkpoint_dir` for each training run. Evaluation reports
-fair CRPS and energy scores, ensemble-mean RMSE, coverage, spectra, measured
-network evaluations and elapsed sampling time. Its confidence intervals resample
-whole trajectories, and physical rollouts condition on generated forecasts.
-
-The recorded research runs use two stages: `research/ito_maps/experiments/train_psd_pilots.sh`
-followed by `research/ito_maps/experiments/train_rollout_stage.sh`. Run these with
-`bash` from the repository root on a free GPU; existing output checkpoints are
-protected against accidental replacement. The selected seed-0 checkpoints are
-`checkpoints/stochastic_navier_stokes/ito_rollout_seed0` and
-`checkpoints/stochastic_navier_stokes/flow_rollout_seed0`.
-
-```bash
-# Evaluate the trained Itô checkpoint supplied by the research run.
-python -m scisi.bin.main_map_model_test \
-  --config-name follmer_ito_map_stochastic_navier_stokes \
-  evaluation.checkpoint_dir=checkpoints/stochastic_navier_stokes/ito_rollout_seed0 \
-  evaluation.output_dir=research/ito_maps/results/manual_evaluation \
-  'evaluation.num_steps=[1,8]'
-
-# Rebuild the manuscript, including generated tables and figures.
-make -C research/ito_maps/paper
-```
-
-See the [handover status](research/ito_maps/STATUS.md) for completed experiments,
-the frozen protocol, and the current manuscript status. The
-[API compatibility notes](research/ito_maps/notes/map_api_compatibility.md) specify
-normalization, conditioning, and rollout contracts. Training currently requires
-an identically-one spatial mask.
-
-## Pixel-space KTH and CLEVRER forecasting
-
-The video pipeline supports the same four model families, including training new
-stochastic-interpolant and flow-matching baselines from scratch. It uses the last
-10 KTH frames or last 2 temporally subsampled CLEVRER frames as context. Both
-initial configurations use 64×64 pixels; CLEVRER preserves RGB channels. No
-latent autoencoder or randomly selected conditioning frame is used.
-
-Install the optional `video` dependencies in the project environment, and ensure
-system `ffmpeg` and `curl` are available. The dataset and pretrained metric
-preparation commands are:
-
-```bash
-uv pip install --python .venv/bin/python -e '.[video]'
-.venv/bin/python research/video_forecasting/data/prepare_videos.py --dataset kth
-.venv/bin/python research/video_forecasting/data/prepare_videos.py --dataset clevrer
-.venv/bin/python research/video_forecasting/experiments/prepare_metrics.py
-```
-
-Download/preprocessing is resumable. Official splits, raw archive checksums,
-frame indices, transformations and decoded-file hashes are retained. Data are
-memory-mapped instead of materializing every overlapping training window.
-
-```bash
-# Run these serially on an otherwise idle GPU, from the repository root.
-bash research/video_forecasting/experiments/train_all_video_models.sh
-bash research/video_forecasting/experiments/evaluate_all_video_models.sh
-
-# Individual model training uses the same Hydra conventions as the other models.
-.venv/bin/python -m scisi.bin.main_video_model_train \
-  --config-name flow_matching_clevrer
-
-# Individual evaluation works for either a map or a solver checkpoint.
-.venv/bin/python -m scisi.bin.main_video_model_test \
-  --checkpoint-dir checkpoints/video/kth/follmer_ito_map \
-  --output-dir research/video_forecasting/results/manual/kth_ito \
-  --steps 1 8 --num-clips 128 --ensemble-size 4
-```
-
-The first experiment uses 20,000 baseline updates, then 2,000 PSD and 500
-teacher-rollout updates per map. It forecasts 30 KTH frames and 14 CLEVRER frames.
-Evaluation records pretrained I3D FVD, LPIPS, PSNR, SSIM, fair CRPS/energy,
-ensemble accuracy/calibration, timings and actual network calls. FVD sample
-counts and best-of-ensemble image metrics are labeled explicitly. These initial
-pixel-space experiments are not a numerical reproduction of the reference's
-larger latent-space study. See the [video handover](research/video_forecasting/STATUS.md)
-and [protocol audit](research/video_forecasting/notes/paper_video_protocol.md).
+See the [status notes](research/ito_maps/STATUS.md) for the current state of the
+research.

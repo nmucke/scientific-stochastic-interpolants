@@ -1,0 +1,12 @@
+# @package _global_
+# Föllmer stochastic interpolant. The case file sets `backbone`, and may set
+# `gamma_multiplier` (noise level, default 1.0).
+model_name: stochastic_interpolant
+model:
+  _target_: scisi.models.follmer_stochastic_interpolant.FollmerStochasticInterpolant
+  interpolation:
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: ${oc.select:gamma_multiplier,1.0}
+    wiener_process: true
+  mask_path: ${mask_path}
+  drift_model: ${backbone}

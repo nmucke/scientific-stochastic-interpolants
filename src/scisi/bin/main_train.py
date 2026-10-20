@@ -48,21 +48,21 @@ CHECKPOINT_PATH = f"checkpoints/{CHECKPOINT_PROJECT}/{CHECKPOINT_NAME}/model.pth
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
-    # config_name="diffusion_stochastic_navier_stokes.yaml",
-    # config_name="flow_matching_udales.yaml",
-    # config_name="udales.yaml",
-    # config_name="xie_and_castro.yaml",
-    # config_name="udales_pde_transformer.yaml",
-    # config_name="knmi_pde_transformer_flow_matching.yaml",
-    # config_name="stochastic_navier_stokes_pde_transformer.yaml",
-    config_name="stochastic_navier_stokes.yaml",
-    # config_name="knmi_pde_transformer.yaml",
-    # config_name="knmi.yaml",
+    # Pick a case with --config-name and a model with models=<name>, e.g.
+    # --config-name udales models=flow_matching
+    config_name="stochastic_navier_stokes",
     version_base=None,
 )
 def main(cfg: DictConfig) -> None:
 
     set_device(cfg)
+
+    # Map models are trained by their own pipeline (EMA, warm start, metadata).
+    if cfg.trainer._target_.endswith("MapTrainer"):
+        from scisi.bin.main_map_model_train import run_training
+
+        run_training(cfg)
+        return
 
     if CONTINUE_FROM_CHECKPOINT:
         logger.info(f"Loading config from checkpoint:")
@@ -77,7 +77,7 @@ def main(cfg: DictConfig) -> None:
 
     logger.info(f"Instantiating experiment tracking...")
     tracker = trackio.init(
-        name="stochastic_interpolant_big_gamma1",
+        name=cfg.experiment_tracking.get("name"),
         project=cfg.experiment_tracking.project,
         config=OmegaConf.to_container(cfg, resolve=True),
     )
@@ -113,9 +113,6 @@ def main(cfg: DictConfig) -> None:
         model.load_state_dict(torch.load(CHECKPOINT_PATH))
 
     logger.info(f"Model parameters: {count_model_parameters(model)/1e6:.2f}M")
-
-    if "AuroraWrapper" in cfg.model.drift_model._target_:
-        model.drift_model.batch_adapter = train_dataloader.dataset.batch_adapter
 
     logger.info(f"Instantiating optimizer: {cfg.optimizer._target_}")
     optimizer = hydra.utils.instantiate(

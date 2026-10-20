@@ -1,0 +1,14 @@
+# @package _global_
+# Deterministic flow map; trained with the map trainer.
+defaults:
+  - override /training: map
+
+model_name: flow_map
+model:
+  _target_: scisi.models.flow_map_model.FlowMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  map_model:
+    _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
+    backbone: ${backbone}
+    path_channels: 0

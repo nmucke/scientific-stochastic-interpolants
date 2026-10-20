@@ -177,11 +177,8 @@ def test_navier_stokes_sample_without_optional_preprocessor():
     torch.testing.assert_close(sample["field_history"], window[..., :-1])
 
 
-@pytest.mark.parametrize(
-    "config_name",
-    ["flow_map_stochastic_navier_stokes", "follmer_ito_map_stochastic_navier_stokes"],
-)
-def test_configured_map_unet_preserves_teacher_on_diagonal(config_name):
+@pytest.mark.parametrize("model_name", ["flow_map", "ito_map"])
+def test_configured_map_unet_preserves_teacher_on_diagonal(model_name):
     from pathlib import Path
     from hydra import compose, initialize_config_dir
     from hydra.utils import instantiate
@@ -189,7 +186,9 @@ def test_configured_map_unet_preserves_teacher_on_diagonal(config_name):
     torch.set_num_threads(1)
     config_dir = str(Path(__file__).resolve().parents[1] / "config")
     with initialize_config_dir(config_dir=config_dir, version_base=None):
-        cfg = compose(config_name=config_name)
+        cfg = compose(
+            config_name="stochastic_navier_stokes", overrides=[f"models={model_name}"]
+        )
     teacher = instantiate(cfg.model.map_model.backbone).eval()
     model = instantiate(cfg.model).eval()
     model.map_model.load_from_teacher(teacher)

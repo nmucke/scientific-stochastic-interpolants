@@ -30,7 +30,7 @@ def load_teacher(checkpoint_dir, device):
     model = instantiate(config.model).to(device).eval()
     state = torch.load(directory / "model.pth", map_location=device, weights_only=True)
     model.load_state_dict(state)
-    return model, config
+    return model
 
 
 def run_training(cfg):
@@ -43,11 +43,7 @@ def run_training(cfg):
         )
     output = Path(cfg.trainer.checkpoint_dir)
     output.mkdir(parents=True, exist_ok=True)
-    if (
-        (output / "model.pth").exists()
-        and not cfg.get("overwrite", False)
-        and not cfg.trainer.get("resume_from")
-    ):
+    if (output / "model.pth").exists() and not cfg.get("overwrite", False):
         raise FileExistsError(
             f"Run already has a checkpoint: {output}; choose a new directory or overwrite=true"
         )
@@ -58,25 +54,17 @@ def run_training(cfg):
     train_loader = instantiate(cfg.train_data, dataset={"preprocesser": preprocesser})
     val_loader = instantiate(cfg.val_data, dataset={"preprocesser": preprocesser})
     model = instantiate(cfg.model).to(device)
-    teacher = None
-    teacher_cfg = cfg.get("teacher") or {}
-    if teacher_cfg.get("checkpoint_dir"):
-        teacher, teacher_config = load_teacher(teacher_cfg.checkpoint_dir, device)
-        if teacher_cfg.get("initialize_student", True):
-            model.map_model.load_from_teacher(teacher)
-        # A teacher with a different interpolant/base cannot anchor this map.
+    if cfg.get("teacher_checkpoint_dir"):
+        # Warm-start the student from a pretrained drift model.
+        teacher = load_teacher(cfg.teacher_checkpoint_dir, device)
         if type(model.interpolation) is not type(teacher.interpolation):
             raise ValueError("Student and teacher interpolation classes differ")
         if getattr(model.interpolation, "gamma_multiplier", None) != getattr(
             teacher.interpolation, "gamma_multiplier", None
         ):
             raise ValueError("Student and teacher diffusion amplitudes differ")
-    if cfg.get("initial_student_checkpoint"):
-        model.load_state_dict(
-            torch.load(
-                cfg.initial_student_checkpoint, map_location=device, weights_only=True
-            )
-        )
+        model.map_model.load_from_teacher(teacher)
+        del teacher
     optimizer = instantiate(cfg.optimizer, params=model.parameters())
     scheduler = (
         instantiate(cfg.scheduler, optimizer=optimizer)
@@ -96,7 +84,6 @@ def run_training(cfg):
     trainer = instantiate(
         cfg.trainer,
         model=model,
-        teacher=teacher,
         train_dataloader=train_loader,
         val_dataloader=val_loader,
         optimizer=optimizer,
@@ -125,21 +112,7 @@ def run_training(cfg):
         "parameters": sum(p.numel() for p in model.parameters()),
         "train_examples": len(train_loader.dataset),
         "val_examples": len(val_loader.dataset),
-        "teacher_checkpoint": teacher_cfg.get("checkpoint_dir"),
-        "initial_student_checkpoint": cfg.get("initial_student_checkpoint"),
-        "validation_objective": (
-            "fixed_noise_full_range_teacher_rollout_with_weighted_diagonal"
-            if teacher is not None
-            else "fixed_noise_full_range_self_consistency_with_weighted_diagonal"
-        ),
-        "validation_intervals": {
-            "description": "Intervals sampled across [0,1], with an atom at the full interval [0,1]",
-            "endpoint_probability": float(
-                cfg.trainer.get("endpoint_probability", 0.25)
-            ),
-            "diagonal_weight": float(cfg.trainer.get("diagonal_weight", 1.0)),
-            "consistency_weight": float(cfg.trainer.get("consistency_weight", 1.0)),
-        },
+        "teacher_checkpoint_dir": cfg.get("teacher_checkpoint_dir"),
     }
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2))
     logger.info(
@@ -157,7 +130,9 @@ def run_training(cfg):
 
 @hydra.main(
     config_path="../../../config",
-    config_name="follmer_ito_map_stochastic_navier_stokes",
+    # Map training is normally launched through scisi.bin.main_train with
+    # models=ito_map or models=flow_map; this entry point needs the same override.
+    config_name="stochastic_navier_stokes",
     version_base=None,
 )
 def main_map_model_train(cfg: DictConfig):
