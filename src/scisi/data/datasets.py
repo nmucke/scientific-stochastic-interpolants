@@ -1,15 +1,12 @@
 import logging
 import os
 import pdb
-from datetime import datetime
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
 import xarray as xr
-from aurora_lib.batch_adapter import BatchAdapter
-from aurora_lib.load_data import load_batch
 
 from scisi.data.load_data import load_stochastic_navier_stokes
 from scisi.preprocessing.preprocessor import Preprocesser
@@ -124,12 +121,13 @@ class StochasticNavierStokesDataset(torch.utils.data.Dataset):
         base = sample[:, :, :, -2]
         target = sample[:, :, :, -1]
 
+        sample = {
+            "base": base,
+            "target": target,
+            "field_history": field_history,
+        }
         if self.preprocesser is not None:
-            sample = self.preprocesser.transform(
-                base=base,
-                target=target,
-                field_history=field_history,
-            )
+            sample = self.preprocesser.transform(**sample)
 
         return {
             "field_history": sample["field_history"],
@@ -573,53 +571,6 @@ class WeatherDataset(torch.utils.data.Dataset):
             return {
                 "x": sample,
             }
-
-
-class AuroraDataset(torch.utils.data.Dataset):
-    """Dataset for the Aurora data."""
-
-    def __init__(
-        self,
-        datetimes: list[str],
-        cache_dir: str,
-        **kwargs: Any,
-    ) -> None:
-        """
-        Initialize the dataset.
-
-        Args:
-            paths: List of paths to the data.
-        """
-        self.datetimes = [datetime.strptime(dt, "%Y-%m-%d") for dt in datetimes]
-
-        self.cache_dir = cache_dir
-
-        logger.info(f"Loading initial aurora batch...")
-        aurora_batch = load_batch(day=self.datetimes[0], cache_path=self.cache_dir)
-        self.batch_adapter = BatchAdapter(
-            aurora_batch.metadata, aurora_batch.static_vars
-        )
-
-        self.lat = aurora_batch.metadata.lat
-
-        del aurora_batch
-
-    def __len__(self) -> int:
-        """Get the length of the dataset."""
-        return len(self.datetimes)
-
-    def __getitem__(self, idx: int) -> dict:
-        """Get the item at the given index."""
-
-        aurora_batch = load_batch(day=self.datetimes[idx], cache_path=self.cache_dir)
-
-        x, field_history = self.batch_adapter.aurora_to_scisi(aurora_batch)
-
-        return {
-            "base": x.squeeze(0),
-            "field_history": field_history.squeeze(0),
-            "target": x.squeeze(0),
-        }
 
 
 class UDalesDataset(torch.utils.data.Dataset):

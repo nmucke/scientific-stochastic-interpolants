@@ -61,12 +61,12 @@ mixed_precision_context = (
 
 @hydra.main(  # type: ignore[misc]
     config_path="../../../config",
-    # config_name=f"weather_posterior.yaml",
-    # config_name=f"stochastic_navier_stokes_posterior.yaml",
-    # config_name=f"flow_matching_stochastic_navier_stokes_posterior.yaml",
-    config_name=f"udales_posterior.yaml",
-    # config_name=f"udales_flow_matching_posterior.yaml",
-    # config_name=f"diffusion_stochastic_navier_stokes_posterior.yaml",
+    # config_name="posterior/weather_posterior",
+    # config_name="posterior/stochastic_navier_stokes_posterior",
+    # config_name="posterior/flow_matching_stochastic_navier_stokes_posterior",
+    config_name="posterior/udales_posterior",
+    # config_name="posterior/udales_flow_matching_posterior",
+    # config_name="posterior/diffusion_stochastic_navier_stokes_posterior",
     version_base=None,
 )
 def main(posterior_cfg: DictConfig) -> None:

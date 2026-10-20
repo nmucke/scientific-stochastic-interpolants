@@ -1,0 +1,53 @@
+# @package _global_
+# Progressive self-distillation of finite-time maps (scisi.training.map_trainer).
+seed: 0
+num_threads: 4
+overwrite: false
+teacher_checkpoint_dir: null  # optional drift-model checkpoint to warm-start from
+
+experiment_tracking:
+  enabled: false  # only read by scisi.bin.main_map_model_train
+  name: null  # null lets trackio pick a run name
+
+train_data:
+  batch_size: 16
+val_data:
+  batch_size: 16
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.00001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 100
+  eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.map_trainer.MapTrainer
+  num_epochs: 1000
+  device: cuda
+  checkpoint_dir: checkpoints/${experiment_tracking.project}/${model_name}
+  resume_from: null  # path to a last.pth to continue training from
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 30
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 1000
+  off_diagonal: progressive_self_distillation  # or lagrangian_self_distillation
+  off_diagonal_weight: 1.0
+  diagonal_epochs: 10  # epochs with only the diagonal loss
+  warmup_epochs: 25  # then ramp the off-diagonal weight up linearly over this many epochs
+  endpoint_probability: 0.25
+  ema_decay: 0.99
+  max_train_batches: 1000
+  max_val_batches: 8

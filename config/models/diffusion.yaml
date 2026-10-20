@@ -1,0 +1,8 @@
+# @package _global_
+model_name: diffusion
+model:
+  _target_: scisi.models.diffusion_model.DenoiseDiffusionModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  mask_path: ${mask_path}
+  denoise_model: ${backbone}

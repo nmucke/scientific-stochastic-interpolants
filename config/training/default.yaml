@@ -1,0 +1,34 @@
+# @package _global_
+# Regression training of drift/denoiser models (scisi.bin.main_train).
+experiment_tracking:
+  name: null  # null lets trackio pick a run name
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 0.000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 1000
+  eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.flow_trainer.FlowTrainer
+  num_epochs: 1000
+  device: cuda
+  checkpoint_dir: null  # null: checkpoints/<project>/<run name>
+  resume_from: null  # path to a last.pth to continue training from
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 50
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 200

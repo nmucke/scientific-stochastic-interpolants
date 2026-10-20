@@ -1,0 +1,67 @@
+# @package _global_
+len_field_history: 7
+mask_path: null
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [21.073786]
+    std: [41.259544]
+  target:
+    mean: [21.073786]
+    std: [41.259544]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  shuffle: true
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.WeatherDataset
+    paths: [/export/scratch2/ntm/SciGenML/data/weather_npz/]
+    files:
+      - 2017/random_0901_1231.npz
+      - 2017/random_0501_0831.npz
+      - 2017/storm_0701_1231.npz
+      - 2017/storm_0101_0630.npz
+      - 2018/random_0901_1231.npz
+      - 2018/random_0501_0831.npz
+      - 2018/random_0101_0430.npz
+      - 2018/storm_0701_1231.npz
+      - 2018/storm_0101_0630.npz
+      - 2019/random_0101_0430.npz
+    len_field_history: ${len_field_history}
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/train
+    use_exisiting_cache: true
+    starting_time: null
+    ending_time: null
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  shuffle: false
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.WeatherDataset
+    paths: [/export/scratch2/ntm/SciGenML/data/weather_npz/]
+    files:
+      - 2019/random_0501_0831.npz
+      - 2019/storm_0701_1231.npz
+    len_field_history: ${len_field_history}
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/weather/val
+    use_exisiting_cache: true
+    starting_time: null
+    ending_time: null
+
+test_data:
+  _target_: scisi.data.datasets.WeatherDataset
+  paths: [/export/scratch2/ntm/SciGenML/data/weather_npz/]
+  files:
+    - 2019/random_0901_1231.npz
+  len_field_history: ${len_field_history}
+  train_or_test: test
+  save_in_memory: true
+  starting_time: null
+  ending_time: null

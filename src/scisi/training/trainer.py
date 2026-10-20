@@ -1,30 +1,27 @@
-import logging
-import os
-import pdb
-from dataclasses import dataclass
+"""Base trainer shared by the flow and map trainers.
 
-import numpy as np
+Subclasses implement ``_compute_loss``; everything else (mixed precision,
+gradient clipping, validation, early stopping, logging, checkpointing and
+resuming) lives here.
+"""
+
+import json
+import logging
+import shutil
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
 import torch
-import torch.nn as nn
-import trackio
 from omegaconf import OmegaConf
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-from torch.utils.data import DataLoader
+from torch import nn
 from tqdm import tqdm
 
-from scisi.training.gradient_clipping import EmaGradientClipper
-
 logger = logging.getLogger(__name__)
-
-SCHEDULERS_THAT_REQUIRE_LOSS = [
-    "ReduceLROnPlateau",
-]
 
 
 @dataclass
 class EarlyStopping:
-    """Early stopping for the trainer."""
+    """Stop when the validation loss has not improved for `patience` epochs."""
 
     patience: int = 10
     delta: float = 1e-6
@@ -34,248 +31,275 @@ class EarlyStopping:
     save_checkpoint: bool = False
 
     def __call__(self, val_loss: float) -> bool:
-        """Check if the early stopping condition is met."""
-        if val_loss < self.best_loss + self.delta:
+        # Strict improvement; small regressions do not reset patience.
+        self.save_checkpoint = val_loss < self.best_loss - self.delta
+        if self.save_checkpoint:
             self.best_loss = val_loss
             self.counter = 0
-            self.save_checkpoint = True
-
-            logger.info(f"New best Val Loss: {self.best_loss:.4f}")
         else:
             self.counter += 1
-            self.save_checkpoint = False
-        if self.counter >= self.patience:
-            self.early_stop = True
+        self.early_stop = self.counter >= self.patience
         return self.early_stop
 
 
 class Trainer:
-    """Trainer for the stochastic interpolant."""
+    """Training loop, validation and checkpointing; subclasses define the loss.
+
+    Checkpoints in ``checkpoint_dir``:
+      * ``model.pth``: best model weights (by validation loss),
+      * ``last.pth``: full state after the last epoch, for ``resume_from``,
+      * ``history.json``: per-epoch losses.
+    """
 
     def __init__(
         self,
-        num_epochs: int,
-        model: nn.Module,
-        train_dataloader: DataLoader,
-        val_dataloader: DataLoader,
-        optimizer: Optimizer,
-        gradient_clipper: EmaGradientClipper,
-        early_stopping: EarlyStopping,
-        loss_fn: nn.Module = nn.MSELoss(),
-        scheduler: LRScheduler = None,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        tracker: trackio.Run | None = None,
-        mixed_precision_warmup: int = 0,
+        num_epochs,
+        model,
+        train_dataloader,
+        val_dataloader,
+        optimizer,
+        gradient_clipper=None,
+        early_stopping=None,
+        loss_fn=None,
+        scheduler=None,
+        device="cuda" if torch.cuda.is_available() else "cpu",
+        tracker=None,
+        mixed_precision_warmup=0,
+        *,
+        checkpoint_dir=None,
+        max_train_batches=None,
+        max_val_batches=None,
+        resume_from=None,
     ):
-        """Initialize the trainer."""
-        self.model = model
+        self.num_epochs = num_epochs
+        self.device = device
+        self.model = model.to(device)
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.optimizer = optimizer
-        self.device = device
-        self.loss_fn = loss_fn
-        self.num_epochs = num_epochs
-        self.early_stopping = early_stopping
         self.gradient_clipper = gradient_clipper
-
-        # Initialize scheduler
-        self.scheduler = scheduler
-        if self.scheduler is not None:
-            self.scheduler_requires_loss = (
-                scheduler.__class__.__name__ in SCHEDULERS_THAT_REQUIRE_LOSS
-            )
-        else:
-            self.scheduler_requires_loss = False
-
-        # Initialize mixed precision
-        self.mixed_precision_warmup = mixed_precision_warmup
-        if (self.mixed_precision_warmup > 0) and (self.device != "cpu"):
-            logger.info(f"Mixed precision warmup: {self.mixed_precision_warmup}")
-            self.full_precision = False
-            self.scaler = torch.amp.GradScaler(self.device)
-            self._train_step = self._train_step_mixed_precision
-        else:
-            logger.info(f"Mixed precision warmup not set, using full precision")
-            self.full_precision = True
-            self._train_step = self._train_step_full_precision
-
-        # Initialize model
-        self.model.train()
-        self.model.to(self.device)
-
-        self.current_lr = self.scheduler.get_last_lr()[0]
-
-        # Initialize tracker
+        self.early_stopping = early_stopping or EarlyStopping()
+        self.loss_fn = nn.MSELoss() if loss_fn is None else loss_fn
+        # A constant schedule keeps the loop free of special cases.
+        self.scheduler = scheduler or torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda _: 1.0
+        )
         self.tracker = tracker
+        self.max_train_batches = max_train_batches
+        self.max_val_batches = max_val_batches
+        self.resume_from = resume_from
 
-        # Initialize checkpointing with Trackio tracker
-        if self.tracker is not None:
+        # bf16 autocast for the first `mixed_precision_warmup` epochs.
+        self.mixed_precision_warmup = mixed_precision_warmup
+        self.full_precision = (
+            mixed_precision_warmup == 0 or torch.device(device).type != "cuda"
+        )
 
-            self.checkpoint_path = (
-                f"checkpoints/{self.tracker.project}/{self.tracker.name}"
+        if checkpoint_dir is None:
+            checkpoint_dir = (
+                f"checkpoints/{tracker.project}/{tracker.name}"
+                if tracker is not None
+                else "checkpoints/model"
             )
-            os.makedirs(self.checkpoint_path, exist_ok=True)
+        self.checkpoint_path = Path(checkpoint_dir)
+        self.checkpoint_path.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_model_path = self.checkpoint_path / "model.pth"
+        if tracker is not None:
+            OmegaConf.save(tracker.config, self.checkpoint_path / "config.yaml")
 
-            # Dump config to file:
-            config_path = f"{self.checkpoint_path}/config.yaml"
-            with open(config_path, "w") as f:
-                OmegaConf.save(self.tracker.config, f)
+        self.epoch = 0  # next epoch to run
+        self.global_step = 0
+        self.history = []
+        self.components = {}  # named loss terms of the last _compute_loss call
 
-            self.checkpoint_model_path = f"{self.checkpoint_path}/model.pth"
+    # ------------------------------------------------------------------ loss
 
-    def _prepare_batch(self, batch: dict) -> dict[str, torch.Tensor]:
-        """Prepare the batch for the model."""
-        for key, value in batch.items():
-            batch[key] = value.to(self.device)
-
-        # Sample pseudo-time
+    def _prepare_batch(self, batch):
+        """Move to device and sample pseudo-time and noise (without mutating batch)."""
+        batch = {k: v.to(self.device) for k, v in batch.items() if v is not None}
         batch["t"] = torch.rand(batch["base"].shape[0], 1, device=self.device)
-
-        # Sample noise
-        batch["noise"] = torch.randn(batch["base"].shape, device=self.device)
-
+        batch["noise"] = torch.randn_like(batch["base"])
         return batch
 
-    def _compute_loss(self, batch: dict) -> torch.Tensor:
-        """Compute the loss for the model."""
+    def _compute_loss(self, batch):
+        """Return the scalar loss; may store named terms in self.components."""
+        raise NotImplementedError
 
-        # Compute pred and true drift
-        pred_drift, true_diff = self.model(**batch)
+    # ------------------------------------------------------------- training
 
-        # Compute and return the loss
-        return self.loss_fn(pred_drift, true_diff)
+    def _after_step(self):
+        """Hook called after every optimizer step (e.g. EMA updates)."""
 
-    def _train_step_mixed_precision(self, batch: dict) -> torch.Tensor:
-        """Train the model for one step using mixed precision."""
-        self.optimizer.zero_grad()
-
-        with torch.amp.autocast(device_type=self.device, dtype=torch.bfloat16):
+    def _train_step(self, batch):
+        self.optimizer.zero_grad(set_to_none=True)
+        with torch.autocast(
+            device_type=torch.device(self.device).type,
+            dtype=torch.bfloat16,
+            enabled=not self.full_precision,
+        ):
             loss = self._compute_loss(batch)
-
-        self.scaler.scale(loss).backward()
-
-        # Clip gradients to prevent exploding gradients
-        self.gradient_clipper.clip_grads(self.model.parameters())
-
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        return loss
-
-    def _train_step_full_precision(self, batch: dict) -> torch.Tensor:
-        """Train the model for one step."""
-        self.optimizer.zero_grad()
-        loss = self._compute_loss(batch)
-
+        if not torch.isfinite(loss):
+            raise FloatingPointError(f"Nonfinite loss at step {self.global_step}")
         loss.backward()
-
-        # Clip gradients to prevent exploding gradients
-        self.gradient_clipper.clip_grads(self.model.parameters())
-
+        if self.gradient_clipper is not None:
+            self.gradient_clipper.clip_grads(self.model.parameters())
         self.optimizer.step()
+        self.global_step += 1
+        self._after_step()
         return loss
 
-    def train(self) -> None:
-        """Train the model."""
+    def _run_epoch(self, loader, max_batches, step_fn, description):
+        """Average loss and its components over (at most `max_batches` of) a loader."""
+        totals = {}
+        count = 0
+        pbar = tqdm(loader, total=max_batches, desc=description, leave=False)
+        for index, batch in enumerate(pbar):
+            if max_batches is not None and index >= max_batches:
+                break
+            batch = self._prepare_batch(batch)
+            n = batch["base"].shape[0]
+            loss = step_fn(batch).item()
+            for key, value in {"loss": loss, **self.components}.items():
+                totals[key] = totals.get(key, 0.0) + value * n
+            count += n
+            pbar.set_postfix(loss=f"{loss:.4f}")
+        if not count:
+            raise ValueError(f"{description} loader must yield at least one batch")
+        return {key: value / count for key, value in totals.items()}
 
-        for epoch in range(self.num_epochs):
+    def _validate(self):
+        """Validation losses with fixed noise, so epochs are comparable."""
+        self.model.eval()
+        cuda_devices = (
+            [torch.device(self.device).index or torch.cuda.current_device()]
+            if torch.device(self.device).type == "cuda"
+            else []
+        )
+        with torch.random.fork_rng(devices=cuda_devices), torch.no_grad():
+            torch.manual_seed(0)
+            result = self._run_epoch(
+                self.val_dataloader, self.max_val_batches, self._compute_loss, "Validation"
+            )
+        return result
+
+    def _update_scheduler(self, val_loss):
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            self.scheduler.step(val_loss)
+        else:
+            self.scheduler.step()
+
+    def _log(self, row):
+        if self.tracker is not None:
+            # "step" is reserved by trackio; the epoch is its x-axis instead.
+            metrics = {k: v for k, v in row.items() if k != "step"}
+            self.tracker.log({**metrics, "global_step": row["step"]}, step=row["epoch"])
+        logger.info(
+            "Epoch %d | %s | best val %.4g",
+            row["epoch"],
+            ", ".join(
+                f"{k} {v:.4g}" for k, v in row.items() if k not in ("epoch", "step")
+            ),
+            self.early_stopping.best_loss,
+        )
+
+    def train(self):
+        if self.resume_from is not None:
+            self.load_checkpoint(self.resume_from)
+
+        for epoch in range(self.epoch, self.num_epochs):
             self.model.train()
-
-            # Loop over batches
-            train_loss = 0.0
-            pbar = tqdm(self.train_dataloader)
-            for batch in pbar:
-
-                batch = self._prepare_batch(batch)
-
-                loss = self._train_step(batch)
-                train_loss += loss.item()
-
-                pbar.set_description(f"Epoch {epoch}, Loss: {loss:.4f}")
-
-            # Switch to full precision if warmup is finished
-            if (epoch >= self.mixed_precision_warmup) and (not self.full_precision):
-                logger.info(
-                    f"Mixed precision warmup finished, switching to full precision"
-                )
-                self._train_step = self._train_step_full_precision
+            train = self._run_epoch(
+                self.train_dataloader,
+                self.max_train_batches,
+                self._train_step,
+                f"Epoch {epoch}",
+            )
+            if epoch + 1 >= self.mixed_precision_warmup:
                 self.full_precision = True
+            val = self._validate()
 
-            # Compute average train loss
-            train_loss /= len(self.train_dataloader)
+            row = {
+                "epoch": epoch,
+                "step": self.global_step,
+                "lr": self.scheduler.get_last_lr()[0],
+                **{f"train_{k}": v for k, v in train.items()},
+                **{f"val_{k}": v for k, v in val.items()},
+            }
+            self.history.append(row)
+            stop = self.early_stopping(row["val_loss"])
+            self._update_scheduler(row["val_loss"])
+            self._log(row)
 
-            val_loss = self._compute_val_loss()
-
-            self._log_with_tracker(epoch, train_loss, val_loss)
-
-            if self._check_early_stopping(val_loss, epoch):
+            self.epoch = epoch + 1
+            self.save_checkpoint()
+            if stop:
+                logger.info("Early stopping triggered at epoch %d", epoch)
                 break
 
-            self._save_checkpoint(epoch)
-
-            self._update_scheduler(val_loss)
-
-            self._print_info(epoch, train_loss, val_loss)
-
-        logger.info(f"Training finished")
-        logger.info(f"Best Val Loss: {self.early_stopping.best_loss:.4f}")
-        (
-            logger.info(f"Tracking: {self.tracker.name} - {self.tracker.url}")
-            if self.tracker is not None
-            else None
-        )
-
-    def _log_with_tracker(self, epoch: int, train_loss: float, val_loss: float) -> None:
-        """Log with tracker."""
-        if self.tracker is not None:
-            self.tracker.log(
-                {
-                    "epoch": epoch,
-                    "log_train_loss": np.log(train_loss),
-                    "log_val_loss": np.log(val_loss),
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                }
+        # Return with the best weights loaded.
+        if self.checkpoint_model_path.exists():
+            self.model.load_state_dict(
+                torch.load(
+                    self.checkpoint_model_path, map_location=self.device, weights_only=True
+                )
             )
+        logger.info("Training finished, best val loss %.4g", self.early_stopping.best_loss)
+        return self.history
 
-    def _check_early_stopping(self, val_loss: float, epoch: int) -> bool:
-        """Early stopping."""
-        if self.early_stopping(val_loss):
-            logger.info(f"Early stopping triggered at epoch {epoch}")
-            if self.tracker is not None:
-                self.model.load_state_dict(torch.load(self.checkpoint_model_path))
-            return True
-        return False
+    # ---------------------------------------------------------- checkpoints
 
-    def _update_scheduler(self, val_loss: float) -> None:
-        """Update the scheduler."""
-        self.scheduler.step(val_loss if self.scheduler_requires_loss else None)
-        if np.abs(self.current_lr - self.scheduler.get_last_lr()[0]) > 1e-6:
-            self.current_lr = self.scheduler.get_last_lr()[0]
-            logger.info(f"Scheduler updated learning rate to {self.current_lr:.6f}")
+    def checkpoint_state(self):
+        """Everything needed to resume training exactly where it stopped."""
+        return {
+            "epoch": self.epoch,
+            "global_step": self.global_step,
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict(),
+            "early_stopping": asdict(self.early_stopping),
+            "gradient_clipper": (
+                dict(vars(self.gradient_clipper))
+                if self.gradient_clipper is not None
+                else None
+            ),
+            "full_precision": self.full_precision,
+            "history": self.history,
+            "torch_rng_state": torch.random.get_rng_state(),
+            "cuda_rng_states": (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_initialized() else None
+            ),
+        }
 
-    def _save_checkpoint(self, epoch: int) -> None:
-        """Save the checkpoint if the early stopping condition is met."""
-        if (self.early_stopping.save_checkpoint) and (self.tracker is not None):
-            logger.info(f"Saving checkpoint at epoch {epoch}")
+    def load_checkpoint_state(self, state):
+        self.epoch = state["epoch"]
+        self.global_step = state["global_step"]
+        self.model.load_state_dict(state["model"])
+        self.optimizer.load_state_dict(state["optimizer"])
+        self.scheduler.load_state_dict(state["scheduler"])
+        for key, value in state["early_stopping"].items():
+            setattr(self.early_stopping, key, value)
+        if state["gradient_clipper"] is not None and self.gradient_clipper is not None:
+            vars(self.gradient_clipper).update(state["gradient_clipper"])
+        self.full_precision = state["full_precision"]
+        self.history = state["history"]
+        torch.random.set_rng_state(state["torch_rng_state"])
+        if state["cuda_rng_states"] is not None and torch.cuda.is_available():
+            torch.cuda.set_rng_state_all(state["cuda_rng_states"])
+
+    def save_checkpoint(self):
+        """Save the resumable state, the history and (if improved) the best model."""
+        torch.save(self.checkpoint_state(), self.checkpoint_path / "last.pth")
+        with open(self.checkpoint_path / "history.json", "w") as handle:
+            json.dump(self.history, handle, indent=2)
+        if self.early_stopping.save_checkpoint:
             torch.save(self.model.state_dict(), self.checkpoint_model_path)
 
-    def _print_info(self, epoch: int, train_loss: float, val_loss: float) -> None:
-        """Print the information about the training and the tracking."""
-        logger.info(
-            f"Epoch {epoch}, Train Loss: {train_loss:.4f}, "
-            f"Val Loss: {val_loss:.4f}, "
-            f"Best Val Loss: {self.early_stopping.best_loss:.4f}, "
-            f"Tracking: {self.tracker.name} - {self.tracker.url}"  # type: ignore[union-attr]
-        )
-
-    def _compute_val_loss(self) -> float:
-        """Validate the model."""
-        self.model.eval()
-        with torch.no_grad():
-            val_loss = 0.0
-            for batch in self.val_dataloader:
-                batch = self._prepare_batch(batch)
-                loss = self._compute_loss(batch)
-                val_loss += loss.item()
-            val_loss /= len(self.val_dataloader)
-        return val_loss
+    def load_checkpoint(self, path):
+        """Resume from a ``last.pth``; `num_epochs` stays the total budget."""
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        self.load_checkpoint_state(state)
+        # Keep the best model of the earlier run if we write somewhere new.
+        best = Path(path).parent / "model.pth"
+        if best.exists() and not self.checkpoint_model_path.exists():
+            shutil.copy2(best, self.checkpoint_model_path)
+        logger.info("Resumed from %s at epoch %d, step %d", path, self.epoch, self.global_step)

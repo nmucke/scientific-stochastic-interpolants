@@ -1,0 +1,42 @@
+# @package _global_
+len_field_history: 5
+mask_path: null
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [0.0]
+    std: [3.09969]
+  target:
+    mean: [0.0]
+    std: [3.09969]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: true
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths: [data/stochastic_navier_stokes]
+    files: [data.npz]
+    len_field_history: ${len_field_history}
+    tajectories_ids: (0, 160)
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: false
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths: [data/stochastic_navier_stokes]
+    files: [data.npz]
+    len_field_history: ${len_field_history}
+    tajectories_ids: (160, 180)
+
+test_data:
+  _target_: scisi.data.datasets.StochasticNavierStokesDataset
+  paths: [data/stochastic_navier_stokes]
+  files: [data.npz]
+  len_field_history: ${len_field_history}
+  tajectories_ids: (180, 200)
+  train_or_test: test

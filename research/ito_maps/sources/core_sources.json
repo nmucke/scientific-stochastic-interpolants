@@ -1,0 +1,8 @@
+{
+  "retrieved_date": "2026-10-07",
+  "papers": [
+    {"title": "Probabilistic Forecasting with Stochastic Interpolants and Föllmer Processes", "arxiv": "2403.13724v2", "url": "https://arxiv.org/html/2403.13724v2", "authors": "Chen, Goldstein, Hua, Albergo, Boffi, Vanden-Eijnden", "use": "Conditional forecasting interpolant and SDE drift; distinguish default gamma diffusion from KL-optimal Föllmer process."},
+    {"title": "Itô maps for any-step SDEs", "arxiv": "2606.11156v1", "url": "https://arxiv.org/html/2606.11156v1", "authors": "Pan, Potaptchik, Yao, Albergo, Pidstrigach", "use": "Finite-time average SDE drift, same-path progressive self-distillation, finite Brownian features."},
+    {"title": "Flow map matching with stochastic interpolants: A mathematical framework for consistency models", "arxiv": "2406.07507v2", "url": "https://arxiv.org/html/2406.07507v2", "authors": "Boffi, Albergo, Vanden-Eijnden", "use": "Two-time deterministic map identities and progressive map distillation; do not equate implemented PSD with inverse-composition direct FMM."}
+  ]
+}

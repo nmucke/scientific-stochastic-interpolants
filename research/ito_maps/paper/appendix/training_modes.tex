@@ -1,0 +1,82 @@
+\section{Teacher Distillation versus Progressive Self-Distillation}\label{app:training-modes}
+The map trainer implements one loss template with two interchangeable off-diagonal targets. We state both exactly as implemented, then contrast them. Throughout, $G_\theta$ is the trained student, $G_{\bar\theta}$ its detached exponential moving average (EMA), $b_{\mathrm T}(x,t;h)$ a frozen pretrained drift, and $\Psi_{s,t}$ the $K$ consecutive increments of $M$ on $[s,t]$ (Section~\ref{sec:map-path}).
+
+\subsection{Common Structure}
+Every update minimizes
+\begin{align}
+ \mathcal L={}&\lambda_{\mathrm{diag}}\,\E\big\|G_\theta(t,t,I_t,h;0)-\widehat R_t\big\|^2\nonumber\\
+ &+\lambda_{\mathrm{off}}(k)\,\E\big\|G_\theta(s,t,I_s,h;\Psi_{s,t})\nonumber\\
+ &\qquad-\sg(\widehat G_{s,t})\big\|^2,
+ \label{eq:common-loss}
+\end{align}
+where squared norms are averaged over all state components and $k$ is the update counter. The diagonal target is
+\begin{equation}
+ \widehat R_t=
+ \begin{cases}
+ R_t & \text{without a teacher},\\
+ b_{\mathrm T}(I_t,t;h) & \text{with a teacher}.
+ \end{cases}
+ \label{eq:diag-target}
+\end{equation}
+The diagonal time $t$ and the off-diagonal start state $x=I_s$ use independent interpolant noise. A fresh Brownian realization is drawn for every example, and the student and the target query the same cached realization through \eqref{eq:bridge}. The weight $\lambda_{\mathrm{off}}(k)$ ramps linearly to its maximum over a configurable number of updates; when it is zero, the off-diagonal branch is skipped. Only the student receives gradients. The deployed checkpoint is the raw student with the lowest validation loss, not its EMA copy.
+
+Intervals are sampled at a maximum length $\ell_{\max}$. Draw $\ell=\ell_{\max}(0.01+0.99U_1)$ and $s=U_2(1-\ell)$, and set $t=s+\ell$. With probability $p_{\mathrm{end}}$, replace $(s,t)$ by $(0,\ell_{\max})$. The split is $u=s+(t-s)(0.25+0.5U_3)$, with independent uniform $U_i$. An optional curriculum grows $\ell_{\max}$ linearly from $\ell_0$ to one; without it, $\ell_{\max}=1$.
+
+\subsection{Progressive Self-Distillation (PSD)}
+The off-diagonal target composes two EMA sub-maps on the same Brownian realization:
+\begin{align}
+ g_1&=G_{\bar\theta}(s,u,x,h;\Psi_{s,u}),\nonumber\\
+ \widetilde x_u&=x+(u-s)g_1+\Delta M_{s,u},\nonumber\\
+ g_2&=G_{\bar\theta}(u,t,\widetilde x_u,h;\Psi_{u,t}),\nonumber\\
+ \widehat G^{\mathrm{PSD}}_{s,t}&=\tfrac{u-s}{t-s}\,g_1+\tfrac{t-u}{t-s}\,g_2.
+ \label{eq:psd-target}
+\end{align}
+This is \eqref{eq:psd} with $\bar\theta$ updated by $\bar\theta\leftarrow\mu\bar\theta+(1-\mu)\theta$ after each step. The martingale increments cancel exactly because $\Delta M_{s,u}+\Delta M_{u,t}=\Delta M_{s,t}$. No trajectory is simulated: each update costs two student evaluations with gradients, two EMA evaluations without gradients, and at most one teacher evaluation for the diagonal target.
+
+``Progressive'' refers to the interval curriculum. Short intervals are learned first, where the composed target is close to the diagonal. Longer intervals then bootstrap from the already-trained shorter ones. There is no discrete step-halving stage in the sense of progressive distillation of diffusion samplers. The only external anchor is the diagonal target \eqref{eq:diag-target}. Without a teacher, PSD regresses on the unbiased but noisy data target $R_t$ and needs no pretrained model. With a teacher, the teacher enters the training loss only through the diagonal.
+
+\subsection{Teacher-Rollout Distillation}
+This mode requires a teacher. It replaces the self-referential target by a same-path numerical teacher trajectory with $N$ uniform steps $\tau_j=s+j(t-s)/N$, where $\tau_N=t$, starting from $Y_0=x$:
+\begin{align}
+ Y_{j+1}&=Y_j+\tfrac{t-s}{N}b_{\mathrm T}(Y_j,\tau_j;h)\nonumber\\
+ &\quad+\Delta M_{\tau_j,\tau_{j+1}},\nonumber\\
+ \widehat G^{\mathrm{TR}}_{s,t}&=\frac{Y_N-x-\Delta M_{s,t}}{t-s}
+ =\frac1N\sum_{j=0}^{N-1}b_{\mathrm T}(Y_j,\tau_j;h).
+ \label{eq:tr-target}
+\end{align}
+The increments $\Delta M_{\tau_j,\tau_{j+1}}$ come from the realization that also produces the student's features $\Psi_{s,t}$, which is the numerical teacher \eqref{eq:numerical-teacher}. The diagonal target is always the teacher drift. The split time $u$ and the EMA copy are unused. Each update costs two student evaluations with gradients and $N+1$ sequential teacher evaluations. For the deterministic flow map, $\Delta M\equiv0$, and \eqref{eq:tr-target} is an explicit-Euler ODE rollout of the flow-matching teacher.
+
+\subsection{Differences}
+Table~\ref{tab:training-modes} summarizes the two modes. Four differences matter most when interpreting results.
+
+\paragraph{Source of finite-time information.} PSD never observes a finite-time transition of any reference process. It propagates diagonal information outward through the composition identity, so finite-time accuracy rests on the diagonal and on the student's own sub-maps. Teacher rollout supervises every sampled interval directly with a finite-time transition of the teacher SDE.
+
+\paragraph{Fixed point and error propagation.} For fixed $(s,t,x,h,\Psi_{s,t})$, the teacher-rollout minimizer is the conditional mean of \eqref{eq:tr-target} given the student's inputs. This is a fixed target that does not depend on $\theta$. Its error consists of the teacher drift error, the $O((t-s)/N)$ left-point drift error (the noise is exact), and the compression loss of Proposition~\ref{prop:compression}. The PSD target depends on $\bar\theta$. Errors in short-interval maps enter the targets for longer intervals and can accumulate along the curriculum. Its stationary point projects a composition onto the $K$ parent features, whereas the children together see $2K$ features on a different grid. Under compression, PSD therefore need not converge to the projection of the true transition, even with an exact diagonal.
+
+\paragraph{States visited.} Both modes start from the interpolant marginal $I_s$. The PSD second child is evaluated at the student-generated $\widetilde x_u$, which may lie off the marginal on which the diagonal is trained. Teacher rollout instead evaluates the teacher along its own trajectory $Y_j$. It thus inherits teacher errors on those states, but not student errors.
+
+\paragraph{Cost and simulation.} PSD is simulation-free and costs about four network evaluations per example. Teacher rollout costs $N+3$ evaluations ($35$ at $N=32$), and its sequential teacher calls dominate. PSD is therefore the mode that scales to long training budgets. Teacher rollout is the targeted correction toward the teacher's transition law.
+
+\begin{table*}[t]
+\caption{Training modes in \texttt{MapTrainer}. Costs are network evaluations per example per update. ``Configuration'' gives the Navier--Stokes stage values of record.}
+\label{tab:training-modes}
+\centering\small
+\begin{tabular}{@{}p{0.2\textwidth}p{0.37\textwidth}p{0.37\textwidth}@{}}
+\toprule
+ & Progressive self-distillation & Teacher-rollout distillation\\
+\midrule
+Off-diagonal target & EMA composition \eqref{eq:psd-target} & Same-path teacher average drift \eqref{eq:tr-target}\\
+Diagonal target & $R_t$, or $b_{\mathrm T}$ when a teacher is supplied & $b_{\mathrm T}$\\
+Teacher required & No & Yes\\
+Target network & EMA of the student, decay $\mu$ & Frozen teacher\\
+Simulation & None & $N$-step Euler drift, exact $\Delta M$\\
+Main bias & Bootstrapped student error; diagonal error & Teacher drift error; $O((t-s)/N)$ drift quadrature\\
+Information gap & Children see $2K$ features; parent sees $K$ & Target depends on $N$ increments; student sees $K$\\
+Cost & 2 student + 2 EMA + $\le1$ teacher & 2 student + $(N+1)$ teacher\\
+Specific settings & $\mu$, curriculum $\ell_0$ and length, split law & $N$\\
+Configuration & 2,000 updates; teacher diagonal; $\mu=0.95$; $\ell_{\max}\colon0.125\to1$ over 500 updates; $p_{\mathrm{end}}=0.25$ & 500 updates from the selected PSD checkpoint; $N=32$; $\ell_{\max}=1$; $p_{\mathrm{end}}=0.5$\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\paragraph{How a teacher enters PSD.} A configured teacher affects PSD in three ways, although it never supplies an off-diagonal training target. It initializes the student backbone, so that at initialization $G_\theta(s,t,x,h;\Psi)=b_{\mathrm T}(x,s;h)$ for every $t$. It replaces $R_t$ on the diagonal. It also defines the validation objective: with a teacher present, validation uses the teacher-rollout target \eqref{eq:tr-target} on the full interval range in both modes, so the PSD checkpoint is selected for agreement with the teacher. The current configuration of record and the planned protocol use this teacher-anchored PSD as stage one and teacher rollout as stage two, for both the It\^o and the flow map. Teacher-free PSD, with data diagonal and EMA self-consistency validation, is implemented but not part of the planned protocol. Stage-one evaluations therefore measure teacher-anchored self-distillation, not training without a teacher.

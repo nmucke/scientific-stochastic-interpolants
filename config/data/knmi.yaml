@@ -1,0 +1,57 @@
+# @package _global_
+len_field_history: 5
+mask_path: null
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [282.1561]
+    std: [19.090252]
+  target:
+    mean: [282.1561]
+    std: [19.090252]
+  field_cond:
+    mean: [282.15598]
+    std: [17.836073]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: true
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KNMIDataset
+    paths: [data/knmi/]
+    files: [sim_1.npz]
+    len_field_history: ${len_field_history}
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/train
+    use_exisiting_cache: false
+    starting_time: null
+    ending_time: null
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: false
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KNMIDataset
+    paths: [data/knmi/]
+    files: [sim_8.npz]
+    len_field_history: ${len_field_history}
+    save_in_memory: false
+    cache_dir: /export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/cache/knmi/val
+    use_exisiting_cache: false
+    starting_time: null
+    ending_time: null
+
+test_data:
+  _target_: scisi.data.datasets.KNMIDataset
+  paths: [data/knmi/]
+  files: [sim_10.npz]
+  len_field_history: ${len_field_history}
+  train_or_test: test
+  save_in_memory: true
+  starting_time: null
+  ending_time: null

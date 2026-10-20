@@ -1,0 +1,104 @@
+\section{Conditional It\^o Maps}
+For ideal map identities, fix $h$ and assume a regular drift version yielding a pathwise unique strong solution with finite second moments. We assume the stated diagonal extension on interior times; endpoint transitions require additional regularity (Appendix~\ref{app:method-assumptions}). Define the transition for $s<t$ by
+\begin{equation}
+ \Phi_{s,t}(x,h;W)
+ =x+(t-s)G_{s,t}(x,h;W)+M_t-M_s,
+ \label{eq:ito}
+\end{equation}
+where $M_t=\int_0^t\gamma_r\,dW_r$ and
+\begin{equation}
+ G_{s,t}(x,h;W)=\frac{1}{t-s}
+ \int_s^t b_r(X_r;h)\,dr.
+ \label{eq:average}
+\end{equation}
+We learn $G_\theta(s,t,x,h;\Psi_{s,t})$, with $\Psi_{s,t}$ a finite description of the driving path. The known martingale displacement is added explicitly. Where the continuous diagonal extension exists, $G_{t,t}(x,h)=b_t(x;h)$ has no Brownian dependence; its learned approximation need not equal the population drift.
+
+\subsection{Path Representation and Coupling}\label{sec:map-path}
+We represent the reweighted Brownian process in its variance clock
+\begin{equation}
+ q(t)=\int_0^t\gamma_r^2\,dr,
+ \qquad M_t\overset{\mathrm{law}}=B_{q(t)},
+\end{equation}
+where $B$ is standard Brownian motion. For $\gamma_t=\varepsilon(1-t)$, $q(t)=\varepsilon^2[1-(1-t)^3]/3$. Hence an interval displacement has exact covariance $[q(t)-q(s)]\mathrm{Id}$. This avoids numerical quadrature of the diffusion schedule.
+
+The map receives $K$ consecutive increments (initially $K=4$) at the local times $r_j=s+j(t-s)/K$. Arbitrary-time queries are coupled by sampling Brownian bridges in the variance clock. Given values $M_a,M_b$ bracketing a new time $r$, put $A=q(r)-q(a)$ and $D=q(b)-q(a)$. Then
+\begin{align}
+ \mu_r&=M_a+\frac{A}{D}(M_b-M_a),\nonumber\\
+ M_r\mid M_a,M_b&\sim\N\left(\mu_r,
+ \frac{A(D-A)}{D}\mathrm{Id}\right).
+ \label{eq:bridge}
+\end{align}
+Cache every queried value; repeated times reuse it. Zero-variance intervals are deterministic. Thus a direct transition and its two subtransitions use the same sampled path even when their local query grids differ, and $\Delta M_{s,t}=\Delta M_{s,u}+\Delta M_{u,t}$ exactly up to floating-point arithmetic. Brownian increments after $s$ are independent of the state at $s$ and the forecast pair before conditioning on any revealed future bridge value.
+
+This construction samples exact finite-dimensional martingale distributions at the requested times. It does not make finitely many path features a complete description of a Brownian path, or make the learned drift integral exact. The feature count is therefore an approximation parameter, rather than an SDE discretization step count. Resampling unrelated paths on the two sides of a composition loss would instead penalize valid stochastic variability.
+
+\subsection{Diagonal and Composition Training}
+The formulation permits simulation-free diagonal regression:
+\begin{equation}
+ \mathcal L_{\mathrm{diag}}=
+ \E\|G_\theta(t,t,I_t,h;0)-R_t\|^2.
+ \label{eq:diagonal}
+\end{equation}
+For $s<u<t$, the exact map satisfies the pathwise composition identity
+\begin{equation}
+ \Phi_{s,t}(x,h;W)=
+ \Phi_{u,t}(\Phi_{s,u}(x,h;W),h;W).
+ \label{eq:composition}
+\end{equation}
+Writing $a=(u-s)/(t-s)$, cancellation of the additive noise gives the finite-time drift target
+\begin{align}
+ \widetilde G={}&aG_{\bar\theta}(s,u,x,h;\Psi_{s,u})\nonumber\\
+ &+(1-a)G_{\bar\theta}(u,t,\widetilde x_u,h;\Psi_{u,t}),\\
+ \widetilde x_u={}&\Phi_{\bar\theta,s,u}(x,h;W).
+\end{align}
+Here $\bar\theta$ denotes detached current parameters or an exponential moving average, as recorded in configuration. The off-diagonal objective is
+\begin{equation}
+ \mathcal L_{\mathrm{comp}}=
+ \E\|G_\theta(s,t,x,h;\Psi_{s,t})-\sg(\widetilde G)\|^2.
+ \label{eq:psd}
+\end{equation}
+We combine \eqref{eq:diagonal} and \eqref{eq:psd}, sampling $x=I_s$ with independent future Brownian increments. Average-drift MSE weights the corresponding endpoint squared error by $(t-s)^{-2}$, aligning diagonal and finite-time supervision. Our teacher-initialized study uses no separate diagonal-only warmup; interval growth and loss ramping are recorded in Appendix~\ref{app:numerical-teacher}. The implementation also supports a frozen pretrained teacher. When present, its drift $b_{\mathrm T}(I_t;h)$ replaces $R_t$ on the diagonal; this is teacher distillation, rather than new regression against raw data targets. A supervised rollout objective uses the finite-time target $(X_t-x-\Delta M_{s,t})/(t-s)$ from a numerical teacher trajectory using Euler drift and exact increments of $M$, unlike the baseline's left-point Euler--Maruyama diffusion (Appendix~\ref{app:numerical-teacher}). Our study uses two stages: teacher-diagonal progressive self-distillation, followed by refinement with this simulation-based same-path target. The second stage therefore does not retain a wholly simulation-free training claim. With a teacher supplied, validation uses the same-path rollout target even during composition training. This checks the selected map against the teacher dynamics and does not certify accuracy against the true conditional distribution. Appendix~\ref{app:training-modes} states both objectives as implemented and contrasts their targets, biases and costs.
+
+The full-path identity follows from \citet{pan2026itomaps}, with $h$ fixed. For finite features and restricted interval sampling, PSD is approximate self-distillation: we assert neither identifiability nor zero population residual, even with ideal optimization. Teacher comparisons are therefore substantive checks. Appendix~\ref{app:pan-differences} lists every departure from the original It\^o-map construction.
+
+\subsection{Deterministic Flow Map Baseline}\label{sec:flow-map-baseline}
+A flow-matching forecast model instead uses an independent Gaussian base $z$ conditioned on $h$, for example $J_t=(1-t)z+ty$ with velocity target $y-z$. Its learned map is
+\begin{equation}
+ F_\theta(s,t,x,h)=x+(t-s)V_\theta(s,t,x,h).
+\end{equation}
+Flow map matching \citep{boffi2025flowmaps} supplies its two-time training principle. The common implementation removes Brownian features and the martingale term, while keeping history conditioning, paired times, and map composition. We describe a composition-based training variant explicitly, rather than claim to reproduce every objective of the original paper. Its forecasts remain probabilistic because different base draws yield different futures. A deterministic map starting from the single fixed state $c(h)$, with no other noise input, could not represent a nondegenerate conditional law.
+
+\subsection{Approximation Errors and Diagnostic Bounds}
+\begin{proposition}[Conditional endpoint error]
+Fix $h$. Let a reference solution $X_1$ of \eqref{eq:sde} and a learned endpoint $\widehat X_1$ have finite second moments and share Brownian input. Then
+\begin{equation}
+ W_2^2(\Law(\widehat X_1\mid h),\Law(X_1\mid h))
+ \leq\E[\|\widehat X_1-X_1\|^2\mid h].
+\end{equation}
+\end{proposition}
+\begin{proof}
+The joint same-path law is a coupling of the two endpoint distributions. The squared Wasserstein distance is the infimum of this cost over all couplings.
+\end{proof}
+This elementary coupling bound motivates same-path diagnostics; it is not a bound from the implemented PSD loss to forecast-law error. It compares to the selected reference SDE, not automatically to the true forecast law: drift estimation and numerical teacher error remain. A future exact-diffusion solver control is needed to distinguish learned-map benefits from the teacher's different noise quadrature. Finite Brownian compression and imperfect conditional regression can reduce ensemble spread.
+
+\begin{proposition}[Information lost by path compression]\label{prop:compression}
+Fix $s,t,x,h$ and let $Y=\Phi_{s,t}(x,h;W)$ have finite second moment. For features $Z=\Psi_{s,t}(W)$ and any square-integrable predictor $f(Z)$,
+\begin{align}
+ \E\|Y-f(Z)\|^2={}&
+ \E\|Y-\E[Y\mid Z]\|^2\nonumber\\
+ &+\E\|\E[Y\mid Z]-f(Z)\|^2.
+ \label{eq:compression}
+\end{align}
+Consequently, the first term is an irreducible same-path regression error for this feature representation.
+\end{proposition}
+\begin{proof}
+Expand the square around $\E[Y\mid Z]$. The cross term vanishes because $Y-\E[Y\mid Z]$ has conditional mean zero.
+\end{proof}
+When the features include $M_t-M_s$, this statement applies equally to regression of the drift integral after subtracting the known displacement. Still fixing $(s,t,x,h)$, total covariance at the squared-loss optimum satisfies
+\begin{equation}
+ \operatorname{Cov}(Y)=\operatorname{Cov}(\E[Y\mid Z])
+ +\E[\operatorname{Cov}(Y\mid Z)].
+\end{equation}
+Thus conditional-mean compression can remove spread at this fixed conditioning; it does not directly quantify rollout spread after histories diverge. This is a statement about same-path squared-error training, not a claim that a low-dimensional random input cannot represent the endpoint distribution by another transport. Composition losses with different feature sets also need not vanish under compression. In particular, two child maps query $2K$ local increments, whereas the direct map sees $K$ increments on its own interval. These query grids are generally different when the split is random. Fixing the EMA parameters, the direct map regresses toward the conditional mean of the composed target given its own inputs. Unobserved path detail and imperfections in the child maps can both contribute to the residual. Consequently, diagonal correctness and a shared martingale alone do not guarantee an exact finite-feature semigroup or exact endpoint law.
+
+An Ornstein--Uhlenbeck example in Appendix~\ref{app:compression} shows nonzero same-path error even when the total noise increment is known. For a fixed fluid-teacher history, a nested Monte Carlo diagnostic estimates the omitted fraction of endpoint variance for $K\in\{1,4,16\}$ (Appendix~\ref{app:ns-compression}): \pending{omitted-variance fractions at $K=4$ and $K=16$}. Such a diagnostic does not by itself predict forecast-score improvement.

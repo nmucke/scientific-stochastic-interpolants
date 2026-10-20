@@ -1,0 +1,14 @@
+\section{Student-Training Replications}\label{app:replications}
+\begin{table*}[t]
+\caption{Individual student-training replications under the frozen protocol. The evaluation sampling seed and test cases are shared; each student repeats both training stages with its own training seed.}
+\label{tab:individual-seeds}
+\centering
+\pendingbox{rows: It\^o map (1 and 8 steps) and flow map (1 and 8 steps) for each student seed 0, 1, 2; columns: fair CRPS, energy score, RMS spread, corrected spread--skill $Q_{\mathrm{RMS}}$, $C_{90}$, spectral discrepancy, at one interval and at physical lead ten.}
+\end{table*}
+\begin{table}[t]
+\caption{Three-student mean CRPS differences from each fixed 64-step solver reference, with 95\% paired trajectory-bootstrap intervals.}
+\label{tab:replication-paired}
+\centering
+\pendingbox{rows: It\^o map 1/8 steps versus SI16/SI64, flow map 1/8 steps versus FM16/FM64; columns: mean difference, relative difference, interval, at one interval and lead ten.}
+\end{table}
+All three students repeat both training stages with seeds 0, 1, and 2; they share fixed teacher checkpoints and the frozen model-selection procedure. Table~\ref{tab:individual-seeds} reports each trained student's measurements without pooling its ensemble with other students. Table~\ref{tab:replication-paired} averages scores over students before paired trajectory resampling. Its intervals describe variation among test trajectories for these fixed models, while the main-text sample standard deviations summarize observed training variation across only three students. An interval that excludes or includes zero does not, by itself, establish a difference of practical size or equivalence; no equivalence margin is declared. \pending{discussion of the replication results.}

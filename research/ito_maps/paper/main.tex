@@ -1,0 +1,55 @@
+\documentclass{article}
+\usepackage{microtype,graphicx,booktabs}
+\usepackage{hyperref}
+\usepackage{icml2026}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{xcolor}
+\input{macros}
+\icmltitlerunning{Conditional Stochastic Forecast Maps}
+\begin{document}
+\twocolumn[
+\icmltitle{Few-Step Probabilistic Forecasting with Conditional It\^o Maps}
+\begin{icmlauthorlist}
+\icmlauthor{Anonymous Authors}{anon}
+\end{icmlauthorlist}
+\icmlaffiliation{anon}{Anonymous Institution, Anonymous City, Anonymous Country}
+\icmlcorrespondingauthor{Anonymous Author}{anon.email@domain.com}
+\icmlkeywords{probabilistic forecasting, stochastic interpolants, It\^o maps, fluid dynamics}
+\vskip 0.3in
+]
+\printAffiliationsAndNotice{}
+\begin{abstract}
+Probabilistic forecasting requires ensembles of plausible futures, making the cost of each generated sample consequential. We develop conditional It\^o maps for forecasting stochastic interpolants, preserving a deterministic observed initial state and replacing numerical integration with learned transitions conditioned on Brownian information. We derive the appropriate diagonal regression and shared-path composition objective, use teacher-supervised refinement, and implement deterministic flow maps under the same interface as a comparator. We evaluate both map families on stochastically forced two-dimensional Navier--Stokes forecasting against multi-step stochastic-interpolant and flow-matching samplers, using fair CRPS, spread--skill calibration, enstrophy spectra, long autoregressive rollouts and measured sampling latency. \pending{headline Navier--Stokes result: quality--cost tradeoff of few-step It\^o and flow maps relative to 64-step solver references.}
+\end{abstract}
+
+% ---------------------------------------------------------------- main text
+\input{sections/introduction}
+\input{sections/setup}
+\input{sections/ito_maps}
+\input{sections/related_work}
+\input{sections/experiments}
+\input{sections/limitations}
+\input{sections/impact_statement}
+
+\clearpage
+\bibliography{references}
+\bibliographystyle{icml2026}
+
+\clearpage
+\appendix
+% ---------------------------------------------------------------- appendix
+\input{appendix/implementation}
+\input{appendix/training_modes}
+\input{appendix/ito_maps_differences}
+\input{appendix/ns_experimental_details}
+\input{appendix/replications}
+\input{appendix/development_ablation}
+\input{appendix/metrics}
+\input{appendix/seed0_uncertainty}
+\input{appendix/qualitative_forecast}
+\input{appendix/compression_diagnostic}
+\input{appendix/linear_sde_compression}
+\clearpage
+\input{appendix/long_horizon}
+\input{appendix/draft_status}
+\end{document}

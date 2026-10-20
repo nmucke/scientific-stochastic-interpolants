@@ -1,0 +1,8 @@
+# @package _global_
+model_name: flow_matching
+model:
+  _target_: scisi.models.flow_matching_model.FlowMatchingModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  mask_path: ${mask_path}
+  drift_model: ${backbone}

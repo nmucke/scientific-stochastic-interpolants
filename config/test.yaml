@@ -1,0 +1,23 @@
+# Settings for scripts/test.py. Pick the trained run with project (the case) and
+# name (the run), e.g.
+#   python scripts/test.py project=udales name=flow_matching_small
+project: stochastic_navier_stokes
+name: ito_map
+
+# Forecast
+num_physical_steps: 100  # trajectory length, including the conditioning history
+batch_size: 5  # ensemble members
+test_sample_index: 0  # which test trajectory to forecast
+num_flow_steps: 50  # pseudo-time steps per physical step for flow models
+num_map_steps: 4  # map steps per physical step for map models
+ode_stepper: scisi.sampling.ode_solvers.euler_step  # flow matching
+sde_stepper: scisi.sampling.sde_solvers.heun_step  # stochastic interpolant, diffusion
+mixed_precision: true  # bf16 sampling on GPU
+
+# Output
+figure_dir: figures/${project}/${name}
+show_plots: false
+
+# Changes to the run's saved config, e.g.
+#   +run_overrides.test_data.paths=[data/knmi/]
+run_overrides: {}
