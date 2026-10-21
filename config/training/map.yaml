@@ -1,4 +1,6 @@
 # @package _global_
+defaults:
+  - /gradient_clipping: global_norm  # or ema; override with gradient_clipping=ema
 # Progressive self-distillation of finite-time maps (scisi.training.map_trainer).
 seed: 0
 num_threads: 4
@@ -36,14 +38,8 @@ trainer:
   early_stopping:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 30
-  gradient_clipper:
-    _target_: scisi.training.gradient_clipping.EmaGradientClipper
-    ema_coef1: 0.9
-    ema_coef2: 0.99
-    max_norm_ratio: 2.0
-    clip_norm_ratio: 1.1
   mixed_precision_warmup: 1000
-  off_diagonal: progressive_self_distillation  # or lagrangian_self_distillation
+  off_diagonal: lagrangian_self_distillation #progressive_self_distillation  # or lagrangian_self_distillation (exact with model.brownian_features=karhunen_loeve)
   off_diagonal_weight: 1.0
   diagonal_epochs: 10  # epochs with only the diagonal loss
   warmup_epochs: 25  # then ramp the off-diagonal weight up linearly over this many epochs

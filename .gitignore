@@ -88,3 +88,6 @@ paper_experiments/results_full/*
 
 # Generated paper figures
 /research/ito_maps/paper/figures/
+
+# manuscripts
+manuscripts/

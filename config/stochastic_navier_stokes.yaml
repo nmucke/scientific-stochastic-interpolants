@@ -30,6 +30,7 @@ backbone:
     heads: 4
     patch_size: 2
     dropout_rate: 0.1
+    qk_norm: true  # per-head RMSNorm on q and k; bounds attention logits by sqrt(head_dim). Old checkpoints: false
     embedding_dim: 512
 
 # Used by scisi.bin.main_map_model_test for map models.

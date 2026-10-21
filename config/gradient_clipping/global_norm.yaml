@@ -1,0 +1,4 @@
+# @package trainer.gradient_clipper
+# Clip the global gradient norm to a fixed value.
+_target_: scisi.training.gradient_clipping.GlobalNormClipper
+max_norm: 1.0

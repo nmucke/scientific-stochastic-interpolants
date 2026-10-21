@@ -1,0 +1,7 @@
+# @package trainer.gradient_clipper
+# Adaptive clipping relative to exponential moving averages of past gradient norms.
+_target_: scisi.training.gradient_clipping.EmaGradientClipper
+ema_coef1: 0.9
+ema_coef2: 0.99
+max_norm_ratio: 2.0
+clip_norm_ratio: 1.1

@@ -12,7 +12,11 @@ from scisi.models.interpolations import (
     LinearDeterministicInterpolation,
     QuadraticStochasticInterpolation,
 )
-from scisi.training.map_trainer import MapTrainer, progressive_self_distillation_loss
+from scisi.training.map_trainer import (
+    MapTrainer,
+    lagrangian_self_distillation_loss,
+    progressive_self_distillation_loss,
+)
 from scisi.training.trainer import EarlyStopping
 
 
@@ -58,7 +62,7 @@ def trainer(tmp_path, stochastic, value=0.4, **kwargs):
     )
 
 
-OFF_DIAGONAL = ["progressive_self_distillation"]
+OFF_DIAGONAL = ["progressive_self_distillation", "lagrangian_self_distillation"]
 
 
 class LinearFlowMapNetwork(nn.Module):
@@ -79,8 +83,11 @@ class LinearFlowMapNetwork(nn.Module):
         return ratio * x
 
 
+@pytest.mark.parametrize(
+    "loss", [progressive_self_distillation_loss, lagrangian_self_distillation_loss]
+)
 @pytest.mark.parametrize("exact", [True, False])
-def test_progressive_loss_vanishes_exactly_for_the_true_flow_map(exact):
+def test_off_diagonal_losses_vanish_exactly_for_the_true_flow_map(loss, exact):
     model = FlowMapModel(
         LinearDeterministicInterpolation(), LinearFlowMapNetwork(exact=exact)
     )
@@ -88,13 +95,81 @@ def test_progressive_loss_vanishes_exactly_for_the_true_flow_map(exact):
     s = torch.tensor([[0.0], [0.1], [0.3], [0.5]])
     t = torch.tensor([[1.0], [0.6], [0.4], [0.9]])
     u = (s + t) / 2
-    value = progressive_self_distillation_loss(
-        model, model, nn.MSELoss(), x, s, u, t, None, {}
-    )
+    value = loss(model, model, nn.MSELoss(), x, s, u, t, None, {})
     if exact:
         assert value.item() < 1e-10
     else:
         assert value.item() > 1e-3
+
+
+def test_lagrangian_loss_backpropagates_through_the_time_derivative():
+    model = FlowMapModel(
+        LinearDeterministicInterpolation(), LinearFlowMapNetwork(exact=False)
+    )
+    target = FlowMapModel(LinearDeterministicInterpolation(), LinearFlowMapNetwork())
+    x = torch.randn(4, 1, 2, 2)
+    s, t = torch.zeros(4, 1), torch.ones(4, 1)
+    lagrangian_self_distillation_loss(
+        model, target.requires_grad_(False), nn.MSELoss(), x, s, None, t, None, {}
+    ).backward()
+    assert model.map_model.a.grad is not None and model.map_model.a.grad != 0
+
+
+class TimeAndPathNetwork(nn.Module):
+    """A smooth map that depends on time, state and the Brownian features."""
+
+    def __init__(self):
+        super().__init__()
+        self.a = nn.Parameter(torch.tensor(0.5))
+
+    def forward(self, x, cond, field_history=None, field_cond=None, pars_cond=None, path_features=None):
+        t = cond[:, 1:].reshape(-1, 1, 1, 1)
+        return self.a * t * x + t**2 * path_features.sum(1, keepdim=True)
+
+
+@pytest.mark.parametrize("features", ["karhunen_loeve", "local"])
+def test_lagrangian_time_derivative_holds_brownian_features_fixed(features):
+    """KL features do not move with t (exact); local ones are frozen at [s, t]."""
+    torch.manual_seed(3)
+    model = FollmerItoMapModel(
+        QuadraticStochasticInterpolation(gamma_multiplier=0.5),
+        TimeAndPathNetwork(),
+        brownian_features=features,
+    )
+    x = torch.randn(3, 1, 2, 2)
+    s, t = torch.full((3, 1), 0.2), torch.full((3, 1), 0.7)
+    path = model.make_brownian_path(x)
+    loss = lagrangian_self_distillation_loss(
+        model, model, nn.MSELoss(), x, s, None, t, path, {}
+    )
+
+    def displacement(time, frozen):
+        if frozen:  # features of [s, t], used at a nearby end time
+            features = path.features(s, t, model.num_path_features)
+            cond = torch.cat([s, time], -1)
+            velocity = model.map_model(x, cond, path_features=features)
+        else:  # features recomputed for [s, time]
+            velocity = model.average_velocity(x, s, time, brownian_path=path)
+        return (time - s).reshape(-1, 1, 1, 1) * velocity
+
+    h = 1e-3
+    with torch.no_grad():
+        mapped = x + displacement(t, True) + path.increment(s, t)
+        target = model.average_velocity(mapped, t, t)
+        frozen = (displacement(t + h, True) - displacement(t - h, True)) / (2 * h)
+        moving = (displacement(t + h, False) - displacement(t - h, False)) / (2 * h)
+    torch.testing.assert_close(loss, nn.MSELoss()(frozen, target), rtol=1e-4, atol=1e-6)
+    if features == "karhunen_loeve":
+        torch.testing.assert_close(frozen, moving, rtol=1e-4, atol=1e-6)
+    else:
+        assert (frozen - moving).abs().max() > 1e-2
+
+
+def test_lagrangian_with_local_features_warns(tmp_path, caplog):
+    with caplog.at_level("WARNING"):
+        instance = trainer(tmp_path, True, off_diagonal="lagrangian_self_distillation")
+    assert instance.model.brownian_features == "local"
+    assert "Karhunen-Loeve" in caplog.text
 
 
 def test_unknown_off_diagonal_loss_is_rejected(tmp_path):
@@ -129,8 +204,9 @@ def test_optimizer_updates_student_without_ema_gradients(
     assert instance.ema_model.map_model.value.item() != original.item()
 
 
-def test_training_saves_student_ema_and_history(tmp_path):
-    instance = trainer(tmp_path, True, value=0.0)
+@pytest.mark.parametrize("off_diagonal", OFF_DIAGONAL)
+def test_training_saves_student_ema_and_history(tmp_path, off_diagonal):
+    instance = trainer(tmp_path, True, value=0.0, off_diagonal=off_diagonal)
     original_batch = batch()
     instance._prepare_batch(original_batch)
     assert "t" not in original_batch and "noise" not in original_batch

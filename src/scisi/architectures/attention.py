@@ -3,15 +3,57 @@ import pdb
 
 import hydra
 import torch
+import torch.autograd.forward_ad as fwAD
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import einsum, rearrange
-from torch.nn.functional import scaled_dot_product_attention
 
 from scisi.architectures.conv_next import MultipleConvNextBlocks
 from scisi.architectures.rotary_positional_embedding import (
     RotaryPositionalEmbeddings,
     VisionRotaryPositionalEmbeddings,
 )
+
+
+def scaled_dot_product_attention(
+    q, k, v, dropout_p=0.0, exact_tangent_gradient=False
+):
+    """Fused attention, or an explicit version under forward-mode AD.
+
+    Time derivatives of map models (Lagrangian self-distillation) push
+    forward-mode tangents through the network and then backpropagate through
+    them. PyTorch's fused attention does not support that, so whenever an input
+    carries a tangent an explicit form is used, with logits and softmax in fp32
+    (also under bf16 autocast, since rounding logits to bf16 creates spurious
+    near-ties).
+
+    ``exact_tangent_gradient`` decides whether the parameter gradient includes
+    the softmax's second derivative (through the tangent of the attention
+    weights). Without q/k normalization the logits can saturate, and that term
+    becomes huge near argmax ties and causes rare gradient spikes, so it is
+    dropped (False). With q/k normalization the logits are bounded and the exact
+    gradient is safe (True). Outputs and tangents are identical either way.
+    """
+    if all(fwAD.unpack_dual(x).tangent is None for x in (q, k, v)):
+        return F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+    with torch.autocast(q.device.type, enabled=False):
+        dtype = torch.promote_types(q.dtype, torch.float32)  # at least fp32
+        logits = q.to(dtype) @ k.to(dtype).transpose(-2, -1) / math.sqrt(q.shape[-1])
+        if exact_tangent_gradient:
+            # Hand-written softmax: torch.softmax's forward-mode rule cannot be
+            # backpropagated through.
+            weights = (logits - logits.amax(-1, keepdim=True).detach()).exp()
+            weights = weights / weights.sum(-1, keepdim=True)
+        else:
+            primal, tangent = fwAD.unpack_dual(logits)
+            weights = torch.softmax(primal, dim=-1)
+            if tangent is not None:
+                weights_tangent = weights * (
+                    tangent - (weights * tangent).sum(-1, keepdim=True)
+                )
+                weights = fwAD.make_dual(weights, weights_tangent.detach())
+    weights = F.dropout(weights, p=dropout_p, training=dropout_p > 0)
+    return weights.to(v.dtype) @ v
 
 
 def patchify(x: torch.Tensor, patch_size: int) -> torch.Tensor:
@@ -102,6 +144,36 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, : x.size(1)]
 
 
+class QKRMSNorm(nn.Module):
+    """Per-head RMSNorm of queries or keys over the head dimension (QK-norm).
+
+    ``x * rsqrt(mean(x**2) + eps) * weight`` over the last axis, computed in at
+    least fp32 (also under bf16 autocast) and cast back to the input dtype. With
+    learnable gains g_q, g_k the attention logits q.k / sqrt(D) are bounded by
+    ``||g_q||_inf * ||g_k||_inf * sqrt(D)`` whatever the input scale. It is
+    applied before the rotary embedding, which is a rotation and keeps the norm.
+    Written out instead of ``F.rms_norm`` so that forward-mode AD followed by
+    backward works.
+
+    Old checkpoints (without QK-norm) load with ``load_state_dict(strict=False)``;
+    the only missing keys are ``*.q_norm.weight`` and ``*.k_norm.weight``, whose
+    gains then start at 1.
+    """
+
+    def __init__(self, dim_head: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim_head))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        dtype = torch.promote_types(x.dtype, torch.float32)
+        with torch.autocast(x.device.type, enabled=False):
+            y = x.to(dtype)
+            y = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + self.eps)
+            y = y * self.weight.to(dtype)
+        return y.to(x.dtype)
+
+
 def split_heads(x: torch.Tensor, heads: int, dim_head: int) -> torch.Tensor:
     """Split heads."""
     batch_size, seq_length, _ = x.size()
@@ -128,6 +200,8 @@ class Attention(nn.Module):
         dim: int,
         heads: int = 4,
         dropout_rate: float = 0.0,
+        qk_norm: bool = False,
+        qk_norm_eps: float = 1e-6,
     ) -> None:
         """
         Initialize Attention.
@@ -136,6 +210,9 @@ class Attention(nn.Module):
             dim (int): Dimension of the input.
             heads (int): Number of heads.
             dropout_rate (float): Dropout rate.
+            qk_norm (bool): Apply per-head RMSNorm (:class:`QKRMSNorm`) to q
+                and k, bounding |logit| by ||g_q||_inf ||g_k||_inf sqrt(D).
+            qk_norm_eps (float): Epsilon of the QK-norm.
         """
         super(Attention, self).__init__()
         self.heads = heads
@@ -149,6 +226,11 @@ class Attention(nn.Module):
 
         self.dropout_rate = dropout_rate
 
+        self.qk_norm = qk_norm
+        if qk_norm:
+            self.q_norm = QKRMSNorm(self.dim_head, eps=qk_norm_eps)
+            self.k_norm = QKRMSNorm(self.dim_head, eps=qk_norm_eps)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass.
@@ -161,9 +243,13 @@ class Attention(nn.Module):
         q = split_heads(self.W_q(x), self.heads, self.dim_head)  # (B, H, L, D)
         k = split_heads(self.W_k(x), self.heads, self.dim_head)  # (B, H, L, D)
         v = split_heads(self.W_v(x), self.heads, self.dim_head)  # (B, H, L, D)
+        if self.qk_norm:
+            q, k = self.q_norm(q), self.k_norm(k)
 
         dropout_p = self.dropout_rate if self.training else 0.0
-        out = scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+        out = scaled_dot_product_attention(
+            q, k, v, dropout_p=dropout_p, exact_tangent_gradient=self.qk_norm
+        )
         out = combine_heads(out, self.heads, self.dim_head)
 
         return self.to_out(out)
@@ -174,9 +260,29 @@ class AttentionWithRotaryPositionalEmbeddings(nn.Module):
     Attention with Rotary Positional Embeddings.
     """
 
-    def __init__(self, dim: int, heads: int = 4, dropout_rate: float = 0.0):
-        """Initialize Attention with Rotary Positional Embeddings."""
+    def __init__(
+        self,
+        dim: int,
+        heads: int = 4,
+        dropout_rate: float = 0.0,
+        legacy_rotary: bool = False,
+        qk_norm: bool = False,
+        qk_norm_eps: float = 1e-6,
+    ):
+        """Initialize Attention with Rotary Positional Embeddings.
+
+        ``legacy_rotary`` reproduces an earlier bug, kept only to evaluate
+        checkpoints trained with it: the rotation was applied along the head
+        axis instead of the sequence axis, so it cancelled in q.k and the
+        attention had no positional information.
+
+        ``qk_norm`` applies a per-head RMSNorm (:class:`QKRMSNorm`) to q and k
+        right after the projections and before the rotary embedding, so that
+        |logit| <= ||g_q||_inf ||g_k||_inf sqrt(D); the 1/sqrt(D) scaling is
+        unchanged. Off by default (no extra parameters).
+        """
         super(AttentionWithRotaryPositionalEmbeddings, self).__init__()
+        self.legacy_rotary = legacy_rotary
         self.heads = heads
         self.dim_head = dim // heads
         self.dropout_rate = dropout_rate
@@ -190,6 +296,11 @@ class AttentionWithRotaryPositionalEmbeddings(nn.Module):
         self.rotary_emb_q = RotaryPositionalEmbeddings(self.dim_head)
         self.rotary_emb_k = RotaryPositionalEmbeddings(self.dim_head)
 
+        self.qk_norm = qk_norm
+        if qk_norm:
+            self.q_norm = QKRMSNorm(self.dim_head, eps=qk_norm_eps)
+            self.k_norm = QKRMSNorm(self.dim_head, eps=qk_norm_eps)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -200,15 +311,25 @@ class AttentionWithRotaryPositionalEmbeddings(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (B, C, H, W).
         """
-        q = split_heads(self.W_q(x), self.heads, self.dim_head)  # (B, H, L, D)
-        k = split_heads(self.W_k(x), self.heads, self.dim_head)  # (B, H, L, D)
+        b, l, _ = x.size()
+        q = self.W_q(x).view(b, l, self.heads, self.dim_head)  # (B, L, H, D)
+        k = self.W_k(x).view(b, l, self.heads, self.dim_head)  # (B, L, H, D)
         v = split_heads(self.W_v(x), self.heads, self.dim_head)  # (B, H, L, D)
+        if self.qk_norm:  # per head, before the rotary embedding
+            q, k = self.q_norm(q), self.k_norm(k)
 
-        q = self.rotary_emb_q(q)
-        k = self.rotary_emb_k(k)
+        if self.legacy_rotary:
+            q = self.rotary_emb_q(q.transpose(1, 2))  # rotates along heads (bug)
+            k = self.rotary_emb_k(k.transpose(1, 2))
+        else:
+            # Rotary embedding expects (B, L, H, D) and rotates along L.
+            q = self.rotary_emb_q(q).transpose(1, 2)  # (B, H, L, D)
+            k = self.rotary_emb_k(k).transpose(1, 2)
 
         dropout_p = self.dropout_rate if self.training else 0.0
-        out = scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+        out = scaled_dot_product_attention(
+            q, k, v, dropout_p=dropout_p, exact_tangent_gradient=self.qk_norm
+        )
 
         out = combine_heads(out, self.heads, self.dim_head)
 
@@ -228,8 +349,13 @@ class SpatialAttention(nn.Module):
         heads: int = 4,
         patch_size: int = 4,
         dropout_rate: float = 0.0,
+        qk_norm: bool = False,
+        qk_norm_eps: float = 1e-6,
     ):
-        """Initialize Spatial Attention."""
+        """Initialize Spatial Attention.
+
+        ``qk_norm``/``qk_norm_eps`` are passed to the attention (QK-norm).
+        """
         super(SpatialAttention, self).__init__()
 
         self.patch_size = patch_size
@@ -251,11 +377,14 @@ class SpatialAttention(nn.Module):
             "dim": self.embedding_dim,
             "heads": heads,
             "dropout_rate": dropout_rate,
+            "qk_norm": qk_norm,
+            "qk_norm_eps": qk_norm_eps,
         }
 
-        if pos_embedding_type == "rotary":
+        if pos_embedding_type in ("rotary", "rotary_legacy"):
             self.attention = AttentionWithRotaryPositionalEmbeddings(
-                **self.attention_args
+                **self.attention_args,
+                legacy_rotary=pos_embedding_type == "rotary_legacy",
             )
         elif pos_embedding_type == "additive":
             self.attention = nn.Sequential(
@@ -305,8 +434,13 @@ class SpatialTransformerBlock(nn.Module):
         patch_size: int = 4,
         dropout_rate: float = 0.0,
         mlp_dim: int = 1024,
+        qk_norm: bool = False,
+        qk_norm_eps: float = 1e-6,
     ):
-        """Initialize Spatial Transformer Block."""
+        """Initialize Spatial Transformer Block.
+
+        ``qk_norm``/``qk_norm_eps`` are passed to the attention (QK-norm).
+        """
         super(SpatialTransformerBlock, self).__init__()
 
         self.patch_size = patch_size
@@ -317,11 +451,14 @@ class SpatialTransformerBlock(nn.Module):
             "dim": embedding_dim,
             "heads": heads,
             "dropout_rate": dropout_rate,
+            "qk_norm": qk_norm,
+            "qk_norm_eps": qk_norm_eps,
         }
 
-        if pos_embedding_type == "rotary":
+        if pos_embedding_type in ("rotary", "rotary_legacy"):
             self.attention = AttentionWithRotaryPositionalEmbeddings(
-                **self.attention_args
+                **self.attention_args,
+                legacy_rotary=pos_embedding_type == "rotary_legacy",
             )
         elif pos_embedding_type == "additive":
             self.attention = nn.Sequential(
