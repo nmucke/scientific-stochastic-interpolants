@@ -109,6 +109,7 @@ class Trainer:
 
         self.epoch = 0  # next epoch to run
         self.global_step = 0
+        self.skipped_steps = 0  # updates skipped for a nonfinite gradient norm
         self.history = []
         self.components = {}  # named loss terms of the last _compute_loss call
 
@@ -142,7 +143,16 @@ class Trainer:
             raise FloatingPointError(f"Nonfinite loss at step {self.global_step}")
         loss.backward()
         if self.gradient_clipper is not None:
-            self.gradient_clipper.clip_grads(self.model.parameters())
+            grad_norm = self.gradient_clipper.clip_grads(self.model.parameters())
+            if grad_norm is not None and not torch.isfinite(torch.as_tensor(grad_norm)):
+                # Skip the update (and the EMA) rather than apply a broken step.
+                self.skipped_steps += 1
+                logger.warning(
+                    "Nonfinite gradient norm at step %d; update skipped",
+                    self.global_step,
+                )
+                self.optimizer.zero_grad(set_to_none=True)
+                return loss
         self.optimizer.step()
         self.global_step += 1
         self._after_step()

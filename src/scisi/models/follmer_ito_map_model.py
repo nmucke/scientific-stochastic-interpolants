@@ -3,7 +3,12 @@
 import torch
 
 from scisi.models.base_map_model import BaseMapModel, batch_time
-from scisi.sampling.brownian_path import WeightedBrownianPath
+from scisi.sampling.brownian_path import (
+    KarhunenLoeveBrownianPath,
+    WeightedBrownianPath,
+)
+
+BROWNIAN_FEATURES = ("local", "karhunen_loeve")
 
 
 class FollmerItoMapModel(BaseMapModel):
@@ -12,12 +17,27 @@ class FollmerItoMapModel(BaseMapModel):
     The current implementation uses the repository's affine diffusion schedule
     ``gamma(t)=gamma_multiplier*(1-t)``. Local path features approximate the
     drift's Brownian dependence; the explicit martingale increment is exact.
+
+    ``brownian_features`` selects the path representation fed to the network:
+    ``"local"`` (increments over equal subdivisions of [s,t]) or
+    ``"karhunen_loeve"`` (the first ``num_path_features`` global KL
+    coefficients of W on [0,1], the same for every interval of a path).
     """
 
-    def __init__(self, interpolation, map_model, num_path_features=4, mask_path=None):
+    def __init__(
+        self,
+        interpolation,
+        map_model,
+        num_path_features=4,
+        mask_path=None,
+        brownian_features="local",
+    ):
         super().__init__(interpolation, map_model, mask_path)
         if not isinstance(num_path_features, int) or num_path_features < 1:
             raise ValueError("num_path_features must be a positive integer.")
+        if brownian_features not in BROWNIAN_FEATURES:
+            raise ValueError(f"brownian_features must be one of {BROWNIAN_FEATURES}.")
+        self.brownian_features = brownian_features
         if not torch.allclose(
             interpolation.transform_noise(torch.ones(1), torch.tensor([0.25])),
             torch.tensor([0.5]),
@@ -34,6 +54,13 @@ class FollmerItoMapModel(BaseMapModel):
             )
 
     def make_brownian_path(self, x, generator=None):
+        if self.brownian_features == "karhunen_loeve":
+            return KarhunenLoeveBrownianPath.sample_like(
+                x,
+                self.gamma_multiplier,
+                generator=generator,
+                num_modes=self.num_path_features,
+            )
         return WeightedBrownianPath.sample_like(
             x, self.gamma_multiplier, generator=generator
         )

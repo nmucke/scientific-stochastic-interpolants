@@ -6,15 +6,19 @@ EMA copy of the student providing the targets:
 
 * ``progressive_self_distillation``: the map over [s, t] matches two composed
   EMA maps over [s, u] and [u, t] (semigroup property).
-* ``lagrangian_self_distillation`` (not implemented yet): the time derivative
-  of the map's drift displacement matches the EMA drift at the mapped state.
+* ``lagrangian_self_distillation``: the time derivative of the map's drift
+  displacement matches the EMA drift at the mapped state.
 """
 
 import copy
+import logging
 
 import torch
+import torch.autograd.forward_ad as fwAD
 
 from scisi.training.trainer import Trainer
+
+logger = logging.getLogger(__name__)
 
 
 def _expand(time):
@@ -45,8 +49,43 @@ def progressive_self_distillation_loss(
 def lagrangian_self_distillation_loss(
     model, ema_model, loss_fn, x, s, u, t, path, conditions
 ):
-    """d/dt D_{s,t}(x) = b_t(X_{s,t}(x)), with D_{s,t} = (t - s) v_{s,t}."""
-    raise NotImplementedError("Lagrangian self-distillation is not implemented yet")
+    """d/dt D_{s,t}(x) = b_t(X_{s,t}(x)), with D_{s,t} = (t - s) v_{s,t}.
+
+    D is the drift part of the map (the martingale increment is added
+    separately), so d/dt D = v_{s,t} + (t - s) d/dt v_{s,t} is matched to the
+    EMA diagonal drift b_t = v_{t,t} at the stop-gradient mapped state
+    X_{s,t} = x + D + (M_t - M_s) (Pan et al., Alg. 1). The derivative is one
+    forward-mode JVP in t, which stays differentiable for the parameter update.
+
+    The derivative is taken with the Brownian features held fixed: path queries
+    detach their times, so the tangent only flows through the explicit time
+    input. With Karhunen-Loeve features, which do not depend on (s, t), this is
+    the exact derivative. Local increment features move with t and are not
+    differentiable in t, so for them this is a frozen-feature approximation of
+    the Lagrangian condition. As for the diagonal loss, the target diagonal
+    drift receives zero path features. ``u`` is unused.
+
+    Dropout is disabled in this pass (as in Boffi et al.'s reference code):
+    dropout noise in a differentiated forward makes the time derivative and
+    its gradient noisy and, in bf16, unstable.
+    """
+    was_training = model.training
+    model.eval()
+    try:
+        with fwAD.dual_level():
+            time = fwAD.make_dual(t, torch.ones_like(t))
+            velocity = model.average_velocity(
+                x, s, time, brownian_path=path, **conditions
+            )
+            displacement, prediction = fwAD.unpack_dual(_expand(time - s) * velocity)
+    finally:
+        model.train(was_training)
+    with torch.no_grad():
+        mapped = x + displacement
+        if path is not None:
+            mapped = mapped + path.increment(s, t)
+        target = ema_model.average_velocity(mapped, t, t, **conditions)
+    return loss_fn(prediction, target)
 
 
 OFF_DIAGONAL_LOSSES = {
@@ -94,6 +133,15 @@ class MapTrainer(Trainer):
                 f"choose from {sorted(OFF_DIAGONAL_LOSSES)}"
             )
         self.off_diagonal_loss = OFF_DIAGONAL_LOSSES[off_diagonal]
+        if (
+            off_diagonal == "lagrangian_self_distillation"
+            and getattr(self.model, "brownian_features", None) == "local"
+        ):
+            logger.warning(
+                "Lagrangian self-distillation with local Brownian features holds "
+                "the features fixed in t, an approximation; Karhunen-Loeve "
+                "features make the time derivative exact."
+            )
 
     def _intervals(self, batch_size):
         """Sample s < u < t, with an atom at the full interval [0, 1]."""

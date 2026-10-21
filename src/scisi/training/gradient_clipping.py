@@ -138,4 +138,21 @@ class EmaGradientClipper:
             if clipped and self.ema_index != 0
             else total_norm
         )
-        self._record_norm(norm)
+        # A nonfinite norm (skipped step) must not poison the running averages.
+        if torch.isfinite(torch.as_tensor(norm)):
+            self._record_norm(norm)
+        return total_norm
+
+
+class GlobalNormClipper:
+    """Clip the global gradient norm to a fixed ``max_norm``.
+
+    Returns the norm before clipping; the trainer skips the update when it is
+    not finite.
+    """
+
+    def __init__(self, max_norm: float = 1.0):
+        self.max_norm = float(max_norm)
+
+    def clip_grads(self, parameters: Iterable[torch.Tensor]) -> torch.Tensor:
+        return torch.nn.utils.clip_grad_norm_(parameters, self.max_norm)
