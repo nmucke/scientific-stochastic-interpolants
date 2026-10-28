@@ -91,3 +91,6 @@ paper_experiments/results_full/*
 
 # manuscripts
 manuscripts/
+
+# Local LaTeX report builds
+/output/
