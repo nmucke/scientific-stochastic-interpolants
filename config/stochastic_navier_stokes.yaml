@@ -37,7 +37,7 @@ backbone:
 evaluation:
   checkpoint_dir: ${oc.select:trainer.checkpoint_dir,null}
   checkpoint_name: model.pth
-  output_dir: research/ito_maps/results/${model_name}
+  output_dir: outputs/evaluation/${model_name}
   num_steps: [1, 2, 4, 8]
   ensemble_size: 16
   origins: [5, 25, 45, 65, 85]
