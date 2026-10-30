@@ -339,6 +339,21 @@ pre-commit install
 
 Hooks run Black, isort, MyPy, and standard checks (trailing whitespace, YAML validation, large file detection) on every commit.
 
+### Branches
+
+`main` is the default branch; PRs go into `dev` (PRs opened against `main` are
+retargeted automatically). The paths in [.github/dev-only-paths](.github/dev-only-paths)
+exist only on `dev`, and a CI check fails if they reach `main`.
+
+```bash
+# Release dev to main: a branch without the dev-only paths, for a PR into main.
+.github/scripts/make-release-branch.sh
+# Bring main into dev without deleting the dev-only paths.
+.github/scripts/sync-main-into-dev.sh
+```
+
+Merge release PRs with a merge commit, not a squash.
+
 ## Citation
 
 If you use this code in your research, please cite:

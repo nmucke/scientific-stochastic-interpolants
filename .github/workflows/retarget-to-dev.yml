@@ -1,5 +1,6 @@
 # main is the default branch, but day-to-day PRs belong in dev. Any PR opened
-# against main is retargeted to dev, except the dev -> main release PR.
+# against main is retargeted to dev, except from dev and release/* (see
+# .github/scripts/make-release-branch.sh).
 #
 # pull_request_target runs the workflow file from main and never checks out PR
 # code, so this file must be on main to take effect.
@@ -15,7 +16,10 @@ permissions:
 
 jobs:
   retarget:
-    if: github.event.pull_request.head.ref != 'dev' || github.event.pull_request.head.repo.full_name != github.repository
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      (github.event.pull_request.head.ref != 'dev' &&
+       !startsWith(github.event.pull_request.head.ref, 'release/'))
     runs-on: ubuntu-latest
     steps:
       - name: Change base branch to dev
@@ -26,4 +30,4 @@ jobs:
         run: |
           gh api -X PATCH "repos/$REPO/pulls/$PR" -f base=dev --silent
           gh api "repos/$REPO/issues/$PR/comments" --silent \
-            -f body="Retargeted from \`main\` to \`dev\`: PRs go into \`dev\`; only release PRs from \`dev\` target \`main\`. If this was meant for \`main\`, change the base back."
+            -f body="Retargeted from \`main\` to \`dev\`: PRs go into \`dev\`; only release PRs target \`main\`. If this was meant for \`main\`, change the base back."
