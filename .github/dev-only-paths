@@ -2,3 +2,4 @@
 # Read by .github/workflows/guard-main.yml and .github/scripts/*.sh.
 research/
 AGENTS.md
+CLAUDE.md

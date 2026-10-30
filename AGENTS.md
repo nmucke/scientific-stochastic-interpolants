@@ -1,6 +1,7 @@
 # Agent notes
 
 This file exists only on `dev`; it is removed from every release to `main`.
+`CLAUDE.md` is a symlink to it, so edit `AGENTS.md`.
 
 ## Branches
 
@@ -14,7 +15,7 @@ This file exists only on `dev`; it is removed from every release to `main`.
 ## Dev-only paths
 
 [.github/dev-only-paths](.github/dev-only-paths) lists paths that live on `dev`
-and must never reach `main` (currently `research/` and this file). The
+and must never reach `main` (currently `research/`, this file and `CLAUDE.md`). The
 `guard-main` workflow fails any PR into, or push to, `main` that contains them.
 
 - Put new dev-only material (notes, experiments, papers, their tests) under
