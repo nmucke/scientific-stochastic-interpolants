@@ -192,6 +192,10 @@ class Trainer:
             )
         return result
 
+    def _check_early_stopping(self, val_loss):
+        """Update early stopping (and best-model saving); return whether to stop."""
+        return self.early_stopping(val_loss)
+
     def _update_scheduler(self, val_loss):
         if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
             self.scheduler.step(val_loss)
@@ -236,7 +240,7 @@ class Trainer:
                 **{f"val_{k}": v for k, v in val.items()},
             }
             self.history.append(row)
-            stop = self.early_stopping(row["val_loss"])
+            stop = self._check_early_stopping(row["val_loss"])
             self._update_scheduler(row["val_loss"])
             self._log(row)
 
