@@ -1,0 +1,5 @@
+# Paths that live on dev and must never reach main, one per line.
+# Read by .github/workflows/guard-main.yml and .github/scripts/*.sh.
+research/
+AGENTS.md
+CLAUDE.md

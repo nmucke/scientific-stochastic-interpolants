@@ -11,7 +11,7 @@ import torch
 from torch import nn
 
 PATH = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[3]
     / "research/ito_maps/experiments/long_horizon_ns.py"
 )
 SPEC = importlib.util.spec_from_file_location("long_horizon_ns", PATH)

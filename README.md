@@ -154,7 +154,6 @@ scientific-stochastic-interpolants/
 │   ├── training/                    #   flow and map training
 │   ├── posterior/                   #   data assimilation
 │   └── test.yaml                    #   settings for scripts/test.py
-├── research/ito_maps/               # Itô-map notes, experiments and paper
 ├── external_libs/                   # Workspace member packages
 │   ├── torch_cfd_lib/              #   PyTorch CFD utilities
 │   └── jax_cfd_lib/                #   JAX CFD utilities
@@ -340,6 +339,21 @@ pre-commit install
 
 Hooks run Black, isort, MyPy, and standard checks (trailing whitespace, YAML validation, large file detection) on every commit.
 
+### Branches
+
+`main` is the default branch; PRs go into `dev` (PRs opened against `main` are
+retargeted automatically). The paths in [.github/dev-only-paths](.github/dev-only-paths)
+exist only on `dev`, and a CI check fails if they reach `main`.
+
+```bash
+# Release dev to main: a branch without the dev-only paths, for a PR into main.
+.github/scripts/make-release-branch.sh
+# Bring main into dev without deleting the dev-only paths.
+.github/scripts/sync-main-into-dev.sh
+```
+
+Merge release PRs with a merge commit, not a squash.
+
 ## Citation
 
 If you use this code in your research, please cite:
@@ -383,8 +397,7 @@ regression with an off-diagonal self-distillation loss against an EMA copy of th
 model (`trainer.off_diagonal`, currently `progressive_self_distillation`). The
 off-diagonal loss can be delayed (`trainer.diagonal_epochs`) and ramped in
 (`trainer.warmup_epochs`). Map models currently require the UNet backbone and an
-identically-one spatial mask. Notes, experiments and the paper live in
-[research/ito_maps](research/ito_maps).
+identically-one spatial mask.
 
 ```bash
 # Train the Föllmer Itô map or the deterministic flow map.
@@ -398,6 +411,3 @@ uv run scripts/train.py --config-name stochastic_navier_stokes models=flow_map \
 # Forecast and plot with a trained map (map steps per physical step: num_map_steps).
 uv run scripts/test.py project=stochastic_navier_stokes name=<run name> num_map_steps=1
 ```
-
-See the [status notes](research/ito_maps/STATUS.md) for the current state of the
-research.

@@ -9,7 +9,7 @@ import pytest
 import torch
 
 SCRIPT = (
-    Path(__file__).parents[1] / "research/ito_maps/experiments/ns_path_compression.py"
+    Path(__file__).parents[3] / "research/ito_maps/experiments/ns_path_compression.py"
 )
 spec = importlib.util.spec_from_file_location("ns_path_compression", SCRIPT)
 diagnostic = importlib.util.module_from_spec(spec)

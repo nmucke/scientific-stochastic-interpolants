@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "research/ito_maps/experiments/archive_training.py"
+SCRIPT = Path(__file__).parents[3] / "research/ito_maps/experiments/archive_training.py"
 spec = importlib.util.spec_from_file_location("archive_training", SCRIPT)
 archive = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(archive)
