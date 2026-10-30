@@ -86,9 +86,6 @@ paper_experiments/results_full/*
 # Local presentation material
 /presentations/
 
-# Generated paper figures
-/research/ito_maps/paper/figures/
-
 # manuscripts
 manuscripts/
 

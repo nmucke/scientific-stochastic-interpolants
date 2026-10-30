@@ -10,7 +10,7 @@ from omegaconf import OmegaConf
 from scisi.sampling.brownian_path import WeightedBrownianPath
 
 SCRIPT = (
-    Path(__file__).parents[1] / "research/ito_maps/experiments/refine_path_features.py"
+    Path(__file__).parents[3] / "research/ito_maps/experiments/refine_path_features.py"
 )
 spec = importlib.util.spec_from_file_location("refine_path_features", SCRIPT)
 refine = importlib.util.module_from_spec(spec)

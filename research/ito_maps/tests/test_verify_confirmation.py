@@ -7,7 +7,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "research/ito_maps/experiments/verify_confirmation.py"
+SCRIPT = Path(__file__).parents[3] / "research/ito_maps/experiments/verify_confirmation.py"
 spec = importlib.util.spec_from_file_location("verify_confirmation", SCRIPT)
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)

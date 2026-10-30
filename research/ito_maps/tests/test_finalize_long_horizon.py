@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 spec = importlib.util.spec_from_file_location(
-    'finalize_long_horizon', Path(__file__).parents[1]
+    'finalize_long_horizon', Path(__file__).parents[3]
     / 'research/ito_maps/experiments/finalize_long_horizon.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

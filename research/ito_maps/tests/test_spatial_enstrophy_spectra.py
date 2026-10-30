@@ -5,7 +5,7 @@ import pytest
 
 spec = importlib.util.spec_from_file_location(
     "spatial_enstrophy_spectra",
-    Path(__file__).parents[1]
+    Path(__file__).parents[3]
     / "research/ito_maps/experiments/spatial_enstrophy_spectra.py",
 )
 module = importlib.util.module_from_spec(spec)

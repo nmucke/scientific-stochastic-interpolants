@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-_path = Path(__file__).resolve().parents[1] / "research/ito_maps/experiments/report_long_horizon.py"
+_path = Path(__file__).resolve().parents[3] / "research/ito_maps/experiments/report_long_horizon.py"
 _spec = importlib.util.spec_from_file_location("long_horizon_report", _path)
 report = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(report)

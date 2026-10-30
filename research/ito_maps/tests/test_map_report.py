@@ -7,7 +7,7 @@ import pytest
 
 spec = importlib.util.spec_from_file_location(
     "map_report",
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[3]
     / "research/ito_maps/experiments/report_results.py",
 )
 report = importlib.util.module_from_spec(spec)
@@ -116,7 +116,7 @@ def test_student_mean_teacher_comparison_separates_seed_and_data_uncertainty(
     import sys
 
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[1] / "research/ito_maps/experiments")
+        str(Path(__file__).resolve().parents[3] / "research/ito_maps/experiments")
     )
     import training_seed_report
 
@@ -167,7 +167,7 @@ def test_student_seed_comparison_rejects_mismatched_teacher_cases(
     tmp_path, monkeypatch
 ):
     monkeypatch.syspath_prepend(
-        str(Path(__file__).resolve().parents[1] / "research/ito_maps/experiments")
+        str(Path(__file__).resolve().parents[3] / "research/ito_maps/experiments")
     )
     import training_seed_report
 
