@@ -211,6 +211,23 @@ class MapTrainer(Trainer):
             for average, current in zip(self.ema_model.buffers(), self.model.buffers()):
                 average.copy_(current)
 
+    def _check_early_stopping(self, val_loss):
+        """Hold early stopping until the off-diagonal weight is fully ramped up.
+
+        Validation always uses the full off-diagonal weight, so before the ramp
+        ends the validation loss includes a term training does not yet
+        optimize, and it typically grows. Until then the latest model is saved
+        and the early-stopping state is reset, so the best-model selection and
+        patience start at the first full-weight epoch.
+        """
+        if self.epoch + 1 < self.diagonal_epochs + self.warmup_epochs:
+            self.early_stopping.best_loss = float("inf")
+            self.early_stopping.counter = 0
+            self.early_stopping.early_stop = False
+            self.early_stopping.save_checkpoint = True
+            return False
+        return super()._check_early_stopping(val_loss)
+
     def _validate(self):
         self.validating = True
         try:

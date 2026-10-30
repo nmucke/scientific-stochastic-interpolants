@@ -237,6 +237,25 @@ def test_diagonal_epochs_then_linear_warmup_in_epochs(tmp_path):
             assert instance.components["off_diagonal_loss"] == 0.0
 
 
+def test_early_stopping_waits_for_the_full_off_diagonal_weight(tmp_path):
+    instance = trainer(tmp_path, False, diagonal_epochs=2)
+    instance.warmup_epochs = 2
+    instance.early_stopping.patience = 1
+    # A stale best (e.g. from a resumed diagonal-phase epoch) is discarded.
+    instance.early_stopping.best_loss = 0.0
+    for epoch, val_loss in [(0, 1.0), (1, 2.0), (2, 3.0)]:
+        instance.epoch = epoch
+        assert not instance._check_early_stopping(val_loss)
+        assert instance.early_stopping.save_checkpoint
+        assert instance.early_stopping.best_loss == float("inf")
+    instance.epoch = 3  # first full-weight epoch: normal early stopping
+    assert not instance._check_early_stopping(5.0)
+    assert instance.early_stopping.best_loss == 5.0
+    instance.epoch = 4
+    assert instance._check_early_stopping(6.0)
+    assert not instance.early_stopping.save_checkpoint
+
+
 def test_nontrivial_mask_is_rejected_before_training_initialization(tmp_path):
     model = FlowMapModel(LinearDeterministicInterpolation(), ConstantMapNetwork())
     model.mask = torch.tensor([[[[1.0, 0.0]]]])
