@@ -1,0 +1,10 @@
+- models=ito_map
+- trainer.off_diagonal=lagrangian_self_distillation
+- experiment_tracking.name=ns_grid_ito_lsd_local
+- seed=0
+- trainer.num_epochs=70
+- scheduler.T_max=70
+- trainer.diagonal_epochs=10
+- trainer.warmup_epochs=10
+- trainer.resume_from=checkpoints/stochastic_navier_stokes/ns_grid_ito_lsd_local/last.pth
+- model.brownian_features=local

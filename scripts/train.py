@@ -73,10 +73,13 @@ def main(cfg: DictConfig) -> None:
     logger.info(f"Model: {cfg.model_name} ({'map' if is_map_model else 'flow'} model)")
 
     logger.info(f"Instantiating experiment tracking...")
+    # A resumed run keeps its name, and with it its checkpoint directory;
+    # trackio's default would rename it when the name already exists.
     tracker = trackio.init(
         name=cfg.experiment_tracking.get("name"),
         project=cfg.experiment_tracking.project,
         config=OmegaConf.to_container(cfg, resolve=True),
+        resume="allow" if cfg.trainer.get("resume_from") else "never",
     )
     logger.info(f"Tracker instantiated with properties:")
     logger.info(f"Project: {tracker.project}")

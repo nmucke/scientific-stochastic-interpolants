@@ -4,11 +4,11 @@ Updated 2026-10-08. Scope: stochastic Navier–Stokes only. The video-forecastin
 
 ## Done
 
-- **Method and theory.** Conditional Itô maps for the forecasting SDE `dX = b dt + ε(1−t) dW`, with `X_0 = c(h)`. Variance-clock Brownian bridges give exact shared-path coupling. Diagonal plus composition (PSD) objectives, with the coupling and compression propositions. Written up in the paper.
+- **Method and theory.** Conditional Itô maps for the forecasting SDE `dX = b dt + ε(1−t) dW`, with `X_0 = c(h)`. Variance-clock Brownian bridges give exact shared-path coupling. Diagonal plus composition (PSD) objectives, with the coupling and compression propositions. Written up in the manuscript (repo `Few-Step-Probabilistic-Forecasting-with-Conditional-It-o-Maps`, cloned into `manuscripts/`).
 - **Implementation** in `src/scisi`. Itô-map and flow-map models, `MapTrainer` with two modes (PSD, with an optional teacher diagonal, and `teacher_rollout`), and Hydra train/test entry points. Teacher initialization, EMA, resume and a mask guard are included.
 - **Paper (method side).**
-  - New appendices: teacher distillation vs. progressive self-distillation (`paper/appendix/training_modes.tex`) and differences from Pan et al. (`paper/appendix/ito_maps_differences.tex`).
-  - Every NS result is a red `\pending{}` placeholder; `paper/notes/results_plan.md` lists them.
+  - New appendices: teacher distillation vs. progressive self-distillation (manuscript `appendix/training_modes.tex`) and differences from Pan et al. (manuscript `appendix/ito_maps_differences.tex`).
+  - Every NS result is a red `\pending{}` placeholder; `notes/paper_planning/results_plan.md` lists them.
   - The build needs no data or results.
 - **Knowledge consolidated** into [notes/key_findings.md](notes/key_findings.md). Originals are in `archive/notes/`.
 

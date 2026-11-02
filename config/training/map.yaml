@@ -42,7 +42,7 @@ trainer:
   off_diagonal: lagrangian_self_distillation #progressive_self_distillation  # or lagrangian_self_distillation (exact with model.brownian_features=karhunen_loeve)
   off_diagonal_weight: 1.0
   diagonal_epochs: 10  # epochs with only the diagonal loss
-  warmup_epochs: 25  # then ramp the off-diagonal weight up linearly over this many epochs
+  warmup_epochs: 10  # then ramp the off-diagonal weight up linearly over this many epochs
   endpoint_probability: 0.25
   ema_decay: 0.99
   max_train_batches: 1000

@@ -1,0 +1,151 @@
+len_field_history: 5
+mask_path: null
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean:
+    - 0.0
+    std:
+    - 3.09969
+  target:
+    mean:
+    - 0.0
+    std:
+    - 3.09969
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  shuffle: true
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+    - data/stochastic_navier_stokes
+    files:
+    - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (0, 160)
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 16
+  shuffle: false
+  dataset:
+    _target_: scisi.data.datasets.StochasticNavierStokesDataset
+    paths:
+    - data/stochastic_navier_stokes
+    files:
+    - data.npz
+    len_field_history: ${len_field_history}
+    tajectories_ids: (160, 180)
+test_data:
+  _target_: scisi.data.datasets.StochasticNavierStokesDataset
+  paths:
+  - data/stochastic_navier_stokes
+  files:
+  - data.npz
+  len_field_history: ${len_field_history}
+  tajectories_ids: (180, 200)
+  train_or_test: test
+trainer:
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.GlobalNormClipper
+    max_norm: 1.0
+  _target_: scisi.training.map_trainer.MapTrainer
+  num_epochs: 70
+  device: cuda
+  checkpoint_dir: checkpoints/${experiment_tracking.project}/${model_name}
+  resume_from: checkpoints/stochastic_navier_stokes/ns_grid_ito_lsd_local/last.pth
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 30
+  mixed_precision_warmup: 1000
+  off_diagonal: lagrangian_self_distillation
+  off_diagonal_weight: 1.0
+  diagonal_epochs: 10
+  warmup_epochs: 10
+  endpoint_probability: 0.25
+  ema_decay: 0.99
+  max_train_batches: 1000
+  max_val_batches: 8
+seed: 0
+num_threads: 4
+overwrite: false
+teacher_checkpoint_dir: null
+experiment_tracking:
+  enabled: false
+  name: ns_grid_ito_lsd_local
+  project: stochastic_navier_stokes
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.0001
+  weight_decay: 1.0e-05
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: 70
+  eta_min: 1.0e-05
+loss_fn:
+  _target_: torch.nn.MSELoss
+model_name: ito_map
+model:
+  _target_: scisi.models.follmer_ito_map_model.FollmerItoMapModel
+  interpolation:
+    _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
+    gamma_multiplier: ${oc.select:gamma_multiplier,1.0}
+    wiener_process: true
+  map_model:
+    _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
+    backbone: ${backbone}
+    path_channels: 4
+  num_path_features: 4
+  brownian_features: local
+backbone:
+  _target_: scisi.architectures.u_net.UNet
+  in_channels: 1
+  out_channels: 1
+  hidden_channels:
+  - 16
+  - 32
+  - 64
+  - 128
+  cond_dim: 1
+  cond_embedding_dim: 256
+  len_field_history: ${len_field_history}
+  field_cond_channels: null
+  pars_cond_dim: null
+  pars_cond_embedding_dim: null
+  multiplier: 2
+  num_blocks: 2
+  dropout_rate: 0.1
+  padding: torch.nn.CircularPad2d
+  attention_in_layers:
+  - false
+  - false
+  - false
+  - true
+  attention:
+    target: scisi.architectures.attention.SpatialAttention
+    pos_embedding_type: rotary
+    heads: 4
+    patch_size: 2
+    dropout_rate: 0.1
+    qk_norm: true
+    embedding_dim: 512
+evaluation:
+  checkpoint_dir: ${oc.select:trainer.checkpoint_dir,null}
+  checkpoint_name: model.pth
+  output_dir: outputs/evaluation/${model_name}
+  num_steps:
+  - 1
+  - 2
+  - 4
+  - 8
+  ensemble_size: 16
+  origins:
+  - 5
+  - 25
+  - 45
+  - 65
+  - 85
+  num_trajectories: 20
+  forecast_horizon: 1
+  seed: 20261007
+  device: cuda

@@ -1,0 +1,9 @@
+- models=ito_map
+- trainer.off_diagonal=progressive_self_distillation
+- experiment_tracking.name=ns_grid_ito_psd_kl
+- seed=0
+- trainer.num_epochs=70
+- scheduler.T_max=70
+- trainer.diagonal_epochs=10
+- trainer.warmup_epochs=10
+- model.brownian_features=karhunen_loeve

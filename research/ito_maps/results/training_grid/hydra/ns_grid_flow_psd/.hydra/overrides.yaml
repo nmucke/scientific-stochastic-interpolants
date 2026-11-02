@@ -1,0 +1,8 @@
+- models=flow_map
+- trainer.off_diagonal=progressive_self_distillation
+- experiment_tracking.name=ns_grid_flow_psd
+- seed=0
+- trainer.num_epochs=70
+- scheduler.T_max=70
+- trainer.diagonal_epochs=10
+- trainer.warmup_epochs=10
