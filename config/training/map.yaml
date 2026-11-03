@@ -39,7 +39,7 @@ trainer:
     _target_: scisi.training.trainer.EarlyStopping
     patience: 30
   mixed_precision_warmup: 1000
-  off_diagonal: lagrangian_self_distillation #progressive_self_distillation  # or lagrangian_self_distillation (exact with model.brownian_features=karhunen_loeve)
+  off_diagonal: progressive_self_distillation  # or lagrangian_self_distillation (exact with model.brownian_features=karhunen_loeve)
   off_diagonal_weight: 1.0
   diagonal_epochs: 10  # epochs with only the diagonal loss
   warmup_epochs: 10  # then ramp the off-diagonal weight up linearly over this many epochs

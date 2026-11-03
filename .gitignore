@@ -8,6 +8,7 @@ data/udales/
 data/udales_old/
 data/stochastic_navier_stokes/
 data/xie_and_castro/
+data/KTH/
 *.npz
 
 # Logs

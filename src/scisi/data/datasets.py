@@ -935,3 +935,213 @@ class XieAndCastroDataset(torch.utils.data.Dataset):
                 "x": sample,
                 "field_cond": self.mask.unsqueeze(-1).repeat(1, 1, 1, sample.shape[-1]),
             }
+
+
+KTH_ACTIONS = (
+    "walking",
+    "jogging",
+    "running",
+    "boxing",
+    "handwaving",
+    "handclapping",
+)
+
+
+def _parse_ids(ids: Any) -> list[int] | None:
+    """Parse ids given as a list, a single int or an inclusive '(a,b)' range string."""
+    if ids is None:
+        return None
+    if isinstance(ids, str):
+        bounds = [int(x) for x in ids.strip("()[] ").split(",")]
+        if len(bounds) != 2:
+            raise ValueError(f"Expected an '(a,b)' range, got {ids!r}")
+        return list(range(bounds[0], bounds[1] + 1))
+    if isinstance(ids, int):
+        return [ids]
+    return [int(x) for x in ids]
+
+
+class KTHDataset(torch.utils.data.Dataset):
+    """Dataset for the KTH human action video data (64x64 grayscale)."""
+
+    def __init__(
+        self,
+        paths: str,
+        files: str,
+        len_field_history: int,
+        persons: list[int] | str | None = None,
+        actions: list[str] | None = None,
+        preprocesser: Preprocesser | None = None,
+        train_or_test: str = "train",
+        test_clip_length: int = 40,
+        num_test_clips: int | None = 256,
+        frame_skip: int = 1,
+        seed: int = 0,
+    ) -> None:
+        """
+        Initialize the dataset.
+
+        Frames are kept as uint8 and converted to float in [0, 1] per item. Train
+        samples are windows of len_field_history + 1 frames within one video; test
+        samples are num_test_clips clips of test_clip_length frames, drawn with a
+        seeded RNG (video uniform, start frame uniform within the video). Videos
+        shorter than the window or clip are skipped.
+
+        Args:
+            paths: List of paths to the data.
+            files: List of files to load (the kth_64.npz written by scripts/download_kth.py).
+            len_field_history: Length of the history.
+            persons: List of person ids to load. (a,b) to load persons a to b, inclusive. None loads all.
+            actions: List of actions to load. None loads all six.
+            preprocesser: Preprocesser to use (train samples only, like the other datasets).
+            train_or_test: Train or test.
+            test_clip_length: Number of frames per test clip (history + forecast).
+            num_test_clips: Number of test clips. None takes the first clip of every video.
+            frame_skip: Temporal stride between consecutive frames of a sample.
+            seed: Seed for drawing the test clips.
+        """
+        if train_or_test not in ("train", "test"):
+            raise ValueError(
+                f"train_or_test must be 'train' or 'test', got {train_or_test!r}"
+            )
+        if frame_skip < 1:
+            raise ValueError("frame_skip must be a positive integer")
+
+        file = f"{paths[0]}/{files[0]}"
+        logger.info(f"Loading data from {file}")
+        with np.load(file) as data:
+            offsets = data["offsets"].astype(np.int64)
+            video_persons = data["person"].astype(np.int64)
+            video_actions = data["action"].astype(str)
+            video_scenarios = data["scenario"].astype(np.int64)
+            video_names = data["names"].astype(str)
+            selected = np.ones(len(video_persons), dtype=bool)
+            person_ids = _parse_ids(persons)
+            if person_ids is not None:
+                selected &= np.isin(video_persons, person_ids)
+            if actions is not None:
+                actions = [str(action) for action in actions]
+                unknown = set(actions) - set(KTH_ACTIONS)
+                if unknown:
+                    raise ValueError(f"Unknown KTH actions: {sorted(unknown)}")
+                selected &= np.isin(video_actions, actions)
+            videos = np.flatnonzero(selected)
+            frames = data["frames"]
+            # Keep only the selected videos, concatenated, as uint8.
+            self.frames = torch.from_numpy(
+                np.concatenate([frames[offsets[v] : offsets[v + 1]] for v in videos])
+                if len(videos)
+                else np.zeros((0, *frames.shape[1:]), dtype=np.uint8)
+            )
+            del frames
+
+        lengths = offsets[videos + 1] - offsets[videos]
+        self.offsets = np.concatenate([[0], np.cumsum(lengths)]).astype(np.int64)
+        self.lengths = lengths
+        self.person = video_persons[videos]
+        self.action = video_actions[videos]
+        self.scenario = video_scenarios[videos]
+        self.names = video_names[videos]
+
+        self.len_field_history = len_field_history
+        self.preprocesser = preprocesser
+        self.train_or_test = train_or_test
+        self.test_clip_length = test_clip_length
+        self.frame_skip = frame_skip
+        self.seed = seed
+        self.num_videos = len(videos)
+        self.num_channels = 1
+        self.height = self.frames.shape[1]
+        self.width = self.frames.shape[2]
+
+        num_frames = (
+            len_field_history + 1 if train_or_test == "train" else test_clip_length
+        )
+        self.num_frames = num_frames
+        span = frame_skip * (num_frames - 1) + 1
+        eligible = np.flatnonzero(lengths >= span)
+        if len(eligible) < self.num_videos:
+            logger.info(
+                f"Skipping {self.num_videos - len(eligible)} videos shorter than {span} frames"
+            )
+
+        if train_or_test == "train":
+            # Index of (video, start) pairs; windows never cross video boundaries.
+            counts = lengths[eligible] - span + 1
+            self.video_index = np.repeat(eligible, counts)
+            self.start_index = np.concatenate(
+                [np.arange(c) for c in counts] if len(counts) else [[]]
+            ).astype(np.int64)
+        elif num_test_clips is None:
+            self.video_index = eligible
+            self.start_index = np.zeros(len(eligible), dtype=np.int64)
+        else:
+            if not len(eligible):
+                raise ValueError(
+                    f"No videos with at least {span} frames to draw test clips from"
+                )
+            rng = np.random.default_rng(seed)
+            self.video_index = eligible[rng.integers(0, len(eligible), num_test_clips)]
+            self.start_index = rng.integers(0, lengths[self.video_index] - span + 1)
+
+        logger.info(
+            f"KTH {train_or_test}: {self.num_videos} videos, {len(self)} samples "
+            f"of {num_frames} frames (frame_skip={frame_skip})."
+        )
+
+    def __len__(self) -> int:
+        """Get the length of the dataset."""
+        return int(len(self.video_index))
+
+    def _get_frames(self, idx: int) -> torch.Tensor:
+        """
+        Get the frames of the sample at the given index.
+
+        Returns:
+            torch.Tensor: Frames in [0, 1]. [num_channels, height, width, num_frames]
+        """
+        start = self.offsets[self.video_index[idx]] + self.start_index[idx]
+        stop = start + self.frame_skip * (self.num_frames - 1) + 1
+        frames = self.frames[start : stop : self.frame_skip]
+        return frames.permute(1, 2, 0).unsqueeze(0).to(torch.float32) / 255.0
+
+    def _prepare_train_sample(self, sample: torch.Tensor) -> dict:
+        """
+        Prepare the train sample.
+
+        Returns:
+            dict: Sample.
+                'field_history': Field history. [B, C, H, W, L]
+                'base': Base. [B, C, H, W]
+                'target': Target. [B, C, H, W]
+        """
+
+        field_history = sample[:, :, :, :-1]
+        base = sample[:, :, :, -2]
+        target = sample[:, :, :, -1]
+
+        sample = {
+            "base": base,
+            "target": target,
+            "field_history": field_history,
+        }
+        if self.preprocesser is not None:
+            sample = self.preprocesser.transform(**sample)
+
+        return {
+            "field_history": sample["field_history"],
+            "base": sample["base"],
+            "target": sample["target"],
+        }
+
+    def __getitem__(self, idx: int) -> dict:
+        """Get the item at the given index."""
+
+        sample = self._get_frames(idx)
+
+        if self.train_or_test == "train":
+            return self._prepare_train_sample(sample)
+        else:
+            return {
+                "x": sample,
+            }
