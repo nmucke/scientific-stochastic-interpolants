@@ -1,0 +1,57 @@
+# @package _global_
+# KTH human actions, 64x64 grayscale (data/KTH/kth_64.npz from scripts/download_kth.py).
+# Frames are returned in [0, 1]; the preprocesser maps them to [-1, 1].
+# Train persons 1-18, val 19-20, test 21-25 (person ranges are inclusive).
+len_field_history: 10
+mask_path: null
+
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [0.5]
+    std: [0.5]
+  target:
+    mean: [0.5]
+    std: [0.5]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: true
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KTHDataset
+    paths: [data/KTH]
+    files: [kth_64.npz]
+    len_field_history: ${len_field_history}
+    persons: (1, 18)
+    actions: null  # null: all six actions
+    frame_skip: 1
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: false
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KTHDataset
+    paths: [data/KTH]
+    files: [kth_64.npz]
+    len_field_history: ${len_field_history}
+    persons: (19, 20)
+    actions: null
+    frame_skip: 1
+
+# Fixed seeded clips of 10 context + 30 forecast frames, as in the KTH protocol.
+test_data:
+  _target_: scisi.data.datasets.KTHDataset
+  paths: [data/KTH]
+  files: [kth_64.npz]
+  len_field_history: ${len_field_history}
+  persons: (21, 25)
+  actions: null
+  train_or_test: test
+  test_clip_length: 40
+  num_test_clips: 256
+  frame_skip: 1
+  seed: 0
