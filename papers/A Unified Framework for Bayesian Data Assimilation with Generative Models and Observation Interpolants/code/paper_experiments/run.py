@@ -39,6 +39,7 @@ _RUNNERS = {
     "analytical": ("cases.analytical.driver", "AnalyticalRunner"),
     "navier_stokes": ("cases.navier_stokes.driver", "NavierStokesRunner"),
     "urban": ("cases.urban.driver", "UrbanRunner"),
+    "lorenz96": ("cases.lorenz96.driver", "Lorenz96Runner"),
 }
 
 
