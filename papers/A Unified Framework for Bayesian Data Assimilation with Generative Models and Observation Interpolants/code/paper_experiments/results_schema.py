@@ -112,11 +112,30 @@ class Scenario(str, Enum):
     # back to each knob's `default`. Declared AFTER sparse_1p5 so `SCENARIOS` keeps
     # its density ordering (5% -> 1/64 -> 1/128).
     SPARSE_0p78 = "sparse 0.78125%"
+    # NONLINEAR observation operators (opt-in; not in any default lineup). Same
+    # sensor mask + noise draws as the linear parent (``seed_scenario`` in the
+    # scenario YAML); only h differs. NS: arctan / speed on the 5% mask. Urban:
+    # arctan on the velocity channels (u, v, w) at 1/64.
+    SPARSE_5_ARCTAN = "sparse 5% arctan"
+    SPARSE_5_SPEED = "sparse 5% speed"
+    SPARSE_1p5_ARCTAN_VEL = "sparse 1.5625% arctan (uvw)"
+    # Its LINEAR control: same uvw sensors + noise draws, h = L.
+    SPARSE_1p5_VEL = "sparse 1.5625% (uvw)"
     ANALYTICAL = "analytical"  # Case 1 has a single (joint) scenario.
 
 
-SCENARIOS: tuple[Scenario, ...] = tuple(Scenario)
-"""All canonical scenarios, in declaration order."""
+NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
+    Scenario.SPARSE_5_ARCTAN,
+    Scenario.SPARSE_5_SPEED,
+    Scenario.SPARSE_1p5_ARCTAN_VEL,
+    Scenario.SPARSE_1p5_VEL,
+)
+"""Opt-in nonlinear-observation study scenarios (and the urban linear control)."""
+
+SCENARIOS: tuple[Scenario, ...] = tuple(
+    s for s in Scenario if s not in NONLINEAR_STUDY_SCENARIOS
+)
+"""All canonical (linear-observation) scenarios, in declaration order."""
 
 
 # --------------------------------------------------------------------------- #
@@ -406,6 +425,7 @@ __all__ = [
     "METHODS",
     "Scenario",
     "SCENARIOS",
+    "NONLINEAR_STUDY_SCENARIOS",
     "Metric",
     "METRICS",
     "SEED_AGGREGATED",

@@ -48,7 +48,14 @@ from scisi.likelihood_models.guidance import (
     FIGGaussianLikelihood,
     GuidanceGaussianLikelihood,
 )
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import (
+    LinearObservationOperator,
+    ObservationOperator,
+    PointwiseObservationOperator,
+)
+from scisi.likelihood_models.physics_observation_operators import (
+    VelocityMagnitudeOperator,
+)
 from scisi.likelihood_models.sda import SDALikelihood
 from scisi.metrics.accuracy import ensemble_mean_rmse
 from scisi.metrics.calibration import crps, rank_histogram, spread_skill
@@ -368,19 +375,93 @@ def build_obs_operator(
     scenario_cfg: DictConfig,
     data_size: tuple[int, int, int],
     mask_seed: int,
-) -> LinearObservationOperator:
-    """Build the scenario's observation operator with a shared seeded mask.
+) -> ObservationOperator:
+    """Build the scenario's (possibly nonlinear) observation operator ``h``.
 
-    Sparse scenarios use a fixed seeded point mask (``mask_seed`` so the mask is
+    The linear sensor map ``L`` comes from ``scenario.obs_operator``: sparse
+    scenarios use a fixed seeded point mask (``mask_seed`` so the mask is
     identical across methods, spec Section 9); super-res scenarios use the
     deterministic block-average operator (no seed needed). ``data_size`` is the
-    model-grid ``(C, H, W)``.
+    model-grid ``(C, H, W)``. The ``_target_`` is ignored (it always describes
+    ``L``); a ``nonlinearity`` block wraps ``L`` (:func:`wrap_nonlinearity`).
     """
     obs_cfg = OmegaConf.to_container(scenario_cfg.obs_operator, resolve=True)
     obs_cfg.pop("_target_", None)
     if obs_cfg.get("type") == "random":
         obs_cfg["seed"] = int(mask_seed)
-    return LinearObservationOperator(data_size=tuple(data_size), **obs_cfg)
+    linear = LinearObservationOperator(data_size=tuple(data_size), **obs_cfg)
+    return wrap_nonlinearity(linear, scenario_cfg)
+
+
+def _pointwise_nonlinear(nl: Any) -> bool:
+    return nl.get("operator", "pointwise") == "pointwise" and (
+        nl.get("name", "identity") != "identity"
+    )
+
+
+def wrap_nonlinearity(
+    linear: LinearObservationOperator, scenario_cfg: Any
+) -> ObservationOperator:
+    """Wrap the linear sensor map ``L`` in the scenario's ``nonlinearity`` block.
+
+    Keys (see ``configs/scenario/sparse_5_arctan.yaml`` / ``sparse_5_speed.yaml``):
+
+    * ``operator: pointwise`` (default) -> ``h(x) = g(L x)``
+      (:class:`PointwiseObservationOperator`); ``name`` (one of
+      ``observation_operators.NONLINEARITIES``), ``strength`` (c), ``eps``.
+    * ``operator: velocity_magnitude`` -> sensor speed of the NS vorticity
+      (:class:`VelocityMagnitudeOperator`); ``norm_std``, ``norm_mean``,
+      ``velocity_scale``, ``eps``, ``domain_length``.
+
+    No block, or ``name: identity``, returns ``L`` itself (linear scenarios
+    untouched). The wrappers delegate the mask API (``obs_indices``,
+    ``obs_indices_on_grid``, ``save_mask``/``load_mask``, ``num_obs``) to ``L``.
+    """
+    nl = scenario_cfg.get("nonlinearity", None) if scenario_cfg is not None else None
+    if nl is None:
+        return linear
+    kind = nl.get("operator", "pointwise")
+    if kind == "pointwise":
+        if not _pointwise_nonlinear(nl):
+            return linear
+        return PointwiseObservationOperator(
+            inner=linear,
+            nonlinearity=str(nl.name),
+            strength=float(nl.get("strength", 1.0)),
+            eps=float(nl.get("eps", 1e-3)),
+        )
+    if kind == "velocity_magnitude":
+        keys = ("norm_std", "norm_mean", "velocity_scale", "eps", "domain_length")
+        kwargs = {k: float(nl[k]) for k in keys if nl.get(k) is not None}
+        return VelocityMagnitudeOperator(inner=linear, **kwargs)
+    raise ValueError(
+        f"Unknown nonlinearity operator {kind!r} (pointwise | velocity_magnitude)"
+    )
+
+
+def apply_nonlinearity_overrides(scenario_cfg: Any, strength: Any = None) -> Any:
+    """CLI override of the scenario's nonlinearity strength ``c``.
+
+    ``+nonlinearity_strength=c`` on the ``run.py`` command line replaces
+    ``scenario.nonlinearity.strength`` for every POINTWISE nonlinear scenario of
+    the run; linear scenarios are returned unchanged, and a non-pointwise
+    operator (``velocity_magnitude``, which has no ``c``) is left unchanged with
+    a warning. Used for the ``c in {1, 2, 4}`` sweep of ``sparse_5_arctan``: the
+    results file gets a ``__c<c>`` suffix (``ExperimentRunner.write``) and the
+    saved states a ``__c<c>`` tag (``common.obs_scenario.states_tag``).
+    """
+    nl = scenario_cfg.get("nonlinearity", None)
+    if strength is None or nl is None:
+        return scenario_cfg
+    if nl.get("operator", "pointwise") != "pointwise":
+        logger.warning(
+            "nonlinearity_strength=%s ignored for %r: operator %r has no strength.",
+            strength, scenario_cfg.get("name", "?"), nl.get("operator"),
+        )
+        return scenario_cfg
+    if _pointwise_nonlinear(nl):
+        scenario_cfg.nonlinearity.strength = float(strength)
+    return scenario_cfg
 
 
 # --------------------------------------------------------------------------- #
@@ -398,13 +479,13 @@ class TruthAndObs:
     pars_cond: Optional[torch.Tensor]
     true_trajectory: torch.Tensor  # [1, C, H, W, T] (normalised)
     observations: torch.Tensor  # [1, N_y, T]
-    obs_operator: LinearObservationOperator
+    obs_operator: ObservationOperator
 
 
 def prepare_truth_and_obs(
     prior: LoadedPrior,
     test_index: int,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     variance: float,
     num_physical_steps: int,
     obs_noise_seed: int,
@@ -601,7 +682,7 @@ def build_posterior(
     method_name: str,
     method_cfg: DictConfig,
     prior: LoadedPrior,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     variance: float,
     likelihood_ensemble_size: int,
     likelihood_mode: Optional[str] = None,
@@ -1311,7 +1392,7 @@ def build_reference_trajectory(
     prior: LoadedPrior,
     method_cfg: DictConfig,
     truth_obs: TruthAndObs,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     variance: float,
     likelihood_ensemble_size: int,
     reference_ensemble_size: int,
@@ -1363,7 +1444,7 @@ def build_reference_trajectory(
 
 def compute_metrics(
     result: AssimResult,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     len_field_history: int,
     kl_num_points: int = 16,
     reference_trajectory: Optional[torch.Tensor] = None,
@@ -1401,6 +1482,11 @@ def compute_metrics(
     unobs_mask_chw = ~obs_mask_chw
     has_obs = bool(obs_mask_chw.any())
     has_unobs = bool(unobs_mask_chw.any())
+    # A NON-LOCAL operator (the speed: every sensor sees the whole vorticity field
+    # through Biot-Savart) has no "observed" grid points, so the observed /
+    # unobserved CRPS split is meaningless: report totals only (split -> NaN).
+    if isinstance(obs_operator, VelocityMagnitudeOperator):
+        has_obs = has_unobs = False
 
     rmse_steps: list[float] = []
     espec_steps: list[float] = []
@@ -1511,6 +1597,8 @@ __all__ = [
     "load_prior",
     "attach_nfe_counter",
     "build_obs_operator",
+    "wrap_nonlinearity",
+    "apply_nonlinearity_overrides",
     "prepare_truth_and_obs",
     "build_posterior",
     "resolve_scheduled_hparam",

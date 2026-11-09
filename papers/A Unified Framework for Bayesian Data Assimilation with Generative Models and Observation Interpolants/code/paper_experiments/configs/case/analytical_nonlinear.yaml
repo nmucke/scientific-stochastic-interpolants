@@ -1,0 +1,75 @@
+# Case 1b -- analytical one-step Gaussian with a NONLINEAR pointwise observation.
+#   x1 = x0 + w, w ~ N(0, prior_variance I);  y = g(x1) + e, e ~ N(0, obs_variance I)
+# g elementwise (PointwiseObservationOperator, L = I). Exact posterior by 1-D
+# quadrature per coordinate (cases/analytical/nonlinear_reference.py); metrics in
+# cases/analytical/nonlinear_metrics.py. Same runner as the linear case
+# (name: analytical); the `nonlinear:` block switches AnalyticalRunner.run() to
+# cases/analytical/nonlinear_driver.py. E / M come from benchmark.yaml (64 / 50;
+# E is the nominal tidy-schema column -- every method draws n_eval_samples).
+#
+#   uv run python <PE>/run.py case=analytical_nonlinear \
+#       'results_file=${results_root}/analytical_nonlinear/results.csv'
+# Restrict with case.nonlinear.dims=[2] / seeds=[0], or use the CLI's --cells.
+name: analytical
+plot_dimension: 2
+
+nonlinear:
+  dims: [2, 10]
+  n_eval_samples: 4096      # samples per (method, seed); same as the linear case
+  knn_k: 5                  # k of the 1-D k-NN KL estimator
+  output_dir: ${experiment_root:}/results/analytical_nonlinear
+  methods: null             # null -> nonlinear_driver.NONLINEAR_METHODS (all 14)
+  cell_defaults:
+    prior_variance: 1.0
+    x0_spread: 1.0          # x0 = x0_offset + x0_spread * N(0, I)
+  # List-valued fields expand as a Cartesian product. R = 1 is too weak for the
+  # nonlinearity to matter, so the sweep uses R in {0.1^2, 0.5^2}. Every nonlinear
+  # family has an identity (linear-Gaussian) control at the SAME R and x0.
+  cells:
+    # Saturation (EnSF / FlowDAS test): x0 away from 0 so arctan is in its flat part.
+    - {nonlinearity: arctan, strength: [1.0, 4.0], obs_variance: [0.01, 0.25],
+       x0_offset: 2.0, x0_spread: 0.5}
+    # Expanding (cubic): z + c z^3.
+    - {nonlinearity: cubic, strength: 1.0, obs_variance: [0.01, 0.25], x0_offset: 0.0}
+    # Non-injective c z^2 -> bimodal posterior; x0 = 0.5 makes the mode weights unequal.
+    - {nonlinearity: square, strength: 1.0, obs_variance: [0.01, 0.25],
+       x0_offset: 0.5, x0_spread: 0.5}
+    # Identity controls, one per (R, x0) of the families above.
+    - {nonlinearity: identity, obs_variance: [0.01, 0.25], x0_offset: 2.0, x0_spread: 0.5}
+    - {nonlinearity: identity, obs_variance: [0.01, 0.25], x0_offset: 0.0}
+    - {nonlinearity: identity, obs_variance: [0.01, 0.25], x0_offset: 0.5, x0_spread: 0.5}
+
+  # R-dependent baseline hyperparameters (override configs/method/*.yaml for THIS
+  # case only; the linear case and NS/urban rows are untouched). Selected by
+  #   uv run python -m cases.analytical.nonlinear_tuning      (run from <PE>)
+  # on the IDENTITY cell (x0_offset 0, spread 1, d = 2) at the same R, M = 50,
+  # tuning seeds 100-101 (disjoint from the evaluation seeds 0-4): argmin of the
+  # standardised marginal W2 over a log-spaced grid. The exact posterior there is
+  # Gaussian, so the choice uses no information about the nonlinearity. Full table:
+  # results/analytical_nonlinear/tuning/tuning.csv. Not tuned: DPS (Guided
+  # diffusion; the library exposes no step knob), EnKF / PF (none), the Ours
+  # samplers (no step / guidance knob; jacobian_damping deliberately left at 1.0).
+  # Old (R = 1 / NS-copied) analytical values at M = 50 in brackets. Flat or
+  # erratic landscapes, read before trusting a row: SDA at R = 0.25 (w2 0.735-0.742
+  # over 1e-6..1e-3), D-Flow (0.53-0.64 / 1.02-1.04 over 0.1..10), FIG (collapsed,
+  # var_err ~1, almost everywhere; its R = 0.25 optimum 31600 came from an
+  # extended grid), SURGE(SDA) R = 0.01 (non-monotone, SMC noise).
+  tuned_hparams:
+    R0.01:
+      "FlowDAS":            {guidance_scale: 0.0316}   # [0.004]
+      "SURGE (FlowDAS)":    {guidance_scale: 0.00316}  # [0.004]
+      "SDA":                {gamma_sda: 0.1}           # [0.01]
+      "SURGE (SDA)":        {gamma_sda: 0.1}           # [0.01]
+      "Guided FM (FIG)":    {guidance_scale: 316.0}    # [1.0]
+      "Guided FM (OT-ODE)": {guidance_scale: 1.0}      # [1.0, hard-coded]
+      "SURGE":              {guidance_scale: 0.1}      # [1.0, hard-coded]
+      "D-Flow SGLD":        {step_size: 0.316}         # [0.005]
+    R0.25:
+      "FlowDAS":            {guidance_scale: 0.316}    # [0.004]
+      "SURGE (FlowDAS)":    {guidance_scale: 1.0e-5}   # [0.004]
+      "SDA":                {gamma_sda: 1.0e-6}        # [0.01] (flat)
+      "SURGE (SDA)":        {gamma_sda: 0.1}           # [0.01]
+      "Guided FM (FIG)":    {guidance_scale: 31600.0}  # [1.0]
+      "Guided FM (OT-ODE)": {guidance_scale: 1.0}      # [1.0, hard-coded]
+      "SURGE":              {guidance_scale: 0.1}      # [1.0, hard-coded]
+      "D-Flow SGLD":        {step_size: 0.316}         # [0.005]

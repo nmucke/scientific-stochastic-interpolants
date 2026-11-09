@@ -1,0 +1,28 @@
+# URBAN LINEAR CONTROL for sparse_1p5_arctan_vel: the SAME velocity-only sensors
+# (u, v, w = state channels [0, 1, 2]; thl not observed), observed LINEARLY
+# (h = L, `name: identity`). Shares the arctan scenario's mask seed AND
+# observation-noise draws (`seed_scenario` below), sensor budget (768 at 1/64 of
+# 3 * 128^2 dofs, fluid cells only) and the case's scalar noise R, so the only
+# difference between the two cells is g = arctan.
+#
+# URBAN only. Launch both together with
+#   +urban_scenarios='["sparse 1.5625% (uvw)", "sparse 1.5625% arctan (uvw)"]'
+name: sparse 1.5625% (uvw)
+type: sparse
+fraction: 0.015625
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: random
+  percent_obs: 0.015625
+  seed: 42  # overridden by common.seeding.mask_seed(case, seed_scenario)
+
+sensor_channels: [0, 1, 2]   # u, v, w (urban VELOCITY_CHANNELS)
+
+nonlinearity:
+  operator: pointwise
+  name: identity   # linear: h = L (the wrapper returns L itself)
+
+# Mask + noise seeds derived from the arctan scenario's label -> identical draws.
+seed_scenario: sparse 1.5625% arctan (uvw)
+hparam_scenario: sparse_1p5

@@ -38,6 +38,7 @@ from collections.abc import Iterable, Sequence
 from common.runner import ExperimentRunner, RunContext
 from common.paths import FIGURES_ROOT, RESULTS_ROOT, output_path
 from common.seeding import mask_seed, obs_seed
+from common.obs_scenario import scenario_key, states_npz_fields, states_tag
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
 from cases.navier_stokes import _ns_figures, _ns_pipeline
@@ -140,6 +141,12 @@ SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
     Scenario.SUPERRES_16: "superres_16",
     Scenario.SPARSE_5: "sparse_5",
     Scenario.SPARSE_1p5: "sparse_1p5",
+    # Nonlinear observation operators (opt-in via +ns_scenarios=[...]; NOT in the
+    # default lineup). Hyperparameter tables are looked up under the linear
+    # parent's key (`hparam_scenario` in the YAML), the mask + noise are the
+    # parent's (`seed_scenario`).
+    Scenario.SPARSE_5_ARCTAN: "sparse_5_arctan",
+    Scenario.SPARSE_5_SPEED: "sparse_5_speed",
 }
 
 # Accuracy + calibration metrics produced per (method, scenario).
@@ -200,7 +207,10 @@ class NavierStokesRunner(ExperimentRunner):
         root = Path(__file__).resolve().parents[2] / "configs" / "scenario"
         for scen in self.scenarios():
             name = SCENARIO_CONFIG_NAME[scen]
-            cfgs[scen.value] = OmegaConf.load(root / f"{name}.yaml")
+            cfgs[scen.value] = _ns_pipeline.apply_nonlinearity_overrides(
+                OmegaConf.load(root / f"{name}.yaml"),
+                strength=self._cfg_get("nonlinearity_strength", None),
+            )
         return cfgs
 
     def _method_cfgs(self) -> dict:
@@ -255,8 +265,12 @@ class NavierStokesRunner(ExperimentRunner):
             import torch
 
             slug = re.sub(r"[^A-Za-z0-9]+", "_", str(ctx.scenario.value)).strip("_")
+            # Same tag as the writer (_save_states): "" for linear, "__c<c>" for
+            # a strength-carrying nonlinear h (EnKF has no variant tag).
+            tag = states_tag(obs_operator)
             pattern = str(
-                output_path(ref_dir) / f"{self.case.value}__EnKF__{slug}__seed{ctx.seed}__*.npz"
+                output_path(ref_dir)
+                / f"{self.case.value}__EnKF__{slug}{tag}__seed{ctx.seed}__*.npz"
             )
             matches = sorted(glob.glob(pattern))
             ref = None
@@ -352,10 +366,12 @@ class NavierStokesRunner(ExperimentRunner):
             prior.test_dataset.width,
         )
 
+        # Mask + obs-noise seeds: the scenario label, or its `seed_scenario`.
+        seed_label = scenario_key(scen_cfg, "seed_scenario", ctx.scenario.value)
         obs_operator = _ns_pipeline.build_obs_operator(
             scenario_cfg=scen_cfg,
             data_size=data_size,
-            mask_seed=mask_seed(self.case.value, ctx.scenario.value),
+            mask_seed=mask_seed(self.case.value, seed_label),
         )
 
         truth_obs = _ns_pipeline.prepare_truth_and_obs(
@@ -365,7 +381,7 @@ class NavierStokesRunner(ExperimentRunner):
             variance=extra["variance"],
             num_physical_steps=extra["num_physical_steps"],
             obs_noise_seed=obs_seed(
-                self.case.value, ctx.scenario.value, extra["test_index"], ctx.seed
+                self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
         )
@@ -392,7 +408,10 @@ class NavierStokesRunner(ExperimentRunner):
             # Select the per-cell guidance scale (e.g. FlowDAS zeta) from the
             # method config's [case][scenario][M] table.
             case_key=self.case.value,
-            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario],
+            scenario_key=scenario_key(
+                scen_cfg, "hparam_scenario", SCENARIO_CONFIG_NAME[ctx.scenario],
+                warn=True,
+            ),
             num_steps=ctx.num_steps,
         )
 
@@ -443,7 +462,10 @@ class NavierStokesRunner(ExperimentRunner):
 
         # Optionally emit the figures (first wired method, main scenario, seed 0).
         if self._cfg_get("save_figures", False) and ctx.method == WIRED_METHODS[0] and ctx.seed == self.seeds[0]:
-            self._save_figures(ctx, result, obs_operator, prior.len_field_history)
+            self._save_figures(
+                ctx, result, obs_operator, prior.len_field_history,
+                observations=truth_obs.observations,
+            )
 
         # Optionally persist the raw posterior + truth states (traj1 only, driven
         # by the master script's save_states flag).
@@ -485,10 +507,12 @@ class NavierStokesRunner(ExperimentRunner):
             prior.test_dataset.height,
             prior.test_dataset.width,
         )
+        # Mask + obs-noise seeds: the scenario label, or its `seed_scenario`.
+        seed_label = scenario_key(scen_cfg, "seed_scenario", ctx.scenario.value)
         obs_operator = _ns_pipeline.build_obs_operator(
             scenario_cfg=scen_cfg,
             data_size=data_size,
-            mask_seed=mask_seed(self.case.value, ctx.scenario.value),
+            mask_seed=mask_seed(self.case.value, seed_label),
         )
         truth_obs = _ns_pipeline.prepare_truth_and_obs(
             prior=prior,
@@ -497,7 +521,7 @@ class NavierStokesRunner(ExperimentRunner):
             variance=extra["variance"],
             num_physical_steps=extra["num_physical_steps"],
             obs_noise_seed=obs_seed(
-                self.case.value, ctx.scenario.value, extra["test_index"], ctx.seed
+                self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
         )
@@ -677,10 +701,12 @@ class NavierStokesRunner(ExperimentRunner):
             prior.test_dataset.height,
             prior.test_dataset.width,
         )
+        # Mask + obs-noise seeds: the scenario label, or its `seed_scenario`.
+        seed_label = scenario_key(scen_cfg, "seed_scenario", scen.value)
         obs_operator = _ns_pipeline.build_obs_operator(
             scenario_cfg=scen_cfg,
             data_size=data_size,
-            mask_seed=mask_seed(self.case.value, scen.value),
+            mask_seed=mask_seed(self.case.value, seed_label),
         )
         truth_obs = _ns_pipeline.prepare_truth_and_obs(
             prior=prior,
@@ -689,7 +715,7 @@ class NavierStokesRunner(ExperimentRunner):
             variance=extra["variance"],
             num_physical_steps=extra["num_physical_steps"],
             obs_noise_seed=obs_seed(
-                self.case.value, scen.value, extra["test_index"], ctx.seed
+                self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
         )
@@ -961,7 +987,9 @@ class NavierStokesRunner(ExperimentRunner):
         # Variant (Ours jacfree/shared) goes in the filename so both modes' states
         # coexist for the same (method, scenario, seed) instead of clobbering.
         variant = self._variant(ctx.method)
-        var_tag = f"__{variant}" if variant else ""
+        # Nonlinear operator strength c (``__c<c>``; "" for linear) so a c-sweep of
+        # the same scenario does not clobber its states.
+        var_tag = (f"__{variant}" if variant else "") + states_tag(obs_operator)
         path = root / (
             f"{self.case.value}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}"
             f"{var_tag}__seed{ctx.seed}__E{ctx.ensemble_size}_M{ctx.num_steps}.npz"
@@ -985,6 +1013,13 @@ class NavierStokesRunner(ExperimentRunner):
             true_trajectory=_np(result.true_trajectory),            # [1, C, H, W, T]
             observations=_np(truth_obs.observations),               # [1, N_y, T]
             obs_indices=_np(getattr(obs_operator, "obs_indices", np.empty(0))),
+            **states_npz_fields(
+                obs_operator,
+                hparam_scenario=scenario_key(
+                    self._scenario_cfgs()[ctx.scenario.value], "hparam_scenario",
+                    SCENARIO_CONFIG_NAME[ctx.scenario],
+                ),
+            ),
             nfe_per_step=float(result.nfe_per_step),
             seconds_per_step=float(result.seconds_per_step),
             # Explicit per-run timing (s/step is the manuscript cost metric; the
@@ -1004,14 +1039,15 @@ class NavierStokesRunner(ExperimentRunner):
 
     # -- figures ----------------------------------------------------------- #
 
-    def _save_figures(self, ctx, result, obs_operator, len_field_history):  # type: ignore[no-untyped-def]
+    def _save_figures(self, ctx, result, obs_operator, len_field_history, observations=None):  # type: ignore[no-untyped-def]
         from pathlib import Path
 
         fig_root = output_path(
             str(self._cfg_get("figures_root", FIGURES_ROOT / "results"))
         )
         traj_path = _ns_figures.save_ns_trajectories(
-            result, obs_operator, fig_root / "ns_trajectories.png"
+            result, obs_operator, fig_root / "ns_trajectories.png",
+            observations=observations,
         )
         diag_path = _ns_figures.save_ns_diagnostics(
             result, len_field_history, fig_root / "ns_diagnostics.png"

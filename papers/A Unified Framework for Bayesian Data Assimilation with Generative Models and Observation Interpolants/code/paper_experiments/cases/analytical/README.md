@@ -100,3 +100,59 @@ python paper_experiments/make_tables.py \
     --results paper_experiments/results/analytical_results.csv \
     --out paper_experiments/generated                            # LaTeX table
 ```
+
+## Nonlinear observation variant (`analytical_nonlinear`)
+
+Same one-step system, observation `y = g(x1) + e`, `e ~ N(0, R I)`, `g` elementwise
+(`PointwiseObservationOperator`, `L = I`). The linear case above is untouched
+(bit-identical outputs); the `nonlinear:` block of
+`configs/case/analytical_nonlinear.yaml` switches `AnalyticalRunner.run()` to
+`nonlinear_driver.py`.
+
+- **Exact reference** (`nonlinear_reference.py`): the posterior factorises per
+  coordinate, so each marginal `N(x; x0_i, prior_var) N(y_i; g(x), R)` is integrated
+  by trapezoidal quadrature on an adaptive 200 001-point grid covering every region
+  within 60 nats of the mode (both branches for `square`; raises if the window
+  cannot be closed). Gives log-density, moments, entropy, inverse-CDF sampling and
+  the exact-quantile marginal W2. Validated in `tests/test_nonlinear_reference.py`:
+  identity `g` = Kalman posterior to the tested 1e-8; 1e6-particle SNIS agrees for
+  arctan/cubic/square within 5 s.e.
+- **Metrics** (`nonlinear_metrics.py`; definitions, floors and the KL caveat in its
+  docstring), all coordinate-wise against the exact target: `mean_err` (RMS mean
+  error in posterior-sd units), `var_err` (RMS relative variance error),
+  `marginal_w2` (W2 to the exact marginal / its sd, RMS over coordinates),
+  `mode_weight_err` (square/abs), `kl_marginal_knn` (per-coordinate 1-D k-NN
+  KL(p||q); biased LOW when q under-covers p -- read with the moment metrics), and
+  the diagnostic `unique_frac` (distinct-row fraction: particle degeneracy).
+  Identity cells also emit the linear table's legacy `kl_points` / `sliced_w2`.
+  Every (cell, seed) emits an `Exact reference` row (exact samples scored the same
+  way) = the metric floor. Each (cell, method, variant) has `n_failed` / `n_seeds`
+  rows: the metric means are over the surviving seeds only.
+- **Cells**: d in {2, 10} x R in {0.01, 0.25} x {arctan c in {1, 4} (x0 ~ 2 +
+  0.5 z), cubic (x0 ~ z), square (x0 ~ 0.5 + 0.5 z)}, plus an identity control at
+  every (R, x0) used: 28 cells x 5 seeds.
+- **Methods**: the 11 linear methods + Guided FM (OT-ODE), standalone SURGE, DPS
+  (`Guided diffusion`). The Ours rows run all three covariance modes
+  (`jacfree`, `shared`, `individual`). EnKF uses `h(member)` (stochastic EnKF,
+  statistical linearisation); the particle filter weights by `N(y; h(x), R)`.
+  M = 50, 4096 samples per draw (the tidy `E` column stays the nominal 64).
+- **Baseline hyperparameters** are R-dependent (`tuned_hparams` in the case YAML),
+  selected by `nonlinear_tuning.py` on the identity cell (d = 2, same R) with
+  tuning seeds 100-101 by minimum `marginal_w2`; table in
+  `results/analytical_nonlinear/tuning/`. DPS has no knob; the Ours samplers are
+  not tuned (`jacobian_damping` stays 1.0).
+- Every draw is wrapped in `try/except`; failures go to `failures_<tag>.json`.
+
+Run the whole sweep (from `<PE>`):
+
+```
+uv run python -m cases.analytical.nonlinear_driver \
+    --results-file results/analytical_nonlinear/results.csv
+# or: uv run python "<PE>/run.py" case=analytical_nonlinear \
+#         'results_file=${results_root}/analytical_nonlinear/results.csv'
+```
+
+Filtered runs: `--cells arctan_c1_ --dims 2 --seeds 0 1 2 --methods EnKF`.
+Outputs: `results/analytical_nonlinear/{raw,results,failures,summary}_<timestamp>.*`
+(+ `results.csv` / `summary.md` with `--results-file`). Re-tune with
+`uv run python -m cases.analytical.nonlinear_tuning [--stage probe]`.
