@@ -75,3 +75,25 @@ methods:
   # are the EnKF's validation optimum, not re-tuned for this cell.
   prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
   prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+
+  # Generative baselines (cases/lorenz96/_l96_baselines.py): each posterior is built
+  # by the Navier--Stokes build_posterior from configs/method/<file>.yaml with the
+  # knobs below substituted as scalars. Every knob must be set here (no fallback to
+  # a table's `default:`); unknown keys are refused, and so is any FLOWDAS_* /
+  # SDA_* / FIG_* / DFLOW_* environment override. Networks as on NS: FlowDAS on the
+  # SI prior, SDA on the FM-derived diffusion prior, D-Flow and FIG on the FM prior.
+  # num_steps is M (fixed at 50); for D-Flow it is the SGLD chain length, and the
+  # differentiable rollout keeps ode_steps midpoint steps.
+  # NOT TUNED: the values are the `analytical` case's M=50 entries of the method
+  # YAMLs (the other vector-state case), not chosen on Lorenz 96. Where they
+  # differ from the tables' `default:` that is noted. Tune on validation only.
+  # FlowDAS: zeta (table default: 1.0), J, per-member score cap, MC chunking (memory only)
+  flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
+  # SDA: gamma in Gamma = R + gamma (sigma/mu)^2 H H^T (= table default)
+  sda: {num_steps: 50, gamma_sda: 0.01}
+  # D-Flow SGLD: eta, s, lambda, omega, delta, ode_steps (= table defaults / fixed
+  # scalars). burn is stored but never read by DFlowPosterior (it returns the chain
+  # endpoint), so burn > num_steps has no effect.
+  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6, burn: 100}
+  # FIG: k (= table default), c (table default: 10.0), w (fixed 0)
+  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
