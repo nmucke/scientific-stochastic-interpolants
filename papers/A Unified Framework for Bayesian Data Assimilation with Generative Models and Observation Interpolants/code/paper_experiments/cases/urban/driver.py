@@ -50,7 +50,7 @@ from common.paths import FIGURES_ROOT, RESULTS_ROOT, output_path
 from common.seeding import mask_seed, obs_seed
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
-from cases.navier_stokes import _forecast_correction as fcw
+from common import forecast_correction as fcw
 from cases.urban import _urban_pipeline
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
 WIRED_METHODS: frozenset = frozenset(METHOD_CONFIG_NAME)
 
 
-class UrbanRunner(ExperimentRunner):
+class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
     """Runner for the urban airflow case."""
 
     case = Case.URBAN
@@ -374,9 +374,7 @@ class UrbanRunner(ExperimentRunner):
 
         # Forecast-residual correction (case.forecast_correction; default off ->
         # (None, None) and the run below is unchanged).
-        correction, fc_monitor = self._build_forecast_correction(
-            ctx, posterior, stepper, data_size, prior, fluid_mask
-        )
+        correction, fc_monitor = self._build_forecast_correction(ctx, data_size, fluid_mask)
 
         result = _urban_pipeline.run_assimilation(
             posterior=posterior,
@@ -469,74 +467,28 @@ class UrbanRunner(ExperimentRunner):
         }
 
     # -- forecast-residual correction (FORECAST_CORRECTION.md) ------------- #
+    # _fc_settings / _variant / _write_fc_diagnostics: fcw.ForecastCorrectionMixin.
 
-    def _fc_settings(self) -> dict:
-        """Merged ``case.forecast_correction`` block (defaults: off)."""
-        cached = self.__dict__.get("_fc_cache")
-        if cached is None:
-            try:
-                case_cfg = self.config.case
-            except Exception:
-                case_cfg = None
-            cached = fcw.fc_settings(case_cfg)
-            self.__dict__["_fc_cache"] = cached
-        return cached
-
-    def _build_forecast_correction(self, ctx, posterior, stepper, data_size, prior, fluid_mask):  # type: ignore[no-untyped-def]
+    def _build_forecast_correction(self, ctx, data_size, fluid_mask):  # type: ignore[no-untyped-def]
         """``(ForecastCorrection, monitor)`` for this cell, or ``(None, None)``.
 
-        Geometry: Gaspari-Cohn on the (default non-periodic) grid with the 4
-        channels at one site, zero taper in solid cells. ``post_update``: the
-        increment projection of ``_urban_constraints`` (no added horizontal
-        divergence, no increment inside buildings), in physical units via the
-        prior's per-channel std. Correction updates fire only at assimilated
-        steps; the free-running steps in between are untouched.
+        Gaspari-Cohn on the grid (``periodic`` per axis, default not), the four
+        channels of a site at distance 0; straight-line distances (not around
+        buildings). ``mask_obstacles: true`` keeps solid cells at their guided
+        values (zero taper there, and a ``post_update`` for the global gain).
+        Only assimilated steps are corrected.
         """
-        from cases.urban import _urban_constraints
-
         settings = self._fc_settings()
         if not fcw.applies_to(settings, ctx.method.value):
             return None, None
-        scen_key = SCENARIO_CONFIG_NAME[ctx.scenario]
-        loc = fcw.urban_localisation(settings, data_size, scen_key, fluid_mask.cpu())
-        std = prior.preprocesser.base_std.reshape(-1)
-        if std.numel() == 1:
-            std = std.expand(int(data_size[0]))
-        projection = _urban_constraints.from_settings(settings, fluid_mask.cpu(), std)
-        from cases.navier_stokes._ns_pipeline import _STEPPERS
-
+        periodic = tuple(bool(p) for p in settings.get("periodic") or (False, False))
+        mask = fluid_mask.to(bool).cpu() if settings.get("mask_obstacles", True) else None
         return fcw.build_correction(
-            settings,
-            posterior=posterior,
-            num_steps=ctx.num_steps,
-            stepper=stepper,
-            localisation=loc,
-            steppers=_STEPPERS,
-            constraint=projection,
-            step_diagnostics=projection.step_diagnostics if projection is not None else None,
-            prior=prior,
-        )
-
-    def _write_fc_diagnostics(self, ctx, correction, monitor) -> None:  # type: ignore[no-untyped-def]
-        """One JSON per cell: lag-1 innovation autocorrelation, Q share, divergence."""
-        settings = self._fc_settings()
-        root = output_path(
-            str(settings.get("diagnostics_root") or RESULTS_ROOT / "urban" / "forecast_correction")
-        )
-        fcw.write_cell_diagnostics(
-            root, self.case.value, ctx, self._variant(ctx.method, ctx.scenario),
-            settings, correction, monitor,
+            settings, case=self.case.value, ctx=ctx, state_shape=data_size,
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario], periodic=periodic, mask=mask,
         )
 
     # -- record emitters --------------------------------------------------- #
-
-    def _variant(self, method, scenario=None) -> str | None:  # type: ignore[no-untyped-def]
-        """Tidy ``variant`` tag with the forecast-correction suffix (if on)."""
-        base = self._base_variant(method)
-        scen_key = SCENARIO_CONFIG_NAME.get(scenario) if scenario is not None else None
-        return fcw.variant_with_correction(
-            base, self._fc_settings(), getattr(method, "value", str(method)), scen_key
-        )
 
     def _base_variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
         """Tidy ``variant`` tag: the Ours likelihood-covariance mode (jacfree /

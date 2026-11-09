@@ -92,32 +92,22 @@ Urban specifics:
   of 145 steps); the free-running steps call the prior directly.
 * **Localisation**: Gaspari-Cohn on the 128^2 grid, non-periodic by default
   (`periodic: [false, false]`; the slice edges are not continuous in the data),
-  the four channels at a site at distance 0, optional cross-variable taper
-  `channel_taper_offdiag` (1 = keep all cross-covariances). The taper is zero on
-  solid cells, so the gain never moves state inside buildings. Distances are
+  the four channels at a site at distance 0 (no cross-variable taper). With
+  `mask_obstacles: true` (default) the taper is zero on solid cells and a
+  `post_update` keeps their guided values (also for a global gain), so the update never moves state inside buildings. Distances are
   straight lines and do not go around buildings. Default radius 8 m, **untuned**:
   tune on validation rows (test rows 0 and 7 are scored by nothing; 6 is the
   tuning row, 8 the foreign initial condition).
-* **Constraint** (`post_update`, `_urban_constraints.IncrementProjection`). The
-  state is a horizontal slice of a 3D LES, so it is NOT horizontally
-  divergence-free (du/dx + dv/dy = -dw/dz; on sim_170 the RMS horizontal
-  divergence is about as large as the derivative terms). The projection
-  therefore acts on the INCREMENT x'' - x': in physical units it is replaced by
-  its orthogonal projection onto {zero in solid cells, zero discrete horizontal
-  divergence} (masked Poisson problem, batched CG). Then x_out has exactly the
-  guided sample's divergence and the obstacle cells keep the guided values;
-  w and thl are only masked. u varies along W and v along H (checked against
-  the walls in the data). Stencil `central` (default) or `forward`.
-  Switches: `project_divergence`, `mask_obstacles`, `u_axis`, `v_axis`,
-  `divergence_stencil`, `cg_tol`, `cg_max_iter`.
-* **Caveat.** "No added horizontal divergence" is stronger than the physics
-  requires: a physical increment can change du/dx + dv/dy together with dw/dz.
-  On random smooth test increments the projection removed 65-70% of the u, v
-  increment. Compare `project_divergence: true` and `false` on validation data.
-  The diagnostic `projection_change_rel` shows how much it removes.
-* **Diagnostics** (`diagnostics: true`), per corrected step: `div_rms_guided`, `div_rms_corrected_raw`,
-  `div_rms_out` (horizontal divergence of the states, 1/s, interior fluid cells),
-  `increment_div_rms_raw` / `_out`, `solid_increment_rms_raw` / `_out`,
-  `projection_change_rel`, `cg_iterations`, `cg_relative_residual`, and the Q share.
-* Example: `FC=measure TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh`, then
-  `FC=on FC_SEED=0 TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh`.
+* **No divergence projection.** The state is a horizontal slice of a 3D LES, so
+  it is not horizontally divergence-free (du/dx + dv/dy = -dw/dz); an earlier
+  increment projection onto zero added horizontal divergence was removed (it was
+  stronger than the physics requires and removed 65-70% of random u, v
+  increments). Only the obstacle mask is applied.
+* **Diagnostics**: the shared ones (lag-1 innovation autocorrelation,
+  `innovation_msq`, `q_share_state`, `cap_fraction`); no urban-specific per-step records.
+* Example (validation row 7): measure first, then correct:
+
+  ```bash
+  FC=on FC_OVERRIDES="gain_scale=0 forecast_seed=0" TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh
+  FC=on FC_OVERRIDES="forecast_seed=0 forecast_num_steps=10" TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh
+  ```

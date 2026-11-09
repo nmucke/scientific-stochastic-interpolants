@@ -347,6 +347,66 @@ def test_lag1_autocorrelation_limits():
     assert abs(driver.lag1_autocorrelation(white)) < 0.05
 
 
+def test_lag1_autocorrelation_pairs_only_adjacent_finite_steps():
+    # +1, -1 alternate, so every adjacent pair gives -1. Dropping the NaN row first
+    # would pair the steps either side of it (+1, +1 here) and give > -1.
+    z = torch.tensor([1.0, -1.0, 1.0, float("nan"), 1.0, -1.0, 1.0]).reshape(-1, 1)
+    assert driver.lag1_autocorrelation(z) == pytest.approx(-1.0)
+    # One non-finite site makes the whole step unusable.
+    z2 = z.repeat(1, 3)
+    z2[3] = torch.tensor([1.0, float("inf"), 1.0])
+    assert driver.lag1_autocorrelation(z2) == pytest.approx(-1.0)
+    # Not mean-removed: a constant bias counts as correlation.
+    biased = 3.0 + torch.randn(4000, 2, generator=torch.Generator().manual_seed(1)) * 0.1
+    assert driver.lag1_autocorrelation(biased) > 0.99
+    assert math.isnan(driver.lag1_autocorrelation(torch.tensor([[1.0], [float("nan")], [1.0]])))
+
+
+def test_normalised_innovations_refuse_several_noise_stages():
+    problem = Problem(num_steps=4, noise_stages=2)
+    members = torch.randn(8, problem.dim_state, dtype=torch.float64)
+    y = torch.zeros(problem.obs_indices.numel(), dtype=torch.float64)
+    with pytest.raises(ValueError, match="noise_stages=1"):
+        driver.normalised_innovations(problem, members, y)
+
+
+def test_tagged_cells_are_kept_apart_from_the_default_cell(tiny_case, tmp_path):
+    with pytest.raises(ValueError, match="needs --tag"):
+        driver.evaluate_cell("enkf", 0, tiny_case, overrides=["inflation=1.05"])
+    with pytest.raises(ValueError, match="takes no settings"):
+        driver.evaluate_cell("oracle", 0, tiny_case, overrides=["x=1"], tag="x")
+    for bad in ("a__b", "traj3", "a b", "_a"):
+        with pytest.raises(ValueError, match="Bad tag"):
+            driver.check_tag("enkf", bad, None)
+    records = driver.evaluate_cell(
+        "enkf", 0, tiny_case, overrides=["inflation=1.05"], tag="infl1.05"
+    )
+    assert {r.variant for r in records} == {"matched_infl1.05"}
+    assert driver.tagged_variant("forecast_correction", "fs5") == "forecast_correction_fs5"
+    assert driver.tagged_variant(None, "fs5") == "fs5"
+    assert driver.tagged_variant("matched", "") == "matched"
+    tagged = driver.cell_path("per_step", "enkf", 0, "infl1.05")
+    assert tagged.name == "lorenz96__enkf-infl1.05__traj0__.csv" and tagged.exists()
+    assert driver.cell_path("per_sequence", "enkf", 0, "infl1.05").with_suffix(".json").exists()
+    assert (tmp_path / "ensembles" / "enkf-infl1.05__seed0.pt").exists()
+    # The default cell's outputs are untouched.
+    assert not driver.cell_path("per_step", "enkf", 0).exists()
+    assert not (tmp_path / "ensembles" / "enkf__seed0.pt").exists()
+
+
+def test_tuning_csv_header_is_merged_not_misaligned(tmp_path):
+    path = tmp_path / "tune.csv"
+    assert driver.merge_tuning_header(path, ["a", "b"]) == ["a", "b"]
+    path.write_text("a,b\n1,2\n")
+    merged = driver.merge_tuning_header(path, ["a", "b", "c"])
+    assert merged == ["a", "b", "c"]
+    with open(path, newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows == [{"a": "1", "b": "2", "c": ""}]
+    # A narrower rerun keeps the wider stored header.
+    assert driver.merge_tuning_header(path, ["a", "b"]) == ["a", "b", "c"]
+
+
 def test_normalised_innovations_use_the_true_forecast_mean(problem):
     gen = torch.Generator().manual_seed(3)
     members = torch.randn(32, problem.dim_state, generator=gen, dtype=torch.float64)

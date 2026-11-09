@@ -1223,7 +1223,7 @@ def run_assimilation(
     metrics score the free-running steps too.
 
     ``forecast_correction`` (optional) is handed to ``sample_trajectory`` (a
-    ``ForecastCorrection``; see ``_forecast_correction.py``). ``None`` (default)
+    ``ForecastCorrection``; see ``common/forecast_correction.py``). ``None`` (default)
     leaves the call exactly as before. Its unguided forecasts go through the
     same drift network, so they are counted in ``nfe_per_step``.
 

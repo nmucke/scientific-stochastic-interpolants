@@ -55,6 +55,10 @@ methods:
   # dps_jacobian_free M=25), by lowest sliced W2: radius 4 of {2, 4, 8}, gain 0.5 of
   # {0.5, 0.75, 1.0}. gain 0.5 is the grid edge; DM-SDE inherits the FM values
   # untested. See GPU_HANDOFF.md section 13.
+  # WARNING: the _fc cells inherit the plain blocks above, which are still the
+  # untuned `inflated` M=50 defaults, NOT the dps_jacobian_free M=25 these gains were
+  # chosen at. The final grid as configured does not reproduce the validation table;
+  # set the plain sampler blocks first, then re-tune the correction.
   si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
   fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
   dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}

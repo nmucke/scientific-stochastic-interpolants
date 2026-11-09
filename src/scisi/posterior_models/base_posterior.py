@@ -24,8 +24,8 @@ class BasePosterior(nn.Module):
     #: ``sample`` permutes members (SMC resampling) set False.
     supports_forecast_correction: bool = True
     #: Optional forecast-residual correction applied at the end of every
-    #: ``sample`` call (``ForecastCorrection``, its config, or ``None``). ``None``
-    #: (default) or a disabled config: no effect, bit-for-bit. See
+    #: ``sample`` call (a ``ForecastCorrection`` or ``None``). ``None`` (default)
+    #: or a disabled correction: no effect, bit-for-bit. See
     #: ``scisi.posterior_models.forecast_correction``.
     forecast_correction = None
 
@@ -126,22 +126,17 @@ class BasePosterior(nn.Module):
         pass
 
     def _active_forecast_correction(self):
-        """The enabled ``ForecastCorrection`` on ``self``, or ``None``.
-
-        A config stored in ``self.forecast_correction`` is converted once to a
-        ``ForecastCorrection`` (kept on ``self``, so diagnostics accumulate), and
-        support is checked (SMC posteriors raise).
-        """
+        """The enabled ``ForecastCorrection`` on ``self`` (support checked), or ``None``."""
         value = self.forecast_correction
         if value is None:
             return None
         from scisi.posterior_models.forecast_correction import ForecastCorrection
 
         if not isinstance(value, ForecastCorrection):
-            value = ForecastCorrection.resolve(value)
-            if value is None:
-                return None
-            self.forecast_correction = value
+            raise TypeError(
+                "forecast_correction must be a ForecastCorrection or None, got "
+                f"{type(value).__name__}"
+            )
         if not value.enabled:
             return None
         value.check_supported(self)
@@ -393,21 +388,16 @@ class BasePosterior(nn.Module):
         ``sample`` (see ``self.forecast_correction``); this argument sets it for
         the duration of this call only (the previous value is restored after).
         ``None`` (default) keeps ``self.forecast_correction`` (itself ``None`` by
-        default); a disabled config is bit-for-bit unchanged. When enabled, every
+        default); a disabled ``ForecastCorrection`` is bit-for-bit unchanged. When enabled, every
         ASSIMILATED step is corrected inside ``sample`` and the corrected state
         enters both ``base`` and ``field_history``; free-running steps call the
         prior directly and are untouched. Diagnostics are reset at the start and
         tagged with the physical index; the correction object is kept as
         ``self.last_forecast_correction``.
         """
-        if forecast_correction is None:
-            return self._sample_trajectory_impl(
-                base, field_history, observations, ensemble_size, batch_size,
-                num_steps, num_physical_steps, field_cond, pars_cond, stepper,
-                step_callback, assimilate_every, assimilate_from,
-            )
-        previous = self.forecast_correction
-        self.forecast_correction = forecast_correction
+        swap = forecast_correction is not None
+        if swap:
+            previous, self.forecast_correction = self.forecast_correction, forecast_correction
         try:
             return self._sample_trajectory_impl(
                 base, field_history, observations, ensemble_size, batch_size,
@@ -415,7 +405,8 @@ class BasePosterior(nn.Module):
                 step_callback, assimilate_every, assimilate_from,
             )
         finally:
-            self.forecast_correction = previous
+            if swap:
+                self.forecast_correction = previous
 
     def _sample_trajectory_impl(
         self,

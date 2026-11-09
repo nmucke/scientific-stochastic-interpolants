@@ -1,81 +1,36 @@
 """Forecast-residual correction for sequential (multi-step) assimilation.
 
-Background and derivation: ``FORECAST_CORRECTION.md`` in the paper-experiments
-directory. In short, the per-member sampler draws ``x'_i ~ p(x^{k+1} | x^k_i, y)``
-and so drops the predictive weight ``p(y | x^k_i)``. The correction restores the
-missing across-member part of the forecast covariance with a Kalman-type step,
+Background: ``FORECAST_CORRECTION.md`` (paper-experiments directory). The per-member
+sampler draws ``x'_i ~ p(x^{k+1} | x^k_i, y)`` and drops the predictive weight
+``p(y | x^k_i)``. The correction restores the across-member forecast covariance:
 
     x''_i = x'_i + gain_scale * (K_ens - K_q) (y_i + e_i - H f_i),
 
-where
+``f_i`` an independent UNGUIDED forecast from ``x^k_i``, ``K_ens`` the (localised)
+gain of the sample covariance of the ``f_i`` in one group, ``K_q`` the gain of the
+transition noise ``Q_hat`` (what the sampler already applies), ``e_i ~ N(0, R)``.
+Do NOT use ``y - H x'_i`` as the innovation (note, section 2).
 
-* ``f_i`` is an independent UNGUIDED forecast from the same previous state
-  ``x^k_i`` (noise independent of ``x'_i``),
-* ``K_ens = P_f H' (H P_f H' + R)^-1`` is the (localised) ensemble gain, ``P_f``
-  the sample covariance of the ``f_i`` within one group of members,
-* ``K_q = Q_hat H' (H Q_hat H' + R)^-1`` is the gain the sampler already applies,
-  with ``Q_hat`` an estimate of the transition-noise covariance,
-* ``e_i ~ N(0, R)``.
+Use ``posterior.sample_trajectory(..., forecast_correction=corr)`` (that call only)
+or ``posterior.forecast_correction = corr`` (every ``sample`` call): the hook runs in
+``BasePosterior.sample`` after ``_post_sample``, before the new state is appended.
+:meth:`ForecastCorrection.correct` applies the update alone.
 
-Do NOT use ``y - H x'_i`` as the innovation: it under-corrects and gets the
-covariance wrong (see the note, section 2).
-
-Main entry points
------------------
-* :class:`ForecastCorrectionConfig` -- all settings, default ``enabled=False``.
-* :class:`ForecastCorrection` -- the correction. It runs inside
-  ``BasePosterior.sample``, right after ``_post_sample`` and before the new state
-  is appended to ``field_history`` (so the last slot is still each member's
-  previous state ``x^k_i``). Enable it either per call,
-  ``posterior.sample_trajectory(..., forecast_correction=corr)`` (set for that
-  call only), or persistently, ``posterior.forecast_correction = corr``, which
-  also covers callers that drive ``posterior.sample`` themselves -- including
-  single-step runs: when enabled, EVERY ``sample`` call is corrected. Free-running
-  steps of ``sample_trajectory`` call the prior directly and are never corrected.
-  ``ForecastCorrection.correct(x, f, y, ...)`` applies the update alone, for
-  callers with their own forecasts.
-
-Supported posteriors: ``StochasticInterpolantPosterior`` (SI-SDE, without
-``resample``), ``FlowMatchingPosterior`` (FM-ODE and FM-SDE / DM-SDE),
-``DiffusionPosterior`` and ``DFlowPosterior`` (its own ``sample`` calls the same
-hook; note its realised gain is not ``K_q``, calibrate ``gain_scale``). SURGE
-posteriors and SI with ``resample=True`` raise (see
-:meth:`ForecastCorrection.check_supported`).
-* Localisation: :class:`CoordinateLocalisation`, :func:`gaspari_cohn_kernel`,
-  :func:`periodic_1d_localisation`, :func:`periodic_2d_localisation`,
-  :func:`grid_localisation`.
-* Q_hat bank: :class:`ResidualBank`, :func:`build_residual_bank`.
-* :func:`draw_unguided_forecast` -- the unguided forecast used by the hook.
-
-Units
------
-Everything runs in the MODEL's internal (standardised) units: the states the
-posterior passes around, the observation rows handed to ``sample_trajectory`` and
-the observation-noise variance stored on the likelihood
-(``likelihood_model.original_variance``, already in model units in every case of
-this repository). ``H`` and ``R`` are read from the posterior's likelihood
-(``likelihood_model.obs_operator`` / ``original_variance``) unless overridden in
-the config, so they can change between runs without touching the correction.
-
-Cost
-----
-No ``d x d`` matrix is ever formed. Per group of ``E`` members the correction
-builds ``m x m`` innovation covariances (Cholesky) and applies ``d x m`` gains in
-row chunks of ``row_chunk`` state entries. Without localisation the gain is
-applied through the ``E`` anomalies (``O(E d + E m)`` memory). With localisation
-the ``d x m`` taper is built from coordinates chunk by chunk (and cached when it
-has at most ``cache_limit`` entries). For a 128^2 state and the 32^2 block-average
-operator (m = 1024) that is 16.8 M entries; one group costs about
-``E d m`` multiply-adds (~1e9 for E = 64), and the bank gain ``K_q`` is cached as
-one ``d x m`` matrix per ``(H, R)``.
+Model (standardised) units throughout; ``H``, ``R`` are the likelihood's
+``obs_operator`` / ``original_variance``. The update assumes a linear(ised) ``H``:
+observation coordinates are ``H c / H 1``, and bank/fixed ``Q_hat H'`` and the cap
+apply ``H`` to increments. The online ``Q_hat`` reuses ``f_i``, which also enters
+the innovation (an O(1/E) bias). No ``d x d`` matrix is formed; linear algebra is
+float64, on the CPU when the state is on MPS.
 """
 
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, Union
 
@@ -84,547 +39,269 @@ import torch
 from scisi.particle_filter.enkf import gaspari_cohn
 
 logger = logging.getLogger(__name__)
-
 Tensor = torch.Tensor
 
-#: Forecast modes understood by :func:`draw_unguided_forecast`.
-FORECAST_MODES = ("prior", "free_run", "ode")
-#: Sources for Q_hat.
-Q_SOURCES = ("online", "bank")
+Q_SOURCES = ("online", "bank", "fixed")
+DTYPE = torch.float64  # linear-algebra dtype
+ROW_CHUNK = 4096  # state rows per chunk when applying d x m gains
+TAPER_CACHE_LIMIT = 2**26  # cache the [d, m] taper up to this many entries
+H_CHUNK = 256  # states per call when applying H to a bank or unit vectors
+_CACHE_SIZE = 16  # entries per operator cache (H may change every cycle)
 
 
-# =========================================================================== #
-# Localisation
-# =========================================================================== #
+class _OperatorCache:
+    """Values keyed by an operator. Entries hold the operator and its ``obs_matrix``,
+    so a collected operator's ``id`` never gives a stale hit and reassigning
+    ``obs_matrix`` invalidates them."""
 
+    def __init__(self) -> None:
+        self._entries: dict = {}
 
-def chordal_distance(delta: Tensor, period: float) -> Tensor:
-    """Chordal distance on a circle of circumference ``period``.
-
-    ``(period / pi) * sin(pi |delta| / period)``: the Euclidean distance between
-    the two points embedded on the circle. It equals the arc length for small
-    gaps, and keeps Gaspari-Cohn positive definite on a 1D periodic lattice
-    (``scisi.particle_filter.enkf.periodic_taper`` uses the same distance).
-    """
-    return (period / math.pi) * torch.sin(math.pi * delta.abs() / period)
+    def get(self, operator: Any, key: Any, build: Callable[[], Any]) -> Any:
+        tag = (operator, getattr(operator, "obs_matrix", None))
+        hit = self._entries.get((id(operator), key))
+        if hit is not None and hit[0][0] is tag[0] and hit[0][1] is tag[1]:
+            return hit[1]
+        if len(self._entries) >= _CACHE_SIZE:
+            self._entries.pop(next(iter(self._entries)))
+        value = build()
+        self._entries[(id(operator), key)] = (tag, value)
+        return value
 
 
 def gaspari_cohn_kernel(
-    radius: Union[float, Sequence[float]],
-    periods: Optional[Sequence[Optional[float]]] = None,
-    combine: str = "euclidean",
+    radius: Union[float, Sequence[float]], periods: Optional[Sequence[Optional[float]]] = None
 ) -> Callable[[Tensor, Tensor], Tensor]:
-    """Gaspari-Cohn taper between two coordinate sets.
+    """Isotropic Gaspari-Cohn taper ``kernel(a [n, k], b [p, k]) -> [n, p]``.
 
-    Args:
-        radius: Half-width ``c`` of the taper (support ``2c``), in the units of
-            the coordinates. A sequence gives one radius per coordinate axis; then
-            each axis is divided by its own radius and the taper uses radius 1.
-        periods: Per-axis period (``None`` for a non-periodic axis). Periodic axes
-            use :func:`chordal_distance`.
-        combine: ``"euclidean"`` (default): isotropic taper of the Euclidean norm of
-            the per-axis distances. Positive semidefinite (PSD) is guaranteed when
-            the coordinates embed in at most 3 dimensions (non-periodic 1D/2D/3D, or
-            one periodic axis plus one non-periodic one); on a 2D periodic grid the
-            embedding is 4D and PSD is not guaranteed, though it holds numerically
-            on the grids and radii tested. ``"product"``: product of 1D tapers, one
-            per axis. Always PSD (Schur product of PSD matrices), but anisotropic.
-
-    Returns:
-        ``kernel(a, b)`` mapping ``a: [n, k]`` and ``b: [p, k]`` to ``[n, p]``.
+    ``radius``: half-width, scalar or per axis. Periodic axes (``periods[j]``) use the
+    chordal distance ``(p / pi) sin(pi |delta| / p)``, as ``enkf.periodic_taper``.
+    PSD is guaranteed in at most 3 embedding dimensions; on a 2D torus (4D) it held
+    numerically for the grids and radii tested.
     """
-    if combine not in ("euclidean", "product"):
-        raise ValueError(f"combine must be 'euclidean' or 'product', got {combine!r}")
 
     def kernel(a: Tensor, b: Tensor) -> Tensor:
-        k = a.shape[1]
-        radii = (
-            torch.as_tensor(radius, dtype=a.dtype, device=a.device).reshape(-1)
-            if not isinstance(radius, (int, float))
-            else torch.full((k,), float(radius), dtype=a.dtype, device=a.device)
-        )
-        if radii.numel() == 1:
-            radii = radii.expand(k)
-        pers = list(periods) if periods is not None else [None] * k
-        if len(pers) != k or radii.numel() != k:
-            raise ValueError("radius / periods must match the coordinate dimension")
-        out = None
-        sq = None
-        for j in range(k):
-            delta = a[:, j : j + 1] - b[None, :, j]
-            dist = (
-                chordal_distance(delta, float(pers[j]))
-                if pers[j] is not None
-                else delta.abs()
-            ) / radii[j]
-            if combine == "product":
-                taper_j = gaspari_cohn(dist, 1.0)
-                out = taper_j if out is None else out * taper_j
-            else:
-                sq = dist**2 if sq is None else sq + dist**2
-        if combine == "product":
-            return out
+        radii = torch.as_tensor(radius, dtype=a.dtype).reshape(-1).expand(a.shape[1])
+        sq = torch.zeros(a.shape[0], b.shape[0], dtype=a.dtype, device=a.device)
+        for j in range(a.shape[1]):
+            delta = (a[:, j : j + 1] - b[None, :, j]).abs()
+            p = None if periods is None else periods[j]
+            if p:
+                delta = (p / math.pi) * torch.sin(math.pi * delta / p)
+            sq += (delta / float(radii[j])) ** 2
         return gaspari_cohn(sq.sqrt(), 1.0)
 
     return kernel
 
 
-class Localisation:
-    """Interface: tapers between state and observation locations.
+class CoordinateLocalisation:
+    """Localisation from ``[d, k]`` state coordinates and a (PSD) kernel.
 
-    Subclasses return the ``[rows, m]`` block of the state-observation taper and
-    the ``[m, m]`` observation-observation taper for a given observation operator.
-    Both are Schur-multiplied onto ``P_f H'`` and ``H P_f H'`` (and the same for
-    ``Q_hat``). Pass ``None`` instead of a ``Localisation`` for no localisation.
+    ``state_shape`` is the per-member state shape (``prod = d``). ``mask``: optional
+    bool (state-shaped or ``[d]``); ``False`` entries get a zero taper row, so the
+    update never moves them. Observation coordinates are ``H c / H 1`` (the sensor
+    for selections, the block centre for block averages), so ``H`` stays free.
+    Tapers are cached per operator on the compute device and dtype.
     """
 
-    def state_obs(self, operator: Any, rows: slice, ref: Tensor) -> Tensor:
-        """Taper between state entries ``rows`` (flat index) and all observations."""
-        raise NotImplementedError
-
-    def obs_obs(self, operator: Any, ref: Tensor) -> Tensor:
-        """``[m, m]`` taper between observations."""
-        raise NotImplementedError
-
-
-def _operator_key(operator: Any) -> tuple:
-    return (
-        id(operator),
-        id(getattr(operator, "obs_matrix", None)),
-        id(getattr(operator, "obs_indices", None)),
-        int(getattr(operator, "num_obs", -1)),
-    )
-
-
-def _state_shape(operator: Any) -> tuple[int, int, int]:
-    try:
-        return int(operator.C), int(operator.H), int(operator.W)
-    except AttributeError as exc:  # pragma: no cover - defensive
-        raise ValueError(
-            "The observation operator must expose the state layout C, H, W "
-            "(LinearObservationOperator does)."
-        ) from exc
-
-
-class CoordinateLocalisation(Localisation):
-    """Localisation from coordinates and a kernel.
-
-    Args:
-        state_coords: ``[d, k]`` coordinates of every flat state entry, in the
-            ``C, H, W`` flattening of the model state.
-        kernel: ``kernel(a [n, k], b [p, k]) -> [n, p]`` taper, e.g.
-            :func:`gaspari_cohn_kernel`. Must be PSD for ``H P H'`` to stay PSD.
-        obs_coords: Optional fixed ``[m, k]`` observation coordinates. By default
-            they are derived from the operator as ``H c / H 1`` for each coordinate
-            field ``c``: exact for selection operators (the sensor location) and
-            the block centre for block-average operators. This keeps the
-            observation operator free at test time.
-        cache_limit: Cache the full ``[d, m]`` taper per operator when it has at
-            most this many entries; otherwise recompute row chunks on every call.
-    """
-
-    def __init__(
-        self,
-        state_coords: Tensor,
-        kernel: Callable[[Tensor, Tensor], Tensor],
-        obs_coords: Optional[Tensor] = None,
-        cache_limit: int = 2**24,
-    ) -> None:
-        self.state_coords = state_coords.detach().to(torch.float64)
+    def __init__(self, state_coords: Tensor, kernel: Callable, state_shape: Sequence[int],
+                 mask: Optional[Tensor] = None) -> None:
+        self.state_coords = state_coords.detach().to(DTYPE).cpu()
         self.kernel = kernel
-        self.fixed_obs_coords = (
-            None if obs_coords is None else obs_coords.detach().to(torch.float64)
-        )
-        self.cache_limit = int(cache_limit)
-        self._cache: dict = {}
-
-    # -- observation coordinates ------------------------------------------- #
+        self.state_shape = tuple(int(s) for s in state_shape)
+        if math.prod(self.state_shape) != self.state_coords.shape[0]:
+            raise ValueError("state_coords rows must match prod(state_shape)")
+        self.keep = None if mask is None else (
+            torch.as_tensor(mask).to(torch.bool).expand(self.state_shape).reshape(-1))
+        self._cache = _OperatorCache()
 
     def obs_coords(self, operator: Any) -> Tensor:
-        if self.fixed_obs_coords is not None:
-            return self.fixed_obs_coords
-        key = ("coords",) + _operator_key(operator)
-        if key not in self._cache:
-            C, H, W = _state_shape(operator)
-            d, k = self.state_coords.shape
-            if d != C * H * W:
-                raise ValueError(
-                    f"state_coords has {d} rows but the operator state has {C * H * W}"
-                )
-            # float32 (the states' dtype) so the operator's cached matrix keeps
-            # its dtype; grid coordinates are exact in float32.
-            fields = self.state_coords.T.reshape(k, C, H, W).to(torch.float32)
-            ones = torch.ones(1, C, H, W, dtype=torch.float32)
-            weight = operator(ones)  # [1, m]
+        def build() -> Tensor:
+            k = self.state_coords.shape[1]
+            weight = operator(torch.ones(1, *self.state_shape))
             if (weight.abs() < 1e-12).any():
-                raise ValueError(
-                    "Cannot place observations whose operator row sums to zero; "
-                    "pass obs_coords explicitly."
-                )
-            self._cache[key] = (
-                (operator(fields) / weight).T.contiguous().to(torch.float64).cpu()
-            )  # [m, k]
-        return self._cache[key]
+                raise ValueError("an observation row of H sums to zero; cannot place it")
+            fields = self.state_coords.T.reshape(k, *self.state_shape).float()
+            return (operator(fields) / weight).T.to(DTYPE).cpu()  # [m, k]
 
-    # -- tapers --------------------------------------------------------------- #
+        return self._cache.get(operator, "coords", build)
 
-    def _full_state_obs(self, operator: Any) -> Optional[Tensor]:
-        key = ("xy",) + _operator_key(operator)
-        if key in self._cache:
-            return self._cache[key]
-        d = self.state_coords.shape[0]
-        m = int(operator.num_obs)
-        if d * m > self.cache_limit:
-            return None
-        taper = self.kernel(self.state_coords, self.obs_coords(operator)).to(
-            torch.float32
-        )
-        self._cache[key] = taper
-        return taper
+    def _block(self, operator: Any, rows: slice, ref: Tensor) -> Tensor:
+        oc = self.obs_coords(operator).to(ref.device)
+        taper = self.kernel(self.state_coords[rows].to(ref.device), oc)
+        if self.keep is not None:
+            taper = taper * self.keep[rows, None].to(taper.device)
+        return taper.to(ref.dtype)
 
     def state_obs(self, operator: Any, rows: slice, ref: Tensor) -> Tensor:
-        full = self._full_state_obs(operator)
-        if full is not None:
-            block = full[rows]
-        else:
-            block = self.kernel(self.state_coords[rows], self.obs_coords(operator))
-        return block.to(device=ref.device, dtype=ref.dtype)
+        """``[rows, m]`` state-observation taper on ``ref``'s device and dtype."""
+        d, m = self.state_coords.shape[0], self.obs_coords(operator).shape[0]
+        if d * m > TAPER_CACHE_LIMIT:
+            return self._block(operator, rows, ref)
+        build = lambda: torch.cat([  # noqa: E731
+            self._block(operator, slice(s, min(s + ROW_CHUNK, d)), ref) for s in range(0, d, ROW_CHUNK)])
+        return self._cache.get(operator, ("xy", ref.device, ref.dtype), build)[rows]
 
     def obs_obs(self, operator: Any, ref: Tensor) -> Tensor:
-        key = ("yy",) + _operator_key(operator)
-        if key not in self._cache:
-            oc = self.obs_coords(operator)
-            self._cache[key] = self.kernel(oc, oc)
-        return self._cache[key].to(device=ref.device, dtype=ref.dtype)
+        """``[m, m]`` observation-observation taper."""
 
-    def full_taper(self) -> Tensor:
-        """``[d, d]`` state-state taper. For tests and small problems only."""
-        return self.kernel(self.state_coords, self.state_coords)
+        def build() -> Tensor:
+            oc = self.obs_coords(operator).to(ref.device)
+            return self.kernel(oc, oc).to(ref.dtype)
+
+        return self._cache.get(operator, ("yy", ref.device, ref.dtype), build)
 
 
-class _ChannelTaperKernel:
-    """Spatial kernel times a ``[C, C]`` cross-channel taper (first column = channel)."""
+def grid_localisation(shape: Sequence[int], radius: Union[float, Sequence[float]],
+                      periodic: Union[bool, Sequence[bool]] = False, channel_axis: bool = True,
+                      mask: Optional[Tensor] = None) -> CoordinateLocalisation:
+    """Gaspari-Cohn on a unit-spaced grid of the state shape, e.g. ``(C, H, W)``.
 
-    def __init__(self, spatial: Callable, channel_taper: Tensor) -> None:
-        self.spatial = spatial
-        self.channel_taper = channel_taper.to(torch.float64)
-
-    def __call__(self, a: Tensor, b: Tensor) -> Tensor:
-        ca = a[:, 0].round().long()
-        cb = b[:, 0].round().long()
-        if (b[:, 0] - cb).abs().max() > 1e-6:
-            raise ValueError(
-                "channel_taper needs every observation to read a single channel."
-            )
-        taper = self.channel_taper.to(device=a.device, dtype=a.dtype)
-        return self.spatial(a[:, 1:], b[:, 1:]) * taper[ca][:, cb]
-
-
-def grid_localisation(
-    shape: tuple[int, int, int],
-    radius: Union[float, Sequence[float]],
-    periodic: tuple[bool, bool] = (False, False),
-    spacing: tuple[float, float] = (1.0, 1.0),
-    channel_coords: Optional[Tensor] = None,
-    channel_taper: Optional[Tensor] = None,
-    combine: str = "euclidean",
-    cache_limit: int = 2**24,
-) -> CoordinateLocalisation:
-    """Gaspari-Cohn localisation on a ``(C, H, W)`` grid, several channels per site.
-
-    The spatial coordinates of entry ``(c, h, w)`` are ``(h * spacing[0],
-    w * spacing[1])``; with ``periodic[j]`` the axis wraps with period
-    ``n_j * spacing[j]``. Channels at the same site are at distance zero unless
-    ``channel_coords`` gives them extra coordinates.
-
-    Args:
-        shape: State layout ``(C, H, W)``.
-        radius: Gaspari-Cohn half-width in spacing units (scalar, or one per
-            coordinate axis: ``[*channel_coords axes, H, W]``).
-        periodic: Whether the H and W axes are periodic.
-        spacing: Grid spacing along H and W.
-        channel_coords: Optional ``[C, kc]`` extra coordinates per channel,
-            non-periodic, e.g. the height of each vertical level when a 3D field
-            is stacked into channels (``[C, 1]``). This is how a 3D grid is
-            described.
-        channel_taper: Optional ``[C, C]`` PSD cross-channel taper (e.g. to damp
-            cross-variable covariances: ones on the diagonal, a smaller value
-            off it). ``None`` keeps all cross-channel covariances.
-        combine: See :func:`gaspari_cohn_kernel`.
-        cache_limit: See :class:`CoordinateLocalisation`.
+    With ``channel_axis`` (default) ``shape[0]`` holds channels at one site (distance
+    0) and the other 1-3 axes are spatial (1D lattice: ``(1, 1, d)``); otherwise all
+    axes are spatial (a 3D ``(D, H, W)`` grid). ``radius`` in cells, scalar or per
+    spatial axis; ``periodic`` one flag or one per spatial axis; ``mask`` as in
+    :class:`CoordinateLocalisation` (state or spatial shape).
     """
-    C, H, W = shape
-    c, h, w = torch.meshgrid(
-        torch.arange(C, dtype=torch.float64),
-        torch.arange(H, dtype=torch.float64) * spacing[0],
-        torch.arange(W, dtype=torch.float64) * spacing[1],
-        indexing="ij",
-    )
-    columns = [c.reshape(-1)]
-    periods: list[Optional[float]] = []
-    if channel_coords is not None:
-        cc = torch.as_tensor(channel_coords, dtype=torch.float64).reshape(C, -1)
-        for j in range(cc.shape[1]):
-            columns.append(cc[:, j][c.reshape(-1).long()])
-            periods.append(None)
-    columns += [h.reshape(-1), w.reshape(-1)]
-    periods += [
-        H * spacing[0] if periodic[0] else None,
-        W * spacing[1] if periodic[1] else None,
-    ]
-    coords = torch.stack(columns, dim=1)
-    spatial = gaspari_cohn_kernel(radius, periods=periods, combine=combine)
-    if channel_taper is None:
-        kernel: Callable = lambda a, b: spatial(a[:, 1:], b[:, 1:])
-    else:
-        kernel = _ChannelTaperKernel(spatial, torch.as_tensor(channel_taper))
-    return CoordinateLocalisation(coords, kernel, cache_limit=cache_limit)
-
-
-def periodic_1d_localisation(
-    dim_state: int, radius: float, cache_limit: int = 2**24
-) -> CoordinateLocalisation:
-    """Gaspari-Cohn on a periodic 1D lattice stored as ``[1, 1, d]`` (Lorenz 96).
-
-    Uses the chordal distance, like ``enkf.periodic_taper``; the state-state taper
-    is identical to it.
-    """
-    return grid_localisation(
-        (1, 1, dim_state), radius, periodic=(False, True), cache_limit=cache_limit
-    )
-
-
-def periodic_2d_localisation(
-    shape: tuple[int, int, int],
-    radius: Union[float, Sequence[float]],
-    channel_taper: Optional[Tensor] = None,
-    combine: str = "euclidean",
-    cache_limit: int = 2**24,
-) -> CoordinateLocalisation:
-    """Gaspari-Cohn on a doubly periodic ``(C, H, W)`` grid (Navier-Stokes)."""
-    return grid_localisation(
-        shape,
-        radius,
-        periodic=(True, True),
-        channel_taper=channel_taper,
-        combine=combine,
-        cache_limit=cache_limit,
-    )
-
-
-# =========================================================================== #
-# Unguided forecasts
-# =========================================================================== #
+    shape = tuple(int(s) for s in shape)
+    grids = torch.meshgrid(*[torch.arange(n, dtype=DTYPE) for n in shape], indexing="ij")
+    axes, spatial = (grids[1:], shape[1:]) if channel_axis else (grids, shape)
+    flags = [bool(periodic)] * len(spatial) if isinstance(periodic, bool) else list(periodic)
+    if len(flags) != len(spatial):
+        raise ValueError(f"periodic needs {len(spatial)} flags, got {len(flags)}")
+    coords = torch.stack([g.reshape(-1) for g in axes], dim=1)
+    periods = [float(n) if p else None for n, p in zip(spatial, flags)]
+    return CoordinateLocalisation(coords, gaspari_cohn_kernel(radius, periods), shape, mask)
 
 
 def _zero_diffusion(t: Tensor) -> Tensor:
     return torch.zeros_like(t)
 
 
-def _is_fm_sde(posterior: Any) -> bool:
-    from scisi.posterior_models.flow_matching_posterior import FlowMatchingPosterior
+def _is_ode_stepper(stepper: Callable) -> bool:
+    fn = getattr(stepper, "func", stepper)  # functools.partial
+    return getattr(fn, "__module__", None) == "scisi.sampling.ode_solvers"
 
-    return isinstance(posterior, FlowMatchingPosterior) and not posterior.is_ode
+
+def _model_device(posterior: Any, fallback: torch.device) -> torch.device:
+    try:
+        return next(posterior.parameters()).device
+    except (StopIteration, AttributeError):
+        return fallback
 
 
-def _lifted_fm_drift(model: Any, diffusion_term: Callable) -> Callable:
+def _lifted_fm_drift(model: Any, g: Callable) -> Callable:
     """Prior reverse-SDE drift ``v + 1/2 g^2 s`` of ``FlowMatchingPosterior``."""
 
     def drift(x, t, field_history=None, field_cond=None, pars_cond=None):
         v = model.drift(x, t, field_history, field_cond, pars_cond)
         t_exp = t.reshape(t.shape[0], *([1] * (x.dim() - 1))) if t.dim() < x.dim() else t
-        s = model.interpolation.score_from_velocity(
-            x=x, v=v, t=t_exp, a0=torch.zeros_like(x)
-        )
-        return v + 0.5 * diffusion_term(t) ** 2 * s
+        s = model.interpolation.score_from_velocity(x=x, v=v, t=t_exp, a0=torch.zeros_like(x))
+        return v + 0.5 * g(t) ** 2 * s
 
     return drift
 
 
-def draw_unguided_forecast(
-    posterior: Any,
-    field_history: Tensor,
-    num_steps: int,
-    stepper: Callable,
-    mode: str = "prior",
-    field_cond: Optional[Tensor] = None,
-    pars_cond: Optional[Tensor] = None,
-    batch_size: int = 128,
-) -> Tensor:
-    """One unguided forecast per member from ``field_history`` (fresh noise).
+def draw_unguided_forecast(posterior: Any, field_history: Tensor, num_steps: int, stepper: Callable,
+                           field_cond: Optional[Tensor] = None, pars_cond: Optional[Tensor] = None,
+                           batch_size: int = 128) -> Tensor:
+    """One unguided forecast per member from ``field_history[..., -1]`` (fresh noise).
 
-    Args:
-        posterior: The ``BasePosterior`` whose prior ``posterior.model`` is used.
-        field_history: ``[N, C, H, W, L]``; ``[..., -1]`` is the current state.
-        num_steps: Pseudo-time steps of the forecast solve.
-        stepper: SDE/ODE step function (``euler_maruyama_step``, ``euler_step``...).
-        mode:
-            * ``"prior"`` (default): the unguided version of the posterior's own
-              SDE/ODE. SI: ``model.sample`` with the posterior's diffusion (exactly
-              the free-running branch of ``sample_trajectory``). FM-ODE: the FM ODE.
-              FM-SDE (DM-SDE): the lifted reverse SDE ``v + 1/2 g^2 s`` with the
-              posterior's ``g``, exactly the posterior's drift without guidance.
-              Other models (e.g. ``DenoiseDiffusionModel``): as ``"free_run"``.
-            * ``"free_run"``: exactly the call of the free-running branch of
-              ``sample_trajectory``. NOTE: for an FM-SDE posterior that call adds
-              ``g dW`` to the bare velocity ``v`` (no score lift), which inflates
-              the forecast spread; prefer ``"prior"`` there.
-            * ``"ode"``: FM models only: the deterministic FM ODE from a fresh
-              ``N(0, I)`` latent (an exact prior draw in the continuum, usually the
-              most accurate at few steps). Raises for SI (a point-mass source).
-        field_cond, pars_cond: Conditioning for this physical step.
-        batch_size: Only used to broadcast a single-member history.
-
-    Returns:
-        ``[N, C, H, W]`` forecasts, on ``field_history``'s device.
+    The posterior's own SDE/ODE without guidance. SI: ``model.sample`` with its
+    diffusion (the free-running branch of ``sample_trajectory``). FM-ODE: the FM ODE
+    from ``N(0, I)``. FM-SDE (DM-SDE): the lifted SDE ``v + 1/2 g^2 s`` (the
+    free-running branch drops the lift). D-Flow: its midpoint ODE ``_flow``
+    (``stepper`` ignored). Others: ``model.sample``. FM honours ``drift_time_shift``.
+    Members run in chunks of ``batch_size``; the FM source is drawn for all at once.
+    Raises ``ValueError`` for an ODE stepper with an SI or FM-SDE posterior (the
+    forecast would be deterministic or noiseless). Returns ``field_history``'s device.
     """
     from scisi.models.flow_matching_model import FlowMatchingModel
-    from scisi.models.follmer_stochastic_interpolant import (
-        FollmerStochasticInterpolant,
-    )
+    from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
+    from scisi.posterior_models.dflow_posterior import DFlowPosterior
 
-    if mode not in FORECAST_MODES:
-        raise ValueError(f"forecast mode must be one of {FORECAST_MODES}, got {mode!r}")
     model = posterior.model
-    base = None if posterior.gaussian_base else field_history[..., -1].clone()
-    common = dict(
-        field_history=field_history,
-        field_cond=field_cond,
-        pars_cond=pars_cond,
-        num_steps=int(num_steps),
-        batch_size=batch_size,
-        return_field_history=False,
-        stepper=stepper,
-    )
     is_fm = isinstance(model, FlowMatchingModel)
-    if mode == "prior" and not (is_fm or isinstance(model, FollmerStochasticInterpolant)):
-        mode = "free_run"
+    is_dflow = isinstance(posterior, DFlowPosterior)
+    is_sde = is_fm and not is_dflow and not getattr(posterior, "is_ode", True)
+    if _is_ode_stepper(stepper) and (is_sde or isinstance(model, FollmerStochasticInterpolant)):
+        raise ValueError(
+            f"forecast stepper {getattr(stepper, '__name__', stepper)!r} is an ODE stepper but "
+            f"the {type(posterior).__name__} forecast is an SDE; use an SDE stepper."
+        )
+    shift = float(getattr(posterior, "drift_time_shift", 0.0)) / int(num_steps)
+    if shift and not (is_fm and not is_dflow):
+        raise NotImplementedError("drift_time_shift is only supported for FM forecasts")
+
+    N = field_history.shape[0]
+    dev = _model_device(posterior, field_history.device)
+    fh = field_history.to(dev)
+    z = torch.randn_like(fh[..., -1]) if is_fm else None
+    cut = lambda t, sl: None if t is None else t[sl].to(dev)  # noqa: E731
+
+    def run(sl: slice) -> Tensor:
+        kw = dict(field_history=fh[sl], field_cond=cut(field_cond, sl), pars_cond=cut(pars_cond, sl))
+        if is_dflow:
+            return posterior._flow(z[sl], int(num_steps), **kw)
+        kw.update(num_steps=int(num_steps), batch_size=sl.stop - sl.start, stepper=stepper)
+        if is_fm:
+            g = posterior.diffusion_term if is_sde else _zero_diffusion
+            drift = _lifted_fm_drift(model, g) if is_sde else model.drift
+            if shift:
+                drift = (lambda f: lambda x, t, *a: f(x, t + shift, *a))(drift)
+                g = (lambda f: lambda t: f(t + shift))(g)
+            return model._sample(base=z[sl], diffusion_term=g, drift=drift, **kw)
+        if not getattr(posterior, "default_diffusion_term", True):
+            kw["diffusion_term"] = posterior.diffusion_term
+        base = None if posterior.gaussian_base else fh[sl][..., -1].clone()
+        return model.sample(base=base, return_field_history=False, **kw)
+
     with torch.no_grad():
-        if mode == "ode":
-            if not is_fm:
-                raise ValueError("forecast mode 'ode' needs a flow-matching prior.")
-            f = model.sample(base=None, diffusion_term=_zero_diffusion, **common)
-        elif mode == "free_run" or not is_fm:
-            extra = (
-                {}
-                if getattr(posterior, "default_diffusion_term", True)
-                else {"diffusion_term": posterior.diffusion_term}
-            )
-            f = model.sample(base=base, **common, **extra)
-        elif _is_fm_sde(posterior):
-            g = posterior.diffusion_term
-            common.pop("return_field_history")
-            f = model._sample(
-                base=None,
-                diffusion_term=g,
-                drift=_lifted_fm_drift(model, g),
-                **common,
-            )
-        else:  # FM-ODE (and D-Flow, whose flow is the FM ODE)
-            f = model.sample(base=None, diffusion_term=_zero_diffusion, **common)
-    return f.to(field_history.device)
+        chunks = [slice(s, min(s + int(batch_size), N)) for s in range(0, N, int(batch_size))]
+        return torch.cat([run(sl).to(field_history.device) for sl in chunks])
 
 
-# =========================================================================== #
-# Q_hat bank
-# =========================================================================== #
+def build_residual_bank(posterior: Any, field_history: Tensor, num_steps: int, stepper: Callable,
+                        pairs_per_state: int = 1, field_cond: Optional[Tensor] = None,
+                        pars_cond: Optional[Tensor] = None, batch_size: int = 128,
+                        seed: Optional[int] = None) -> Tensor:
+    """``[S * pairs, ...]`` residuals ``(f1 - f2) / sqrt(2)`` of forecast pairs (CPU).
 
-
-@dataclass
-class ResidualBank:
-    """Stored transition-noise residuals ``r = (f1 - f2) / sqrt(2)``.
-
-    ``f1``, ``f2`` are two unguided forecasts from the same state, so
-    ``Cov(r) = Q(x)``; the bank estimates the state-averaged ``Q``. Stored in
-    model units, ``[N_b, C, H, W]``. ``Q_hat H'`` and ``H Q_hat H'`` are formed at
-    use time from ``H`` applied to the bank, so ``H`` and ``R`` stay free.
-
-    ``meta`` records how the bank was built (forecast steps, stepper, mode); keep
-    it consistent with the forecasts used at test time (see
-    :class:`ForecastCorrectionConfig`).
+    ``Cov(r) = Q``, averaged over the states, for ``q_source="bank"``. Build it with
+    the test-time forecast steps/stepper. ``seed``: forked, seeded RNG (the global
+    stream is untouched). ``torch.save`` it; ``residual_bank`` accepts the path.
     """
-
-    residuals: Tensor
-    meta: dict = field(default_factory=dict)
-
-    def __len__(self) -> int:
-        return int(self.residuals.shape[0])
-
-    def save(self, path: Union[str, Path]) -> None:
-        torch.save({"residuals": self.residuals.cpu(), "meta": dict(self.meta)}, path)
-
-    @classmethod
-    def load(cls, path: Union[str, Path]) -> "ResidualBank":
-        data = torch.load(path, map_location="cpu")
-        return cls(residuals=data["residuals"], meta=dict(data.get("meta", {})))
+    devices = [field_history.device, _model_device(posterior, field_history.device)]
+    out = []
+    with _forked_rng(devices, seed) if seed is not None else contextlib.nullcontext():
+        for _ in range(int(pairs_per_state)):
+            args = (posterior, field_history, num_steps, stepper, field_cond, pars_cond, batch_size)
+            f1, f2 = draw_unguided_forecast(*args), draw_unguided_forecast(*args)
+            out.append(((f1 - f2) / math.sqrt(2.0)).float().cpu())
+    return torch.cat(out)
 
 
-def build_residual_bank(
-    posterior: Any,
-    field_history: Tensor,
-    num_steps: int,
-    stepper: Callable,
-    mode: str = "prior",
-    pairs_per_state: int = 1,
-    field_cond: Optional[Tensor] = None,
-    pars_cond: Optional[Tensor] = None,
-    batch_size: int = 128,
-    path: Optional[Union[str, Path]] = None,
-    seed: Optional[int] = None,
-) -> ResidualBank:
-    """Build (and optionally save) a residual bank from a set of states.
-
-    Args:
-        posterior: The posterior whose prior is used (the same object, or the same
-            kind, as at test time, so the forecast definition matches).
-        field_history: ``[S, C, H, W, L]`` histories of validation or training
-            states (model units).
-        num_steps: Forecast pseudo-time steps. Use the same value as
-            ``forecast_num_steps`` at test time so ``Q_hat`` matches the
-            forecasts that enter ``K_ens``.
-        stepper, mode: As :func:`draw_unguided_forecast`.
-        pairs_per_state: Forecast pairs per state; ``N_b = S * pairs_per_state``.
-        field_cond, pars_cond: Conditioning, one row per state (or ``None``).
-        batch_size: States per forecast call.
-        path: If given, save the bank there (``ResidualBank.load`` reads it).
-        seed: Optional ``torch.manual_seed`` before drawing.
-    """
-    if seed is not None:
-        torch.manual_seed(int(seed))
-    S = field_history.shape[0]
-    chunks = []
-    for _ in range(int(pairs_per_state)):
-        for start in range(0, S, batch_size):
-            sl = slice(start, min(start + batch_size, S))
-            kw = dict(
-                num_steps=num_steps,
-                stepper=stepper,
-                mode=mode,
-                field_cond=field_cond[sl] if field_cond is not None else None,
-                pars_cond=pars_cond[sl] if pars_cond is not None else None,
-                batch_size=batch_size,
-            )
-            f1 = draw_unguided_forecast(posterior, field_history[sl], **kw)
-            f2 = draw_unguided_forecast(posterior, field_history[sl], **kw)
-            chunks.append(((f1 - f2) / math.sqrt(2.0)).float().cpu())
-    bank = ResidualBank(
-        residuals=torch.cat(chunks, dim=0),
-        meta={
-            "num_steps": int(num_steps),
-            "stepper": getattr(stepper, "__name__", repr(stepper)),
-            "mode": mode,
-            "num_states": int(S),
-            "pairs_per_state": int(pairs_per_state),
-        },
-    )
-    if path is not None:
-        bank.save(path)
-    return bank
+@contextlib.contextmanager
+def _forked_rng(devices: Sequence[torch.device], seed: int):
+    """Fork the CPU generator and those of ``devices``; seed only those."""
+    cuda = sorted({torch.cuda.current_device() if d.index is None else d.index
+                   for d in devices if d.type == "cuda"})
+    mps = any(d.type == "mps" for d in devices)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(torch.random.fork_rng(devices=cuda, device_type="cuda"))
+        if mps:
+            stack.enter_context(torch.random.fork_rng(devices=[0], device_type="mps"))
+            torch.mps.manual_seed(seed)
+        torch.default_generator.manual_seed(seed)
+        for i in cuda:
+            torch.cuda.default_generators[i].manual_seed(seed)
+        yield
 
 
-# =========================================================================== #
-# Config, diagnostics, correction
-# =========================================================================== #
+def _mix_seed(seed: int, counter: int) -> int:
+    """A seed decorrelated from ``seed`` itself (which may be the driver's seed)."""
+    digest = hashlib.blake2b(f"forecast-correction:{int(seed)}:{int(counter)}".encode(), digest_size=8)
+    return int.from_bytes(digest.digest(), "little") >> 1
 
 
 @dataclass
@@ -632,93 +309,49 @@ class ForecastCorrectionConfig:
     """Settings of the forecast-residual correction.
 
     Attributes:
-        enabled: Master switch. ``False`` (default) leaves ``sample`` and
-            ``sample_trajectory`` bit-for-bit unchanged (no extra random draws).
-        forecast_num_steps: Pseudo-time steps of the unguided forecast ``f_i``
-            (and of the online residual forecast). ``None`` (default): the
-            sampler's ``num_steps``. Fewer steps make the correction cheap but
-            the ``f_i`` become approximate prior draws (see below).
-        forecast_stepper: Step function for the forecast; ``None``: the sampler's
-            ``stepper``.
-        forecast_mode: ``"prior"`` (default), ``"free_run"`` or ``"ode"``; see
-            :func:`draw_unguided_forecast`.
-        forecast_fn: Optional custom forecast,
-            ``forecast_fn(posterior, field_history, field_cond, pars_cond,
-            num_steps, stepper) -> [N, C, H, W]``. Overrides ``forecast_mode``.
-        localisation: A :class:`Localisation` or ``None`` (no localisation).
-        gain_scale: Multiplier on ``K_ens - K_q`` (default 1, the derivation). For
-            calibration against the sampler's realised gain (note, 4.4); tune on
-            validation data only.
-        q_source: ``"online"`` (default) or ``"bank"``. See "Choosing Q_hat".
-        residual_bank: The bank for ``q_source="bank"``: a :class:`ResidualBank`,
-            a ``[N_b, C, H, W]`` tensor, or a path saved by ``ResidualBank.save``.
-        group_size: Members per independent sequence when several sequences are
-            batched together, members of one sequence contiguous. Ensemble
-            statistics are computed per group only. ``None``: the whole batch is
-            one ensemble. Must divide the batch size.
-        update_cap: Optional cap on the update size in Mahalanobis units: with
-            ``u_i = H delta_i`` and ``S = H P_f H' + R`` (localised), the size is
-            ``sqrt(u_i' S^-1 u_i / m)`` (RMS per observation). Updates above the
-            cap are scaled down to it; the fraction capped is logged. ``None``:
-            no cap.
-        post_update: Optional ``post_update(x_corrected, x_guided) -> Tensor``
-            applied after the update, e.g. a divergence-free projection and the
-            obstacle mask for uDALES. Shapes ``[N, C, H, W]``, model units.
-        obs_operator: Override for ``H``. ``None``: the posterior's
-            ``likelihood_model.obs_operator`` (or ``posterior.obs_operator``).
-        obs_noise_var: Override for ``R`` in model units: scalar or ``[m]``
-            (diagonal). ``None``: ``likelihood_model.original_variance``.
-        forecast_seed: If set, the forecasts and the perturbations ``e_i`` are drawn
-            from a forked RNG seeded with ``forecast_seed + call index``, so the
-            global stream the guided sampler sees is the same as without the
-            correction. ``None`` (default): drawn from the global stream after the
-            guided sample (still independent of it).
-        compute_dtype: dtype of the linear algebra (default ``float64``); ``None``
-            keeps the state dtype.
-        row_chunk: State rows per chunk when applying ``d x m`` gains.
-        callback: Optional ``callback(record: dict)`` called with each step's
-            diagnostics record.
-
-    Choosing Q_hat. ``"online"`` draws a second unguided forecast per member each
-    step and uses ``r_i = (f_i - f'_i) / sqrt(2)``: no offline artefact, ``Q_hat``
-    follows the current state, and it is built from the SAME forecast solver as
-    ``K_ens``, so a few-step solver's errors enter both gains alike. It costs one
-    more prior run per member and step, and ``Q_hat`` then has rank ``E``
-    (localise). ``"bank"`` averages ``Q(x)`` over the bank's states: cheaper per
-    step and low-noise, but biased where ``Q`` is state-dependent, and it must be
-    built with the same forecast steps/stepper used at test time. Default:
-    ``"online"``, because it needs nothing beyond the trained prior and stays
-    consistent with whatever ``forecast_num_steps`` is chosen.
-
-    Few-step forecasts are approximate prior draws: their spread is not exactly
-    ``Q`` and their mean not exactly ``mu_i``. That biases ``K_ens`` (through
-    ``P_f``) and, for a bank built at a different step count, makes ``K_q``
-    inconsistent with it. Check the forecast spread against a full-step run on
-    validation data before trusting a very small ``forecast_num_steps``.
+        enabled: Master switch. ``False`` (default): bit-for-bit no-op.
+        forecast_num_steps: Steps of the forecasts ``f_i`` (and ``f'_i``). ``None``:
+            the sampler's ``num_steps`` (D-Flow: ``ode_steps``). Few steps give
+            approximate prior draws; check their spread against a full-step run.
+        forecast_stepper: Forecast step function; ``None``: the sampler's.
+        localisation: :class:`CoordinateLocalisation` (anything with ``state_obs`` /
+            ``obs_obs``) or ``None``.
+        gain_scale: Multiplier on ``K_ens - K_q`` (note, 4.4; tune on validation).
+        q_source: ``"online"`` (default): ``Q_hat`` from a second forecast,
+            ``(f_i - f'_i) / sqrt(2)`` (same solver as ``K_ens``, rank ``E``).
+            ``"bank"``: ``residual_bank`` (state-averaged; build it with the
+            test-time forecast steps). ``"fixed"``: known diagonal ``Q`` from
+            ``q_variance`` (closed-form ``K_q``, not localised).
+        residual_bank: ``[N_b, ...]`` residuals, or a ``torch.save`` path (tensor or
+            dict with ``"residuals"``). ``Q = B' B`` is the bank ``sqrt(N_b) B``.
+        q_variance: ``"fixed"``: scalar or per-state-entry variance.
+        group_size: Members per independent sequence (contiguous); statistics are
+            per group. The last group takes the remainder (one leftover member
+            joins the previous group). ``None``: one ensemble.
+        update_cap: Optional cap on ``sqrt(u' S^-1 u / m)``, ``u = H delta_i``,
+            ``S = H P_f H' + R`` (localised); larger updates are scaled down.
+        post_update: Optional ``post_update(x_corrected, x_guided) -> Tensor``.
+        forecast_seed: If set, forecasts and ``e_i`` come from forked generators
+            seeded with a hash of ``(forecast_seed, call counter)``: the sampler's
+            stream is unchanged. The counter is never reset (each call and
+            trajectory gets fresh noise); use a new ``ForecastCorrection`` to repeat
+            a run. ``None``: the global stream, after the guided sample.
     """
 
     enabled: bool = False
     forecast_num_steps: Optional[int] = None
     forecast_stepper: Optional[Callable] = None
-    forecast_mode: str = "prior"
-    forecast_fn: Optional[Callable] = None
-    localisation: Optional[Localisation] = None
+    localisation: Optional[CoordinateLocalisation] = None
     gain_scale: float = 1.0
     q_source: str = "online"
-    residual_bank: Optional[Union[ResidualBank, Tensor, str, Path]] = None
+    residual_bank: Optional[Union[Tensor, str, Path]] = None
+    q_variance: Optional[Union[float, Tensor]] = None
     group_size: Optional[int] = None
     update_cap: Optional[float] = None
     post_update: Optional[Callable[[Tensor, Tensor], Tensor]] = None
-    obs_operator: Optional[Any] = None
-    obs_noise_var: Optional[Union[float, Tensor]] = None
     forecast_seed: Optional[int] = None
-    compute_dtype: Optional[torch.dtype] = torch.float64
-    row_chunk: int = 4096
-    callback: Optional[Callable[[dict], None]] = None
 
     def __post_init__(self) -> None:
-        if self.forecast_mode not in FORECAST_MODES:
-            raise ValueError(f"forecast_mode must be one of {FORECAST_MODES}")
         if self.q_source not in Q_SOURCES:
             raise ValueError(f"q_source must be one of {Q_SOURCES}")
         if self.forecast_num_steps is not None and int(self.forecast_num_steps) < 1:
@@ -730,125 +363,100 @@ class ForecastCorrectionConfig:
 
 
 class CorrectionDiagnostics:
-    """Per-step diagnostics of a :class:`ForecastCorrection`.
+    """One record per corrected step; tensors are ``[G]`` (one entry per group).
 
-    ``records`` holds one dict per corrected step with keys (tensors are ``[G]``,
-    one entry per group):
-
-    * ``phys_idx``: physical step index (``None`` outside ``sample_trajectory``).
-    * ``innovation_mean``: mean over observations of ``ybar - H fbar``, the
-      forecast innovation of the group (model units).
-    * ``innovation_msq``: mean over observations of the normalised innovation
-      squared, ``(ybar - H fbar)_j^2 / S_jj`` with ``S = H P_f H' + R``.
-    * ``innovation_lag1``: mean over observations of the product of this step's
-      and the previous step's normalised innovations (``None`` at the first step
-      or when ``m`` changed).
-    * ``update_rms``: RMS of the update ``x'' - x'`` over members and entries.
-    * ``spread_rms``: RMS forecast spread (std of ``f``), for scale.
-    * ``cap_fraction``: fraction of members whose update was capped.
-
-    :meth:`lag1_autocorrelation` aggregates the lag-1 autocorrelation of the
-    normalised innovations, the usable symptom of the per-member bias (note,
-    section 1); it should be near zero for a well-calibrated filter.
+    ``phys_idx``; ``innovation_mean`` (mean of ``ybar - H fbar``); ``innovation_msq``
+    (mean of ``(ybar - H fbar)_j^2 / S_jj``); ``innovation_lag1`` (mean product with
+    the previous step's normalised innovation; ``None`` at the first step);
+    ``update_rms``; ``spread_rms`` (RMS forecast std); ``q_rms`` (RMS of
+    ``sqrt(diag Q_hat)``: the Q share of the forecast variance is
+    ``(q_rms / spread_rms)^2``); ``cap_fraction``.
     """
 
+    KEYS = ("innovation_mean", "innovation_msq", "update_rms", "spread_rms", "q_rms", "cap_fraction")
+
     def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
         self.records: list[dict] = []
         self._prev: Optional[Tensor] = None
 
-    def reset(self) -> None:
-        self.records = []
-        self._prev = None
-
-    def _lag(self, normalised: Tensor) -> Optional[Tensor]:
-        prev = self._prev
-        self._prev = normalised
-        if prev is None or prev.shape != normalised.shape:
-            return None
-        return (normalised * prev).mean(dim=1)
+    def add(self, phys_idx: Optional[int], normalised: Tensor, **stats: Tensor) -> None:
+        prev, self._prev = self._prev, normalised
+        lag = None if prev is None or prev.shape != normalised.shape else (normalised * prev).mean(1)
+        self.records.append({"phys_idx": phys_idx, "innovation_lag1": lag, **stats})
 
     def lag1_autocorrelation(self) -> Optional[Tensor]:
-        """``[G]`` lag-1 autocorrelation of the normalised innovations over steps."""
-        num = 0.0
-        a = 0.0
-        b = 0.0
-        prev_msq = None
-        any_lag = False
-        for rec in self.records:
-            if rec["innovation_lag1"] is not None and prev_msq is not None:
-                num = num + rec["innovation_lag1"]
-                a = a + rec["innovation_msq"]
-                b = b + prev_msq
-                any_lag = True
-            prev_msq = rec["innovation_msq"]
-        if not any_lag:
-            return None
-        return num / torch.sqrt(a * b).clamp_min(1e-30)
+        """``[G]`` lag-1 autocorrelation of the normalised innovations (near 0 when
+        calibrated; the symptom of the per-member bias, note section 1)."""
+        num = a = b = 0.0
+        found = False
+        for prev, rec in zip(self.records, self.records[1:]):
+            if rec["innovation_lag1"] is not None:
+                num, found = num + rec["innovation_lag1"], True
+                a, b = a + rec["innovation_msq"], b + prev["innovation_msq"]
+        return num / torch.sqrt(a * b).clamp_min(1e-30) if found else None
 
     def as_dict(self) -> dict:
-        """Stack the per-step records: ``{key: [steps, G]}`` (lag1 NaN-padded)."""
+        """``{key: [steps, G]}`` (lag1 NaN-padded) plus ``phys_idx``."""
         if not self.records:
             return {}
         out: dict = {"phys_idx": [r["phys_idx"] for r in self.records]}
-        for key in (
-            "innovation_mean",
-            "innovation_msq",
-            "update_rms",
-            "spread_rms",
-            "cap_fraction",
-        ):
-            out[key] = torch.stack([r[key] for r in self.records])
-        G = self.records[0]["innovation_mean"].shape[0]
+        out.update({key: torch.stack([r[key] for r in self.records]) for key in self.KEYS})
+        nan = torch.full_like(self.records[0]["innovation_mean"], float("nan"))
         out["innovation_lag1"] = torch.stack(
-            [
-                r["innovation_lag1"]
-                if r["innovation_lag1"] is not None
-                else torch.full((G,), float("nan"))
-                for r in self.records
-            ]
-        )
+            [nan if r["innovation_lag1"] is None else r["innovation_lag1"] for r in self.records])
         return out
 
 
 def _cholesky(S: Tensor) -> Tensor:
     L, info = torch.linalg.cholesky_ex(S)
-    if int(info) == 0:
-        return L
-    # Indefinite through a non-PSD taper or round-off: add a small jitter.
     jitter = 1e-10 * S.diagonal().abs().mean().clamp_min(1e-30)
     for _ in range(8):
-        L, info = torch.linalg.cholesky_ex(
-            S + jitter * torch.eye(S.shape[0], dtype=S.dtype, device=S.device)
-        )
         if int(info) == 0:
-            logger.warning("forecast correction: jittered an indefinite S by %g", jitter)
             return L
+        # Indefinite through a non-PSD taper or round-off: add a small jitter.
+        logger.warning("forecast correction: jittering an indefinite S by %g", float(jitter))
+        L, info = torch.linalg.cholesky_ex(S + jitter * torch.eye(S.shape[0], dtype=S.dtype, device=S.device))
         jitter = jitter * 100
+    if int(info) == 0:
+        return L
     raise RuntimeError("forecast correction: innovation covariance is not PD")
 
 
-class ForecastCorrection:
-    """The forecast-residual correction (see module docstring).
+def _obs_cov(HX: Tensor, scale: float, loc_yy: Optional[Tensor]) -> Tensor:
+    C = (HX.T @ HX) * scale
+    return C if loc_yy is None else C * loc_yy
 
-    Use with ``sample_trajectory``::
+
+def _unlocalised_gain(X: Tensor, HX: Tensor, Z: Tensor) -> Tensor:
+    """``(X' HX Z)'``, ``[E_out, d]``, through the smaller intermediate."""
+    if X.shape[0] * Z.shape[1] > HX.shape[1] * X.shape[1]:
+        return Z.T @ (HX.T @ X)  # m x d intermediate
+    return (HX @ Z).T @ X  # E_in x E_out intermediate
+
+
+def _group_slices(n: int, group_size: Optional[int]) -> list[slice]:
+    if n < 2:
+        raise ValueError("the correction needs at least 2 members")
+    if group_size is None or int(group_size) >= n:
+        return [slice(0, n)]
+    starts = list(range(0, n, int(group_size)))
+    if n - starts[-1] < 2:
+        starts.pop()
+    return [slice(a, b) for a, b in zip(starts, starts[1:] + [n])]
+
+
+class ForecastCorrection:
+    """The forecast-residual correction (module docstring)::
 
         corr = ForecastCorrection(ForecastCorrectionConfig(enabled=True, ...))
         traj = posterior.sample_trajectory(..., forecast_correction=corr)
         corr.diagnostics.lag1_autocorrelation()
 
-    or with ``sample`` (every call is corrected while it is set)::
-
-        posterior.forecast_correction = corr
-        x_new = posterior.sample(...)
-
-    or directly, for a caller that runs the guided sampler itself::
-
-        x_new = corr(x_guided, f, y, operator=H, obs_noise_var=r)
-
-    Attributes:
-        config: The :class:`ForecastCorrectionConfig`.
-        diagnostics: :class:`CorrectionDiagnostics` of the last run (reset at the
-            start of every ``sample_trajectory``).
+    ``diagnostics`` is reset by ``sample_trajectory``, which also sets
+    ``current_phys_idx`` (recorded per step).
     """
 
     def __init__(self, config: Optional[ForecastCorrectionConfig] = None, **kwargs: Any):
@@ -858,454 +466,227 @@ class ForecastCorrection:
             raise TypeError("pass either a config or keyword arguments, not both")
         self.config = config
         self.diagnostics = CorrectionDiagnostics()
-        self._kq_cache: dict = {}
-        self._bank: Optional[Tensor] = None
-        self._calls = 0
-        #: Physical step index recorded in the diagnostics; set by
-        #: ``sample_trajectory`` before each assimilation step (else ``None``).
         self.current_phys_idx: Optional[int] = None
+        self._calls = 0  # never reset: seeds the forecasts and guards the hook
+        self._cache = _OperatorCache()
+        self._bank: Optional[tuple[Any, Tensor]] = None
 
-    # ------------------------------------------------------------------ #
     @property
     def enabled(self) -> bool:
         return bool(self.config.enabled)
 
     def reset(self) -> None:
-        """Clear diagnostics and the lag state (not the K_q cache)."""
+        """Clear the diagnostics (not the gain caches or the call counter)."""
         self.diagnostics.reset()
-        self._calls = 0
         self.current_phys_idx = None
 
-    @staticmethod
-    def resolve(
-        value: Union["ForecastCorrection", ForecastCorrectionConfig, None],
-    ) -> Optional["ForecastCorrection"]:
-        """Turn a ``sample_trajectory`` argument into an enabled correction or None."""
-        if value is None:
-            return None
-        if isinstance(value, ForecastCorrectionConfig):
-            value = ForecastCorrection(value)
-        if not isinstance(value, ForecastCorrection):
-            raise TypeError(
-                "forecast_correction must be a ForecastCorrection, a "
-                f"ForecastCorrectionConfig or None, got {type(value).__name__}"
-            )
-        return value if value.enabled else None
-
     def check_supported(self, posterior: Any) -> None:
-        """Raise for posteriors the correction must not be combined with.
+        """Refuse SMC posteriors (SURGE, SI with ``resample=True``): their weights use
+        the observation already, so a correction would count it twice. A posterior
+        overriding ``_post_step`` / ``_post_sample`` without a ``resample`` flag is
+        refused too. ``DiffusionPosterior`` ignores its ``resample`` (no SMC)."""
+        from scisi.posterior_models.base_posterior import BasePosterior
 
-        SMC posteriors (SURGE; SI with ``resample=True``) reweight and resample
-        members by the observation likelihood inside ``sample``. They resample
-        ``base`` and ``field_history`` together, so the member <-> parent
-        pairing survives, but the correction would then apply a second update
-        for the same observation on top of weights that already (in SURGE's
-        case, exactly) target the filtering posterior: the observation would be
-        counted twice. Neither order (before or after their resampling) fixes
-        that, so they are refused rather than ordered.
-        """
-        if not getattr(posterior, "supports_forecast_correction", True):
+        cls, resample = type(posterior), getattr(posterior, "resample", None)
+        custom = isinstance(posterior, BasePosterior) and any(
+            getattr(cls, h) is not getattr(BasePosterior, h) for h in ("_post_step", "_post_sample"))
+        if not getattr(posterior, "supports_forecast_correction", True) or bool(resample) or (
+                custom and resample is None):
             raise NotImplementedError(
-                f"{type(posterior).__name__} does not support the forecast "
-                "correction: it is an SMC sampler whose weights already account "
-                "for the observation; correcting on top would count it twice."
-            )
-        if bool(getattr(posterior, "resample", False)):
-            raise NotImplementedError(
-                f"{type(posterior).__name__} with resample=True does not support "
-                "the forecast correction: its SMC reweighting already uses the "
-                "observation (it would be counted twice)."
-            )
-        if self.config.q_source == "bank" and self.config.residual_bank is None:
+                f"{cls.__name__} does not support the forecast correction: it is (or may be) "
+                "an SMC sampler whose weights already use the observation.")
+        cfg = self.config
+        if cfg.q_source == "bank" and cfg.residual_bank is None:
             raise ValueError("q_source='bank' needs config.residual_bank")
+        if cfg.q_source == "fixed" and cfg.q_variance is None:
+            raise ValueError("q_source='fixed' needs config.q_variance")
 
-    # ------------------------------------------------------------------ #
-    def observation_model(self, posterior: Any = None) -> tuple[Any, Any]:
-        """``(H, R)`` from the config, else from the posterior's likelihood."""
-        op = self.config.obs_operator
-        var = self.config.obs_noise_var
-        if posterior is not None:
-            lik = getattr(posterior, "likelihood_model", None)
-            if op is None:
-                op = getattr(lik, "obs_operator", None)
-                if op is None:
-                    op = getattr(posterior, "obs_operator", None)
-            if var is None:
-                var = getattr(lik, "original_variance", None)
-                if var is None:
-                    var = getattr(posterior, "original_variance", None)
-                if var is None:
-                    var = getattr(posterior, "variance", None)
-        if op is None or var is None:
-            raise ValueError(
-                "forecast correction: no observation operator / noise variance; "
-                "set config.obs_operator and config.obs_noise_var."
-            )
-        return op, var
+    def apply(self, posterior: Any, base: Tensor, prev_history: Tensor, observations: Tensor,
+              num_steps: int, stepper: Callable, field_cond: Optional[Tensor] = None,
+              pars_cond: Optional[Tensor] = None, batch_size: int = 128) -> Tensor:
+        """Correct the guided sample ``base`` (hook of ``BasePosterior.sample``).
 
-    def _bank_tensor(self) -> Tensor:
-        if self._bank is None:
-            bank = self.config.residual_bank
-            if isinstance(bank, (str, Path)):
-                bank = ResidualBank.load(bank)
-            if isinstance(bank, ResidualBank):
-                bank = bank.residuals
-            if not torch.is_tensor(bank):
-                raise ValueError("residual_bank must be a ResidualBank, tensor or path")
-            self._bank = bank
-        return self._bank
-
-    # ------------------------------------------------------------------ #
-    # Forecast
-    # ------------------------------------------------------------------ #
-
-    def draw_forecast(
-        self,
-        posterior: Any,
-        field_history: Tensor,
-        num_steps: int,
-        stepper: Callable,
-        field_cond: Optional[Tensor] = None,
-        pars_cond: Optional[Tensor] = None,
-        batch_size: int = 128,
-    ) -> Tensor:
-        """One unguided forecast per member with the configured steps/stepper."""
+        ``prev_history`` is the history before the new state is appended.
+        """
         cfg = self.config
-        steps = int(cfg.forecast_num_steps or num_steps)
+        lik = posterior.likelihood_model
+        operator, var = getattr(lik, "obs_operator", None), getattr(lik, "original_variance", None)
+        if operator is None or var is None:
+            raise ValueError("forecast correction needs likelihood_model.obs_operator / original_variance")
+        steps = int(cfg.forecast_num_steps or getattr(posterior, "ode_steps", num_steps))
         fstep = cfg.forecast_stepper or stepper
-        if cfg.forecast_fn is not None:
-            with torch.no_grad():
-                return cfg.forecast_fn(
-                    posterior, field_history, field_cond, pars_cond, steps, fstep
-                )
-        return draw_unguided_forecast(
-            posterior,
-            field_history,
-            num_steps=steps,
-            stepper=fstep,
-            mode=cfg.forecast_mode,
-            field_cond=field_cond,
-            pars_cond=pars_cond,
-            batch_size=batch_size,
-        )
-
-    @contextlib.contextmanager
-    def _rng_context(self, ref: Tensor):
-        """Forked, seeded RNG when ``forecast_seed`` is set; else a no-op."""
-        seed = self.config.forecast_seed
-        if seed is None:
-            yield
-            return
-        devices = [ref.device.index or 0] if ref.device.type == "cuda" else []
-        with torch.random.fork_rng(devices=devices):
-            torch.manual_seed(int(seed) + self._calls)
-            yield
-
-    # ------------------------------------------------------------------ #
-    # Hook used by BasePosterior.sample (and DFlowPosterior.sample)
-    # ------------------------------------------------------------------ #
-
-    def apply(
-        self,
-        posterior: Any,
-        base: Tensor,
-        prev_history: Tensor,
-        observations: Tensor,
-        num_steps: int,
-        stepper: Callable,
-        field_cond: Optional[Tensor] = None,
-        pars_cond: Optional[Tensor] = None,
-        batch_size: int = 128,
-    ) -> Tensor:
-        """Correct one guided sample; called by ``BasePosterior.sample``.
-
-        Args:
-            posterior: The posterior (its prior draws the forecasts; H and R come
-                from its likelihood unless overridden).
-            base: ``[N, C, H, W]`` guided samples ``x'_i``.
-            prev_history: ``[N, C, H, W, L]`` history whose last slot is the
-                previous state ``x^k_i`` of each member (the history BEFORE the
-                new state is appended).
-            observations, field_cond, pars_cond: This step's inputs to ``sample``.
-            num_steps, stepper: The sampler's; ``forecast_num_steps`` /
-                ``forecast_stepper`` override them for the forecast.
-
-        Returns:
-            ``[N, C, H, W]`` corrected samples, same dtype and device as ``base``.
-            The phys index recorded in the diagnostics is
-            ``self.current_phys_idx`` (set by ``sample_trajectory``).
-        """
-        operator, obs_var = self.observation_model(posterior)
-        with torch.no_grad(), self._rng_context(base):
-            fkw = dict(
-                num_steps=num_steps,
-                stepper=stepper,
-                field_cond=field_cond,
-                pars_cond=pars_cond,
-                batch_size=batch_size,
-            )
-            f = self.draw_forecast(posterior, prev_history, **fkw).to(base.device)
-            residuals = None
-            if self.config.q_source == "online":
-                f2 = self.draw_forecast(posterior, prev_history, **fkw)
-                residuals = (f - f2.to(base.device)) / math.sqrt(2.0)
-            new_base = self.correct(
-                base,
-                f,
-                observations,
-                operator=operator,
-                obs_noise_var=obs_var,
-                residuals=residuals,
-                phys_idx=self.current_phys_idx,
-            )
+        args = (posterior, prev_history, steps, fstep, field_cond, pars_cond, batch_size)
+        devices = [base.device, prev_history.device, _model_device(posterior, base.device)]
+        seed = cfg.forecast_seed
+        with torch.no_grad(), (
+            contextlib.nullcontext() if seed is None else _forked_rng(devices, _mix_seed(seed, self._calls))
+        ):
+            f = draw_unguided_forecast(*args)
+            f2 = draw_unguided_forecast(*args) if cfg.q_source == "online" else None
+            out = self.correct(base, f, observations, operator, var, f2=f2, phys_idx=self.current_phys_idx)
         self._calls += 1
-        return new_base.to(dtype=base.dtype, device=base.device)
-
-    def __call__(self, *args: Any, **kwargs: Any) -> Tensor:
-        """Alias of :meth:`correct`."""
-        return self.correct(*args, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # The update itself
-    # ------------------------------------------------------------------ #
-
-    def correct(
-        self,
-        x: Tensor,
-        f: Tensor,
-        y: Tensor,
-        operator: Any = None,
-        obs_noise_var: Any = None,
-        residuals: Optional[Tensor] = None,
-        perturbations: Optional[Tensor] = None,
-        phys_idx: Optional[int] = None,
-    ) -> Tensor:
-        """Apply ``x'' = x' + gain_scale (K_ens - K_q)(y + e - H f)``.
-
-        Args:
-            x: ``[N, C, H, W]`` guided samples ``x'_i`` (model units).
-            f: ``[N, C, H, W]`` independent unguided forecasts ``f_i``.
-            y: Observations, ``[1, m]`` (shared), ``[N, m]`` (one row per member)
-                or ``[G, m]`` (one row per group).
-            operator: ``H``; default from the config.
-            obs_noise_var: ``R`` (scalar or ``[m]``); default from the config.
-            residuals: ``[N, C, H, W]`` online residuals (``q_source="online"``).
-            perturbations: Optional ``[N, m]`` ``e_i`` to use instead of fresh
-                ``N(0, R)`` draws (for tests and paired comparisons).
-            phys_idx: Recorded in the diagnostics.
-
-        Returns:
-            ``[N, C, H, W]`` corrected samples (``post_update`` applied).
-        """
-        cfg = self.config
-        if operator is None or obs_noise_var is None:
-            op, var = self.observation_model(None)
-            operator = op if operator is None else operator
-            obs_noise_var = var if obs_noise_var is None else obs_noise_var
-        if cfg.q_source == "online" and residuals is None:
-            raise ValueError("q_source='online' needs residuals (a second forecast)")
-
-        N = x.shape[0]
-        E = int(cfg.group_size or N)
-        if N % E != 0:
-            raise ValueError(f"batch {N} is not a multiple of group_size {E}")
-        if E < 2:
-            raise ValueError("the correction needs at least 2 members per group")
-        G = N // E
-        dtype = cfg.compute_dtype or x.dtype
-        dev = x.device
-        shape = x.shape
-        d = x[0].numel()
-
-        sdtype = x.dtype
-
-        def apply_H(X: Tensor) -> Tensor:
-            # H in the state dtype, so the operator's cached matrix is not
-            # re-cast back and forth between the sampler and the correction.
-            Xs = X.to(device=dev, dtype=sdtype).reshape((-1,) + tuple(shape[1:]))
-            return operator(Xs).to(dtype)
-
-        F = f.reshape(N, -1).to(device=dev, dtype=dtype)
-        HF = apply_H(f)  # [N, m]
-        m = HF.shape[1]
-        R = torch.as_tensor(obs_noise_var, dtype=dtype, device=dev).reshape(-1)
-        if R.numel() == 1:
-            R = R.expand(m)
-        if R.numel() != m:
-            raise ValueError(f"obs_noise_var has {R.numel()} entries, expected {m}")
-
-        Y = y.to(device=dev, dtype=dtype).reshape(-1, m)
-        if Y.shape[0] == 1:
-            Y = Y.expand(N, m)
-        elif Y.shape[0] == G and G != N:
-            Y = Y.repeat_interleave(E, dim=0)
-        elif Y.shape[0] != N:
-            raise ValueError(
-                f"observations have {Y.shape[0]} rows; expected 1, {G} or {N}"
-            )
-
-        if perturbations is None:
-            e = torch.randn(N, m, dtype=dtype, device=dev) * R.sqrt()
-        else:
-            e = perturbations.to(device=dev, dtype=dtype).reshape(N, m)
-        V = Y + e - HF  # [N, m] perturbed innovations
-
-        loc = cfg.localisation
-        loc_yy = loc.obs_obs(operator, F) if loc is not None else None
-        Kq_bank = (
-            self._bank_gain(operator, R, loc, dtype, dev, shape, sdtype)
-            if cfg.q_source == "bank"
-            else None
-        )
-        if residuals is not None:
-            Rres = residuals.reshape(N, -1).to(device=dev, dtype=dtype)
-            HRres = apply_H(residuals)
-
-        delta = torch.empty(N, d, dtype=dtype, device=dev)
-        stats = {k: [] for k in ("mean", "msq", "norm", "upd", "spr", "cap")}
-        for g in range(G):
-            sl = slice(g * E, (g + 1) * E)
-            Fg, HFg, Vg = F[sl], HF[sl], V[sl]
-            A = Fg - Fg.mean(0, keepdim=True)
-            AH = HFg - HFg.mean(0, keepdim=True)
-            S_ens = self._obs_cov(AH, 1.0 / (E - 1), loc_yy) + torch.diag(R)
-            L_ens = _cholesky(S_ens)
-            Z_ens = torch.cholesky_solve(Vg.T, L_ens)  # [m, E]
-            dg = self._apply_gain(A, AH, 1.0 / (E - 1), Z_ens, loc, operator)
-            if Kq_bank is not None:
-                dg = dg - Vg @ Kq_bank.T
-            else:
-                Rg, HRg = Rres[sl], HRres[sl]
-                S_q = self._obs_cov(HRg, 1.0 / E, loc_yy) + torch.diag(R)
-                Z_q = torch.cholesky_solve(Vg.T, _cholesky(S_q))
-                dg = dg - self._apply_gain(Rg, HRg, 1.0 / E, Z_q, loc, operator)
-            dg = float(cfg.gain_scale) * dg
-
-            capped = torch.zeros(E, dtype=torch.bool, device=dev)
-            if cfg.update_cap is not None:
-                U = apply_H(dg)  # [E, m]
-                W = torch.linalg.solve_triangular(L_ens, U.T, upper=False)
-                size = (W**2).mean(0).sqrt()  # [E]
-                capped = size > float(cfg.update_cap)
-                scale = torch.where(
-                    capped, float(cfg.update_cap) / size.clamp_min(1e-30), 1.0
-                )
-                dg = dg * scale[:, None]
-            delta[sl] = dg
-
-            # Diagnostics: forecast innovation of the group.
-            innov = Y[sl].mean(0) - HFg.mean(0)
-            normalised = innov / S_ens.diagonal().sqrt()
-            stats["mean"].append(innov.mean())
-            stats["msq"].append((normalised**2).mean())
-            stats["norm"].append(normalised)
-            stats["upd"].append(dg.pow(2).mean().sqrt())
-            stats["spr"].append(A.pow(2).sum(0).div(E - 1).mean().sqrt())
-            stats["cap"].append(capped.to(dtype).mean())
-
-        x_new = (x.reshape(N, -1).to(dtype) + delta).to(x.dtype).reshape(shape)
-        if cfg.post_update is not None:
-            x_new = cfg.post_update(x_new, x)
-
-        record = {
-            "phys_idx": phys_idx,
-            "innovation_mean": torch.stack(stats["mean"]).cpu(),
-            "innovation_msq": torch.stack(stats["msq"]).cpu(),
-            "innovation_lag1": None,
-            "update_rms": torch.stack(stats["upd"]).cpu(),
-            "spread_rms": torch.stack(stats["spr"]).cpu(),
-            "cap_fraction": torch.stack(stats["cap"]).cpu(),
-        }
-        lag = self.diagnostics._lag(torch.stack(stats["norm"]).cpu())
-        record["innovation_lag1"] = lag
-        self.diagnostics.records.append(record)
-        if cfg.callback is not None:
-            cfg.callback(record)
-        return x_new
-
-    # ------------------------------------------------------------------ #
-    # Linear-algebra helpers (never d x d)
-    # ------------------------------------------------------------------ #
-
-    @staticmethod
-    def _obs_cov(HX: Tensor, scale: float, loc_yy: Optional[Tensor]) -> Tensor:
-        """``loc_yy o (HX' HX) * scale``: ``[m, m]``."""
-        C = (HX.T @ HX) * scale
-        return C * loc_yy if loc_yy is not None else C
-
-    def _apply_gain(
-        self,
-        X: Tensor,
-        HX: Tensor,
-        scale: float,
-        Z: Tensor,
-        loc: Optional[Localisation],
-        operator: Any,
-    ) -> Tensor:
-        """``[(loc_xy o (X' HX) * scale) Z]'``: ``[E_out, d]`` for ``Z: [m, E_out]``."""
-        if loc is None:
-            return ((HX @ Z).T @ X) * scale  # [E_out, d], no d x m matrix
-        d = X.shape[1]
-        out = torch.empty(Z.shape[1], d, dtype=X.dtype, device=X.device)
-        chunk = max(1, int(self.config.row_chunk))
-        for start in range(0, d, chunk):
-            rows = slice(start, min(start + chunk, d))
-            block = (X[:, rows].T @ HX) * scale  # [r, m]
-            block = block * loc.state_obs(operator, rows, block)
-            out[:, rows] = (block @ Z).T
         return out
 
-    def _bank_gain(
-        self,
-        operator: Any,
-        R: Tensor,
-        loc: Optional[Localisation],
-        dtype: torch.dtype,
-        dev: torch.device,
-        shape: torch.Size,
-        sdtype: torch.dtype = torch.float32,
-    ) -> Tensor:
-        """``K_q = (loc o Q_hat H') (loc o H Q_hat H' + R)^-1``, ``[d, m]``, cached."""
-        key = (
-            _operator_key(operator),
-            tuple(R.detach().cpu().tolist()) if R.numel() <= 4096 else hash(R.cpu().numpy().tobytes()),
-            id(loc),
-            dtype,
-            str(dev),
-        )
-        if key in self._kq_cache:
-            return self._kq_cache[key]
-        bank = self._bank_tensor()
-        Nb = bank.shape[0]
-        if tuple(bank.shape[1:]) != tuple(shape[1:]):
-            raise ValueError(
-                f"residual bank fields {tuple(bank.shape[1:])} do not match the "
-                f"state {tuple(shape[1:])}"
-            )
-        Rb = bank.reshape(Nb, -1).to(device=dev, dtype=dtype)
-        HRb = torch.cat(
-            [
-                operator(
-                    Rb[i : i + 256].to(sdtype).reshape((-1,) + tuple(shape[1:]))
-                ).to(dtype)
-                for i in range(0, Nb, 256)
-            ]
-        )
-        loc_yy = loc.obs_obs(operator, Rb) if loc is not None else None
-        S_q = self._obs_cov(HRb, 1.0 / Nb, loc_yy) + torch.diag(R)
-        L = _cholesky(S_q)
-        d = Rb.shape[1]
-        m = HRb.shape[1]
-        K = torch.empty(d, m, dtype=dtype, device=dev)
-        chunk = max(1, int(self.config.row_chunk))
-        for start in range(0, d, chunk):
-            rows = slice(start, min(start + chunk, d))
-            block = (Rb[:, rows].T @ HRb) / Nb  # [r, m] = Q_hat H' rows
-            if loc is not None:
-                block = block * loc.state_obs(operator, rows, block)
-            K[rows] = torch.cholesky_solve(block.T, L).T
-        self._kq_cache[key] = K
-        return K
+    def correct(self, x: Tensor, f: Tensor, y: Tensor, operator: Any, obs_noise_var: Union[float, Tensor],
+                f2: Optional[Tensor] = None, perturbations: Optional[Tensor] = None,
+                phys_idx: Optional[int] = None) -> Tensor:
+        """``x'' = x' + gain_scale (K_ens - K_q)(y + e - H f)``; returns ``x``'s shape,
+        dtype and device (``post_update`` applied).
+
+        ``x``, ``f``: ``[N, ...]`` guided samples and independent forecasts. ``y``:
+        ``[1, m]``, one row per group or one per member. ``obs_noise_var``: ``R``,
+        scalar or ``[m]``. ``f2``: second forecast (``q_source="online"``).
+        ``perturbations``: optional ``[N, m]`` ``e_i`` instead of ``N(0, R)`` draws.
+        """
+        cfg = self.config
+        online = cfg.q_source == "online"
+        if online and f2 is None:
+            raise ValueError("q_source='online' needs f2 (a second forecast)")
+        N, shape, sdev, sdtype = x.shape[0], x.shape, x.device, x.dtype
+        dev = torch.device("cpu") if sdev.type == "mps" else sdev  # MPS: no float64 / cholesky_solve
+        d = x[0].numel()
+
+        def flat(t: Tensor) -> Tensor:
+            return t.reshape(t.shape[0], -1).to(dev).to(DTYPE)  # device first: MPS has no float64
+
+        def apply_H(t: Tensor) -> Tensor:  # on the state's device/dtype (the operator's cache stays put)
+            return flat(operator(t.reshape(-1, *shape[1:]).to(sdtype).to(sdev)))
+
+        F, HF = flat(f), apply_H(f)
+        m = HF.shape[1]
+        R = torch.as_tensor(obs_noise_var, dtype=DTYPE).reshape(-1).to(dev)
+        if R.numel() not in (1, m):
+            raise ValueError(f"obs_noise_var has {R.numel()} entries, expected 1 or {m}")
+        R = R.expand(m)
+        slices = _group_slices(N, cfg.group_size)
+        Y = flat(y.reshape(-1, m))
+        if Y.shape[0] == 1:
+            Y = Y.expand(N, m)
+        elif Y.shape[0] == len(slices) and Y.shape[0] != N:
+            Y = Y.repeat_interleave(torch.tensor([s.stop - s.start for s in slices], device=dev), 0)
+        elif Y.shape[0] != N:
+            raise ValueError(f"observations have {Y.shape[0]} rows; expected 1, {len(slices)} or {N}")
+        e = flat(perturbations) if perturbations is not None else (
+            torch.randn(N, m, dtype=DTYPE, device=dev) * R.sqrt())
+        V = Y + e - HF  # perturbed forecast innovations
+
+        if online:  # H applied to f2 itself (exact for nonlinear H too)
+            Rr, HRr = (F - flat(f2)) / math.sqrt(2.0), (HF - apply_H(f2)) / math.sqrt(2.0)
+        loc = cfg.localisation
+        loc_yy = None if loc is None else loc.obs_obs(operator, F)
+        Kq, q_rms = (None, None) if online else self._fixed_gain(operator, R, loc_yy, shape, apply_H, F)
+
+        groups = []  # (slice, L_ens, S_ens, [(X, HX, scale, Z)])
+        for sl in slices:
+            E = sl.stop - sl.start
+            A, AH = F[sl] - F[sl].mean(0), HF[sl] - HF[sl].mean(0)
+            S = _obs_cov(AH, 1.0 / (E - 1), loc_yy) + torch.diag(R)
+            L = _cholesky(S)
+            terms = [(A, AH, 1.0 / (E - 1), torch.cholesky_solve(V[sl].T, L))]
+            if online:
+                Sq = _obs_cov(HRr[sl], 1.0 / E, loc_yy) + torch.diag(R)
+                terms.append((Rr[sl], HRr[sl], -1.0 / E, torch.cholesky_solve(V[sl].T, _cholesky(Sq))))
+            groups.append((sl, L, S, terms))
+
+        delta = torch.zeros(N, d, dtype=DTYPE, device=dev)
+        if loc is None:
+            for sl, _, _, terms in groups:
+                for X, HX, scale, Z in terms:
+                    delta[sl] += _unlocalised_gain(X, HX, Z) * scale
+        else:
+            for start in range(0, d, ROW_CHUNK):
+                rows = slice(start, min(start + ROW_CHUNK, d))
+                taper = loc.state_obs(operator, rows, F)  # one block for all groups and gains
+                for sl, _, _, terms in groups:
+                    for X, HX, scale, Z in terms:
+                        delta[sl, rows] += (((X[:, rows].T @ HX) * (scale * taper)) @ Z).T
+        if Kq is not None:
+            delta -= V @ Kq.T
+        delta *= float(cfg.gain_scale)
+
+        norm, stats = [], {k: [] for k in CorrectionDiagnostics.KEYS}
+        for sl, L, S, terms in groups:
+            E = sl.stop - sl.start
+            capped = torch.zeros(E, dtype=DTYPE, device=dev)
+            if cfg.update_cap is not None:
+                cap = float(cfg.update_cap)
+                W = torch.linalg.solve_triangular(L, apply_H(delta[sl]).T, upper=False)
+                size = W.pow(2).mean(0).sqrt()
+                capped = (size > cap).to(DTYPE)
+                delta[sl] *= torch.where(capped > 0, cap / size.clamp_min(1e-30), 1.0)[:, None]
+            innov = Y[sl].mean(0) - HF[sl].mean(0)
+            norm.append(innov / S.diagonal().sqrt())
+            values = (innov.mean(), norm[-1].pow(2).mean(), delta[sl].pow(2).mean().sqrt(),
+                      terms[0][0].pow(2).sum(0).div(E - 1).mean().sqrt(),
+                      terms[1][0].pow(2).sum(0).div(E).mean().sqrt() if online else q_rms, capped.mean())
+            for key, value in zip(CorrectionDiagnostics.KEYS, values):
+                stats[key].append(value)
+
+        x_new = (flat(x) + delta).to(sdtype).to(sdev).reshape(shape)
+        if cfg.post_update is not None:
+            x_new = cfg.post_update(x_new, x)
+        stats = {k: torch.stack(v).cpu() for k, v in stats.items()}
+        self.diagnostics.add(phys_idx, torch.stack(norm).cpu(), **stats)
+        return x_new
+
+    def _bank_tensor(self) -> Tensor:
+        src = self.config.residual_bank
+        if self._bank is None or self._bank[0] is not src:
+            bank = torch.load(src, map_location="cpu") if isinstance(src, (str, Path)) else src
+            bank = bank["residuals"] if isinstance(bank, dict) else bank
+            if not torch.is_tensor(bank):
+                raise ValueError("residual_bank must be a tensor or a path")
+            self._bank = (src, bank)
+        return self._bank[1]
+
+    def _fixed_gain(self, operator: Any, R: Tensor, loc_yy: Optional[Tensor], shape: torch.Size,
+                    apply_H: Callable[[Tensor], Tensor], ref: Tensor) -> tuple[Tensor, Tensor]:
+        """``(K_q [d, m], q_rms)`` for ``q_source`` bank or fixed, cached per operator."""
+        cfg, loc = self.config, self.config.localisation
+        d, dev = ref.shape[1], ref.device
+        if cfg.q_source == "bank":
+            bank = self._bank_tensor()  # held by self, so its id is stable
+            if tuple(bank.shape[1:]) != tuple(shape[1:]):
+                raise ValueError(f"residual bank fields {tuple(bank.shape[1:])} != state {tuple(shape[1:])}")
+            ident: Any = id(bank)
+        else:
+            q = torch.as_tensor(cfg.q_variance, dtype=DTYPE).reshape(-1)
+            if q.numel() not in (1, d):
+                raise ValueError(f"q_variance has {q.numel()} entries, expected 1 or {d}")
+            ident = q.numpy().tobytes()
+        key = (cfg.q_source, ident, R.cpu().numpy().tobytes(), loc, str(dev))
+
+        def build() -> tuple[Tensor, Tensor]:
+            if cfg.q_source == "bank":
+                Rb = bank.reshape(bank.shape[0], -1).to(dev).to(DTYPE)
+                HRb = torch.cat([apply_H(Rb[i : i + H_CHUNK]) for i in range(0, Rb.shape[0], H_CHUNK)])
+                S = _obs_cov(HRb, 1.0 / Rb.shape[0], loc_yy) + torch.diag(R)
+                QHt = lambda rows: (Rb[:, rows].T @ HRb) / Rb.shape[0]  # noqa: E731
+                q_rms = Rb.pow(2).mean(0).mean().sqrt()
+            else:  # diagonal Q: K_q = Q H' (H Q H' + R)^-1, exact, not localised
+                qd = q.to(dev).expand(d)
+                Ht = []  # rows H e_j, i.e. H' [d, m]
+                for i in range(0, d, H_CHUNK):
+                    n = min(H_CHUNK, d - i)
+                    unit = torch.zeros(n, d, dtype=DTYPE, device=dev)
+                    unit[torch.arange(n), torch.arange(i, i + n)] = 1.0
+                    Ht.append(apply_H(unit))
+                Ht = torch.cat(Ht)
+                QH = qd[:, None] * Ht
+                S = Ht.T @ QH + torch.diag(R)
+                QHt = lambda rows: QH[rows]  # noqa: E731
+                q_rms = qd.mean().sqrt()
+            L = _cholesky(S)
+            K = torch.empty(d, S.shape[0], dtype=DTYPE, device=dev)
+            for start in range(0, d, ROW_CHUNK):
+                rows = slice(start, min(start + ROW_CHUNK, d))
+                block = QHt(rows)
+                if loc is not None and cfg.q_source == "bank":
+                    block = block * loc.state_obs(operator, rows, ref)
+                K[rows] = torch.cholesky_solve(block.T, L).T
+            return K, q_rms
+
+        return self._cache.get(operator, key, build)
 
 
 __all__ = [
@@ -1313,13 +694,8 @@ __all__ = [
     "CorrectionDiagnostics",
     "ForecastCorrection",
     "ForecastCorrectionConfig",
-    "Localisation",
-    "ResidualBank",
     "build_residual_bank",
-    "chordal_distance",
     "draw_unguided_forecast",
     "gaspari_cohn_kernel",
     "grid_localisation",
-    "periodic_1d_localisation",
-    "periodic_2d_localisation",
 ]

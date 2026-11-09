@@ -20,7 +20,7 @@ Two details a reader of the results needs:
   case does not expose. ``src/scisi`` is left as it is.
 * With ``forecast_correction`` (off by default) the Ours rows also run with the
   forecast-residual correction of ``FORECAST_CORRECTION.md``, as variants
-  ``<variant>_fc<S>[_bank][_g<E>]`` (:func:`fc_variant`). Off, every row is
+  ``<variant>_fc<S>[_bank[<B>]][_g<E>]`` (:func:`fc_variant`). Off, every row is
   bit-for-bit what it was.
 * ``sliced_w1`` is the single-step ``sliced_w2`` column under its correct name:
   ``analytical_utils.wasserstein_distance`` averages 1-D **W1** distances. In this
@@ -117,23 +117,36 @@ SURGE_WRAPPED: tuple[Method, ...] = (Method.OURS_SI_SDE, Method.OURS_DM_SDE)
 
 # Forecast-residual correction (FORECAST_CORRECTION.md, variant A) on the Ours rows.
 # A corrected row is ``<plain variant>_fc<forecast steps>``, plus ``_bank`` when Q_hat
-# comes from a residual bank instead of the online second forecast, plus ``_g<E>``
+# comes from a residual bank instead of the online second forecast (``_bank<B>``
+# when the bank does not hold the default FC_DEFAULT_BANK_SIZE pairs), plus ``_g<E>``
 # when the ensemble statistics are taken over independent groups of E members (the
 # pooled N members are still what is scored). ``GROUP_ONLY`` cells hold the
 # grouped comparators: EnKF and ``adapted_shared`` on the same groups.
 FC_TAG = "_fc"
 FC_Q_SOURCES = ("online", "bank")
+FC_DEFAULT_BANK_SIZE = 4096
 
 
 def fc_variant(
-    base: str, steps: int, q_source: str = "online", group: int | None = None
+    base: str,
+    steps: int,
+    q_source: str = "online",
+    group: int | None = None,
+    bank_size: int | None = None,
 ) -> str:
-    """Variant tag of a corrected row, e.g. ``shared_fc5``, ``jacfree_fc2_bank_g64``."""
+    """Variant tag of a corrected row, e.g. ``shared_fc5``, ``jacfree_fc2_bank_g64``.
+
+    ``bank_size`` adds its digits to ``_bank`` only when it differs from
+    ``FC_DEFAULT_BANK_SIZE`` (``_bank1024``), so tags written before it existed
+    keep their meaning; it is ignored for ``q_source="online"``.
+    """
     if q_source not in FC_Q_SOURCES:
         raise ValueError(f"q_source must be one of {FC_Q_SOURCES}, got {q_source!r}")
     tag = f"{base}{FC_TAG}{int(steps)}"
     if q_source == "bank":
         tag += "_bank"
+        if bank_size is not None and int(bank_size) != FC_DEFAULT_BANK_SIZE:
+            tag += str(int(bank_size))
     if group is not None:
         tag += f"_g{int(group)}"
     return tag
@@ -144,20 +157,31 @@ def group_tag(group: int) -> str:
 
 
 def parse_fc_variant(variant: str | None) -> dict[str, object] | None:
-    """``{base, steps, q_source, group}`` of a corrected tag, ``None`` otherwise."""
-    match = re.fullmatch(r"(.+?)_fc(\d+)(_bank)?(?:_g(\d+))?", variant or "")
+    """``{base, steps, q_source, group, bank_size}`` of a corrected tag, else ``None``.
+
+    ``bank_size`` is ``None`` for an online row and ``FC_DEFAULT_BANK_SIZE`` for a
+    plain ``_bank`` tag.
+    """
+    match = re.fullmatch(r"(.+?)_fc(\d+)(_bank(\d+)?)?(?:_g(\d+))?", variant or "")
     if match is None:
         return None
+    bank = match.group(3) is not None
     return {
         "base": match.group(1),
         "steps": int(match.group(2)),
-        "q_source": "bank" if match.group(3) else "online",
-        "group": int(match.group(4)) if match.group(4) else None,
+        "q_source": "bank" if bank else "online",
+        "group": int(match.group(5)) if match.group(5) else None,
+        "bank_size": (int(match.group(4) or FC_DEFAULT_BANK_SIZE) if bank else None),
     }
 
 
 def _groups(n: int, group: int | None) -> list[slice]:
-    """Contiguous member groups of size ``group``; the last one takes the remainder."""
+    """Contiguous member groups of size ``group``; the last one takes the remainder.
+
+    The partition of the library's ``ForecastCorrectionConfig.group_size`` (a single
+    leftover member joins the previous group), so the grouped comparators (EnKF,
+    ``adapted_shared``) use exactly the groups of the corrected rows.
+    """
     if group is None or group >= n:
         return [slice(0, n)]
     if group < 2:
@@ -170,49 +194,6 @@ def _groups(n: int, group: int | None) -> list[slice]:
 
 def _per_group(fn: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor, group):
     return torch.cat([fn(x[sl]) for sl in _groups(x.shape[0], group)])
-
-
-class GroupedForecastCorrection(ForecastCorrection):
-    """``ForecastCorrection`` whose groups need not divide the batch.
-
-    The library's ``group_size`` must divide ``N``; the paper protocol has
-    ``N = 100000``, which 64 does not divide. Each contiguous group (the last one
-    holds the remainder, see :func:`_groups`) is corrected as its own ensemble.
-
-    It also reorders the unlocalised gain product. The library forms
-    ``(HX Z)' X``, whose ``HX Z`` is ``E x E_out``: 80 GB at ``E = 10^5``. Here it is
-    ``Z' (HX' X)``, with an ``m x d`` middle factor; the same matrix, in another
-    floating-point order.
-    """
-
-    def _apply_gain(self, X, HX, scale, Z, loc, operator):
-        if loc is not None:
-            return super()._apply_gain(X, HX, scale, Z, loc, operator)
-        return Z.T @ (HX.T @ X) * scale
-
-    def __init__(self, config: ForecastCorrectionConfig, group: int | None) -> None:
-        super().__init__(config)
-        self.group = group
-
-    def correct(self, x, f, y, operator=None, obs_noise_var=None, residuals=None,
-                perturbations=None, phys_idx=None):
-        slices = _groups(x.shape[0], self.group)
-        if len(slices) == 1:
-            return super().correct(
-                x, f, y, operator=operator, obs_noise_var=obs_noise_var,
-                residuals=residuals, perturbations=perturbations, phys_idx=phys_idx,
-            )
-        if y.reshape(-1, y.shape[-1]).shape[0] != 1:
-            raise ValueError("grouped correction here takes one shared observation row")
-        return torch.cat([
-            super(GroupedForecastCorrection, self).correct(
-                x[sl], f[sl], y, operator=operator, obs_noise_var=obs_noise_var,
-                residuals=None if residuals is None else residuals[sl],
-                perturbations=None if perturbations is None else perturbations[sl],
-                phys_idx=phys_idx,
-            )
-            for sl in slices
-        ])
 
 
 # Closed-form rows, one ensemble drawn straight from the named Gaussian per cycle.
@@ -387,11 +368,15 @@ class MultistepRunner(AnalyticalRunner):
         value = self._case_get("fc_group_size", None)
         return None if value in (None, "", "null") else int(value)
 
+    @property
+    def fc_bank_size(self) -> int:
+        return int(self._case_get("fc_bank_size", FC_DEFAULT_BANK_SIZE))
+
     def _fc_modes(self, num_steps: int) -> list[tuple[str, str, dict]]:
         """``(variant, likelihood_mode, spec)`` of the corrected Ours rows."""
         if not self.fc_enabled:
             return []
-        q, group = self.fc_q_source, self.fc_group_size
+        q, group, bank = self.fc_q_source, self.fc_group_size, self.fc_bank_size
         bases = self._case_get("fc_variants", None)
         bases = (
             [name for name, _ in _OURS_VARIANTS] if bases is None
@@ -401,24 +386,24 @@ class MultistepRunner(AnalyticalRunner):
         if unknown:
             raise ValueError(f"fc_variants: unknown Ours variants {sorted(unknown)}")
         return [
-            (fc_variant(name, steps, q, group), mode,
+            (fc_variant(name, steps, q, group, bank), mode,
              {"base": name, "steps": steps, "q_source": q, "group": group})
             for steps in self.fc_steps(num_steps)
             for name, mode in _OURS_VARIANTS
             if name in bases
         ]
 
-    def _make_correction(self, spec: dict) -> GroupedForecastCorrection:
+    def _make_correction(self, spec: dict) -> ForecastCorrection:
         """One correction per rollout; H and R come from each cycle's likelihood."""
-        return GroupedForecastCorrection(
+        return ForecastCorrection(
             ForecastCorrectionConfig(
                 enabled=True,
                 forecast_num_steps=int(spec["steps"]),
                 q_source=str(spec["q_source"]),
                 # Filled at the first cycle (it needs the posterior); see _ours_cycle.
                 residual_bank=None,
-            ),
-            group=spec["group"],
+                group_size=spec["group"],
+            )
         )
 
     def _residual_bank(self, posterior, correction, num_steps, d, seed_key) -> None:
@@ -432,7 +417,7 @@ class MultistepRunner(AnalyticalRunner):
         cfg = correction.config
         if cfg.q_source != "bank" or cfg.residual_bank is not None:
             return
-        size = int(self._case_get("fc_bank_size", 4096))
+        size = self.fc_bank_size
         with torch.random.fork_rng(devices=[]):
             torch.manual_seed(derive_seed("multistep", "fc_bank", *seed_key))
             states = torch.randn(size, 1, 1, d, 1)
@@ -1010,7 +995,6 @@ __all__ = [
     "REFERENCE_KALMAN",
     "REFERENCE_MEMBER_CHAIN",
     "FC_TAG",
-    "GroupedForecastCorrection",
     "fc_variant",
     "group_tag",
     "parse_fc_variant",

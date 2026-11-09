@@ -19,7 +19,7 @@ sys.path.insert(0, str(EXPERIMENT))
 
 import scisi.posterior_models.forecast_correction as fc_module  # noqa: E402
 from cases.analytical.multistep import (  # noqa: E402
-    GroupedForecastCorrection,
+    FC_DEFAULT_BANK_SIZE,
     MultistepRunner,
     _groups,
     fc_variant,
@@ -78,13 +78,105 @@ def test_variant_tags_round_trip():
     assert fc_variant("shared", 5) == "shared_fc5"
     assert fc_variant("jacfree", 2, "bank", 64) == "jacfree_fc2_bank_g64"
     assert parse_fc_variant("jacfree_fc2_bank_g64") == {
-        "base": "jacfree", "steps": 2, "q_source": "bank", "group": 64,
+        "base": "jacfree", "steps": 2, "q_source": "bank", "group": 64, "bank_size": 4096,
     }
     assert parse_fc_variant("shared_fc50") == {
         "base": "shared", "steps": 50, "q_source": "online", "group": None,
+        "bank_size": None,
     }
     for plain in ("shared", "jacfree", "adapted_shared", "surge_shared", None):
         assert parse_fc_variant(plain) is None
+
+
+def test_bank_size_is_tagged_only_when_not_the_default():
+    # The default size, or none given, leaves the stored tags as they were.
+    assert fc_variant("shared", 5, "bank", None, FC_DEFAULT_BANK_SIZE) == "shared_fc5_bank"
+    assert fc_variant("shared", 5, "bank") == "shared_fc5_bank"
+    assert fc_variant("shared", 5, "online", 64, 1024) == "shared_fc5_g64"  # unused
+    tag = fc_variant("shared", 5, "bank", 64, 1024)
+    assert tag == "shared_fc5_bank1024_g64"
+    assert parse_fc_variant(tag) == {
+        "base": "shared", "steps": 5, "q_source": "bank", "group": 64, "bank_size": 1024,
+    }
+    # Stored tags of the existing grid keep their meaning.
+    for stored, meaning in {
+        "shared_fc5_bank": ("shared", 5, "bank", None, 4096),
+        "jacfree_fc50_g64": ("jacfree", 50, "online", 64, None),
+        "shared_fc10": ("shared", 10, "online", None, None),
+    }.items():
+        spec = parse_fc_variant(stored)
+        assert (spec["base"], spec["steps"], spec["q_source"], spec["group"],
+                spec["bank_size"]) == meaning
+        assert fc_variant(*meaning[:4], meaning[4]) == stored
+
+
+def test_bank_size_reaches_the_row_variant():
+    runner = MultistepRunner(
+        _config(fc_only=True, fc_steps=[3], fc_q_source="bank", fc_bank_size=128,
+                fc_variants=["shared"]),
+        seeds=(0,),
+    )
+    assert [v for v, _, _ in runner._fc_modes(10)] == ["shared_fc3_bank128"]
+    default = MultistepRunner(
+        _config(fc_only=True, fc_steps=[3], fc_q_source="bank", fc_variants=["shared"]),
+        seeds=(0,),
+    )
+    assert [v for v, _, _ in default._fc_modes(10)] == ["shared_fc3_bank"]
+
+
+def test_figure_group_sizes_come_from_the_data():
+    import make_analytical_multistep_figures as figs
+
+    assert figs.group_sizes(["shared", "g64", "adapted_shared_g64", None]) == [64]
+    assert figs.group_sizes(["shared_fc5_g32", "g16", "shared_fc5_bank"]) == [16, 32]
+    scalar = {
+        ("s", "EnKF", None, "kl_points"): {},
+        ("s", "EnKF", "g32", "kl_points"): {},
+        ("s", "Ours (SI-SDE)", "adapted_shared_g32", "kl_points"): {},
+        ("s", "Ours (SI-SDE)", "shared_fc5_g32", "kl_points"): {},
+    }
+    labels = [label for _, _, label in figs.correction_rows(scalar, "s")]
+    assert "EnKF, E=32" in labels
+    assert "Ours SI-SDE adapted_shared, E=32" in labels
+    assert not any("E=64" in label for label in labels)
+
+
+def _fake_python(tmp_path) -> Path:
+    """A stand-in for ``run.py``: creates its output files and logs its arguments."""
+    fake = tmp_path / "fake_python"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "for a in \"$@\"; do case \"$a\" in results_file=*|+per_step_file=*) "
+        ": > \"${a#*=}\" ;; esac; done\n"
+        "echo \"$@\" >> \"$ROOT/args.txt\"\n"
+    )
+    fake.chmod(0o755)
+    return fake
+
+
+@pytest.mark.skipif(not Path("/bin/bash").exists(), reason="needs /bin/bash")
+def test_grid_survives_an_empty_cell_list_and_names_bank_sizes(tmp_path):
+    """Under /bin/bash (3.2 on macOS) with set -u an empty spec list must not abort."""
+    env = {
+        **os.environ, "PY": str(_fake_python(tmp_path)), "ROOT": str(tmp_path),
+        "SEEDS": "0", "SETTINGS": "paper", "LINEUPS": "fc base", "FC_STEPS": " ",
+    }
+    script = str(EXPERIMENT / "run_analytical_multistep_grid.sh")
+    run = subprocess.run(["/bin/bash", script], capture_output=True, text=True, env=env)
+    assert run.returncode == 1, run.stderr
+    assert "unbound" not in run.stderr
+    assert "FAIL no cells for lineup fc" in run.stdout
+    assert "failed cells: 1" in run.stdout
+    # The lineup after the empty one still ran.
+    assert (tmp_path / "metrics" / "paper__M50__K20__E100000__traj0.csv").exists()
+
+    env.update(LINEUPS="fc", FC_STEPS="2", FC_Q_SOURCE="bank", FC_BANK_SIZE="1024")
+    subprocess.run(["/bin/bash", script], check=True, capture_output=True, text=True, env=env)
+    assert (tmp_path / "metrics" / "paper_fc2_bank1024__M50__K20__E100000__traj0.csv").exists()
+    assert "+fc_bank_size=1024" in (tmp_path / "args.txt").read_text()
+    env.update(FC_BANK_SIZE="4096", FC_STEPS="3")
+    subprocess.run(["/bin/bash", script], check=True, capture_output=True, text=True, env=env)
+    assert (tmp_path / "metrics" / "paper_fc3_bank__M50__K20__E100000__traj0.csv").exists()
 
 
 @pytest.mark.parametrize("spec", [{}, PARTIAL], ids=["paper", "partial"])
@@ -155,33 +247,53 @@ def test_forecast_num_steps_is_honoured(monkeypatch, q_source, calls_per_cycle, 
     assert set(seen) == {steps}
     bank_calls = 2 if q_source == "bank" else 0  # one pair of forecasts, built once
     assert len(seen) == cycles * calls_per_cycle + bank_calls
-    tag = fc_variant("shared", steps, q_source)
+    tag = fc_variant("shared", steps, q_source, None, 64)  # fc_bank_size above
     assert {r.variant for r in records} == {tag}
     assert {r.nfe for r in records} == {20 + calls_per_cycle * steps}
 
 
-def test_grouped_correction_matches_the_library_groups_and_takes_a_remainder():
-    torch.manual_seed(0)
-    n, d = 96, 2
-    x, f, res = torch.randn(n, 1, 1, d), torch.randn(n, 1, 1, d), torch.randn(n, 1, 1, d)
-    y = torch.randn(1, d)
-    e = torch.randn(n, d)
-    op = lambda z: z.reshape(z.shape[0], -1)  # noqa: E731  (H = I)
-    kw = dict(operator=op, obs_noise_var=1.0, perturbations=e)
-    lib = ForecastCorrection(ForecastCorrectionConfig(enabled=True, group_size=32))
-    ours = GroupedForecastCorrection(ForecastCorrectionConfig(enabled=True), group=32)
-    torch.testing.assert_close(ours.correct(x, f, y, residuals=res, **kw),
-                               lib.correct(x, f, y, residuals=res, **kw))
+def test_group_partition_rule():
     assert [s.stop - s.start for s in _groups(100, 32)] == [32, 32, 32, 4]
     assert [s.stop - s.start for s in _groups(97, 32)] == [32, 32, 33]
+    assert [s.stop - s.start for s in _groups(129, 64)] == [64, 65]
     assert [s.stop - s.start for s in _groups(100, None)] == [100]
-    remainder = GroupedForecastCorrection(ForecastCorrectionConfig(enabled=True), group=64)
-    out = remainder.correct(x, f, y, residuals=res, **kw)
-    whole = ForecastCorrection(ForecastCorrectionConfig(enabled=True))
-    torch.testing.assert_close(out[64:], whole.correct(
-        x[64:], f[64:], y, residuals=res[64:], operator=op, obs_noise_var=1.0,
-        perturbations=e[64:],
-    ))
+    assert [s.stop - s.start for s in _groups(50, 64)] == [50]
+
+
+@pytest.mark.parametrize("n", [100, 129, 2000])
+def test_corrected_groups_are_the_comparator_groups(n):
+    """The library's ``group_size`` partition is ``_groups``, which the grouped
+    EnKF / ``adapted_shared`` comparators use: the grouped correction of the batch
+    equals one ungrouped correction per ``_groups`` slice."""
+    torch.manual_seed(0)
+    d, group = 2, 64
+    x, f, f2 = (torch.randn(n, 1, 1, d) for _ in range(3))
+    y, e = torch.randn(1, d), torch.randn(n, d)
+    op = lambda z: z.reshape(z.shape[0], -1)  # noqa: E731  (H = I)
+    grouped = ForecastCorrection(ForecastCorrectionConfig(enabled=True, group_size=group))
+    out = grouped.correct(x, f, y, op, 1.0, f2=f2, perturbations=e)
+    slices = _groups(n, group)
+    # One diagnostics entry per group, in one record (one call, one step).
+    assert len(grouped.diagnostics.records) == 1
+    assert grouped.diagnostics.records[0]["spread_rms"].shape == (len(slices),)
+    for sl in slices:
+        alone = ForecastCorrection(ForecastCorrectionConfig(enabled=True))
+        torch.testing.assert_close(
+            out[sl], alone.correct(x[sl], f[sl], y, op, 1.0, f2=f2[sl], perturbations=e[sl]))
+
+
+def test_make_correction_uses_the_library_groups():
+    runner = MultistepRunner(
+        _config(fc_only=True, fc_steps=[3], fc_q_source="bank", fc_group_size=64,
+                fc_variants=["shared"]),
+        seeds=(0,),
+    )
+    (_, _, spec), = runner._fc_modes(10)
+    corr = runner._make_correction(spec)
+    assert type(corr) is ForecastCorrection
+    assert (corr.config.group_size, corr.config.q_source, corr.config.forecast_num_steps) == (
+        64, "bank", 3)
+    assert runner.fc_bank_size == FC_DEFAULT_BANK_SIZE
 
 
 def test_group_cells_tag_enkf_and_adapted_rows():

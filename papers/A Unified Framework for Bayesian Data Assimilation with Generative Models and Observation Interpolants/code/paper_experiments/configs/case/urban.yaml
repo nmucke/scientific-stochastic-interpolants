@@ -83,47 +83,24 @@ data_path: data/udales            # author-provided .nc directory
 mask_path: data/udales/mask.npz   # solid-cell mask (mask==1 fluid, mask==0 solid)
 
 # Forecast-residual correction (FORECAST_CORRECTION.md; wiring in
-# cases/navier_stokes/_forecast_correction.py + cases/urban/_urban_constraints.py).
-# OFF by default: with enabled=false nothing is built and every run is unchanged.
-# Updates fire only at ASSIMILATED steps (assimilate_every); free-running steps are
-# never corrected. Variant tag as for NS (<base>_fc_..., measure-only <base>_fcdiag_...).
+# common/forecast_correction.py). These are the ONLY defaults. OFF by default:
+# with enabled=false nothing is built and every run is unchanged. Updates fire
+# only at ASSIMILATED steps (assimilate_every). Variant <base>_fc<steps>_<hash8>
+# as for NS. Measure only: gain_scale=0 forecast_seed=0 diagnostics=true.
 forecast_correction:
   enabled: false
-  mode: correct            # correct | measure (diagnostics only, trajectory unchanged)
   methods: ["Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)"]
-  forecast_num_steps: null # null = the sampler's M
-  forecast_stepper: null   # null = the sampler's; sde | ode
-  forecast_mode: prior     # prior | free_run | ode
+  forecast_num_steps: null   # null = the sampler's M
+  forecast_stepper: null     # null = the sampler's; sde | ode
   # Gaspari-Cohn half-width in grid cells (1 m); straight-line distance, the four
   # channels at one site share a location. UNTUNED: tune on validation rows.
   localisation_radius: 8.0
-  localisation_combine: euclidean
-  localisation_cache_limit: 67108864  # 2^26: caches the d x m taper at m <= 1024
-  periodic: [false, false]            # (H, W); the slice edges are not continuous in the data
-  channel_taper_offdiag: 1.0          # cross-variable taper in [0, 1]; 1 = keep all
+  periodic: [false, false]   # (H, W); the slice edges are not continuous in the data
+  mask_obstacles: true       # solid cells keep their guided values (zero taper there)
   gain_scale: 1.0
-  update_cap: 3.0
-  q_source: online
-  residual_bank: null
-  bank_indices: null       # e.g. [0, 7] (test rows not scored; 6 is the tuning row, 8 the foreign IC)
-  bank_max_states: 256
-  bank_pairs_per_state: 1
-  group_size: null
+  update_cap: null
+  q_source: online           # online | bank
+  residual_bank: null        # q_source=bank: torch.save'd residual tensor
   forecast_seed: null
-  compute_dtype: float64
-  row_chunk: 4096
-  # Constraints (post_update): project the INCREMENT so it adds no horizontal
-  # divergence and nothing inside buildings (the 2D slice itself is not
-  # divergence-free: du/dx + dv/dy = -dw/dz). See _urban_constraints.py.
-  project_divergence: true
-  mask_obstacles: true     # zero the increment in solid cells (also zeroes the taper there)
-  u_channel: 0
-  v_channel: 1
-  u_axis: W                # u varies along W, v along H (checked on the data)
-  v_axis: H
-  divergence_stencil: central  # central | forward
-  cg_tol: 1.0e-8
-  cg_max_iter: 2000
-  diagnostics: false       # per-step divergence / obstacle checks + Q share
-  diagnostics_root: null   # default results/urban/forecast_correction
-  variant_suffix: null
+  diagnostics: false
+  diagnostics_root: null     # default results/urban/forecast_correction

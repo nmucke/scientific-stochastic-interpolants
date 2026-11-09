@@ -4,6 +4,10 @@
   ``results/lorenz96/aggregated/per_step.csv``.
 * ``lorenz96_ess``              -- effective sample size of the reference over time.
 
+Only the default variants in ``SERIES`` are drawn; tagged sweep cells
+(``driver.py cell --tag``, variant ``<variant>_<tag>``) are in the aggregated CSVs
+but not in these figures.
+
     python paper_experiments/make_lorenz96_figures.py
     python paper_experiments/make_lorenz96_figures.py --out <dir>
 """

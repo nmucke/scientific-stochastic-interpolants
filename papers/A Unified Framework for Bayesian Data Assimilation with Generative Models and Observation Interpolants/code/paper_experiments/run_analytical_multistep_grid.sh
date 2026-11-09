@@ -19,14 +19,17 @@
 #
 # Forecast-residual correction (FORECAST_CORRECTION.md), not in the default LINEUPS:
 #   LINEUPS=fc     one cell per forecast step count S in FC_STEPS, holding only the
-#                  corrected Ours rows, <setting>_fc<S>[_bank][_g<E>]. The rows are
-#                  variants <jacfree|shared>_fc<S>[_bank][_g<E>].
+#                  corrected Ours rows, <setting>_fc<S>[_bank[<B>]][_g<E>]. The rows
+#                  are variants <jacfree|shared>_fc<S>[_bank[<B>]][_g<E>].
 #   LINEUPS=group  <setting>_g<E>: EnKF and adapted_shared on the same groups of
 #                  FC_GROUP members, the comparators of a grouped fc cell.
 # FC_STEPS (default "1 2 5 10 25 50"), FC_Q_SOURCE (online | bank, default online),
 # FC_GROUP (members per independent ensemble; empty = all N_EVAL members),
 # FC_VARIANTS (plain Ours variants to correct, e.g. "shared"; empty = jacfree and
-# shared; a subset is part of the cell name).
+# shared; a subset is part of the cell name), FC_BANK_SIZE (residual pairs with
+# FC_Q_SOURCE=bank; empty = the case's 4096; any other size is part of the cell and
+# variant name, _bank<B>). An empty FC_STEPS gives no fc cells: logged and counted
+# as a failure.
 #
 # Env overrides: SETTINGS, LINEUPS, SEEDS, M, N_EVAL, CYCLES, ROOT, PY, FC_*. N_EVAL defaults to
 # the manuscript's 100000. Use another ROOT for smoke runs: the aggregation refuses
@@ -47,11 +50,17 @@ FC_STEPS="${FC_STEPS:-1 2 5 10 25 50}"
 FC_Q_SOURCE="${FC_Q_SOURCE:-online}"
 FC_GROUP="${FC_GROUP:-}"
 FC_VARIANTS="${FC_VARIANTS:-}"
+FC_BANK_SIZE="${FC_BANK_SIZE:-}"
 FC_SUFFIX=""; FC_ARGS=("+fc_q_source=$FC_Q_SOURCE")
 if [ -n "$FC_VARIANTS" ]; then
   FC_SUFFIX="_${FC_VARIANTS// /-}"; FC_ARGS+=("+fc_variants=[${FC_VARIANTS// /,}]")
 fi
 [ "$FC_Q_SOURCE" = online ] || FC_SUFFIX="${FC_SUFFIX}_$FC_Q_SOURCE"
+if [ -n "$FC_BANK_SIZE" ]; then
+  [ "$FC_Q_SOURCE" = bank ] || { echo "[msgrid] FC_BANK_SIZE needs FC_Q_SOURCE=bank" >&2; exit 1; }
+  FC_ARGS+=("+fc_bank_size=$FC_BANK_SIZE")
+  [ "$FC_BANK_SIZE" = 4096 ] || FC_SUFFIX="${FC_SUFFIX}$FC_BANK_SIZE"
+fi
 if [ -n "$FC_GROUP" ]; then FC_SUFFIX="${FC_SUFFIX}_g$FC_GROUP"; FC_ARGS+=("+fc_group_size=$FC_GROUP"); fi
 mkdir -p "$ROOT/metrics" "$ROOT/per_step" "$ROOT/tmp"
 LOG="$ROOT/run_analytical_multistep_grid.log"
@@ -74,7 +83,13 @@ for SETTING in $SETTINGS; do
            SPECS=("${SETTING}_g${FC_GROUP}|+group_only=true +fc_group_size=$FC_GROUP") ;;
     *)     echo "[msgrid] unknown lineup $LINEUP" | tee -a "$LOG"; exit 1 ;;
   esac
-  for SPEC in "${SPECS[@]}"; do
+  if [ "${#SPECS[@]}" -eq 0 ]; then
+    echo "[msgrid] FAIL no cells for lineup $LINEUP (empty FC_STEPS?)" | tee -a "$LOG"
+    FAILS=$((FAILS + 1)); continue
+  fi
+  # ${a[@]+"${a[@]}"}: bash 3.2 (macOS /bin/bash) rejects "${a[@]}" of an empty
+  # array under set -u.
+  for SPEC in ${SPECS[@]+"${SPECS[@]}"}; do
   CELL="${SPEC%%|*}"; read -r -a EXTRA <<< "${SPEC#*|}"
   for SEED in $SEEDS; do
     NAME="${CELL}__M${M}__K${CYCLES}__E${N_EVAL}__traj${SEED}.csv"

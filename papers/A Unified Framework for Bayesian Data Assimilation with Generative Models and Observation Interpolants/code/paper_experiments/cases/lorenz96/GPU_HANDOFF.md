@@ -658,7 +658,9 @@ autocorrelation of normalised innovations) and `innovation_msq`. Both use the
 **true-model** forecast of the analysis ensemble, mean_i Phi(x_i) with variance
 H Cov(Phi) H' + q + r, so they are the same measure for every method
 (`driver.innovation_scores`). Zero lag-1 means white innovations. The E=64
-PF-subsample floor is -0.05.
+PF-subsample floor is -0.05. Lag-1 is not mean-removed (a constant bias counts as
+correlation, as in the library's diagnostics) and pairs only adjacent finite steps.
+Both statistics are exact for `noise_stages: 1` only and raise otherwise.
 
 Configuration lives in `configs/case/lorenz96.yaml` (`methods.<cell>_fc.correction`, keys
 documented there): `forecast_num_steps` (null means the sampler's M), `localisation`
@@ -668,15 +670,37 @@ the plain cell also moves the corrected one. Plain cells never read the blocks. 
 by default: only the `_fc` cells use it. CLI overrides use dotted keys:
 
 ```bash
-python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 \
+python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 --tag fs5_g0.5 \
     --set correction.forecast_num_steps=5 --set correction.gain_scale=0.5
 python cases/lorenz96/driver.py tune --method fm_ode_fc --tag gain \
     --set likelihood_mode=dps_jacobian_free --set num_steps=25 \
     --grid '{"correction.localisation":[4],"correction.gain_scale":[0.5,0.75,1.0]}'
 ```
 
-`tune` accepts every cell; `--innovations` adds lag-1, msq and NFE columns (on by
+`cell --set` **requires `--tag`** (it is refused without one). The tag goes into
+every output path (`lorenz96__si_sde_fc-fs5_g0.5__traj0__.csv`, the per-sequence
+JSON, `ensembles/si_sde_fc-fs5_g0.5__seed0.pt`) and into the tidy variant
+(`forecast_correction_fs5_g0.5`), so a sweep cell never overwrites the default cell
+and the aggregator reports it as its own row. Tag `off` for a
+`correction.enabled=false` run, so that row does not read as the corrected cell. The
+figures plot the untagged default variants only. Tags take letters, digits, `.`, `=`,
+`-` and single `_`.
+
+`tune` accepts the cells that read settings: the samplers, their `_fc` cells,
+`prior_enkf*`, `enkf`, `enkf_large` and `oracle_fc`. `oracle`, `pf_matched`,
+`pf_subsample` and `pf_reference` take no settings, so `tune` does not offer them
+and `cell --set` refuses them. `--innovations` adds lag-1, msq and NFE columns (on by
 default for the new cells), and `--tag` keeps parallel jobs from writing to one CSV.
+If a rerun writes a column set the stored CSV lacks, the file is rewritten under the
+union of both headers (old rows blank in the new columns) before rows are appended.
+
+> **The final grid will NOT reproduce the validation table below.** The gains and
+> radii below were chosen with the sampler at `dps_jacobian_free` M=25, but the
+> `methods:` block still holds the untuned `inflated` M=50 defaults, and the `_fc`
+> cells inherit those. Running `run_lorenz96_grid.sh` as is scores the corrected
+> cells at `inflated` M=50 with a gain tuned for another sampler. First write the
+> chosen sampler settings into `methods:` (step 1 of "What the GPU run should add"),
+> then re-tune the correction.
 
 **Off-identity.** Plain `si_sde`, `fm_ode` and `dm_sde` (Jacobian-free, M=25, 4
 validation sequences, real priors on MPS), plus `enkf` and `oracle`, are bitwise
@@ -773,5 +797,6 @@ against 4096 PF draws) took about 4 min per run here and dominates validation ti
 3. Final grid: `SEEDS="0 1 2" ./run_lorenz96_grid.sh` now includes the six new
    cells. Report `prior_enkf` next to the corrected cells in any table.
 4. If the paper keeps the correction, it needs a case where it beats `prior_enkf`:
-   a non-Gaussian kernel (`noise_stages > 1`, which needs a new gate) or E small for d.
+   a non-Gaussian kernel (`noise_stages > 1`, which needs a new gate, and new
+   innovation statistics: `driver.normalised_innovations` raises there) or E small for d.
    State plainly if none is found.

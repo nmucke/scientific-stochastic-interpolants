@@ -8,7 +8,7 @@ that prior and the method's own randomness.
     python cases/lorenz96/driver.py tune --method enkf --grid '{"inflation": [1.0, 1.1]}'
     python cases/lorenz96/driver.py reference --split test
     python cases/lorenz96/driver.py cell --method si_sde --seed 0
-    python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 \
+    python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 --tag fs5_g0.8 \
         --set correction.forecast_num_steps=5 --set correction.gain_scale=0.8
 
 Cells ending in ``_fc`` are the generative samplers (and the exact-kernel oracle)
@@ -16,6 +16,11 @@ with the forecast-residual correction of ``FORECAST_CORRECTION.md``; ``prior_enk
 and ``prior_enkf_fm`` forecast with the unguided trained prior and update with the
 localised EnKF. ``run_lorenz96_grid.sh`` runs all of it. Test sequences are never used to choose a
 setting: ``tune`` reads the validation split only.
+
+``cell --set`` changes a cell's settings and so needs ``--tag``: the tag goes into
+every output path (``<cell>-<tag>``) and into the tidy ``variant``
+(``forecast_correction_<tag>``), so a sweep never overwrites, or is aggregated as,
+the default cell.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ import itertools
 import json
 import math
 import multiprocessing
+import re
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -318,10 +324,16 @@ class CellOutput:
 def normalised_innovations(problem, previous, observation) -> torch.Tensor:
     """``(y - H mean_i Phi(x_i)) / sqrt(diag(H P_f H') + q + r)`` for one step.
 
-    ``Phi`` is the deterministic Lorenz 96 flow over one interval, so
+    ``Phi`` is the deterministic Lorenz 96 flow over one whole interval, so
     ``mean_i Phi(x_i)`` is the exact forecast mean of the member mixture under the
-    true model and ``Cov_i(Phi(x_i)) + q I`` its forecast covariance. The same
-    measure is used for every method, whatever its own forecast model.
+    true model and ``Cov_i(Phi(x_i)) + q I`` (``q = noise_std**2``) its forecast
+    covariance. The same measure is used for every method, whatever its own
+    forecast model.
+
+    Both statements hold only for ``noise_stages == 1`` (one kick at the end of the
+    interval). With several stages the earlier kicks pass through the nonlinear
+    flow, so neither the mean nor the variance has this closed form; that case
+    raises rather than report a wrong number.
 
     Args:
         previous: ``[E, d]`` analysis members at the previous step (finite ones).
@@ -330,7 +342,13 @@ def normalised_innovations(problem, previous, observation) -> torch.Tensor:
     from scisi.dynamics.lorenz96 import integrate
 
     model = problem.model
-    flow = integrate(previous.double(), model.steps_per_stage, problem.dt, problem.forcing)
+    if model.noise_stages != 1:
+        raise ValueError(
+            "normalised_innovations is exact for noise_stages=1 only, "
+            f"got {model.noise_stages}."
+        )
+    steps = model.steps_per_stage * model.noise_stages  # the whole interval
+    flow = integrate(previous.double(), steps, problem.dt, problem.forcing)
     H = problem.obs_matrix
     projected = flow @ H.T
     variance = projected.var(0) + problem.noise_std**2 + problem.obs_variance
@@ -343,11 +361,18 @@ def lag1_autocorrelation(z: torch.Tensor) -> float:
     ``sum_t z_t z_{t-1} / sqrt(sum_t z_t^2 sum_t z_{t-1}^2)`` over steps and sites:
     zero for an optimal filter (innovations are white), positive when the analysis
     under-uses the observations (FORECAST_CORRECTION.md, section 1).
+
+    The mean is NOT removed, as in the library's
+    ``ForecastCorrectionDiagnostics.lag1_autocorrelation``: a constant bias in the
+    innovations counts as correlation (a constant sequence gives 1). Only pairs of
+    adjacent steps that are both finite enter the sums, so a non-finite step drops
+    the two pairs it belongs to and never joins the steps either side of it.
     """
-    z = z[torch.isfinite(z).all(-1)]
-    if z.shape[0] < 2:
+    finite = torch.isfinite(z).all(-1)
+    pair = finite[1:] & finite[:-1]
+    if not bool(pair.any()):
         return float("nan")
-    a, b = z[1:], z[:-1]
+    a, b = z[1:][pair], z[:-1][pair]
     return float((a * b).sum() / ((a**2).sum() * (b**2).sum()).sqrt())
 
 
@@ -658,16 +683,21 @@ def evaluate_cell(
     cfg=None,
     split: str = "test",
     overrides=None,
+    tag: str = "",
 ) -> list[ResultRecord]:
     """Run and score one (method, seed); writes per-step rows and the ensembles.
 
     ``overrides`` are ``key=value`` strings applied to the cell's settings (see
-    :func:`apply_overrides`).
+    :func:`apply_overrides`); they need a ``tag``, which goes into every output
+    path and into the tidy ``variant`` (:func:`tagged_variant`), so a non-default
+    run never overwrites or poses as the default cell.
     """
+    check_tag(name, tag, overrides)
     cfg = case_config() if cfg is None else cfg
     problem = problem_of(cfg)
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
+    variant = tagged_variant(variant, tag)
     nfe = None
     innovations = None
     settings = apply_overrides(method_settings(cfg, name), overrides)
@@ -695,7 +725,7 @@ def evaluate_cell(
         output = run_method(cfg, name, problem, sequences, split, seed, settings)
         scores, innovations = score_cell(problem, output, sequences, split, seed)
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
-        path = RESULTS / "ensembles" / f"{name}__seed{seed}.pt"
+        path = RESULTS / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(output.ensembles.float(), path)
         # Cost on equal terms: one sequence at this method's ensemble size, whereas
@@ -730,13 +760,13 @@ def evaluate_cell(
     if innovations is not None:
         for key in (INNOVATION_LAG1, INNOVATION_MSQ):
             per_sequence[key] = [entry[key] for entry in innovations]
-    per_step_file = cell_path("per_step", name, seed)
+    per_step_file = cell_path("per_step", name, seed, tag)
     per_step_file.parent.mkdir(parents=True, exist_ok=True)
     per_step_file.unlink(missing_ok=True)
     append_per_step(
         per_step_file, per_step_rows(test_index=-1, per_step=curves, **common)
     )
-    sequence_file = cell_path("per_sequence", name, seed).with_suffix(".json")
+    sequence_file = cell_path("per_sequence", name, seed, tag).with_suffix(".json")
     sequence_file.parent.mkdir(parents=True, exist_ok=True)
     sequence_file.write_text(json.dumps(per_sequence))
 
@@ -759,15 +789,48 @@ def finite_mean(values) -> float:
     return sum(kept) / len(kept) if kept else float("nan")
 
 
-def cell_path(kind: str, name: str, seed: int) -> Path:
+# Cells that take no settings: an override or a tuning grid would be ignored.
+NO_SETTINGS = ("oracle", "pf_matched", "pf_subsample", "pf_reference")
+TAG_PATTERN = re.compile(r"[A-Za-z0-9.=-]+(_[A-Za-z0-9.=-]+)*")
+
+
+def check_tag(name: str, tag: str, overrides) -> None:
+    """Refuse overrides without a tag, a tag that would break file names, and
+    overrides of a cell that ignores its settings."""
+    if overrides and name in NO_SETTINGS:
+        raise ValueError(f"{name} takes no settings; --set would be ignored.")
+    if overrides and not tag:
+        raise ValueError(
+            "--set changes the cell, so it needs --tag: without one the run would "
+            "overwrite the default cell's outputs and be aggregated as it."
+        )
+    if tag and (not TAG_PATTERN.fullmatch(tag) or re.search(r"traj\d", tag)):
+        raise ValueError(
+            f"Bad tag {tag!r}: use letters, digits, '.', '=', '-' and single '_' "
+            "(no '__', no 'traj<N>')."
+        )
+
+
+def tagged_variant(variant: str | None, tag: str) -> str | None:
+    """``forecast_correction`` + tag ``fs5`` -> ``forecast_correction_fs5``."""
+    if not tag:
+        return variant
+    return f"{variant}_{tag}" if variant else tag
+
+
+def cell_label(name: str, tag: str = "") -> str:
+    return f"{name}-{tag}" if tag else name
+
+
+def cell_path(kind: str, name: str, seed: int, tag: str = "") -> Path:
     # common.aggregate_lib buckets files by this token; here a bucket is a seed.
-    return RESULTS / kind / f"lorenz96__{name}__traj{seed}__.csv"
+    return RESULTS / kind / f"lorenz96__{cell_label(name, tag)}__traj{seed}__.csv"
 
 
 def cmd_cell(args) -> None:
     torch.set_num_threads(args.threads)
-    records = evaluate_cell(args.method, args.seed, overrides=args.set)
-    path = cell_path("metrics", args.method, args.seed)
+    records = evaluate_cell(args.method, args.seed, overrides=args.set, tag=args.tag)
+    path = cell_path("metrics", args.method, args.seed, args.tag)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     with ResultsWriter(path) as writer:
@@ -792,8 +855,9 @@ def cmd_tune(args) -> None:
     extended = args.method in CORRECTED or args.method in PRIOR_ENKF or args.method == "oracle_fc"
     if extended or args.innovations:
         columns += [INNOVATION_LAG1, INNOVATION_MSQ, Metric.NFE.value]
+    columns = merge_tuning_header(path, columns)
     with open(path, "a", newline="") as handle:
-        writer = csv.DictWriter(handle, columns)
+        writer = csv.DictWriter(handle, columns, restval="")
         if handle.tell() == 0:
             writer.writeheader()
         for values in itertools.product(*grid.values()):
@@ -821,6 +885,28 @@ def cmd_tune(args) -> None:
             writer.writerow(row)
             handle.flush()
             print(json.dumps(row), flush=True)
+
+
+def merge_tuning_header(path: Path, columns: list[str]) -> list[str]:
+    """Columns to append with; rewrites ``path`` first if its header lacks some.
+
+    A rerun with ``--innovations`` (or without) must not append rows whose fields
+    do not line up with the stored header: the file is rewritten under the union
+    of both column sets, old rows left blank in the new columns.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return columns
+    with open(path, newline="") as handle:
+        reader = csv.DictReader(handle)
+        stored = list(reader.fieldnames or [])
+        rows = list(reader)
+    merged = stored + [column for column in columns if column not in stored]
+    if merged != stored:
+        with open(path, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, merged, restval="")
+            writer.writeheader()
+            writer.writerows(rows)
+    return merged
 
 
 TUNING_METRICS = (
@@ -947,8 +1033,8 @@ def main() -> None:
     tune.add_argument(
         "--method",
         choices=[
-            *GENERATIVE, *CORRECTED, *PRIOR_ENKF, "enkf", "enkf_large", "oracle",
-            "oracle_fc", "pf_matched", "pf_subsample",
+            # Only cells that read settings: a grid over the others is a no-op.
+            *GENERATIVE, *CORRECTED, *PRIOR_ENKF, "enkf", "enkf_large", "oracle_fc",
         ],
         required=True,
     )
@@ -972,7 +1058,13 @@ def main() -> None:
         action="append",
         help="key=value override of the cell's settings, e.g. "
         "correction.forecast_num_steps=5, correction.localisation=4, "
-        "correction.gain_scale=0.8 (repeatable; JSON values)",
+        "correction.gain_scale=0.8 (repeatable; JSON values); needs --tag",
+    )
+    cell.add_argument(
+        "--tag",
+        default="",
+        help="label of a non-default run, required with --set: outputs go to "
+        "<method>-<tag> and the tidy variant becomes <variant>_<tag>",
     )
     cell.add_argument("--threads", type=int, default=2)
     cell.set_defaults(func=cmd_cell)

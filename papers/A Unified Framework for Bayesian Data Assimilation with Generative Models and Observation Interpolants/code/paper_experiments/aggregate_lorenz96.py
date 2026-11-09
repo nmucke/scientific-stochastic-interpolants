@@ -4,6 +4,8 @@
 over the held-out sequences. This reduces them to mean +/- std over seeds, in
 ``results/lorenz96/aggregated/{all,per_step}.csv``. Seeds share the sequences, so that
 std is sampler noise only; ``sequence_spread.csv`` holds the spread over sequences.
+A tagged cell (``driver.py cell --tag``) is its own row: its variant is
+``<variant>_<tag>`` and its files ``lorenz96__<method>-<tag>__traj<seed>__.csv``.
 
     .venv/bin/python paper_experiments/aggregate_lorenz96.py
 """

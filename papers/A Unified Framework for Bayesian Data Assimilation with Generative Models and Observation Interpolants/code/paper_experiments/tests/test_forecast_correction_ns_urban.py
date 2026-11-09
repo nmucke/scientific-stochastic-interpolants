@@ -1,13 +1,13 @@
 """Forecast-residual correction wired into the Navier-Stokes and urban cases.
 
 CPU smoke tests on tiny synthetic inputs with RANDOM-weight networks: they check
-the plumbing (switches, bit-for-bit identity when off, shapes, masks, variant
-tags, the urban increment projection), not accuracy. No trained weights or data
-are needed.
+the plumbing (switches, bit-for-bit identity when off or at gain 0, shapes, masks,
+variant tags), not accuracy. No trained weights or data are needed.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,8 +19,7 @@ from omegaconf import OmegaConf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cases.navier_stokes import _forecast_correction as fcw  # noqa: E402
-from cases.navier_stokes import _ns_pipeline  # noqa: E402
+from cases.navier_stokes import _ns_correction  # noqa: E402
 from cases.navier_stokes._ns_pipeline import (  # noqa: E402
     LoadedPrior,
     TruthAndObs,
@@ -28,8 +27,9 @@ from cases.navier_stokes._ns_pipeline import (  # noqa: E402
     build_posterior,
     run_assimilation,
 )
-from cases.urban import _urban_constraints  # noqa: E402
-from cases.urban._urban_constraints import IncrementProjection, derivative  # noqa: E402
+from common import forecast_correction as fcw  # noqa: E402
+from common.runner import RunContext  # noqa: E402
+from results_schema import Case, Method, Scenario  # noqa: E402
 from scisi.likelihood_models.observation_operators import (  # noqa: E402
     LinearObservationOperator,
 )
@@ -54,6 +54,11 @@ METHODS = {
     "Ours (SI-SDE)": "si_sde",
     "Ours (DM-SDE)": "dm_sde",
     "Ours (FM-ODE)": "fm_ode",
+}
+METHOD_ENUM = {
+    "Ours (SI-SDE)": Method.OURS_SI_SDE,
+    "Ours (DM-SDE)": Method.OURS_DM_SDE,
+    "Ours (FM-ODE)": Method.OURS_FM_ODE,
 }
 L = 2  # history length
 G = 16  # grid side
@@ -126,8 +131,6 @@ def _run(method, prior, op, truth, T, correction=None, E=4, M=3, every=None, pas
         scenario_key="sparse_5", num_steps=M,
     )
     nfe = attach_nfe_counter(model)
-    if correction is not None and not isinstance(correction, ForecastCorrection):
-        correction = correction(post, stepper)
     kw = {"forecast_correction": correction} if pass_kw else {}
     torch.manual_seed(seed)
     res = run_assimilation(
@@ -135,7 +138,7 @@ def _run(method, prior, op, truth, T, correction=None, E=4, M=3, every=None, pas
         num_physical_steps=T, stepper=stepper, nfe_counter=nfe,
         gaussian_base=method != "Ours (SI-SDE)", assimilate_every=every, **kw,
     )
-    return res, post
+    return res
 
 
 def _ns_ops():  # type: ignore[no-untyped-def]
@@ -145,25 +148,33 @@ def _ns_ops():  # type: ignore[no-untyped-def]
     }
 
 
-def _settings(**kw):  # type: ignore[no-untyped-def]
-    s = dict(fcw.DEFAULTS)
-    s.update({"enabled": True, "localisation_radius": 3.0})
-    s.update(kw)
-    return s
+def _yaml(case: str) -> dict:
+    return fcw.fc_settings(OmegaConf.load(EXP / "configs" / "case" / f"{case}.yaml"))
 
 
-def _ns_correction(settings, scen="sparse_5"):  # type: ignore[no-untyped-def]
-    def make(post, stepper):  # type: ignore[no-untyped-def]
-        loc = fcw.ns_localisation(settings, (1, G, G), scen)
-        corr, mon = fcw.build_correction(
-            settings, posterior=post, num_steps=3, stepper=stepper, localisation=loc,
-            steppers=_ns_pipeline._STEPPERS, step_diagnostics=fcw.ns_step_diagnostics,
-            constraint=fcw.zero_mean_increment,
-        )
-        make.monitor = mon  # type: ignore[attr-defined]
-        make.correction = corr  # type: ignore[attr-defined]
-        return corr
-    return make
+def _settings(case: str = "navier_stokes", **kw):  # type: ignore[no-untyped-def]
+    return {**_yaml(case), "enabled": True, "localisation_radius": 3.0, **kw}
+
+
+def _ctx(method="Ours (DM-SDE)", case=Case.NAVIER_STOKES, scenario=Scenario.SPARSE_5, test_index=7):  # type: ignore[no-untyped-def]
+    return RunContext(case=case, method=METHOD_ENUM[method], scenario=scenario, seed=0,
+                      ensemble_size=4, num_steps=3, extra={"test_index": test_index})
+
+
+def _ns_fc(settings, scen="sparse_5", method="Ours (DM-SDE)"):  # type: ignore[no-untyped-def]
+    return fcw.build_correction(
+        settings, case="navier_stokes", ctx=_ctx(method), state_shape=(1, G, G),
+        scenario_key=scen, periodic=True, constraint=_ns_correction.zero_mean_increment,
+        step_diagnostics=_ns_correction.ns_step_diagnostics,
+    )
+
+
+def _building_mask() -> torch.Tensor:
+    m = torch.ones(G, G, dtype=torch.bool)
+    m[3:7, 4:9] = False
+    m[10:14, 2:5] = False
+    m[9:12, 11:15] = False
+    return m
 
 
 # --------------------------------------------------------------------------- #
@@ -172,45 +183,50 @@ def _ns_correction(settings, scen="sparse_5"):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize("case", ["navier_stokes", "urban"])
-def test_case_config_defaults_off_and_known_keys(case):
-    cfg = OmegaConf.load(EXP / "configs" / "case" / f"{case}.yaml")
-    s = fcw.fc_settings(cfg)
+def test_case_config_defaults_off(case):
+    s = _yaml(case)
     assert s["enabled"] is False
-    urban_only = {
-        "periodic", "channel_taper_offdiag", "project_divergence", "mask_obstacles",
-        "u_channel", "v_channel", "u_axis", "v_axis", "divergence_stencil",
-        "cg_tol", "cg_max_iter", "zero_mean_increment",
-    }
-    unknown = set(cfg.forecast_correction) - set(fcw.DEFAULTS) - urban_only
-    assert not unknown, unknown
-    for m in fcw.DEFAULT_METHODS:
+    assert s["update_cap"] is None  # the cap is opt-in
+    assert s["q_source"] == "online" and s["forecast_seed"] is None
+    for m in s["methods"]:
         assert not fcw.applies_to(s, m)
-    assert fcw.variant_with_correction("jacfree", s, "Ours (SI-SDE)", "sparse_5") == "jacfree"
-    assert fcw.variant_with_correction(None, s, "FlowDAS", "sparse_5") is None
+    assert fcw.variant_with_correction("jacfree", s, "Ours (SI-SDE)") == "jacfree"
+    assert fcw.variant_with_correction(None, s, "FlowDAS") is None
+    assert fcw.fc_settings(OmegaConf.create({})) == {}  # no block -> off
 
 
-def test_variant_tags_are_distinct():
-    on = _settings(localisation_radius={"default": 8, "superres_16": 12})
-    tag = fcw.variant_with_correction("jacfree", on, "Ours (SI-SDE)", "sparse_5")
-    assert tag == "jacfree_fc_r8_g1_nM_qon_cap3"
-    assert fcw.variant_with_correction("jacfree", on, "Ours (SI-SDE)", "superres_16").startswith(
-        "jacfree_fc_r12_"
-    )
-    assert fcw.variant_with_correction(None, on, "Ours (FM-ODE)", "sparse_5").startswith("fc_")
-    # Not in `methods` -> untouched.
-    assert fcw.variant_with_correction(None, on, "FlowDAS", "sparse_5") is None
-    meas = _settings(mode="measure", forecast_num_steps=10)
-    assert fcw.variant_with_correction("shared_jac10", meas, "Ours (DM-SDE)", "x") == (
-        "shared_jac10_fcdiag_n10"
-    )
-    other = _settings(gain_scale=0.5, update_cap=None, localisation_radius=None, q_source="bank")
-    assert fcw.variant_suffix(other, None) == "fc_rglob_g0p5_nM_qbank_capnone"
+def test_tag_changes_with_every_numeric_setting():
+    base = _settings()
+    tags = {fcw.fc_tag(base)}
+    for key, value in [("gain_scale", 0.5), ("update_cap", 3.0), ("localisation_radius", None),
+                       ("q_source", "bank"), ("residual_bank", "b.pt"), ("forecast_stepper", "sde"),
+                       ("forecast_seed", 0), ("zero_mean_increment", False),
+                       ("forecast_num_steps", 10), ("localisation_radius", {"default": 8})]:
+        tags.add(fcw.fc_tag(dict(base, **{key: value})))
+    assert len(tags) == 11
+    # Settings that never change the numbers do not change the tag; 1 == 1.0.
+    same = dict(base, diagnostics=True, diagnostics_root="/x", methods=["Ours (FM-ODE)"], gain_scale=1)
+    assert fcw.fc_tag(same) == fcw.fc_tag(base)
+    assert fcw.fc_tag(dict(base, forecast_num_steps=10)).startswith("fc10_")
+    assert fcw.fc_tag(base).startswith("fcM_")
+
+
+def test_tag_is_file_name_safe_for_mappings():
+    s = _settings(localisation_radius={"default": 8, "superres_16": 12})
+    tag = fcw.variant_with_correction("jacfree", s, "Ours (SI-SDE)")
+    import re
+
+    assert re.fullmatch(r"jacfree_fcM_[0-9a-f]{8}", tag), tag
+    # Key order of the mapping does not matter.
+    s2 = _settings(localisation_radius={"superres_16": 12, "default": 8})
+    assert fcw.variant_with_correction("jacfree", s2, "Ours (SI-SDE)") == tag
+    assert fcw.variant_with_correction(None, s, "Ours (FM-ODE)").startswith("fcM_")
+    assert fcw.variant_with_correction(None, s, "FlowDAS") is None  # not in `methods`
 
 
 def test_runner_variant_uses_case_block():
     from cases.navier_stokes.driver import NavierStokesRunner
     from cases.urban.driver import UrbanRunner
-    from results_schema import Method, Scenario
 
     for runner_cls, case in ((NavierStokesRunner, "navier_stokes"), (UrbanRunner, "urban")):
         case_cfg = OmegaConf.load(EXP / "configs" / "case" / f"{case}.yaml")
@@ -219,8 +235,31 @@ def test_runner_variant_uses_case_block():
         assert r._variant(Method.OURS_SI_SDE, Scenario.SPARSE_1p5) == "jacfree"
         cfg.case.forecast_correction.enabled = True
         r = runner_cls(cfg, seeds=[0])
-        assert r._variant(Method.OURS_SI_SDE, Scenario.SPARSE_1p5) == "jacfree_fc_r8_g1_nM_qon_cap3"
+        expect = "jacfree_" + fcw.fc_tag(fcw.fc_settings(cfg.case))
+        assert r._variant(Method.OURS_SI_SDE, Scenario.SPARSE_1p5) == expect
         assert r._variant(Method.SURGE_SDA, Scenario.SPARSE_1p5) is None
+
+
+@pytest.mark.parametrize("case", ["navier_stokes", "urban"])
+def test_hydra_overrides_and_cli_tag(case):
+    from hydra import compose, initialize_config_dir
+
+    overrides = [
+        "case.forecast_correction.enabled=true",
+        "case.forecast_correction.forecast_num_steps=10",
+        "case.forecast_correction.localisation_radius={default:8,superres_16:12}",
+    ]
+    tag = fcw._cli_tag(case, overrides)
+    with initialize_config_dir(config_dir=str(EXP / "configs"), version_base=None):
+        cfg = compose(config_name="benchmark", overrides=[f"case={case}", *overrides])
+    s = fcw.fc_settings(cfg.case)
+    assert s["enabled"] and s["forecast_num_steps"] == 10
+    assert s["localisation_radius"] == {"default": 8, "superres_16": 12}
+    assert tag == fcw.fc_tag(s) and tag.startswith("fc10_")
+    # The grid scripts' entry point prints the same tag.
+    out = subprocess.run([sys.executable, "-m", "common.forecast_correction", "tag", case, *overrides],
+                         cwd=EXP, capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == tag
 
 
 # --------------------------------------------------------------------------- #
@@ -230,21 +269,24 @@ def test_runner_variant_uses_case_block():
 
 def test_ns_observation_sites_are_block_centres_and_sensor_cells():
     ops = _ns_ops()
-    loc = fcw.ns_localisation(_settings(), (1, G, G), "superres_32")
-    oc = loc.obs_coords(ops["superres"])  # type: ignore[union-attr]
+    corr, _ = _ns_fc(_settings(), "superres_32")
+    loc = corr.config.localisation
+    oc = loc.obs_coords(ops["superres"])
     centres = torch.arange(1.5, G, 4.0, dtype=torch.float64)
     expect = torch.stack(torch.meshgrid(centres, centres, indexing="ij"), -1).reshape(-1, 2)
-    torch.testing.assert_close(oc[:, 1:], expect)
+    torch.testing.assert_close(oc, expect)
     sp = ops["sparse"]
-    oc = loc.obs_coords(sp)  # type: ignore[union-attr]
+    oc = loc.obs_coords(sp)
     idx = sp.obs_indices.reshape(-1)
-    torch.testing.assert_close(oc[:, 1], (idx // G).double())
-    torch.testing.assert_close(oc[:, 2], (idx % G).double())
-    blk = loc.state_obs(sp, slice(0, G * G), torch.zeros(1))  # type: ignore[union-attr]
+    torch.testing.assert_close(oc[:, 0], (idx // G).double())
+    torch.testing.assert_close(oc[:, 1], (idx % G).double())
+    blk = loc.state_obs(sp, slice(0, G * G), torch.zeros(1, dtype=torch.float64))
     assert blk.shape == (G * G, sp.num_obs)
-    # Taper is 1 at the sensor cell itself and periodic (wraps around the edge).
-    assert torch.allclose(blk[idx, torch.arange(sp.num_obs)], torch.ones(sp.num_obs))
-    assert fcw.ns_localisation(_settings(localisation_radius=None), (1, G, G), "x") is None
+    assert torch.allclose(blk[idx, torch.arange(sp.num_obs)], torch.ones(sp.num_obs, dtype=torch.float64))
+    corr, _ = _ns_fc(_settings(localisation_radius=None))
+    assert corr.config.localisation is None
+    corr, _ = _ns_fc(_settings(localisation_radius={"default": 3, "superres_32": 5}), "superres_32")
+    assert corr.config.localisation is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -259,30 +301,31 @@ def test_ns_off_is_bit_for_bit(method, scen):
     prior = _prior(1)
     op = _ns_ops()[scen]
     truth = _truth(op, 1, T)
-    ref, _ = _run(method, prior, op, truth, T, pass_kw=False)
-    none, _ = _run(method, prior, op, truth, T, correction=None)
-    off, _ = _run(method, prior, op, truth, T,
-                  correction=ForecastCorrection(ForecastCorrectionConfig(enabled=False)))
+    ref = _run(method, prior, op, truth, T, pass_kw=False)
+    none = _run(method, prior, op, truth, T, correction=None)
+    off = _run(method, prior, op, truth, T,
+               correction=ForecastCorrection(ForecastCorrectionConfig(enabled=False)))
     assert torch.equal(ref.posterior_trajectory, none.posterior_trajectory)
     assert torch.equal(ref.posterior_trajectory, off.posterior_trajectory)
     assert ref.nfe_per_step == off.nfe_per_step
 
 
 @pytest.mark.parametrize("method", list(METHODS))
-def test_ns_measure_mode_leaves_trajectory_unchanged(method):
+def test_ns_gain_zero_with_seed_measures_without_changing_the_trajectory(method):
     T = L + 3
     prior = _prior(1)
     op = _ns_ops()["sparse"]
     truth = _truth(op, 1, T)
-    ref, _ = _run(method, prior, op, truth, T)
-    make = _ns_correction(_settings(mode="measure"))
-    meas, _ = _run(method, prior, op, truth, T, correction=make)
+    ref = _run(method, prior, op, truth, T)
+    corr, mon = _ns_fc(_settings(gain_scale=0.0, forecast_seed=0, diagnostics=True),
+                               method=method)
+    meas = _run(method, prior, op, truth, T, correction=corr)
     assert torch.equal(ref.posterior_trajectory, meas.posterior_trajectory)
     assert meas.nfe_per_step > ref.nfe_per_step  # the forecasts are counted
-    payload = fcw.summary(make.correction, make.monitor)
+    payload = fcw.summary(corr, mon)
     assert len(payload["innovation_msq"]) == T - L
     assert payload["lag1_autocorrelation"] is not None
-    assert 0 < payload["q_share_obs_mean"] < 10
+    assert 0 < payload["q_share_state_mean"] < 10
     assert all(r["increment_rms"] == 0.0 for r in payload["steps"])
 
 
@@ -293,24 +336,21 @@ def test_ns_correction_runs_with_diagnostics(method, scen, tmp_path):
     prior = _prior(1)
     op = _ns_ops()[scen]
     truth = _truth(op, 1, T)
-    plain, _ = _run(method, prior, op, truth, T)
-    make = _ns_correction(_settings(diagnostics=True, forecast_num_steps=2, forecast_seed=0),
-                          "superres_32" if scen == "superres" else "sparse_5")
-    corr, _ = _run(method, prior, op, truth, T, correction=make)
-    traj = corr.posterior_trajectory
+    plain = _run(method, prior, op, truth, T)
+    corr, mon = _ns_fc(_settings(diagnostics=True, forecast_num_steps=2, forecast_seed=0),
+                               "superres_32" if scen == "superres" else "sparse_5", method)
+    res = _run(method, prior, op, truth, T, correction=corr)
+    traj = res.posterior_trajectory
     assert traj.shape == plain.posterior_trajectory.shape == (4, 1, G, G, T)
     assert torch.isfinite(traj).all()
     assert not torch.equal(traj, plain.posterior_trajectory)
-    payload = fcw.summary(make.correction, make.monitor)
-    steps = payload["steps"]
-    assert len(steps) == T - L
-    for rec in steps:
-        assert len(rec["enstrophy_ratio_bands"]) == len(fcw.NS_BAND_EDGES) - 1
+    payload = fcw.summary(corr, mon)
+    assert len(payload["steps"]) == T - L
+    assert len(payload["q_share_state"]) == T - L
+    for rec in payload["steps"]:
+        assert len(rec["enstrophy_ratio_bands"]) == len(_ns_correction.NS_BAND_EDGES) - 1
         assert rec["increment_rms"] > 0
         assert rec["increment_domain_mean_abs"] < 1e-6 * rec["increment_rms"] + 1e-7
-        assert "q_share_obs" in rec
-    path = fcw.write_diagnostics(tmp_path / "d.json", payload)
-    assert path.stat().st_size > 0
 
 
 def test_ns_forecast_steps_are_honoured():
@@ -318,148 +358,91 @@ def test_ns_forecast_steps_are_honoured():
     prior = _prior(1)
     op = _ns_ops()["sparse"]
     truth = _truth(op, 1, T)
-    base, _ = _run("Ours (FM-ODE)", prior, op, truth, T, M=3)
+    base = _run("Ours (FM-ODE)", prior, op, truth, T, M=3)
     nfes = []
     for steps in (1, 4):
-        make = _ns_correction(_settings(forecast_num_steps=steps))
-        res, _ = _run("Ours (FM-ODE)", prior, op, truth, T, correction=make, M=3)
+        corr, _ = _ns_fc(_settings(forecast_num_steps=steps), method="Ours (FM-ODE)")
+        res = _run("Ours (FM-ODE)", prior, op, truth, T, correction=corr, M=3)
         nfes.append(res.nfe_per_step - base.nfe_per_step)
     # Online Q: two forecasts per member per assimilated step, `steps` passes each.
     assert nfes[1] - nfes[0] == pytest.approx(2 * 3, rel=1e-6)
 
 
+def test_forecast_seed_depends_on_the_cell():
+    s = _settings(forecast_seed=0)
+    seeds = set()
+    for ti in (1, 2):
+        for scen in (Scenario.SPARSE_5, Scenario.SPARSE_1p5):
+            corr, _ = fcw.build_correction(s, case="navier_stokes", ctx=_ctx(scenario=scen, test_index=ti),
+                                           state_shape=(1, G, G), scenario_key="x", periodic=True)
+            seeds.add(corr.config.forecast_seed)
+    assert len(seeds) == 4
+    corr, _ = _ns_fc(_settings())
+    assert corr.config.forecast_seed is None and corr.config.update_cap is None
+
+
 # --------------------------------------------------------------------------- #
-# Urban: projection
+# Urban: masked localisation and pipeline smoke
 # --------------------------------------------------------------------------- #
 
 
-def _building_mask() -> torch.Tensor:
-    m = torch.ones(G, G, dtype=torch.bool)
-    m[3:7, 4:9] = False
-    m[10:14, 2:5] = False
-    m[9:12, 11:15] = False
-    return m
+def _urban_op(keep):  # type: ignore[no-untyped-def]
+    from cases.urban._urban_pipeline import _restrict_sensors_to_fluid
 
-
-@pytest.mark.parametrize("stencil", ["central", "forward"])
-@pytest.mark.parametrize("periodic", [False, True])
-def test_derivative_adjoint(stencil, periodic):
-    g = torch.Generator().manual_seed(0)
-    a = torch.randn(3, G, G, generator=g, dtype=torch.float64)
-    b = torch.randn(3, G, G, generator=g, dtype=torch.float64)
-    for ax in (-1, -2):
-        lhs = (derivative(a, ax, periodic, stencil) * b).sum()
-        rhs = (a * derivative(b, ax, periodic, stencil, transpose=True)).sum()
-        assert torch.allclose(lhs, rhs)
-
-
-@pytest.mark.parametrize("stencil", ["central", "forward"])
-@pytest.mark.parametrize("periodic", [(False, False), (True, True)])
-def test_projection_removes_increment_divergence_and_obstacle_mass(stencil, periodic):
-    mask = _building_mask()
-    std = [0.45, 0.36, 0.13, 0.18]
-    P = IncrementProjection(mask, std, periodic=periodic, stencil=stencil, tol=1e-10)
-    g = torch.Generator().manual_seed(1)
-    xg = torch.randn(3, 4, G, G, generator=g)
-    xn = xg + 0.3 * torch.randn(3, 4, G, G, generator=g)
-    xo = P(xn, xg)
-    d = P.step_diagnostics(xg, xn, xo)
-    assert d["increment_div_rms_raw"] > 1e-2
-    assert d["increment_div_rms_out"] < 1e-5 * d["increment_div_rms_raw"]
-    assert d["solid_increment_rms_raw"] > 0 and d["solid_increment_rms_out"] == 0.0
-    assert abs(d["div_rms_out"] - d["div_rms_guided"]) < 1e-5 * d["div_rms_guided"]
-    # Solid cells keep the guided values in every channel.
-    assert torch.equal(xo[:, :, ~mask], xg[:, :, ~mask])
-    # Idempotent: projecting the projected increment changes nothing.
-    xo2 = P(xo, xg)
-    assert torch.allclose(xo2, xo, atol=1e-5)
-    # Divergence on ALL cells (incl. solid ones) of the projected increment.
-    inc = (xo.double() - xg.double()) * torch.tensor(std, dtype=torch.float64)[None, :, None, None]
-    div = P.divergence(inc[:, 0], inc[:, 1])
-    assert div.abs().max() < 1e-5
-
-
-def test_projection_from_settings_switches():
-    mask = _building_mask()
-    s = fcw.fc_settings(OmegaConf.load(EXP / "configs" / "case" / "urban.yaml"))
-    P = _urban_constraints.from_settings(s, mask, [1.0] * 4)
-    assert P is not None and P.project and P.mask_obstacles
-    assert (P.u_axis, P.v_axis) == (-1, -2)
-    s2 = dict(s, project_divergence=False, mask_obstacles=False)
-    assert _urban_constraints.from_settings(s2, mask, [1.0] * 4) is None
+    op = LinearObservationOperator(type="random", data_size=(4, G, G), percent_obs=0.05, seed=0)
+    _restrict_sensors_to_fluid(op, keep, percent_obs=0.05, seed=0)
+    return op
 
 
 def test_urban_localisation_zero_in_solids():
-    mask = _building_mask()
-    keep = mask.unsqueeze(0).expand(4, G, G)
-    op = LinearObservationOperator(type="random", data_size=(4, G, G), percent_obs=0.05, seed=0)
-    # Sensors in fluid only, as the urban pipeline draws them.
-    from cases.urban._urban_pipeline import _restrict_sensors_to_fluid
-
-    _restrict_sensors_to_fluid(op, keep, percent_obs=0.05, seed=0)
-    s = dict(fcw.fc_settings(OmegaConf.load(EXP / "configs" / "case" / "urban.yaml")),
-             enabled=True, localisation_radius=4.0, channel_taper_offdiag=0.5)
-    loc = fcw.urban_localisation(s, (4, G, G), "sparse_1p5", mask)
-    blk = loc.state_obs(op, slice(0, 4 * G * G), torch.zeros(1))  # type: ignore[union-attr]
+    keep = _building_mask().unsqueeze(0).expand(4, G, G)
+    op = _urban_op(keep)
+    corr, mon = fcw.build_correction(
+        _settings("urban", localisation_radius=4.0), case="urban",
+        ctx=_ctx(case=Case.URBAN, scenario=Scenario.SPARSE_1p5), state_shape=(4, G, G),
+        scenario_key="sparse_1p5", periodic=(False, False), mask=keep)
+    loc = corr.config.localisation
+    blk = loc.state_obs(op, slice(0, 4 * G * G), torch.zeros(1, dtype=torch.float64))
     assert blk.shape == (4 * G * G, op.num_obs)
     assert blk[~keep.reshape(-1)].abs().max() == 0
     assert blk[keep.reshape(-1)].abs().max() > 0
-    yy = loc.obs_obs(op, torch.zeros(1, dtype=torch.float64))  # type: ignore[union-attr]
+    yy = loc.obs_obs(op, torch.zeros(1, dtype=torch.float64))
     assert torch.linalg.eigvalsh(yy.double()).min() > -1e-8
-    # Cross-channel taper 0.5 between a sensor and a different channel at its site.
+    # Channels at one site share a location (no cross-channel taper).
     c0 = int(op.obs_indices[0]) // (G * G)
     site = int(op.obs_indices[0]) % (G * G)
-    other = ((c0 + 1) % 4) * G * G + site
-    assert blk[other, 0].item() == pytest.approx(0.5)
+    assert blk[((c0 + 1) % 4) * G * G + site, 0].item() == pytest.approx(1.0)
+    # post_update keeps the guided values in solid cells (also for a global gain).
+    xg, xn = torch.randn(3, 4, G, G), torch.randn(3, 4, G, G)
+    xo = mon.post_update(xn, xg)
+    assert torch.equal(xo[:, ~keep], xg[:, ~keep]) and torch.equal(xo[:, keep], xn[:, keep])
 
 
-# --------------------------------------------------------------------------- #
-# Urban: pipeline smoke (4 channels, buildings, assimilate_every)
-# --------------------------------------------------------------------------- #
-
-
+@pytest.mark.parametrize("radius", [4.0, None])
 @pytest.mark.parametrize("method", ["Ours (SI-SDE)", "Ours (DM-SDE)"])
-def test_urban_correction_with_projection(method):
+def test_urban_correction_keeps_solids(method, radius):
     T = L + 4
-    std = [0.45, 0.36, 0.13, 0.18]
-    prior = _prior(4, std)
-    mask = _building_mask()
-    keep = mask.unsqueeze(0).expand(4, G, G)
+    prior = _prior(4, [0.45, 0.36, 0.13, 0.18])
+    keep = _building_mask().unsqueeze(0).expand(4, G, G)
     from cases.urban._urban_pipeline import build_obs_operator
 
     scen = OmegaConf.create({"obs_operator": {"type": "random", "percent_obs": 0.05}})
     op = build_obs_operator(scen, (4, G, G), mask_seed=0, fluid_mask=keep)
-    assert bool(op.obs_indices_on_grid.reshape(-1)[~keep.reshape(-1)].eq(0).all())
     truth = _truth(op, 4, T)
-    plain, _ = _run(method, prior, op, truth, T, every=2)
-    off, _ = _run(method, prior, op, truth, T, every=2, pass_kw=False)
+    plain = _run(method, prior, op, truth, T, every=2)
+    off = _run(method, prior, op, truth, T, every=2, pass_kw=False)
     assert torch.equal(plain.posterior_trajectory, off.posterior_trajectory)
 
-    s = dict(fcw.fc_settings(OmegaConf.load(EXP / "configs" / "case" / "urban.yaml")),
-             enabled=True, localisation_radius=4.0, diagnostics=True, forecast_num_steps=2)
-
-    def make(post, stepper):  # type: ignore[no-untyped-def]
-        loc = fcw.urban_localisation(s, (4, G, G), "sparse_1p5", mask)
-        P = _urban_constraints.from_settings(s, mask, std)
-        corr, mon = fcw.build_correction(
-            s, posterior=post, num_steps=3, stepper=stepper, localisation=loc,
-            steppers=_ns_pipeline._STEPPERS, constraint=P, step_diagnostics=P.step_diagnostics,
-        )
-        make.monitor, make.correction = mon, corr  # type: ignore[attr-defined]
-        return corr
-
-    res, _ = _run(method, prior, op, truth, T, correction=make, every=2)
+    corr, _ = fcw.build_correction(
+        _settings("urban", localisation_radius=radius, forecast_num_steps=2, forecast_seed=0),
+        case="urban", ctx=_ctx(method, Case.URBAN, Scenario.SPARSE_1p5), state_shape=(4, G, G),
+        scenario_key="sparse_1p5", periodic=(False, False), mask=keep)
+    res = _run(method, prior, op, truth, T, correction=corr, every=2)
     traj = res.posterior_trajectory
     assert traj.shape == (4, 4, G, G, T) and torch.isfinite(traj).all()
-    steps = make.monitor.records  # type: ignore[attr-defined]
     # Only assimilated steps are corrected: steps L, L+2 of L..T-1.
-    assert [r for r in make.correction.diagnostics.as_dict()["phys_idx"]] == [L, L + 2]  # type: ignore[attr-defined]
-    assert len(steps) == 2
-    for rec in steps:
-        assert rec["increment_rms_raw"] > 0
-        assert rec["increment_div_rms_out"] < 1e-5 * max(rec["increment_div_rms_raw"], 1e-12)
-        assert rec["solid_increment_rms_out"] == 0.0
-        assert abs(rec["div_rms_out"] - rec["div_rms_guided"]) <= 1e-5 * rec["div_rms_guided"]
+    assert corr.diagnostics.as_dict()["phys_idx"] == [L, L + 2]
+    assert not torch.equal(traj, plain.posterior_trajectory)
 
 
 # --------------------------------------------------------------------------- #
@@ -467,12 +450,10 @@ def test_urban_correction_with_projection(method):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("mode", ["correct", "measure"])
-def test_driver_builds_and_writes_diagnostics(mode, tmp_path):
-    from common.runner import RunContext
+@pytest.mark.parametrize("gain", [1.0, 0.0])
+def test_driver_builds_and_writes_diagnostics(gain, tmp_path):
     from cases.navier_stokes.driver import NavierStokesRunner
     from cases.urban.driver import UrbanRunner
-    from results_schema import Case, Method, Scenario
 
     for runner_cls, case, C, scenario in (
         (NavierStokesRunner, "navier_stokes", 1, Scenario.SPARSE_5),
@@ -480,69 +461,28 @@ def test_driver_builds_and_writes_diagnostics(mode, tmp_path):
     ):
         case_cfg = OmegaConf.load(EXP / "configs" / "case" / f"{case}.yaml")
         fc = case_cfg.forecast_correction
-        fc.enabled, fc.mode, fc.diagnostics = True, mode, True
+        fc.enabled, fc.gain_scale, fc.forecast_seed, fc.diagnostics = True, gain, 0, True
         fc.localisation_radius, fc.forecast_num_steps = 4.0, 2
         fc.diagnostics_root = str(tmp_path / case)
         cfg = OmegaConf.create({"case": case_cfg, "likelihood_mode": "dps_jacobian_free"})
         runner = runner_cls(cfg, seeds=[0])
         prior = _prior(C, [0.4] * C)
-        mask = _building_mask()
-        keep = mask.unsqueeze(0).expand(C, G, G)
-        if case == "urban":
-            from cases.urban._urban_pipeline import _restrict_sensors_to_fluid
-
-            op = LinearObservationOperator(type="random", data_size=(C, G, G), percent_obs=0.05, seed=0)
-            _restrict_sensors_to_fluid(op, keep, percent_obs=0.05, seed=0)
-        else:
-            op = _ns_ops()["sparse"]
+        keep = _building_mask().unsqueeze(0).expand(C, G, G)
+        op = _urban_op(keep) if case == "urban" else _ns_ops()["sparse"]
         T = L + 2
         truth = _truth(op, C, T)
-        ctx = RunContext(
-            case=Case(case), method=Method.OURS_DM_SDE, scenario=scenario, seed=0,
-            ensemble_size=4, num_steps=3, extra={"test_index": 7},
-        )
-        holder = {}
-
-        def make(post, stepper):  # type: ignore[no-untyped-def]
-            args = (ctx, post, stepper, (C, G, G), prior)
-            if case == "urban":
-                args = args + (keep,)
-            corr, mon = runner._build_forecast_correction(*args)
-            holder.update(corr=corr, mon=mon)
-            return corr
-
-        plain, _ = _run("Ours (DM-SDE)", prior, op, truth, T)
-        res, _ = _run("Ours (DM-SDE)", prior, op, truth, T, correction=make)
-        if mode == "measure":
-            assert torch.equal(res.posterior_trajectory, plain.posterior_trajectory)
-        else:
-            assert not torch.equal(res.posterior_trajectory, plain.posterior_trajectory)
-        runner._write_fc_diagnostics(ctx, holder["corr"], holder["mon"])
-        files = list((tmp_path / case).glob("*.json"))
-        assert len(files) == 1
-        name = files[0].name
-        assert ("fcdiag" in name) == (mode == "measure")
-        files[0].unlink()
-
-
-@pytest.mark.parametrize("case", ["navier_stokes", "urban"])
-def test_hydra_cli_overrides_reach_the_settings(case):
-    from hydra import compose, initialize_config_dir
-
-    import run  # noqa: F401  (registers the experiment_root resolver)
-
-    with initialize_config_dir(config_dir=str(EXP / "configs"), version_base=None):
-        cfg = compose(
-            config_name="benchmark",
-            overrides=[
-                f"case={case}",
-                "case.forecast_correction.enabled=true",
-                "case.forecast_correction.forecast_num_steps=10",
-                "case.forecast_correction.localisation_radius=null",
-                "case.forecast_correction.bank_indices=[0,7]",
-            ],
-        )
-    s = fcw.fc_settings(cfg.case)
-    assert s["enabled"] and s["forecast_num_steps"] == 10
-    assert s["localisation_radius"] is None and s["bank_indices"] == [0, 7]
-    assert fcw.variant_suffix(s, "sparse_5") == "fc_rglob_g1_n10_qon_cap3"
+        ctx = RunContext(case=Case(case), method=Method.OURS_DM_SDE, scenario=scenario, seed=0,
+                         ensemble_size=4, num_steps=3, extra={"test_index": 7})
+        args = (ctx, (C, G, G)) + ((keep,) if case == "urban" else ())
+        corr, mon = runner._build_forecast_correction(*args)
+        assert runner._build_forecast_correction(
+            RunContext(case=Case(case), method=Method.SDA, scenario=scenario, seed=0,
+                       ensemble_size=4, num_steps=3), *args[1:]) == (None, None)
+        plain = _run("Ours (DM-SDE)", prior, op, truth, T)
+        res = _run("Ours (DM-SDE)", prior, op, truth, T, correction=corr)
+        same = torch.equal(res.posterior_trajectory, plain.posterior_trajectory)
+        assert same == (gain == 0.0)
+        path = runner._write_fc_diagnostics(ctx, corr, mon)
+        assert path.parent == tmp_path / case
+        assert runner._variant(ctx.method) in path.name
+        assert fcw.fc_tag(runner._fc_settings()) in path.name

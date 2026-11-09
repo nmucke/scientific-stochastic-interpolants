@@ -67,48 +67,26 @@ pde:
   assimilation_interval: null  # Delta t between observations
 
 # Forecast-residual correction (FORECAST_CORRECTION.md; wiring in
-# cases/navier_stokes/_forecast_correction.py). OFF by default: with
-# enabled=false nothing is built and every run is bit-for-bit unchanged.
+# common/forecast_correction.py). These are the ONLY defaults. OFF by default:
+# with enabled=false nothing is built and every run is bit-for-bit unchanged.
 # CLI: case.forecast_correction.enabled=true case.forecast_correction.forecast_num_steps=25 ...
-# A corrected cell gets the variant tag <base>_fc_r<radius>_g<gain>_n<steps>_q<on|bank>_cap<cap>
-# (measure-only: <base>_fcdiag_n<steps>), so its rows never mix with plain ones.
+# A corrected cell gets the variant <base>_fc<steps>_<hash8> (hash of every key
+# below except enabled/methods/diagnostics*), so its rows never mix with plain ones.
+# Measure only (trajectory = the plain run's): gain_scale=0 forecast_seed=0 diagnostics=true.
 forecast_correction:
   enabled: false
-  # correct: apply the update at every assimilated step.
-  # measure: draw the forecasts and record the diagnostics only (lag-1 innovation
-  #          autocorrelation, Q share); the trajectory equals the plain run's.
-  mode: correct
   methods: ["Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)"]
-  # Unguided forecast f_i: pseudo-time steps (null = the sampler's M), stepper
-  # (null = the sampler's; sde | ode) and mode (prior | free_run | ode).
-  forecast_num_steps: null
-  forecast_stepper: null
-  forecast_mode: prior
-  # Gaspari-Cohn half-width in grid cells on the doubly periodic 128^2 grid
-  # (support = 2 x radius); null = global update (NOT recommended: cut member
-  # enstrophy to 42-50% in a scratch check). Observation sites are the sensor
-  # cells (sparse) or the block centres (super-res). A mapping gives per-scenario
-  # values, e.g. {default: 8, superres_16: 12}. UNTUNED: tune on validation rows.
+  forecast_num_steps: null   # SDE/ODE steps of the unguided forecasts; null = the sampler's M
+  forecast_stepper: null     # null = the sampler's; sde | ode
+  # Gaspari-Cohn half-width in grid cells on the doubly periodic grid; null =
+  # global (NOT recommended: cut member enstrophy to 42-50% in a scratch check).
+  # A mapping gives per-scenario values, e.g. {default: 8, superres_16: 12}. UNTUNED.
   localisation_radius: 8.0
-  localisation_combine: euclidean   # euclidean | product (always PSD)
-  localisation_cache_limit: 16777216  # 2^24 entries: caches the 32^2 taper
-  gain_scale: 1.0          # multiplier on K_ens - K_q; calibrate on validation (note 4.4)
-  update_cap: 3.0          # Mahalanobis RMS per observation; null = no cap
-  q_source: online         # online (2nd forecast per member) | bank
-  residual_bank: null      # bank path (q_source=bank); built if missing and bank_indices set
-  bank_indices: null       # test_data rows to build it from, e.g. [0,1,2,3,4] (not scored)
-  bank_max_states: 256
-  bank_pairs_per_state: 1
-  group_size: null
-  forecast_seed: null      # set (e.g. 0) to keep the guided RNG stream of the plain run
-  compute_dtype: float64
-  row_chunk: 4096
-  # post_update: remove the domain mean of the increment (a localised gain can
-  # shift the fixed mean vorticity of the periodic field). false = raw update.
-  zero_mean_increment: true
-  # Cheap optional outputs per assimilated step: enstrophy per band before/after,
-  # Q share of the forecast variance. The library's innovation statistics (lag-1
-  # autocorrelation, cap fraction) are always written when the correction runs.
-  diagnostics: false
-  diagnostics_root: null   # default results/navier_stokes/forecast_correction
-  variant_suffix: null     # override the auto-built tag
+  gain_scale: 1.0            # multiplier on K_ens - K_q (note 4.4); 0 = measure only
+  update_cap: null           # Mahalanobis RMS cap per observation; null = no cap
+  q_source: online           # online (2nd forecast per member) | bank
+  residual_bank: null        # q_source=bank: torch.save'd residual tensor (build_residual_bank)
+  forecast_seed: null        # int: forecasts on a forked RNG (seeded per scenario/traj/seed)
+  zero_mean_increment: true  # post_update: keep the domain-mean vorticity
+  diagnostics: false         # + enstrophy per band before/after, per step
+  diagnostics_root: null     # default results/navier_stokes/forecast_correction

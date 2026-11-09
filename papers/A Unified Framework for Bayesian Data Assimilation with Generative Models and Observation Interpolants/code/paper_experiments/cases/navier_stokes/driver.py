@@ -40,8 +40,8 @@ from common.paths import FIGURES_ROOT, RESULTS_ROOT, output_path
 from common.seeding import mask_seed, obs_seed
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
-from cases.navier_stokes import _forecast_correction as fcw
-from cases.navier_stokes import _ns_figures, _ns_pipeline
+from common import forecast_correction as fcw
+from cases.navier_stokes import _ns_correction, _ns_figures, _ns_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +164,7 @@ ABLATION_TAGS: tuple[str, ...] = (
 )
 
 
-class NavierStokesRunner(ExperimentRunner):
+class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
     """Runner for the Navier--Stokes benchmark."""
 
     case = Case.NAVIER_STOKES
@@ -401,9 +401,7 @@ class NavierStokesRunner(ExperimentRunner):
 
         # Forecast-residual correction (case.forecast_correction; default off ->
         # (None, None) and the run below is unchanged).
-        correction, fc_monitor = self._build_forecast_correction(
-            ctx, posterior, stepper, data_size, prior
-        )
+        correction, fc_monitor = self._build_forecast_correction(ctx, data_size)
 
         result = _ns_pipeline.run_assimilation(
             posterior=posterior,
@@ -816,77 +814,27 @@ class NavierStokesRunner(ExperimentRunner):
                     )
 
     # -- forecast-residual correction (FORECAST_CORRECTION.md) ------------- #
+    # _fc_settings / _variant / _write_fc_diagnostics: fcw.ForecastCorrectionMixin.
 
-    def _fc_settings(self) -> dict:
-        """Merged ``case.forecast_correction`` block (defaults: off)."""
-        cached = self.__dict__.get("_fc_cache")
-        if cached is None:
-            try:
-                case_cfg = self.config.case
-            except Exception:
-                case_cfg = None
-            cached = fcw.fc_settings(case_cfg)
-            self.__dict__["_fc_cache"] = cached
-        return cached
-
-    def _build_forecast_correction(self, ctx, posterior, stepper, data_size, prior):  # type: ignore[no-untyped-def]
+    def _build_forecast_correction(self, ctx, data_size):  # type: ignore[no-untyped-def]
         """``(ForecastCorrection, monitor)`` for this cell, or ``(None, None)``.
 
-        Localisation is doubly periodic Gaspari-Cohn; the observation locations
-        (sensor cells / block centres) come from the operator. ``post_update``
-        (``zero_mean_increment: true``) removes the domain mean of the increment:
-        a localised gain is not a combination of whole anomaly fields, so the raw
-        update can shift the (fixed) mean vorticity. With ``diagnostics: true`` the
-        monitor records the enstrophy per band before/after and the Q share.
+        Doubly periodic Gaspari-Cohn localisation; ``zero_mean_increment: true``
+        removes the domain mean of the increment (a localised gain can shift the
+        fixed mean vorticity); ``diagnostics: true`` adds enstrophy per band.
         """
         settings = self._fc_settings()
         if not fcw.applies_to(settings, ctx.method.value):
             return None, None
-        scen_key = SCENARIO_CONFIG_NAME[ctx.scenario]
-        loc = fcw.ns_localisation(settings, data_size, scen_key)
         return fcw.build_correction(
-            settings,
-            posterior=posterior,
-            num_steps=ctx.num_steps,
-            stepper=stepper,
-            localisation=loc,
-            steppers=_ns_pipeline._STEPPERS,
-            constraint=(
-                fcw.zero_mean_increment
-                if bool(settings.get("zero_mean_increment", True)) else None
-            ),
-            step_diagnostics=fcw.ns_step_diagnostics,
-            prior=prior,
-        )
-
-    def _write_fc_diagnostics(self, ctx, correction, monitor) -> None:  # type: ignore[no-untyped-def]
-        """One JSON per cell: lag-1 innovation autocorrelation, Q share, spectra."""
-        settings = self._fc_settings()
-        root = output_path(
-            str(
-                settings.get("diagnostics_root")
-                or RESULTS_ROOT / "navier_stokes" / "forecast_correction"
-            )
-        )
-        fcw.write_cell_diagnostics(
-            root, self.case.value, ctx, self._variant(ctx.method, ctx.scenario),
-            settings, correction, monitor,
+            settings, case=self.case.value, ctx=ctx, state_shape=data_size,
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario], periodic=True,
+            constraint=(_ns_correction.zero_mean_increment
+                        if settings.get("zero_mean_increment", True) else None),
+            step_diagnostics=_ns_correction.ns_step_diagnostics,
         )
 
     # -- record emitters --------------------------------------------------- #
-
-    def _variant(self, method, scenario=None) -> str | None:  # type: ignore[no-untyped-def]
-        """Tidy ``variant`` tag for a cell, with the forecast-correction suffix.
-
-        A cell run with the forecast correction (or its measure-only mode) gets
-        ``<base>_<suffix>`` (see ``_forecast_correction.variant_suffix``), so its
-        rows never aggregate with the plain ones; off -> exactly the old tag.
-        """
-        base = self._base_variant(method)
-        scen_key = SCENARIO_CONFIG_NAME.get(scenario) if scenario is not None else None
-        return fcw.variant_with_correction(
-            base, self._fc_settings(), getattr(method, "value", str(method)), scen_key
-        )
 
     def _base_variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
         """Tidy ``variant`` tag for a cell: the Ours likelihood-covariance mode.

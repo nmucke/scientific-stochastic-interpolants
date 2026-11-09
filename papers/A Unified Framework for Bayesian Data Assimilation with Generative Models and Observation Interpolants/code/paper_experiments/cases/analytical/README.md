@@ -205,6 +205,7 @@ Corrected Ours rows are extra variants:
 |---|---|
 | `<jacfree\|shared>_fc<S>` | correction with `forecast_num_steps = S`, online `Q_hat` (a second forecast) |
 | `..._bank` | `Q_hat` from a residual bank, 4096 pairs from `N(0, I)` states at the same `S` |
+| `..._bank<B>` | the same with `fc_bank_size = B` pairs; the size is in the tag only when it is not 4096, so the stored `_bank` tags keep their meaning |
 | `..._g<E>` | ensemble statistics over independent groups of `E` contiguous members (the last group takes the remainder); the pooled `N` members are scored |
 | `adapted_shared_g<E>`, EnKF `g<E>` | the comparators on the same groups (`LINEUPS=group`) |
 
@@ -213,7 +214,10 @@ corrected rows to the lineup), `fc_only` (a cell with only them), `fc_steps`
 (list of `S`; default `M`), `fc_variants`, `fc_q_source`, `fc_group_size`,
 `fc_bank_size`, `group_only`. The grid takes `LINEUPS=fc` (one cell per `S` in
 `FC_STEPS`) and `LINEUPS=group`, with `FC_STEPS`, `FC_VARIANTS`, `FC_Q_SOURCE`,
-`FC_GROUP`:
+`FC_GROUP`, `FC_BANK_SIZE` (with `FC_Q_SOURCE=bank`; a non-default size is in the cell
+name too). A blank `FC_STEPS` gives no fc cells; the grid logs it as a failure and
+goes on with the other lineups. The tables and figures take the group sizes `E` of
+the grouped rows from the data.
 
 ```bash
 SETTINGS=paper LINEUPS=fc FC_VARIANTS=shared FC_STEPS="1 2 5 10 25 50" bash "$EXPERIMENT_DIR/run_analytical_multistep_grid.sh"
@@ -221,10 +225,14 @@ SETTINGS=paper LINEUPS="fc group" FC_GROUP=64 FC_STEPS=5 SEEDS=0 bash "$EXPERIME
 ```
 
 `NFE` per cycle is `M + 2 S` (online) or `M + S` (bank; the bank's own cost is not
-counted). Cycle 1 shares the plain row's seed for the guided draw. The case wraps the
-library class (`GroupedForecastCorrection`) to allow a ragged last group, and to
-compute the unlocalised gain as `Z' (HX' X)`: the library's `(HX Z)' X` forms an
-`E x E` matrix, which does not fit at `E = 10^5`.
+counted). Cycle 1 shares the plain row's seed for the guided draw. The groups are
+the library's `group_size` partition (contiguous, the last group takes the remainder,
+a single leftover member joins the previous group); the grouped comparators use the
+same partition (`_groups`), so `..._g<E>` and `adapted_shared_g<E>` / EnKF `g<E>`
+rows share their groups. The library picks the unlocalised gain order by size
+(`Z' (HX' X)` here, never an `E x E` matrix at `E = 10^5`). Rows stored before the
+library rewrite still hold: bank rows reproduce bit-for-bit, online rows to round-off
+(about 1e-7 in a 2000-member, 3-cycle check).
 
 ### Differences from the single-step code path
 

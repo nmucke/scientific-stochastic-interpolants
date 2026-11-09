@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -47,7 +48,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker as mticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-from cases.analytical.multistep import parse_fc_variant  # noqa: E402
+from cases.analytical.multistep import (  # noqa: E402
+    ADAPTED_VARIANT,
+    FC_DEFAULT_BANK_SIZE,
+    group_tag,
+    parse_fc_variant,
+)
 from figure_common import FIGURES_DIR, SERIES, _save_fig, apply_style  # noqa: E402
 
 ROOT = _here / "results" / "analytical_multistep"
@@ -99,11 +105,34 @@ FC_TABLE_STEPS: tuple[int, ...] = (5, 50)  # corrected rows in the per-cycle tab
 FC_FIGURE_STEPS: tuple[int, ...] = (2, 5, 50)
 
 
+def _bank_label(spec: dict) -> str:
+    """``", bank"``, plus the size when it is not the default."""
+    if spec["q_source"] != "bank":
+        return ""
+    size = spec.get("bank_size")
+    return ", bank" if size in (None, FC_DEFAULT_BANK_SIZE) else f", bank {size}"
+
+
+def group_sizes(variants) -> list[int]:
+    """Group sizes ``E`` in the data: of grouped corrected rows (``..._g<E>``) and of
+    the grouped comparators (EnKF ``g<E>``, ``adapted_shared_g<E>``)."""
+    sizes = set()
+    pattern = re.compile(rf"(?:{ADAPTED_VARIANT}_)?g(\d+)")
+    for variant in variants:
+        spec = parse_fc_variant(variant)
+        if spec and spec["group"]:
+            sizes.add(int(spec["group"]))
+        match = pattern.fullmatch(variant or "")
+        if match:
+            sizes.add(int(match.group(1)))
+    return sorted(sizes)
+
+
 def fc_label(method: str, variant: str) -> str:
     spec = parse_fc_variant(variant)
     name = _OURS_STYLE[method][0]
     extra = "".join((
-        ", bank" if spec["q_source"] == "bank" else "",
+        _bank_label(spec),
         f", E={spec['group']}" if spec["group"] else "",
     ))
     return f"Ours {name} ({_BASE_NAME.get(spec['base'], spec['base'])}) + FC S={spec['steps']}{extra}"
@@ -115,8 +144,8 @@ def fc_series(keys, steps: tuple[int, ...] | None = None) -> tuple[tuple, ...]:
         {(k[1], k[2]) for k in keys if k[1] in _OURS_STYLE and parse_fc_variant(k[2])},
         key=lambda mv: (
             list(_OURS_STYLE).index(mv[0]), parse_fc_variant(mv[1])["base"] != "shared",
-            parse_fc_variant(mv[1])["q_source"], parse_fc_variant(mv[1])["group"] or 0,
-            parse_fc_variant(mv[1])["steps"],
+            parse_fc_variant(mv[1])["q_source"], parse_fc_variant(mv[1])["bank_size"] or 0,
+            parse_fc_variant(mv[1])["group"] or 0, parse_fc_variant(mv[1])["steps"],
         ),
     )
     out = []
@@ -409,6 +438,7 @@ def make_forecast_steps_figure(scalar, systems: list[str], out_stem: Path) -> li
         len(systems), 2, figsize=(11.0, 4.1 * len(systems)), squeeze=False, sharex=True,
     )
     handles: dict[str, object] = {}
+    groups = group_sizes({key[2] for key in scalar})
     for row, scenario in enumerate(systems):
         for col, base in enumerate(("shared", "jacfree")):
             ax = axes[row][col]
@@ -417,17 +447,20 @@ def make_forecast_steps_figure(scalar, systems: list[str], out_stem: Path) -> li
                 spec = parse_fc_variant(variant)
                 if scen != scenario or metric != "kl_points" or not spec or spec["base"] != base:
                     continue
-                lines[(method, spec["q_source"], spec["group"])].append(
+                lines[(method, spec["q_source"], spec["bank_size"], spec["group"])].append(
                     (spec["steps"], entry["value"], entry["std"])
                 )
-            for (method, q, group), points in sorted(
-                lines.items(), key=lambda kv: (list(_OURS_STYLE).index(kv[0][0]), kv[0][1], kv[0][2] or 0)
+            for (method, q, bank, group), points in sorted(
+                lines.items(),
+                key=lambda kv: (
+                    list(_OURS_STYLE).index(kv[0][0]), kv[0][1], kv[0][2] or 0, kv[0][3] or 0
+                ),
             ):
                 name, colour, marker = _OURS_STYLE[method]
                 points.sort()
                 xs, ys, sd = (np.array(v) for v in zip(*points))
                 ls = "-" if group is None else "--"
-                label = f"{name} + FC" + (", bank" if q == "bank" else "") + (
+                label = f"{name} + FC" + _bank_label({"q_source": q, "bank_size": bank}) + (
                     f", E={group}" if group else ""
                 )
                 (line,) = ax.plot(
@@ -446,7 +479,10 @@ def make_forecast_steps_figure(scalar, systems: list[str], out_stem: Path) -> li
                 (REFERENCE_MEMBER_CHAIN_NAME, None, "Exact per-member chain", "#000000", "-"),
                 ("Ours (SI-SDE)", "adapted_shared", "SI-SDE adapted_shared", "#56B4E9", "-."),
                 ("EnKF", None, "EnKF", "#E69F00", "-"),
-                ("EnKF", "g64", "EnKF, E=64", "#E69F00", "--"),
+                *(
+                    ("EnKF", group_tag(e), f"EnKF, E={e}", "#E69F00", "--")
+                    for e in groups
+                ),
                 ("Kalman filter (sampled)", None, "Sampling floor", "#999999", "-"),
             ):
                 entry = scalar.get((scenario, method, variant, "kl_points"))
@@ -485,19 +521,21 @@ CORRECTION_COLUMNS: tuple[tuple[str, str], ...] = (
 def correction_rows(scalar, scenario: str) -> list[tuple[str, str | None, str]]:
     """``(method, variant, label)``: comparators first, then every corrected row."""
     keys = {(k[1], k[2]) for k in scalar if k[0] == scenario and k[3] == "kl_points"}
+    groups = group_sizes(v for _, v in keys)
     rows = [
         (m, v, lab) for m, v, lab in (
             (REFERENCE_KALMAN_NAME, None, "Sampling floor (Kalman, sampled)"),
             (REFERENCE_MEMBER_CHAIN_NAME, None, "Exact per-member chain"),
             ("EnKF", None, "EnKF"),
-            ("EnKF", "g64", "EnKF, E=64"),
+            *(("EnKF", group_tag(e), f"EnKF, E={e}") for e in groups),
             *(
                 (m, v, f"Ours {_OURS_STYLE[m][0]} ({_BASE_NAME.get(v, v)}), plain")
                 for m in _OURS_STYLE for v in ("shared", "jacfree")
             ),
             *((m, "adapted_shared", f"Ours {_OURS_STYLE[m][0]} adapted_shared") for m in _OURS_STYLE),
-            *((m, "adapted_shared_g64", f"Ours {_OURS_STYLE[m][0]} adapted_shared, E=64")
-              for m in _OURS_STYLE),
+            *((m, f"{ADAPTED_VARIANT}_{group_tag(e)}",
+               f"Ours {_OURS_STYLE[m][0]} adapted_shared, E={e}")
+              for e in groups for m in _OURS_STYLE),
         ) if (m, v) in keys
     ]
     rows += [(m, v, lab) for m, v, lab, *_ in fc_series({(scenario, *mv) for mv in keys})]

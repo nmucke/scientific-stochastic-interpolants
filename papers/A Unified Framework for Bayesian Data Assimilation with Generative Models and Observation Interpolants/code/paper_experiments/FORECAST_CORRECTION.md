@@ -150,70 +150,91 @@ The original outline started the forecast from `prev_base` kept from before
 (`base[sl] = ...`), so the kept tensor already holds x'_i. The implementation starts
 the forecast from `field_history[..., -1]`.
 
-The forecasts f_i (and the online residual forecast) are drawn under `no_grad` after
-the guided sample, from the global stream, or from a forked RNG with
-`forecast_seed`. They use `forecast_num_steps` (default: the sampler's `num_steps`)
-and `forecast_stepper` (default: the sampler's stepper).
+The forecasts f_i (and the online second forecast f'_i) are drawn under `no_grad`
+after the guided sample, in chunks of the sampler's `batch_size`, from the global
+stream, or with `forecast_seed` from forked generators (CPU and the devices in use)
+seeded with a hash of `(forecast_seed, call counter)`. The hash keeps them apart from
+a driver that seeds `torch` with the same number, and the counter is never reset, so
+every call and trajectory gets fresh forecast noise. They use `forecast_num_steps`
+(default: the sampler's `num_steps`; D-Flow: its `ode_steps`) and `forecast_stepper`
+(default: the sampler's stepper).
+
+**The forecast is the posterior's own SDE/ODE without guidance**
+(`draw_unguided_forecast`): SI uses `model.sample` with the posterior's diffusion,
+FM-ODE the FM ODE from N(0, I), FM-SDE (DM-SDE) the lifted reverse SDE
+`v + 1/2 g^2 s`, and D-Flow its midpoint ODE. FM forecasts honour
+`drift_time_shift`. An ODE stepper with an SI or FM-SDE posterior raises, because the
+forecast would be deterministic (SI from its point mass: zero online residuals,
+K_q = 0) or noiseless.
 
 **Finding: the free-running branch is wrong for FM-SDE (DM-SDE).** It calls
 `FlowMatchingModel.sample(diffusion_term=g)`, which integrates `v dt + g dW`, without
 the score lift `1/2 g^2 s`. In the closed-form linear-Gaussian case at 50 steps its
-forecast variance is 1.25-1.30 Q, against 0.94-0.97 Q for the lifted SDE. The
-correction's default `forecast_mode="prior"` uses the lifted drift (the posterior's
-own drift without guidance). `"free_run"` reproduces the existing call. `"ode"` uses
-the FM ODE. The free-running branch itself is unchanged, to keep existing numbers;
-this affects only DM-SDE runs with `assimilate_every > 1`.
+forecast variance is 1.25-1.30 Q, against 0.94-0.97 Q for the lifted SDE, which the
+correction uses. The free-running branch itself is unchanged, to keep existing
+numbers; this affects only DM-SDE runs with `assimilate_every > 1`.
 
 ### 4.2 The correction module
 
 `ForecastCorrectionConfig` fields, with defaults: `enabled=False`,
-`forecast_num_steps=None`, `forecast_stepper=None`, `forecast_mode="prior"`,
-`forecast_fn=None`, `localisation=None`, `gain_scale=1.0`, `q_source="online"`,
-`residual_bank=None`, `group_size=None`, `update_cap=None`, `post_update=None`,
-`obs_operator=None`, `obs_noise_var=None`, `forecast_seed=None`,
-`compute_dtype=float64`, `row_chunk=4096`, `callback=None`.
+`forecast_num_steps=None`, `forecast_stepper=None`, `localisation=None`,
+`gain_scale=1.0`, `q_source="online"`, `residual_bank=None`, `q_variance=None`,
+`group_size=None`, `update_cap=None`, `post_update=None`, `forecast_seed=None`.
+`sample_trajectory` and `posterior.forecast_correction` take a `ForecastCorrection`
+(or `None`).
 
-- **Units and H, R.** Everything is in model (standardised) units. By default H is
-  `likelihood_model.obs_operator` and R is `likelihood_model.original_variance`, which
-  every likelihood in the repository holds in model units. A diagonal `[m]` R or an
-  explicit operator can be passed instead.
+- **Units and H, R.** Everything is in model (standardised) units. H is
+  `likelihood_model.obs_operator` and R is `likelihood_model.original_variance`
+  (scalar or a diagonal `[m]`), which every likelihood in the repository holds in model
+  units. `ForecastCorrection.correct(x, f, y, operator, obs_noise_var, f2=...)` takes
+  them explicitly. The update assumes a linear (or linearised) H: observation
+  coordinates are H c / H 1, and the bank/fixed Q̂H' and the cap apply H to
+  increments. The online Q̂H' uses (H f − H f')/√2.
 - **No d x d.** Per group, it forms the m x m innovation covariances (Cholesky) and
-  applies the d x m gains in row chunks. Without localisation the gain goes through
-  the E anomalies. H is applied in the state dtype, so the operator's cached matrix
-  is not recast. For the 32²→128² operator (m=1024) one group costs about E d m
-  multiply-adds, and the cached bank K_q is one d x m matrix per (H, R).
+  applies the d x m gains in row chunks; one taper block serves every group and both
+  gains. Without localisation the gain goes through the E anomalies, with the product
+  order that avoids an E x E matrix at large E. The linear algebra is float64 (on the
+  CPU when the state is on MPS, which has neither float64 nor `cholesky_solve`); H is
+  applied on the state's device and dtype. For the 32²→128² operator (m=1024) one
+  group costs about E d m multiply-adds, and the cached bank K_q is one d x m matrix
+  per (H, R).
 - **Groups.** `group_size=E` treats each block of E contiguous members as an
-  independent ensemble. Observations may be `[1, m]`, one row per member, or one row
-  per group.
-- **Cap and hook.** `update_cap` limits sqrt(u' S⁻¹ u / m) with u = H δ_i and S the
-  localised H P_f H' + R. `post_update(x_new, x_guided)` runs after the update (for
-  projection or masks).
+  independent ensemble. The last group takes the remainder (a single leftover member
+  joins the previous group). Observations may be `[1, m]`, one row per group, or one
+  row per member.
+- **Cap and hook.** `update_cap` (opt-in) limits sqrt(u' S⁻¹ u / m) with u = H δ_i and
+  S the localised H P_f H' + R. `post_update(x_new, x_guided)` runs after the update
+  (for projection or masks).
 - **Diagnostics.** `corr.diagnostics.records` holds one dict per corrected step, with
   per-group innovation mean, mean squared normalised innovation, lag-1 product, update
-  RMS, forecast spread and cap fraction. `lag1_autocorrelation()` and `as_dict()`
-  summarise them, and `callback` receives each record.
+  RMS, forecast spread `spread_rms`, `q_rms` (so the Q share of the forecast variance
+  is (q_rms/spread_rms)²) and cap fraction. `lag1_autocorrelation()` and `as_dict()`
+  summarise them.
 
-**Localisation.** The interface `Localisation.state_obs(H, rows)` / `obs_obs(H)` is
-built from coordinates and a kernel (`CoordinateLocalisation`). By default,
-observation coordinates are derived from H as `H c / H 1`, which gives the sensor
-location for selection operators and the block centre for block averages, so H stays
-free. The helpers are `periodic_1d_localisation` (identical to `enkf.periodic_taper`),
-`periodic_2d_localisation` and `grid_localisation`. `grid_localisation` takes
-non-periodic axes, several channels per site, `channel_coords` (e.g. levels for 3D)
-and a `[C, C]` `channel_taper`. Gaspari-Cohn uses chordal distance on periodic axes.
-The isotropic form is PSD by theory only in at most 3 embedding dimensions; on a 2D
-torus (4D embedding) it was PSD numerically for the radii tested. `combine="product"`
-is always PSD.
+**Localisation.** `CoordinateLocalisation(state_coords, kernel, state_shape, mask)`
+provides `state_obs(H, rows, ref)` / `obs_obs(H, ref)`. Observation coordinates are
+derived from H as `H c / H 1`, which gives the sensor location for selection operators
+and the block centre for block averages, so H stays free. Tapers are cached per
+operator on the compute device, in float64. `grid_localisation(shape, radius,
+periodic, channel_axis=True, mask=None)` covers 1D (`(1, 1, d)`, identical to
+`enkf.periodic_taper` when periodic), 2D and 3D grids, with channels at one site at
+distance 0 and an optional mask (zero taper rows, e.g. solid cells). Gaspari-Cohn uses
+chordal distance on periodic axes. The isotropic form is PSD by theory only in at most
+3 embedding dimensions; on a 2D torus (4D embedding) it was PSD numerically for the
+radii tested.
 
 ### 4.3 The Q̂ source
 
 - `q_source="online"` (default): a second unguided forecast per member gives
   r_i = (f_i − f'_i)/√2 each step. It needs no artefact, follows the state, and uses
   the same solver as K_ens. It costs one more prior run per member and step, and Q̂ has
-  rank E.
-- `q_source="bank"`: `ResidualBank` / `build_residual_bank(posterior, states,
-  num_steps, stepper, ...)` stores r = (f¹ − f²)/√2. Q̂H' and HQ̂H' are formed from H
-  applied to the bank at use time and cached per (H, R).
+  rank E. It reuses f_i, which also enters the innovation: an O(1/E) bias.
+- `q_source="bank"`: `build_residual_bank(posterior, states, num_steps, stepper, ...)`
+  returns r = (f¹ − f²)/√2 as a tensor (save it with `torch.save`; `residual_bank`
+  takes the tensor or the path). Q̂H' and HQ̂H' are formed from H applied to the bank
+  at use time and cached per (H, R). A known factor Q = B'B is the bank √N_b B.
+- `q_source="fixed"`: a known diagonal Q (`q_variance`, scalar or per state entry);
+  K_q is formed in closed form and not localised.
 
 **Few-step forecasts are approximate prior draws.** In the closed-form case, Euler
 FM-ODE at 5 steps gives variance 0.58 Q (0.23 Q at 2 steps), and SI-SDE at 2 steps
@@ -234,13 +255,16 @@ lag-1 autocorrelation of innovations is close to zero, and report it.
 
 ### 4.5 Physical constraints
 
-- Navier-Stokes (vorticity): localised updates are linear combinations of member anomalies
-  and keep the zero-mean constraint. Check enstrophy spectra per band: a global update cut
-  member enstrophy to 42-50% in a worst-case check, while localisation at 8 sites kept
-  85-103%.
-- uDALES: localised updates break the divergence-free condition and can put mass into
-  obstacles. Apply the update to a potential or stream function, or project after it, and
-  reapply the obstacle mask.
+- Navier-Stokes (vorticity): a localised update is not a combination of whole member
+  anomalies, so it can shift the domain-mean vorticity; the case removes the domain mean of
+  the increment (`zero_mean_increment`, `cases/navier_stokes/_ns_correction.py`). Check
+  enstrophy spectra per band (`diagnostics: true`): a global update cut member enstrophy to
+  42-50% in a worst-case check, while localisation at 8 sites kept 85-103%.
+- uDALES: the state is a horizontal slice of a 3D LES and is not horizontally
+  divergence-free (du/dx + dv/dy = -dw/dz), so no divergence projection is applied (an
+  increment projection was tried and removed: stronger than the physics requires). The
+  obstacle mask is applied (`mask_obstacles`: zero taper in solid cells and a
+  `post_update` keeping their guided values).
 - Cap the update size in Mahalanobis units as a guard, and log how often the cap binds.
 
 ## 5. Test plan
@@ -255,12 +279,15 @@ Run in this order. Stop and reassess if a stage fails.
    section 2); EnKF with the true model; the `oracle` cell (exact per-member kernel) with and
    without correction. Metrics as in the handoff, plus lag-1 innovation autocorrelation.
    Tune localisation radius, `gain_scale` and τ for variant B on validation only.
-3. **Measure before fixing on Navier-Stokes and uDALES.** On existing runs, compute lag-1
-   innovation autocorrelation and the share of P_f that is Q (from the bank against the
-   forecast spread). If autocorrelation is near zero and Q dominates, the correction is not
-   warranted there; say so.
-4. **Navier-Stokes and uDALES with the correction**, E=64, on the paper's scenarios, with the
-   spectrum, divergence and obstacle checks from 4.5, and the alternative in section 2.
+3. **Measure before fixing on Navier-Stokes and uDALES.** Run with `gain_scale=0
+   forecast_seed=0` (grid: `FC=on FC_OVERRIDES="gain_scale=0 forecast_seed=0"`; the
+   trajectory equals the plain run's) and read the lag-1 innovation autocorrelation and the
+   Q share `(q_rms / spread_rms)^2` from the per-cell diagnostics JSON. If autocorrelation
+   is near zero and Q dominates, the correction is not warranted there; say so.
+4. **Navier-Stokes and uDALES with the correction** (`FC=on`, settings via `FC_OVERRIDES`;
+   wiring in `common/forecast_correction.py`, switches in `cases/navier_stokes/README.md`),
+   E=64, on the paper's scenarios, with the spectrum and obstacle checks from 4.5, and the
+   alternative in section 2 (not yet wired for these cases).
 
 What would count against the method:
 
