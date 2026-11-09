@@ -47,10 +47,12 @@ methods:
   #                       sampler's num_steps); few steps are approximate prior draws
   #   localisation        Gaspari-Cohn radius in sites on the periodic lattice (null: none)
   #   gain_scale          multiplier on K_ens - K_q; calibrate on validation only
-  #   q_source            online (second forecast per member, default) | exact (true Q)
-  #   forecast_mode       prior (default) | free_run | ode
+  #   q_source            online (second forecast per member, default) | exact (the true
+  #                       transition variance: closed-form K_q, library q_source=fixed)
   #   update_cap          Mahalanobis cap on the update (null: none)
   #   enabled             false gives the plain sampler, bit for bit
+  # Unknown keys are refused. The forecast is always the posterior's own unguided
+  # SDE/ODE.
   # Chosen on validation (4 sequences, seed 0, E=64, 8-epoch priors, sampler at
   # dps_jacobian_free M=25), by lowest sliced W2: radius 4 of {2, 4, 8}, gain 0.5 of
   # {0.5, 0.75, 1.0}. gain 0.5 is the grid edge; DM-SDE inherits the FM values
@@ -66,7 +68,8 @@ methods:
   # Radius 4 of {none, 2, 4, 8} on validation.
   oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
   # Unguided trained-prior forecast + EnKF update (the update of the `enkf` cell).
-  # num_steps / diffusion_scale set the prior's forecast solver. inflation 1.0 and
-  # radius 4 are the EnKF's validation optimum, not re-tuned for this cell.
+  # inflation / localisation are the `enkf` cell's keys; num_steps (and diffusion_scale
+  # for a DM-SDE prior) set the prior's forecast solver. inflation 1.0 and radius 4
+  # are the EnKF's validation optimum, not re-tuned for this cell.
   prior_enkf: {prior: si_sde, num_steps: 25, inflation: 1.0, localisation: 4}
   prior_enkf_fm: {prior: fm_ode, num_steps: 25, inflation: 1.0, localisation: 4}

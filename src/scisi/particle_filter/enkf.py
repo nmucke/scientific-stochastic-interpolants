@@ -35,8 +35,18 @@ def gaspari_cohn(distance: torch.Tensor, radius: float) -> torch.Tensor:
 def periodic_taper(dim_state: int, radius: float, dtype=torch.float64) -> torch.Tensor:
     """``[d, d]`` Gaspari--Cohn taper on a periodic 1D lattice.
 
-    Uses the chordal distance. The taper is positive definite for chordal distance
-    on a circle, whereas arc length loses that once ``radius`` exceeds about ``d / 4``.
+    Uses the chordal distance ``(d / pi) sin(pi |i - j| / d)`` of a ring of
+    circumference ``d``, not the arc length ``min(|i - j|, d - |i - j|)``. The
+    taper is positive definite for chordal distance on a circle, whereas arc length
+    loses that once ``radius`` exceeds about ``d / 4``.
+
+    The compact support ``2 * radius`` is therefore in chordal distance. Chords are
+    shorter than arcs (equal only at zero; the antipodal site is at chord ``d / pi``
+    against arc ``d / 2``), so the taper reaches further in sites than ``radius``
+    suggests: it vanishes from arc length ``(d / pi) asin(2 pi radius / d)`` on, and
+    only if ``radius <= d / (2 pi)``. For ``radius > d / (2 pi)`` every chord is
+    below ``2 * radius``, so no entry is zero (at ``d = 16`` that is any radius above
+    2.55).
     """
     index = torch.arange(dim_state, dtype=dtype)
     gap = (index[:, None] - index[None, :]).abs()

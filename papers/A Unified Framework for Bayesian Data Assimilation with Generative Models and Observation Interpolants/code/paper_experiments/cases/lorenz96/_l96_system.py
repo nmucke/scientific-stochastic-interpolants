@@ -7,6 +7,7 @@ prior mean from seeds alone, so every method sees identical inputs.
 
 from __future__ import annotations
 
+import csv
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -111,3 +112,26 @@ def draw_prior_ensemble(
     gen = torch.Generator().manual_seed(int(seed))
     noise = torch.randn(members, problem.dim_state, generator=gen, dtype=dtype)
     return sequence.prior_mean.to(dtype) + problem.prior_std * noise
+
+
+def open_csv_for_append(path: Path, columns) -> tuple:
+    """Open ``path`` to append rows with ``columns``; return ``(handle, writer)``.
+
+    A new or empty file gets the header. An existing file must have exactly these
+    columns, otherwise rows of different runs would mix silently, so it is refused.
+    """
+    columns = list(columns)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > 0:
+        with open(path, newline="") as handle:
+            header = next(csv.reader(handle), [])
+        if header != columns:
+            raise ValueError(
+                f"{path} has columns {header}, not {columns}. Move it away or "
+                "write to another file."
+            )
+    handle = open(path, "a", newline="")
+    writer = csv.DictWriter(handle, columns)
+    if handle.tell() == 0:
+        writer.writeheader()
+    return handle, writer

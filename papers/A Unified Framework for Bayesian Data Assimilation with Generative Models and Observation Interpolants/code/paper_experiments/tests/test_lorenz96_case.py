@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -269,26 +270,50 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     (root / "lorenz96").symlink_to(tmp_path)
     monkeypatch.setattr(aggregate_lorenz96, "RESULTS", root)
     monkeypatch.setattr(make_lorenz96_figures, "RESULTS", root)
-    for seed in (0, 1):
-        path = driver.cell_path("metrics", "enkf", seed)
+    for name, seed in (("enkf", 0), ("enkf", 1), ("pf_reference", 0)):
+        path = driver.cell_path("metrics", name, seed)
         path.parent.mkdir(parents=True, exist_ok=True)
         with ResultsWriter(path) as writer:
-            writer.extend(driver.evaluate_cell("enkf", seed, tiny_case))
+            writer.extend(driver.evaluate_cell(name, seed, tiny_case))
     # A diverged sequence must not stop the reduction.
     sequence_file = driver.cell_path("per_sequence", "enkf", 0).with_suffix(".json")
     entries = json.loads(sequence_file.read_text())
     entries[Metric.RMSE.value][0] = float("nan")
     sequence_file.write_text(json.dumps(entries))
+    other = json.loads(
+        driver.cell_path("per_sequence", "enkf", 1).with_suffix(".json").read_text()
+    )
 
     monkeypatch.setattr(sys, "argv", ["aggregate_lorenz96.py"])
     aggregate_lorenz96.main()
     aggregated = tmp_path / "aggregated"
     with open(aggregated / "all.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    rmse = next(r for r in rows if r["metric"] == Metric.RMSE.value)
-    assert rmse["method"] == "EnKF" and int(rmse["n_traj"]) == 2
-    assert (aggregated / "per_step.csv").exists()
-    assert (aggregated / "sequence_spread.csv").exists()
+    rmse = next(
+        r for r in rows if r["metric"] == Metric.RMSE.value and r["method"] == "EnKF"
+    )
+    assert int(rmse["n_traj"]) == 2 and float(rmse["std"]) > 0
+    # One seed: the std is not measured, so NaN rather than the library's 0.0.
+    reference = [r for r in rows if r["variant"] == "reference"]
+    assert reference and all(math.isnan(float(r["std"])) for r in reference)
+    assert any(r["metric"] == driver.DIVERGED_STEPS for r in reference)
+    with open(aggregated / "per_step.csv", encoding="utf-8") as handle:
+        per_step = list(csv.DictReader(handle))
+    assert all(
+        math.isnan(float(r["std"])) for r in per_step if r["variant"] == "reference"
+    )
+    with open(aggregated / "sequence_spread.csv", encoding="utf-8") as handle:
+        spread = {(r["cell"], r["metric"]): r for r in csv.DictReader(handle)}
+    # Sequence 0 keeps only seed 1, whose value was not replaced by NaN.
+    rmse_0 = other[Metric.RMSE.value][0]
+    rmse_1 = (entries[Metric.RMSE.value][1] + other[Metric.RMSE.value][1]) / 2
+    row = spread[("enkf", Metric.RMSE.value)]
+    assert int(row["n"]) == 2
+    assert float(row["std"]) == pytest.approx(abs(rmse_0 - rmse_1) / 2**0.5)
+    crps = [(a + b) / 2 for a, b in zip(entries["crps"], other["crps"])]
+    assert float(spread[("enkf", "crps")]["std"]) == pytest.approx(
+        statistics.stdev(crps)
+    )
 
     figures = tmp_path / "figures"
     figures.mkdir()
@@ -297,6 +322,137 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     make_lorenz96_figures.plot_ess(figures)
     assert (figures / "lorenz96_rmse_vs_step.pdf").exists()
     assert (figures / "lorenz96_ess.pdf").exists()
+    # A label that matches no SERIES entry must not give an empty figure.
+    monkeypatch.setattr(make_lorenz96_figures, "SERIES", (("EnKF (renamed)", "", "x", "k", "-"),))
+    with pytest.raises(ValueError, match="No SERIES entry"):
+        make_lorenz96_figures.plot_metric("rmse", "RMSE", figures)
+
+
+def test_enkf_rejects_unknown_settings(problem):
+    sequences = load_sequences(problem, "test", 1)
+    with pytest.raises(TypeError, match="inflaton"):
+        driver.run_enkf(problem, sequences, "test", 0, 8, {"inflaton": 1.1})
+
+
+@pytest.mark.parametrize("name", sorted(driver.GENERATIVE))
+def test_inflated_likelihood_runs_through_assimilate(tiny_case, name, monkeypatch):
+    built = []
+    real_build = generative.build_posterior
+
+    def spy(method, model, problem, stats, settings):
+        built.append(settings.likelihood_mode)
+        return real_build(method, model, problem, stats, settings)
+
+    monkeypatch.setattr(generative, "build_posterior", spy)
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    settings = {**driver.method_settings(tiny_case, name), "likelihood_mode": "inflated"}
+    out = driver.run_method(tiny_case, name, problem, sequences, "test", 0, settings)
+    assert built == ["inflated"]
+    assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert torch.isfinite(out.ensembles).all()
+    assert out.nfe >= settings["num_steps"]
+
+
+def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypatch):
+    def failing(message):
+        def assimilate(*args, **kwargs):
+            raise AssertionError(message)
+
+        return assimilate
+
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    drift = "FM-SDE prior drift is non-finite; use an endpoint-vanishing g_tau"
+    monkeypatch.setattr(generative, "assimilate", failing(drift))
+    out = driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
+    assert torch.isnan(out.ensembles).all() and out.nfe is None
+    records = driver.evaluate_cell("dm_sde", 0, tiny_case)
+    diverged = next(r.value for r in records if r.metric == driver.DIVERGED_STEPS)
+    assert diverged == 2 * problem.num_steps
+    assert Metric.NFE.value not in {r.metric for r in records}
+    with pytest.raises(AssertionError):  # the same message from another sampler
+        driver.run_method(tiny_case, "si_sde", problem, sequences, "test", 0)
+    monkeypatch.setattr(generative, "assimilate", failing("shapes differ"))
+    with pytest.raises(AssertionError, match="shapes differ"):
+        driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
+
+
+def test_count_diverged_steps_counts_non_finite_entries():
+    scores = [
+        {"a": [1.0, float("nan"), 2.0], "b": [0.0, 0.0, float("inf")]},
+        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0]},
+    ]
+    assert driver.count_diverged_steps(scores) == 2
+
+
+@pytest.fixture
+def tuning_case(tiny_case, monkeypatch):
+    tiny_case.evaluation.validation_sequences = 2
+    problem = driver.problem_of(tiny_case)
+    for index, seq in enumerate(load_sequences(problem, "validation", 2)):
+        driver._reference_task((problem, seq, "validation", index, 0, 256))
+    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    return tiny_case
+
+
+def test_tune_reads_validation_only_and_a_diverged_setting_is_ineligible(
+    tuning_case, tmp_path, monkeypatch
+):
+    splits = []
+    real_sequences, real_reference = driver.load_sequences, driver.load_reference
+    real_run = driver.run_method
+
+    def sequences_spy(problem, split, count):
+        splits.append(split)
+        return real_sequences(problem, split, count)
+
+    def reference_spy(split, *args):
+        splits.append(split)
+        return real_reference(split, *args)
+
+    def run_spy(cfg, name, problem, sequences, split, seed, settings=None):
+        splits.append(split)
+        out = real_run(cfg, name, problem, sequences, split, seed, settings)
+        if settings["inflation"] == 2.0:
+            out.ensembles[:, 1:] = float("nan")  # every member lost after step 0
+        return out
+
+    monkeypatch.setattr(driver, "load_sequences", sequences_spy)
+    monkeypatch.setattr(driver, "load_reference", reference_spy)
+    monkeypatch.setattr(driver, "run_method", run_spy)
+    args = SimpleNamespace(
+        method="enkf", grid=json.dumps({"inflation": [1.0, 2.0]}), threads=1
+    )
+    driver.cmd_tune(args)
+    assert splits and set(splits) == {"validation"}
+
+    path = tmp_path / "tuning" / "enkf__inflation.csv"
+    with open(path, encoding="utf-8") as handle:
+        good, bad = list(csv.DictReader(handle))
+    assert json.loads(good["base"]) == driver.method_settings(tuning_case, "enkf")
+    assert int(good["diverged_steps"]) == 0
+    assert math.isfinite(float(good[Metric.SLICED_W2.value]))
+    assert int(bad["diverged_steps"]) == 2 * (tuning_case.problem.num_steps - 1)
+    for metric in driver.TUNING_SCORES:
+        assert math.isinf(float(bad[metric.value]))
+    # Ranking by the selection metric can never pick the diverged setting.
+    best = min((good, bad), key=lambda row: float(row[Metric.SLICED_W2.value]))
+    assert best is good
+
+    driver.cmd_tune(args)  # same columns: appends
+    with open(path, encoding="utf-8") as handle:
+        assert len(list(csv.DictReader(handle))) == 4
+    path.write_text("inflation,seconds\n1.0,0.1\n")  # an older layout
+    with pytest.raises(ValueError, match="has columns"):
+        driver.cmd_tune(args)
+
+
+def test_reference_refuses_other_replicate_counts(tiny_case, monkeypatch):
+    tiny_case.evaluation.reference_replicates = 3
+    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    with pytest.raises(ValueError, match="reference_replicates must be 2"):
+        driver.cmd_reference(SimpleNamespace(split="test", workers=1))
 
 
 # --------------------------------------------------------------------------- #
@@ -331,11 +487,6 @@ def test_overrides_reach_nested_keys_and_keep_strings():
     }
     assert out["likelihood_mode"] == "dps_jacobian_free"
     assert base["correction"] == {"gain_scale": 1.0}  # not mutated
-
-
-def test_exact_residual_bank_has_the_transition_covariance():
-    bank = generative.exact_residual_bank(16, 0.3).reshape(16, -1).double()
-    torch.testing.assert_close(bank.T @ bank / 16, 0.3 * torch.eye(16, dtype=torch.float64))
 
 
 def test_lag1_autocorrelation_limits():
@@ -392,19 +543,6 @@ def test_tagged_cells_are_kept_apart_from_the_default_cell(tiny_case, tmp_path):
     # The default cell's outputs are untouched.
     assert not driver.cell_path("per_step", "enkf", 0).exists()
     assert not (tmp_path / "ensembles" / "enkf__seed0.pt").exists()
-
-
-def test_tuning_csv_header_is_merged_not_misaligned(tmp_path):
-    path = tmp_path / "tune.csv"
-    assert driver.merge_tuning_header(path, ["a", "b"]) == ["a", "b"]
-    path.write_text("a,b\n1,2\n")
-    merged = driver.merge_tuning_header(path, ["a", "b", "c"])
-    assert merged == ["a", "b", "c"]
-    with open(path, newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    assert rows == [{"a": "1", "b": "2", "c": ""}]
-    # A narrower rerun keeps the wider stored header.
-    assert driver.merge_tuning_header(path, ["a", "b"]) == ["a", "b", "c"]
 
 
 def test_normalised_innovations_use_the_true_forecast_mean(problem):
@@ -497,3 +635,105 @@ def test_prior_enkf_uses_the_enkf_update_on_prior_forecasts(tiny_case, monkeypat
             x = enkf.analyse(x, obs[s, t], gen)
             torch.testing.assert_close(out[s, t], x, atol=1e-5, rtol=1e-5)
             x = stats.inverse(stats.forward(x).float().double())
+
+
+def test_correction_block_maps_exact_to_the_fixed_true_q_and_refuses_unknown_keys(problem):
+    cfg = generative.correction_config(problem, {"q_source": "exact", "localisation": 4}, 8, 0.3)
+    assert cfg.q_source == "fixed" and cfg.q_variance == 0.3 and cfg.group_size == 8
+    assert cfg.enabled and cfg.localisation is not None
+    online = generative.correction_config(problem, {}, 8, 0.3)
+    assert online.q_source == "online" and online.q_variance is None
+    with pytest.raises(ValueError, match="Unknown correction settings"):
+        generative.correction_config(problem, {"forecast_mode": "prior"}, 8, 0.3)
+    with pytest.raises(ValueError, match="q_source"):
+        generative.correction_config(problem, {"q_source": "bank"}, 8, 0.3)
+
+
+@pytest.mark.parametrize("radius", [None, 4])
+def test_exact_q_equals_a_bank_with_the_transition_covariance(problem, radius):
+    """``q_source: exact`` (library ``fixed``) gives the K_q of a residual bank whose
+    sample covariance is exactly ``q I`` (``sqrt(q d) e_j``), with or without the
+    taper: H is a selection, so the taper is 1 at every observed site."""
+    from scisi.posterior_models.forecast_correction import ForecastCorrection
+
+    d, q, members = problem.dim_state, 0.3, 8
+    operator = build_obs_operator(problem)
+    m = problem.obs_indices.numel()
+    gen = torch.Generator().manual_seed(0)
+    x, f = (torch.randn(members, 1, 1, d, generator=gen) for _ in range(2))
+    y = torch.randn(1, m, generator=gen)
+    e = torch.randn(members, m, generator=gen)
+    block = {"q_source": "exact", "localisation": radius, "gain_scale": 0.5}
+    fixed = ForecastCorrection(generative.correction_config(problem, block, members, q))
+    bank_cfg = generative.correction_config(problem, block, members, q)
+    bank_cfg.q_source, bank_cfg.q_variance = "bank", None
+    bank_cfg.residual_bank = (torch.eye(d) * (q * d) ** 0.5).reshape(d, 1, 1, d)
+    bank = ForecastCorrection(bank_cfg)
+    a = fixed.correct(x, f, y, operator, problem.obs_variance, perturbations=e)
+    b = bank.correct(x, f, y, operator, problem.obs_variance, perturbations=e)
+    torch.testing.assert_close(a, b, atol=1e-6, rtol=1e-6)
+    assert not torch.equal(a, x)
+
+
+def test_a_plain_sampler_refuses_a_correction_block(tiny_case):
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 1)
+    settings = {**driver.method_settings(tiny_case, "si_sde"), "correction": {}}
+    with pytest.raises(TypeError, match="correction"):
+        driver.run_method(tiny_case, "si_sde", problem, sequences, "test", 0, settings)
+
+
+def test_the_dm_sde_fc_drift_assertion_counts_as_diverged(tiny_case, monkeypatch):
+    def assimilate(*args, **kwargs):
+        raise AssertionError("FM-SDE prior drift is non-finite; use an endpoint-vanishing g_tau")
+
+    monkeypatch.setattr(generative, "assimilate", assimilate)
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    out = driver.run_method(tiny_case, "dm_sde_fc", problem, sequences, "test", 0)
+    assert torch.isnan(out.ensembles).all() and out.nfe is None
+    with pytest.raises(AssertionError):
+        driver.run_method(tiny_case, "si_sde_fc", problem, sequences, "test", 0)
+
+
+def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypatch):
+    seen = []
+    real_run = driver.run_method
+
+    def run_spy(cfg, name, problem, sequences, split, seed, settings=None):
+        seen.append(settings)
+        return real_run(cfg, name, problem, sequences, split, seed, settings)
+
+    monkeypatch.setattr(driver, "run_method", run_spy)
+    args = SimpleNamespace(
+        method="fm_ode_fc",
+        grid=json.dumps({"correction.gain_scale": [0.0, 0.5]}),
+        set=["correction.forecast_num_steps=2"],
+        tag="t",
+        innovations=False,
+        threads=1,
+    )
+    driver.cmd_tune(args)
+    assert [s["correction"]["gain_scale"] for s in seen] == [0.0, 0.5]
+    assert all(s["correction"]["forecast_num_steps"] == 2 for s in seen)
+    assert all(s["num_steps"] == tuning_case.methods.fm_ode.num_steps for s in seen)
+    path = tmp_path / "tuning" / "fm_ode_fc__correction.gain_scale__t.csv"
+    with open(path, encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 2
+    assert json.loads(rows[0]["base"])["correction"]["forecast_num_steps"] == 2
+    for row in rows:
+        assert math.isfinite(float(row[driver.INNOVATION_LAG1]))
+        # The sampler's M plus two forecasts of 2 steps, except at gain 0, which
+        # still draws the forecasts.
+        assert float(row[Metric.NFE.value]) == tuning_case.methods.fm_ode.num_steps + 4
+    # The plain cell writes no innovation columns, so its own file is unaffected,
+    # and asking for them into an existing file without them is refused.
+    plain = SimpleNamespace(
+        method="enkf", grid=json.dumps({"inflation": [1.0]}), threads=1
+    )
+    driver.cmd_tune(plain)
+    with pytest.raises(ValueError, match="has columns"):
+        driver.cmd_tune(SimpleNamespace(**vars(plain), innovations=True))
+    with pytest.raises(ValueError, match="nothing to tune"):
+        driver.cmd_tune(SimpleNamespace(method="oracle", grid="{}", threads=1))

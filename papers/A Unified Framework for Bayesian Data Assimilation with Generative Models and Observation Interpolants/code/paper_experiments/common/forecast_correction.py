@@ -151,7 +151,8 @@ def build_correction(
 
     Gaspari-Cohn localisation on the state grid (``localisation_radius`` cells;
     ``None`` = global; a mapping gives per-scenario radii), observation sites from
-    ``H`` itself. ``mask`` (bool, state shape): False entries get a zero taper and
+    ``H`` itself (a nonlinear ``h``: its linear sensor map ``h.inner``; the gains
+    are EnKF-style in ``h(f_i)``, see the library docstring). ``mask`` (bool, state shape): False entries get a zero taper and
     keep their guided values. ``forecast_seed``: when set, the forecasts use a
     forked RNG seeded per (case, scenario, test_index, seed, forecast_seed).
     """
@@ -230,16 +231,31 @@ def _slug(x: object) -> str:
 
 def write_cell_diagnostics(root: Path, case_name: str, ctx: Any, variant: Optional[str],
                            settings: Mapping, correction: Any,
-                           monitor: Optional[CorrectionMonitor]) -> Path:
-    """``<root>/<case>__<method>__<scenario>__<variant>__traj<i>__seed<s>__E.._M...json``."""
+                           monitor: Optional[CorrectionMonitor], obs_operator: Any = None) -> Path:
+    """``<root>/<case>__<method>__<scenario>__<variant>[__c<c>]__traj<i>__seed<s>__E.._M...json``.
+
+    ``obs_operator``: adds the ``states_tag`` (``__c<c>`` for a strength-carrying
+    nonlinear ``h``, as the saved states) so a c-sweep does not overwrite one file,
+    and the operator metadata (``obs_linear``, ``obs_nonlinearity``, ``obs_strength``).
+    """
+    from common.obs_scenario import states_tag
+
     payload = summary(correction, monitor)
     test_index = int(ctx.extra.get("test_index", -1))
     payload.update(case=case_name, method=ctx.method.value, scenario=ctx.scenario.value,
                    variant=variant, seed=int(ctx.seed), test_index=test_index,
                    E=int(ctx.ensemble_size), M=int(ctx.num_steps),
                    settings={k: v for k, v in settings.items() if k != "methods"})
+    obs_tag = ""
+    if obs_operator is not None:
+        obs_tag = states_tag(obs_operator)
+        strength = getattr(obs_operator, "strength", None)
+        linear = bool(getattr(obs_operator, "is_linear", True))
+        payload.update(obs_linear=linear,
+                       obs_nonlinearity=str(getattr(obs_operator, "nonlinearity", "") or ""),
+                       obs_strength=None if linear or strength is None else float(strength))
     path = Path(root) / (
-        f"{case_name}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}__{variant}"
+        f"{case_name}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}__{variant}{obs_tag}"
         f"__traj{test_index}__seed{ctx.seed}__E{ctx.ensemble_size}_M{ctx.num_steps}.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, default=float))
@@ -278,7 +294,7 @@ class ForecastCorrectionMixin:
             self._base_variant(method), self._fc_settings(),  # type: ignore[attr-defined]
             getattr(method, "value", str(method)))
 
-    def _write_fc_diagnostics(self, ctx, correction, monitor) -> Path:  # type: ignore[no-untyped-def]
+    def _write_fc_diagnostics(self, ctx, correction, monitor, obs_operator=None) -> Path:  # type: ignore[no-untyped-def]
         from common.paths import RESULTS_ROOT, output_path
 
         settings = self._fc_settings()
@@ -286,7 +302,7 @@ class ForecastCorrectionMixin:
         root = output_path(str(settings.get("diagnostics_root")
                                or RESULTS_ROOT / case / "forecast_correction"))
         return write_cell_diagnostics(root, case, ctx, self._variant(ctx.method), settings,
-                                      correction, monitor)
+                                      correction, monitor, obs_operator=obs_operator)
 
 
 # --------------------------------------------------------------------------- #

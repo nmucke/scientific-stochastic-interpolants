@@ -19,8 +19,8 @@ This is a reasonable, finite, documented adaptation of EnSF to our harness:
     - the PRIOR score, approximated by the forecast ensemble's empirical
       Gaussian score ``s_prior(z) = -(z - mu_f) / diag(Cov_f)`` (the diagonal
       Gaussian fit of the forecast ensemble -- the "ensemble score" of EnSF), and
-    - the OBSERVATION-likelihood score ``s_obs(z) = H^T R^{-1} (y - H z)`` (a
-      tempered Gaussian guidance term),
+    - the OBSERVATION-likelihood score ``s_obs(z) = J_h(z)^T R^{-1} (y - h(z))``
+      (a tempered Gaussian guidance term; ``J_h = H`` for linear ``H``),
   annealed by a cosine-like temperature ``g(t)`` so the observation term is
   switched on smoothly (Bao et al.'s damping function). The reverse diffusion is
   integrated with Euler--Maruyama.
@@ -41,7 +41,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import (
+    ObservationOperator,
+    PointwiseObservationOperator,
+)
 
 
 class EnsembleScoreFilter(nn.Module):
@@ -65,15 +68,47 @@ class EnsembleScoreFilter(nn.Module):
         var = ensemble.var(dim=0, unbiased=False, keepdim=True).clamp_min(1e-6)
         return mu, var
 
+    @staticmethod
+    def _forecast_obs_variance(
+        forecast: torch.Tensor,
+        mu_f: torch.Tensor,
+        var_f: torch.Tensor,
+        obs_operator: ObservationOperator,
+    ) -> torch.Tensor:
+        """Diagonal forecast variance in observation space, ``[1, N_y]``.
+
+        Linear ``H``: ``H var_f`` (the existing rule; exact
+        ``diag(H diag(var_f) H^T)`` for a selection ``H``). Nonlinear ``h``:
+
+        * ``PointwiseObservationOperator`` ``h = g(L x)``: the linearized
+          ``diag(J diag(var_f) J^T)`` at the forecast mean with
+          ``J = diag(g'(L mu_f)) L``, evaluated elementwise as
+          ``g'(L mu_f)^2 * (L var_f)`` (the same ``L var_f`` rule as the linear
+          path, so ``g = identity`` reproduces it bit for bit);
+        * any other nonlinear ``h``: the ensemble variance of ``h(forecast)``.
+        """
+        if obs_operator.is_linear:
+            return obs_operator(var_f)
+        if isinstance(obs_operator, PointwiseObservationOperator):
+            dg = obs_operator.dg(obs_operator.inner(mu_f))  # [1, N_y]
+            return dg**2 * obs_operator.inner(var_f)
+        hf = obs_operator(forecast)  # [E, N_y]
+        return hf.var(dim=0, unbiased=False, keepdim=True).clamp_min(1e-6)
+
     def _analysis_update(
         self,
         forecast: torch.Tensor,
         observations: torch.Tensor,
-        obs_operator: LinearObservationOperator,
+        obs_operator: ObservationOperator,
         variance: float,
         generator: Optional[torch.Generator],
     ) -> torch.Tensor:
-        """Score-based analysis update injecting N(y; H z, R).
+        """Score-based analysis update injecting N(y; h(z), R).
+
+        For a nonlinear ``h`` the observation score is
+        ``J_h(z)^T (y - h(z)) / (var_f_obs + R)`` (per-member VJP) and the
+        forecast obs-space variance is linearized (see
+        :meth:`_forecast_obs_variance`); a linear ``H`` is unchanged.
 
         Runs a short reverse diffusion whose drift is the sum of the forecast
         ensemble's empirical Gaussian (prior) score and the tempered Gaussian
@@ -83,6 +118,8 @@ class EnsembleScoreFilter(nn.Module):
         device = forecast.device
 
         mu_f, var_f = self._empirical_gaussian(forecast)  # [1, ...]
+        # Diagonal forecast obs variance [1, N_y] (state independent).
+        var_f_obs = self._forecast_obs_variance(forecast, mu_f, var_f, obs_operator)
 
         # Initialise the analysis ensemble at the forecast (the prior is the
         # forecast distribution; we relax it toward the observation-consistent
@@ -110,9 +147,9 @@ class EnsembleScoreFilter(nn.Module):
             # The raw 1/variance (=400 at R=0.0025) made the explicit Langevin step
             # scale as ~var_f/R >> 1 (past the stability limit) and diverged to 1e12;
             # dividing by (var_f_obs + R) caps each step to a Kalman-like increment.
+            # Nonlinear h: J_h(z)^T u per member via the VJP (= H^T u when linear).
             resid = observations - obs_operator(z)  # [E, N_y]
-            var_f_obs = obs_operator(var_f)  # [1, N_y] diagonal forecast obs variance
-            obs_score = obs_operator.transpose(resid / (var_f_obs + variance))  # [E,C,H,W]
+            obs_score = obs_operator.vjp(z, resid / (var_f_obs + variance))  # [E,C,H,W]
 
             drift = prior_score + g * obs_score
             noise = torch.randn(z.shape, generator=generator, device=device)
@@ -127,7 +164,7 @@ class EnsembleScoreFilter(nn.Module):
         self,
         prior,  # LoadedPrior
         truth_obs,  # TruthAndObs
-        obs_operator: LinearObservationOperator,
+        obs_operator: ObservationOperator,
         ensemble_size: int,
         variance: float,
         num_steps: int,

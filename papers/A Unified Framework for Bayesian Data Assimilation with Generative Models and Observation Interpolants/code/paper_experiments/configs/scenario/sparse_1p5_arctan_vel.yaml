@@ -1,0 +1,34 @@
+# URBAN NONLINEAR sparse sensors on the VELOCITY channels only: h(x) = arctan(c L x)/c
+# with L a seeded random selection of fluid cells of channels (u, v, w) =
+# state channels [0, 1, 2]; temperature (thl, channel 3) is NOT observed.
+# Applied in the normalised state space (every channel unit-std), c = 1 by default;
+# sweep {1, 2, 4} with +nonlinearity_strength=c (results_file gets a __c<c> suffix).
+#
+# BUDGET: percent_obs of the OBSERVED channels' dofs, 3 * 128^2 * 1/64 = 768
+# sensors, all in fluid cells (the linear sparse_1p5 places 1024 over 4 channels).
+# The mask is seeded from this scenario's own label (it cannot equal sparse_1p5's,
+# which spans thl as well); the noise R is the case's scalar normalised variance.
+# LINEAR CONTROL: sparse_1p5_vel ("sparse 1.5625% (uvw)") -- same sensors, same
+# noise draws, h = L. Run both in the same launch.
+#
+# URBAN only. Launch with +urban_scenarios='["sparse 1.5625% arctan (uvw)"]'.
+name: sparse 1.5625% arctan (uvw)
+type: sparse
+fraction: 0.015625
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: random
+  percent_obs: 0.015625
+  seed: 42  # overridden by common.seeding.mask_seed(case, scenario)
+
+sensor_channels: [0, 1, 2]   # u, v, w (urban VELOCITY_CHANNELS)
+
+nonlinearity:
+  operator: pointwise
+  name: arctan
+  strength: 1.0
+  eps: 1.0e-3
+
+# Hyperparameter rows: reuse the tuned urban sparse_1p5 row (RE-TUNE for h).
+hparam_scenario: sparse_1p5

@@ -419,3 +419,22 @@ def test_gaspari_cohn_is_compact_and_normalised():
 @pytest.mark.parametrize("d, radius", [(16, 5.0), (16, 8.0), (40, 12.0)])
 def test_periodic_taper_is_positive_semidefinite_at_large_radius(d, radius):
     assert torch.linalg.eigvalsh(periodic_taper(d, radius)).min() > -1e-10
+
+
+def test_periodic_taper_support_is_in_chordal_distance():
+    # radius 2 on d = 16: zero from arc (16 / pi) asin(4 pi / 16) = 4.6 sites on.
+    taper = periodic_taper(16, 2.0)[0]
+    assert (taper[1:5] > 0).all() and (taper[5:12] == 0).all()
+    # Above d / (2 pi) no chord reaches 2 * radius, so nothing is cut off.
+    assert (periodic_taper(16, 2.6) > 0).all()
+
+
+@pytest.mark.parametrize("proposal", ["bootstrap", "optimal"])
+def test_particle_filter_refuses_non_finite_weights(linear_problem, proposal):
+    A, q, H, r, m0, _, observations, _ = linear_problem
+    particles = m0[:, None].repeat(1, 64)
+    particles[1, 5] = float("nan")
+    with pytest.raises(FloatingPointError, match="not finite"):
+        BootstrapParticleFilter(H, r, proposal=proposal).run(
+            LinearModel(A, q), particles, observations, torch.Generator().manual_seed(0)
+        )

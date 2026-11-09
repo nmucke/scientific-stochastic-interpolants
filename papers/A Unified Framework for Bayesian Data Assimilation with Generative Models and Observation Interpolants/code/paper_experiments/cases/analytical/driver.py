@@ -20,7 +20,7 @@ on the analytic Gaussian prior; the KL / sliced-W2 estimators are reused from
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Optional
 
@@ -144,6 +144,7 @@ def draw_interpolant_posterior(
     sigma_bar_eig_floor: bool = False,
     isotropic_front_factor: bool = False,
     residual_step_cap: Optional[float] = None,
+    obs_op: Optional[nn.Module] = None,
 ) -> torch.Tensor:
     """Draw an Ours-sampler posterior ensemble via the canonical ``src/scisi`` models.
 
@@ -159,7 +160,9 @@ def draw_interpolant_posterior(
     """
     d = sys_.d
     n = ensemble_size
-    obs_op = build_identity_obs_operator(d=d)
+    # ``obs_op`` lets the nonlinear harness (nonlinear_driver.py) pass a
+    # PointwiseObservationOperator; None keeps the linear H = I path unchanged.
+    obs_op = obs_op if obs_op is not None else build_identity_obs_operator(d=d)
     # Pre-expand to the ensemble so BasePosterior.sample captures E from the start.
     x0_4d = x0.reshape(1, 1, 1, d)
     fh = x0_4d.unsqueeze(-1).repeat(n, 1, 1, 1, 1)  # [n, 1, 1, d, 1]
@@ -280,6 +283,18 @@ class AnalyticalRunner(ExperimentRunner):
     def scenarios(self) -> Sequence[Scenario]:
         return (Scenario.ANALYTICAL,)
 
+    def run(self, *, aggregate: bool = True) -> list[ResultRecord]:
+        """Linear case unchanged; ``case.nonlinear`` (analytical_nonlinear.yaml)
+        delegates to the nonlinear-observation harness (``nonlinear_driver``)."""
+        case_cfg = getattr(self.config, "case", None)
+        if case_cfg is not None and case_cfg.get("nonlinear", None) is not None:
+            from .nonlinear_driver import NonlinearAnalyticalHarness
+
+            return NonlinearAnalyticalHarness.from_config(
+                self.config, seeds=self.seeds
+            ).run(aggregate=aggregate)
+        return super().run(aggregate=aggregate)
+
     # -- config helpers ---------------------------------------------------- #
 
     # Baseline -> YAML config name under configs/method/. Loaded on demand to read
@@ -335,6 +350,31 @@ class AnalyticalRunner(ExperimentRunner):
             return int(cfg.n_eval_samples)
         return _N_EVAL
 
+    def _ours_hparams(self, method: Method, num_steps: int) -> dict:
+        """Stabilisation kwargs of :func:`draw_interpolant_posterior` for an Ours row.
+
+        Read from this sampler's own YAML (the same [case][scenario][M] tables the
+        NS/urban pipeline resolves); a top-level CLI override still wins, so a
+        sweep needs no edit to the tracked config. Shared by the linear
+        ``evaluate`` and the nonlinear harness.
+        """
+        lik = self._method_cfg(method).get("likelihood_model", {})
+
+        def hp(key, fallback):
+            cli = self._cfg_get(key, None)
+            return cli if cli is not None else _cfg_hparam(lik, key, num_steps, fallback)
+
+        cap = hp("residual_step_cap", None)
+        return dict(
+            # FM/DM drift-evaluation time offset (P1 probe); 0 = current
+            # left-endpoint Euler, 1 = bespoke right endpoint, 0.5 = midpoint.
+            drift_time_shift=float(hp("drift_time_shift", 0.0)),
+            jacobian_damping=float(hp("jacobian_damping", 1.0)),
+            sigma_bar_eig_floor=bool(hp("sigma_bar_eig_floor", False)),
+            isotropic_front_factor=bool(hp("isotropic_front_factor", False)),
+            residual_step_cap=float(cap) if cap is not None else None,
+        )
+
     # -- the per-(method, scenario, seed) work ----------------------------- #
     def evaluate(self, ctx: RunContext) -> Iterable[ResultRecord]:
         import time
@@ -372,17 +412,7 @@ class AnalyticalRunner(ExperimentRunner):
         if ctx.method in _OURS_SAMPLER:
             # Ours: run BOTH likelihood-covariance modes -> two variant rows.
             sampler = _OURS_SAMPLER[ctx.method]
-            # Hyperparameters come from this sampler's own YAML (the same
-            # [case][scenario][M] tables the NS/urban pipeline resolves); a CLI
-            # override still wins, so a sweep needs no edit to the tracked config.
-            lik = self._method_cfg(ctx.method).get("likelihood_model", {})
-
-            def _ours_hp(key, fallback):
-                cli = self._cfg_get(key, None)
-                if cli is not None:
-                    return cli
-                return _cfg_hparam(lik, key, M, fallback)
-
+            hp = self._ours_hparams(ctx.method, M)
             for variant, mode in _OURS_VARIANTS:
                 seed = derive_seed(
                     "analytical", f"{ctx.method.value}:{variant}", ctx.seed
@@ -390,18 +420,7 @@ class AnalyticalRunner(ExperimentRunner):
                 t0 = time.perf_counter()
                 samp = draw_interpolant_posterior(
                     sys_, x0, y, sampler=sampler, likelihood_mode=mode,
-                    ensemble_size=n_eval, num_steps=M, seed=seed,
-                    # FM/DM drift-evaluation time offset (P1 probe); 0 = current
-                    # left-endpoint Euler, 1 = bespoke right endpoint, 0.5 = midpoint.
-                    drift_time_shift=float(_ours_hp("drift_time_shift", 0.0)),
-                    jacobian_damping=float(_ours_hp("jacobian_damping", 1.0)),
-                    sigma_bar_eig_floor=bool(_ours_hp("sigma_bar_eig_floor", False)),
-                    isotropic_front_factor=bool(
-                        _ours_hp("isotropic_front_factor", False)
-                    ),
-                    residual_step_cap=(
-                        lambda v: float(v) if v is not None else None
-                    )(_ours_hp("residual_step_cap", None)),
+                    ensemble_size=n_eval, num_steps=M, seed=seed, **hp,
                 )
                 yield from _emit(samp, M, time.perf_counter() - t0, variant)
         else:
@@ -421,6 +440,8 @@ class AnalyticalRunner(ExperimentRunner):
         n: int,
         M: int,
         gen: torch.Generator,
+        obs_op: Optional[nn.Module] = None,
+        hparams: Optional[Mapping[str, object]] = None,
     ) -> tuple[torch.Tensor, int]:
         """Run a BASELINE / classical method for ``method``; return (samples, NFE).
 
@@ -433,13 +454,26 @@ class AnalyticalRunner(ExperimentRunner):
         EnKF and particle filter are the only non-``src/scisi`` methods: they are
         the closed-form classical references in ``classical_baselines`` (no
         generative prior model at all).
+
+        ``obs_op`` / ``hparams`` are the nonlinear-harness hooks: an explicit
+        (possibly nonlinear) observation operator, and per-run hyperparameter
+        overrides ``{key: value}`` that win over the method YAML (the R-dependent
+        tuned values of ``configs/case/analytical_nonlinear.yaml``). Both ``None``
+        (the linear case) leave this path exactly as before.
         """
         d = sys_.d
+        # The system's own R / prior variance (the linear case: R = 1, prior 1).
+        obs_var, prior_var = sys_.obs_var, sys_.prior_var
+        given_op = obs_op  # None on the linear path (classical filters keep H = I code)
+        obs_op = obs_op if obs_op is not None else build_identity_obs_operator(d=d)
+        overrides = dict(hparams or {})
 
-        # Read a baseline hyperparameter from its config, resolved for THIS step
-        # count M against the analytical per-cell matrix (null cell -> config
-        # `default:`). See _cfg_hparam.
+        # Read a baseline hyperparameter: an explicit override wins, else its
+        # config resolved for THIS step count M against the analytical per-cell
+        # matrix (null cell -> config `default:`). See _cfg_hparam.
         def _hp(block, key, fallback):
+            if key in overrides:
+                return overrides[key]
             return _cfg_hparam(block, key, M, fallback)
 
         # Pre-expand to ensemble size n so BasePosterior.sample sees
@@ -459,11 +493,10 @@ class AnalyticalRunner(ExperimentRunner):
             lik = self._method_cfg(Method.FLOWDAS).get("likelihood_model", {})
             n_mc = int(_hp(lik, "num_mc_samples", 25))
             zeta = float(_hp(lik, "guidance_scale", 1.0))
-            si_model = build_si_model(d=d, g0=_G0, prior_var=_PRIOR_VAR)
-            obs_op = build_identity_obs_operator(d=d)
+            si_model = build_si_model(d=d, g0=_G0, prior_var=prior_var)
             likelihood = FlowdasGaussianLikelihood(
                 model=si_model, obs_operator=obs_op,
-                variance=_OBS_VAR, num_mc_samples=n_mc, guidance_scale=zeta,
+                variance=obs_var, num_mc_samples=n_mc, guidance_scale=zeta,
             )
             posterior = StochasticInterpolantPosterior(
                 model=si_model, likelihood_model=likelihood,
@@ -483,8 +516,7 @@ class AnalyticalRunner(ExperimentRunner):
             step_size = float(_hp(lik, "step_size", 0.005))
             noise_scale = float(_hp(lik, "noise_scale", 1e-3))
             lambda_reg = float(_hp(lik, "lambda_reg", 1e-4))
-            fm_model = build_fm_model(d=d, prior_var=_PRIOR_VAR)
-            obs_op = build_identity_obs_operator(d=d)
+            fm_model = build_fm_model(d=d, prior_var=prior_var)
             # PECULIAR TO D-FLOW: M drives the SGLD chain length num_optim_steps
             # (the FM-ODE rollout stays fixed at ode_steps=6), so the analytical
             # M-sweep {50,100,250,500} IS the Langevin-steps axis for D-Flow --
@@ -494,7 +526,7 @@ class AnalyticalRunner(ExperimentRunner):
             dflow_K = M
             likelihood = DFlowSGLDLikelihood(
                 model=fm_model, obs_operator=obs_op,
-                variance=_OBS_VAR,
+                variance=obs_var,
                 num_optim_steps=dflow_K,
                 step_size=step_size,
                 noise_scale=noise_scale,
@@ -506,7 +538,7 @@ class AnalyticalRunner(ExperimentRunner):
                 step_size=step_size,
                 noise_scale=noise_scale,
                 lambda_reg=lambda_reg,
-                variance=_OBS_VAR,
+                variance=obs_var,
             )
             with torch.no_grad():
                 out = posterior.sample(
@@ -521,11 +553,10 @@ class AnalyticalRunner(ExperimentRunner):
         if method == Method.SDA:
             lik = self._method_cfg(Method.SDA).get("likelihood_model", {})
             gamma_sda = float(_hp(lik, "gamma_sda", 1e-2))
-            dm_model = build_dm_model(d=d, prior_var=_PRIOR_VAR, g0=_G0)
-            obs_op = build_identity_obs_operator(d=d)
+            dm_model = build_dm_model(d=d, prior_var=prior_var, g0=_G0)
             likelihood = SDALikelihood(
                 model=dm_model, obs_operator=obs_op,
-                variance=_OBS_VAR, model_class="fm", gamma_sda=gamma_sda,
+                variance=obs_var, model_class="fm", gamma_sda=gamma_sda,
             )
             posterior = DiffusionPosterior(
                 model=dm_model, likelihood_model=likelihood,
@@ -544,14 +575,13 @@ class AnalyticalRunner(ExperimentRunner):
             cfg = self._method_cfg(Method.SURGE_SDA)
             gamma_sda = float(_hp(cfg.get("likelihood_model", {}), "gamma_sda", 1e-2))
             ess = float(_hp(cfg.get("posterior_model", {}), "ess_threshold", 0.5))
-            dm_model = build_dm_model(d=d, prior_var=_PRIOR_VAR, g0=_G0)
-            obs_op = build_identity_obs_operator(d=d)
+            dm_model = build_dm_model(d=d, prior_var=prior_var, g0=_G0)
             likelihood = SDALikelihood(
                 model=dm_model, obs_operator=obs_op,
-                variance=_OBS_VAR, model_class="fm", gamma_sda=gamma_sda,
+                variance=obs_var, model_class="fm", gamma_sda=gamma_sda,
             )
             posterior = SurgeFlowMatchingPosterior(
-                model=dm_model, obs_operator=obs_op, variance=_OBS_VAR,
+                model=dm_model, obs_operator=obs_op, variance=obs_var,
                 likelihood_model=likelihood, ess_threshold=ess,
                 diffusion_term=None,
             )
@@ -571,14 +601,13 @@ class AnalyticalRunner(ExperimentRunner):
             n_mc = int(_hp(lik, "num_mc_samples", 25))
             zeta = float(_hp(lik, "guidance_scale", 1.0))
             ess = float(_hp(cfg.get("posterior_model", {}), "ess_threshold", 0.5))
-            si_model = build_si_model(d=d, g0=_G0, prior_var=_PRIOR_VAR)
-            obs_op = build_identity_obs_operator(d=d)
+            si_model = build_si_model(d=d, g0=_G0, prior_var=prior_var)
             likelihood = FlowdasGaussianLikelihood(
                 model=si_model, obs_operator=obs_op,
-                variance=_OBS_VAR, num_mc_samples=n_mc, guidance_scale=zeta,
+                variance=obs_var, num_mc_samples=n_mc, guidance_scale=zeta,
             )
             posterior = SurgeStochasticInterpolantPosterior(
-                model=si_model, obs_operator=obs_op, variance=_OBS_VAR,
+                model=si_model, obs_operator=obs_op, variance=obs_var,
                 likelihood_model=likelihood, ess_threshold=ess,
                 diffusion_term=None,
             )
@@ -602,10 +631,9 @@ class AnalyticalRunner(ExperimentRunner):
             n_mc = int(_hp(
                 self._method_cfg(Method.FLOWDAS).get("likelihood_model", {}),
                 "num_mc_samples", 25))
-            fm_model = build_fm_model(d=d, prior_var=_PRIOR_VAR)
-            obs_op = build_identity_obs_operator(d=d)
+            fm_model = build_fm_model(d=d, prior_var=prior_var)
             likelihood = FIGGaussianLikelihood(
-                model=fm_model, obs_operator=obs_op, variance=_OBS_VAR,
+                model=fm_model, obs_operator=obs_op, variance=obs_var,
                 ensemble_size=n_mc,
                 guidance_steps=fig_k, guidance_scale=fig_c,
                 interpolant_noise=fig_w,
@@ -621,13 +649,87 @@ class AnalyticalRunner(ExperimentRunner):
             return out.reshape(n, d), M * (1 + fig_k)
 
         # ------------------------------------------------------------------
+        # Extra baselines used by the NONLINEAR harness only (not in the linear
+        # ANALYTICAL_METHODS lineup, so the linear table is unaffected):
+        # Guided FM (OT-ODE), DPS ("Guided diffusion"), standalone SURGE. The
+        # analytical-regime settings follow the README (OT-ODE sigma_y^2 = R,
+        # gamma = 1); none of these has a configs/method YAML.
+        # ------------------------------------------------------------------
+        if method == Method.GUIDED_FM_OTODE:
+            from scisi.likelihood_models.guidance import GuidanceGaussianLikelihood
+
+            fm_model = build_fm_model(d=d, prior_var=prior_var)
+            likelihood = GuidanceGaussianLikelihood(
+                model=fm_model, obs_operator=obs_op, variance=obs_var,
+                weighting="ot_ode", obs_variance=obs_var,
+                guidance_scale=float(_hp(None, "guidance_scale", 1.0)),
+            )
+            posterior = FlowMatchingPosterior(
+                model=fm_model, likelihood_model=likelihood, diffusion_term=None,
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=None, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            return out.reshape(n, d), 2 * M
+
+        if method == Method.GUIDED_DIFFUSION:
+            from scisi.likelihood_models.guidance import DPSGaussianLikelihood
+
+            dm_model = build_dm_model(d=d, prior_var=prior_var, g0=_G0)
+            likelihood = DPSGaussianLikelihood(
+                model=dm_model, obs_operator=obs_op, variance=obs_var,
+                model_class="fm",
+            )
+            posterior = DiffusionPosterior(
+                model=dm_model, likelihood_model=likelihood,
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=None, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            return out.reshape(n, d), 2 * M
+
+        if method == Method.SURGE:
+            from scisi.posterior_models.surge_posterior import SurgePosterior
+
+            dm_model = build_dm_model(d=d, prior_var=prior_var, g0=_G0)
+            posterior = SurgePosterior(
+                model=dm_model, obs_operator=obs_op, variance=obs_var,
+                guidance_scale=float(_hp(None, "guidance_scale", 1.0)),
+                ess_threshold=0.5, diffusion_term=None,
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=None, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            return out.reshape(n, d), 2 * M
+
+        # ------------------------------------------------------------------
         # Classical filters (use hand-coded samplers; no generative prior)
         # ------------------------------------------------------------------
+        # Nonlinear h for the classical filters: row-wise forward of the given
+        # operator on the [E, d] ensemble. None -> the original H = I code.
+        obs_fn = None
+        if given_op is not None:
+            def obs_fn(xe: torch.Tensor) -> torch.Tensor:
+                return given_op(xe.reshape(xe.shape[0], 1, 1, d))
+
         if method == Method.ENKF:
-            return enkf_posterior(sys_, x0, y, ensemble_size=n, generator=gen), 1
+            return (
+                enkf_posterior(
+                    sys_, x0, y, ensemble_size=n, generator=gen, obs_fn=obs_fn
+                ),
+                1,
+            )
         if method == Method.PARTICLE_FILTER:
             return (
-                particle_filter_posterior(sys_, x0, y, ensemble_size=n, generator=gen),
+                particle_filter_posterior(
+                    sys_, x0, y, ensemble_size=n, generator=gen, obs_fn=obs_fn
+                ),
                 1,
             )
         raise ValueError(f"unhandled analytical method {method!r}")

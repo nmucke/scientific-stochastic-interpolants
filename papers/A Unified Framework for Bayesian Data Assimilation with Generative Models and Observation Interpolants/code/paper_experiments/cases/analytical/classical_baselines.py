@@ -20,11 +20,16 @@ posteriors (see ``driver.draw_interpolant_posterior``).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
 Tensor = torch.Tensor
+# Optional nonlinear observation map h: [E, d] -> [E, N_y] (row-wise). ``None``
+# keeps the original H = I code path bit-for-bit (the linear table's numbers).
+ObsFn = Optional[Callable[[Tensor], Tensor]]
 
 
 @dataclass(frozen=True)
@@ -70,18 +75,38 @@ def enkf_posterior(
     *,
     ensemble_size: int,
     generator: torch.Generator,
+    obs_fn: ObsFn = None,
 ) -> Tensor:
     """Stochastic ensemble Kalman filter (Evensen) on the analytic system.
 
     Forecast ensemble ``x_f ~ N(x0, I)`` (the known prior transition), perturbed
     observations ``y + e``, ``e ~ N(0, R)``, sample-covariance gain. With ``H = I``
     this is the textbook stochastic EnKF and is exact up to ensemble noise.
+
+    With a nonlinear ``obs_fn = h`` it is the standard stochastic EnKF with
+    statistical linearisation (Evensen 2003 / Houtekamer & Mitchell): the
+    predicted observations are ``h(x_f^(e))`` per member, the gain is
+    ``K = C_xh (C_hh + R I)^{-1}`` from the ensemble cross-/auto-covariances of
+    ``(x_f, h(x_f))``, and ``x_a = x_f + K (y + e - h(x_f))``. Exact only for
+    linear ``h``; for nonlinear ``h`` it is the classical Gaussian-update baseline.
     """
     d = sys.d
     R = sys.obs_var
     x_f = x0.unsqueeze(0) + sys.prior_var**0.5 * torch.randn(
         ensemble_size, d, generator=generator
     )
+    if obs_fn is not None:
+        hx = obs_fn(x_f)
+        dx = x_f - x_f.mean(0, keepdim=True)
+        dh = hx - hx.mean(0, keepdim=True)
+        C_xh = dx.T @ dh / (ensemble_size - 1)
+        C_hh = dh.T @ dh / (ensemble_size - 1)
+        n_y = hx.shape[1]
+        K = C_xh @ torch.linalg.inv(C_hh + R * torch.eye(n_y, dtype=x_f.dtype))
+        y_pert = y.reshape(1, -1) + (R**0.5) * torch.randn(
+            ensemble_size, n_y, generator=generator
+        )
+        return x_f + (y_pert - hx) @ K.T
     # Sample forecast covariance.
     xf_mean = x_f.mean(0, keepdim=True)
     P = (x_f - xf_mean).T @ (x_f - xf_mean) / (ensemble_size - 1)
@@ -101,19 +126,25 @@ def particle_filter_posterior(
     *,
     ensemble_size: int,
     generator: torch.Generator,
+    obs_fn: ObsFn = None,
 ) -> Tensor:
     """Bootstrap particle filter (Carrassi) on the analytic system.
 
     Propose ``x ~ N(x0, I)`` (prior transition), weight by the Gaussian
     likelihood ``N(y; H x, R)``, and resample (systematic). Exact in the
     ``E -> inf`` limit; reported with the same ``E`` as the other methods.
+    With ``obs_fn = h`` the weights are the exact nonlinear likelihood
+    ``N(y; h(x), R)`` (the PF needs no linearisation).
     """
     d = sys.d
     R = sys.obs_var
     x = x0.unsqueeze(0) + sys.prior_var**0.5 * torch.randn(
         ensemble_size, d, generator=generator
     )
-    log_w = -0.5 * ((y.unsqueeze(0) - x) ** 2).sum(1) / R  # H = I
+    if obs_fn is None:
+        log_w = -0.5 * ((y.unsqueeze(0) - x) ** 2).sum(1) / R  # H = I
+    else:
+        log_w = -0.5 * ((y.reshape(1, -1) - obs_fn(x)) ** 2).sum(1) / R
     w = torch.softmax(log_w, dim=0)
     # Systematic resampling.
     positions = (

@@ -805,3 +805,177 @@ def test_sample_override_without_hook_raises(lg):
 
     with pytest.raises(NotImplementedError):
         _kalman_run(NoHook(A, Q, op, r), A, Q, rows, r, 10, 2, 0, ForecastCorrection(enabled=True))
+
+
+# --------------------------------------------------------------------------- #
+# Nonlinear observation operators (EnKF-style gains; linearised bank / fixed Q)
+# --------------------------------------------------------------------------- #
+
+
+def _arctan(op, c=1.5):
+    from scisi.likelihood_models.observation_operators import PointwiseObservationOperator
+
+    return PointwiseObservationOperator(inner=op, nonlinearity="arctan", strength=c)
+
+
+def _nl_dense_reference(x, f, y, h, R, e, f2=None, Kq=None, txy=None, tyy=None):
+    """Dense EnKF-style reference: cross-covariances with ``h(f)``, innovation ``y + e - h(f)``."""
+    X, F = x.reshape(len(x), -1).double(), f.reshape(len(f), -1).double()
+    HF = h(f).double()
+    m = HF.shape[1]
+    Rm = torch.as_tensor(R, dtype=torch.float64) * torch.eye(m, dtype=torch.float64)
+
+    def gain(D, HD, n):
+        PH, HPH = D.T @ HD / n, HD.T @ HD / n
+        if txy is not None:
+            PH, HPH = PH * txy, HPH * tyy
+        return PH @ torch.linalg.inv(HPH + Rm)
+
+    K_ens = gain(F - F.mean(0), HF - HF.mean(0), len(F) - 1)
+    if Kq is None:
+        s = math.sqrt(2.0)
+        Kq = gain((F - f2.reshape(len(f2), -1).double()) / s, (HF - h(f2).double()) / s, len(F))
+    V = y.double().reshape(-1, m) + e.double() - HF
+    return (X + V @ (K_ens - Kq).T).reshape(x.shape)
+
+
+@pytest.mark.parametrize("localised", [False, True])
+def test_nonlinear_online_matches_dense_enkf_reference(lg, localised):
+    A, Q, rows, r, op = lg
+    d, m = A.shape[0], rows.numel()
+    nl = _arctan(op)
+    x, f, f2, y, e = _inputs(30, d, m)
+    f, f2 = 2 * f, 2 * f2  # well inside the nonlinear range of arctan(1.5 z)
+    loc = _loc1d(d, 2.0) if localised else None
+    out = ForecastCorrection(enabled=True, localisation=loc).correct(x, f, y, nl, r, f2=f2, perturbations=e)
+    txy = tyy = None
+    if localised:
+        full = loc.kernel(loc.state_coords, loc.state_coords)
+        txy, tyy = full[:, rows], full[rows][:, rows]
+    ref = _nl_dense_reference(x, f, y, nl, r, e, f2=f2, txy=txy, tyy=tyy)
+    torch.testing.assert_close(out.double(), ref, rtol=1e-5, atol=1e-5)
+    # ... and it differs from the linear-H update (the nonlinearity matters here).
+    lin = ForecastCorrection(enabled=True, localisation=loc).correct(x, f, y, op, r, f2=f2, perturbations=e)
+    assert (lin - out).abs().max() > 1e-2
+
+
+@pytest.mark.parametrize("source", ["bank", "fixed"])
+@pytest.mark.parametrize("localised", [False, True])
+def test_nonlinear_bank_and_fixed_linearise_at_the_group_mean(lg, source, localised):
+    A, Q, rows, r, op = lg
+    d, m = A.shape[0], rows.numel()
+    nl = _arctan(op)
+    x, f, _, y, e = _inputs(24, d, m)
+    f = 2 * f
+    bank = torch.randn(40, 1, 1, d, generator=torch.Generator().manual_seed(9))
+    q = torch.linspace(0.2, 1.0, d)
+    if source == "fixed" and localised:
+        pytest.skip("fixed Q is not localised")
+    loc = _loc1d(d, 2.0) if localised else None
+    sizes = (12, 12)
+    corr = ForecastCorrection(enabled=True, q_source=source, residual_bank=bank, q_variance=q,
+                              localisation=loc, group_size=12)
+    out = corr.correct(x, f, y, nl, r, perturbations=e)
+    full = None if loc is None else loc.kernel(loc.state_coords, loc.state_coords)
+    txy, tyy = (None, None) if full is None else (full[:, rows], full[rows][:, rows])
+    refs, start = [], 0
+    for n in sizes:
+        sl = slice(start, start + n)
+        J = nl.jacobian(f[sl].mean(0, keepdim=True)).double()  # [m, d] at the group forecast mean
+        Rm = r * torch.eye(m, dtype=torch.float64)
+        if source == "bank":
+            B = bank.reshape(40, -1).double()
+            QH, HQH = B.T @ (B @ J.T) / 40, (B @ J.T).T @ (B @ J.T) / 40
+            if txy is not None:
+                QH, HQH = QH * txy, HQH * tyy
+        else:
+            QH = torch.diag(q.double()) @ J.T
+            HQH = J @ QH
+        Kq = QH @ torch.linalg.inv(HQH + Rm)
+        refs.append(_nl_dense_reference(x[sl], f[sl], y, nl, r, e[sl], Kq=Kq, txy=txy, tyy=tyy))
+        start += n
+    torch.testing.assert_close(out.double(), torch.cat(refs), rtol=1e-5, atol=1e-5)
+    assert not corr._cache._entries  # state-dependent gains are not cached
+
+
+def test_nonlinear_paths_reduce_to_linear_as_strength_vanishes(lg):
+    """arctan(c z) / c -> z: every nonlinear path approaches its linear counterpart."""
+    A, Q, rows, r, op = lg
+    d, m = A.shape[0], rows.numel()
+    x, f, f2, y, e = _inputs(20, d, m)
+    y = 30 + y  # large innovation, so the cap binds
+    bank = torch.randn(40, 1, 1, d, generator=torch.Generator().manual_seed(9))
+    for source in ("online", "bank", "fixed"):
+        kw = dict(enabled=True, q_source=source, residual_bank=bank, q_variance=0.4,
+                  localisation=_loc1d(d, 2.0), update_cap=0.5)
+        a = ForecastCorrection(**kw).correct(x, f, y, op, r, f2=f2, perturbations=e)
+        corr = ForecastCorrection(**kw)
+        b = corr.correct(x, f, y, _arctan(op, 1e-4), r, f2=f2, perturbations=e)
+        assert corr.diagnostics.records[0]["cap_fraction"].item() == 1.0
+        torch.testing.assert_close(a, b, rtol=1e-3, atol=1e-3)
+
+
+def test_nonlinear_update_cap_measures_the_observation_change(lg):
+    A, Q, rows, r, op = lg
+    d = A.shape[0]
+    nl = _arctan(op, 0.5)
+    gen = torch.Generator().manual_seed(4)
+    x, f, f2 = (torch.randn(20, 1, 1, d, generator=gen) for _ in range(3))
+    y = 3 + torch.randn(1, rows.numel(), generator=gen)
+    zeros = torch.zeros(20, rows.numel())
+    free = ForecastCorrection(enabled=True).correct(x, f, y, nl, r, f2=f2, perturbations=zeros)
+    capped = ForecastCorrection(enabled=True, update_cap=1e-3)
+    out = capped.correct(x, f, y, nl, r, f2=f2, perturbations=zeros)
+    assert capped.diagnostics.records[0]["cap_fraction"].item() == 1.0
+    assert (out - x).norm() < 0.1 * (free - x).norm()
+
+
+def test_nonlinear_localisation_uses_the_sensor_map(lg):
+    A, Q, rows, r, op = lg
+    d = A.shape[0]
+    loc = _loc1d(d, 2.0)
+    nl = _arctan(op)
+    torch.testing.assert_close(loc.obs_coords(nl), loc.obs_coords(op))
+    ref = torch.zeros(1, dtype=torch.float64)
+    torch.testing.assert_close(loc.obs_obs(nl, ref), loc.obs_obs(op, ref))
+
+    class Opaque(nn.Module):  # nonlinear, no linear sensor map
+        is_linear = False
+        num_obs = rows.numel()
+
+        def forward(self, x):
+            return torch.sin(x.reshape(x.shape[0], -1)[:, rows])
+
+    with pytest.raises(ValueError, match="obs_coords"):
+        loc.obs_coords(Opaque())
+    coords = torch.stack([torch.zeros(rows.numel()), rows.float()], 1).double()  # (H, W) of (1, 1, d)
+    explicit = fc.CoordinateLocalisation(loc.state_coords, loc.kernel, (1, 1, d), obs_coords=coords)
+    torch.testing.assert_close(explicit.obs_coords(Opaque()), loc.obs_coords(op))
+    with pytest.raises(ValueError, match="rows"):
+        explicit.obs_coords(_selection_operator(d, torch.arange(0, d, 2)))
+    # Online needs only forward; bank / fixed need jvp.
+    x, f, f2, y, e = _inputs(10, d, rows.numel())
+    ForecastCorrection(enabled=True, localisation=explicit).correct(x, f, y, Opaque(), r, f2=f2)
+    with pytest.raises(NotImplementedError, match="jvp"):
+        ForecastCorrection(enabled=True, q_source="fixed", q_variance=0.5).correct(x, f, y, Opaque(), r)
+
+
+def test_velocity_magnitude_operator_correction_matches_reference():
+    """NS sensor speed (non-local in the vorticity) on a tiny periodic grid."""
+    from scisi.likelihood_models.physics_observation_operators import VelocityMagnitudeOperator
+
+    inner = LinearObservationOperator(type="random", data_size=(1, 8, 8), percent_obs=0.2, seed=3)
+    nl = VelocityMagnitudeOperator(inner=inner, norm_std=1.0, velocity_scale=0.5)
+    gen = torch.Generator().manual_seed(6)
+    x, f, f2 = (torch.randn(16, 1, 8, 8, generator=gen) for _ in range(3))
+    y, e = torch.randn(1, nl.num_obs, generator=gen).abs(), 0.1 * torch.randn(16, nl.num_obs, generator=gen)
+    loc = grid_localisation((1, 8, 8), 2.0, periodic=True)
+    out = ForecastCorrection(enabled=True, localisation=loc).correct(x, f, y, nl, 0.05, f2=f2, perturbations=e)
+    full = loc.kernel(loc.state_coords, loc.state_coords)
+    idx = inner.obs_indices.reshape(-1)
+    ref = _nl_dense_reference(x, f, y, nl, 0.05, e, f2=f2, txy=full[:, idx], tyy=full[idx][:, idx])
+    torch.testing.assert_close(out.double(), ref, rtol=1e-5, atol=1e-5)
+    bank = torch.randn(20, 1, 8, 8, generator=gen)
+    out_b = ForecastCorrection(enabled=True, localisation=loc, q_source="bank", residual_bank=bank,
+                               update_cap=0.5).correct(x, f, y, nl, 0.05, perturbations=e)
+    assert torch.isfinite(out_b).all()

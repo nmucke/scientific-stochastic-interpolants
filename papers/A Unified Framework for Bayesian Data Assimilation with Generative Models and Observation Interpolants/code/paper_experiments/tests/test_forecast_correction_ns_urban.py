@@ -486,3 +486,78 @@ def test_driver_builds_and_writes_diagnostics(gain, tmp_path):
         assert path.parent == tmp_path / case
         assert runner._variant(ctx.method) in path.name
         assert fcw.fc_tag(runner._fc_settings()) in path.name
+
+
+# --------------------------------------------------------------------------- #
+# Nonlinear observation operators (PR #55 scenarios)
+# --------------------------------------------------------------------------- #
+
+
+def _scenario_op(name, data_size, strength=None, fluid_mask=None):  # type: ignore[no-untyped-def]
+    from cases.navier_stokes import _ns_pipeline
+    from cases.urban import _urban_pipeline
+
+    scen = _ns_pipeline.apply_nonlinearity_overrides(
+        OmegaConf.load(EXP / "configs" / "scenario" / f"{name}.yaml"), strength=strength)
+    if fluid_mask is not None:
+        return _urban_pipeline.build_obs_operator(scen, data_size, mask_seed=0, fluid_mask=fluid_mask)
+    return _ns_pipeline.build_obs_operator(scen, data_size, mask_seed=0)
+
+
+@pytest.mark.parametrize("scen", ["sparse_5_arctan", "sparse_5_speed"])
+def test_ns_correction_with_a_nonlinear_operator(scen):
+    T = L + 2
+    prior = _prior(1)
+    op = _scenario_op(scen, (1, G, G), strength=2.0 if scen.endswith("arctan") else None)
+    assert not op.is_linear
+    truth = _truth(op, 1, T)
+    corr, mon = _ns_fc(_settings(diagnostics=True, forecast_num_steps=2, forecast_seed=0), scen)
+    # Observation sites are the sensors of the linear map inside h.
+    torch.testing.assert_close(corr.config.localisation.obs_coords(op),
+                               corr.config.localisation.obs_coords(op.inner))
+    plain = _run("Ours (DM-SDE)", prior, op, truth, T)
+    res = _run("Ours (DM-SDE)", prior, op, truth, T, correction=corr)
+    assert torch.isfinite(res.posterior_trajectory).all()
+    assert not torch.equal(res.posterior_trajectory, plain.posterior_trajectory)
+    assert len(fcw.summary(corr, mon)["steps"]) == T - L
+
+
+def test_urban_correction_with_a_nonlinear_operator():
+    T = L + 2
+    prior = _prior(4, [0.4] * 4)
+    keep = _building_mask().unsqueeze(0).expand(4, G, G)
+    op = _scenario_op("sparse_1p5_arctan_vel", (4, G, G), strength=2.0, fluid_mask=keep)
+    assert not op.is_linear and op.strength == 2.0
+    truth = _truth(op, 4, T)
+    corr, _ = fcw.build_correction(
+        _settings("urban", localisation_radius=4.0, forecast_num_steps=2, forecast_seed=0),
+        case="urban", ctx=_ctx(case=Case.URBAN, scenario=Scenario.SPARSE_1p5_ARCTAN_VEL),
+        state_shape=(4, G, G), scenario_key="sparse_1p5_arctan_vel", mask=keep)
+    plain = _run("Ours (DM-SDE)", prior, op, truth, T)
+    res = _run("Ours (DM-SDE)", prior, op, truth, T, correction=corr)
+    traj, ref = res.posterior_trajectory, plain.posterior_trajectory
+    assert torch.isfinite(traj).all() and not torch.equal(traj, ref)
+
+
+def test_diagnostics_files_are_apart_across_strengths(tmp_path):
+    from cases.navier_stokes.driver import NavierStokesRunner
+
+    case_cfg = OmegaConf.load(EXP / "configs" / "case" / "navier_stokes.yaml")
+    fc = case_cfg.forecast_correction
+    fc.enabled, fc.diagnostics_root, fc.forecast_num_steps = True, str(tmp_path), 2
+    runner = NavierStokesRunner(OmegaConf.create({"case": case_cfg}), seeds=[0])
+    ctx = RunContext(case=Case.NAVIER_STOKES, method=Method.OURS_DM_SDE,
+                     scenario=Scenario.SPARSE_5_ARCTAN, seed=0, ensemble_size=4, num_steps=3,
+                     extra={"test_index": 7})
+    corr, mon = runner._build_forecast_correction(ctx, (1, G, G))
+    paths = {}
+    for c in (1.0, 2.0):
+        op = _scenario_op("sparse_5_arctan", (1, G, G), strength=c)
+        paths[c] = runner._write_fc_diagnostics(ctx, corr, mon, op)
+        assert f"__c{c:g}__" in paths[c].name
+        payload = __import__("json").loads(paths[c].read_text())
+        assert payload["obs_strength"] == c and payload["obs_linear"] is False
+    assert paths[1.0] != paths[2.0]
+    linear = runner._write_fc_diagnostics(ctx, corr, mon, _ns_ops()["sparse"])
+    assert linear == runner._write_fc_diagnostics(ctx, corr, mon)  # linear: name unchanged
+    assert "__c" not in linear.name

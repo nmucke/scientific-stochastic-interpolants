@@ -187,9 +187,8 @@ numbers; this affects only DM-SDE runs with `assimilate_every > 1`.
   `likelihood_model.obs_operator` and R is `likelihood_model.original_variance`
   (scalar or a diagonal `[m]`), which every likelihood in the repository holds in model
   units. `ForecastCorrection.correct(x, f, y, operator, obs_noise_var, f2=...)` takes
-  them explicitly. The update assumes a linear (or linearised) H: observation
-  coordinates are H c / H 1, and the bank/fixed Q̂H' and the cap apply H to
-  increments. The online Q̂H' uses (H f − H f')/√2.
+  them explicitly. The online Q̂H' uses (H f − H f')/√2. Nonlinear H: see
+  **Nonlinear H** below.
 - **No d x d.** Per group, it forms the m x m innovation covariances (Cholesky) and
   applies the d x m gains in row chunks; one taper block serves every group and both
   gains. Without localisation the gain goes through the E anomalies, with the product
@@ -202,8 +201,8 @@ numbers; this affects only DM-SDE runs with `assimilate_every > 1`.
   independent ensemble. The last group takes the remainder (a single leftover member
   joins the previous group). Observations may be `[1, m]`, one row per group, or one
   row per member.
-- **Cap and hook.** `update_cap` (opt-in) limits sqrt(u' S⁻¹ u / m) with u = H δ_i and
-  S the localised H P_f H' + R. `post_update(x_new, x_guided)` runs after the update
+- **Cap and hook.** `update_cap` (opt-in) limits sqrt(u' S⁻¹ u / m) with u = H δ_i
+  (nonlinear H: u = H(x'_i + δ_i) − H(x'_i)) and S the localised H P_f H' + R. `post_update(x_new, x_guided)` runs after the update
   (for projection or masks).
 - **Diagnostics.** `corr.diagnostics.records` holds one dict per corrected step, with
   per-group innovation mean, mean squared normalised innovation, lag-1 product, update
@@ -211,17 +210,45 @@ numbers; this affects only DM-SDE runs with `assimilate_every > 1`.
   is (q_rms/spread_rms)²) and cap fraction. `lag1_autocorrelation()` and `as_dict()`
   summarise them.
 
-**Localisation.** `CoordinateLocalisation(state_coords, kernel, state_shape, mask)`
-provides `state_obs(H, rows, ref)` / `obs_obs(H, ref)`. Observation coordinates are
-derived from H as `H c / H 1`, which gives the sensor location for selection operators
-and the block centre for block averages, so H stays free. Tapers are cached per
-operator on the compute device, in float64. `grid_localisation(shape, radius,
+**Localisation.** `CoordinateLocalisation(state_coords, kernel, state_shape, mask,
+obs_coords=None)` provides `state_obs(H, rows, ref)` / `obs_obs(H, ref)`. Observation
+coordinates are derived as `L c / L 1`, with L = H for a linear H and its linear
+sensor map `H.inner` for a nonlinear one; this gives the sensor location for
+selection operators and the block centre for block averages, so H stays free.
+`obs_coords` (`[m, k]`) fixes them instead, and is required for a nonlinear H
+without `inner`. Tapers are cached per sensor map on the compute device, in float64. `grid_localisation(shape, radius,
 periodic, channel_axis=True, mask=None)` covers 1D (`(1, 1, d)`, identical to
 `enkf.periodic_taper` when periodic), 2D and 3D grids, with channels at one site at
 distance 0 and an optional mask (zero taper rows, e.g. solid cells). Gaspari-Cohn uses
 chordal distance on periodic axes. The isotropic form is PSD by theory only in at most
 3 embedding dimensions; on a 2D torus (4D embedding) it was PSD numerically for the
 radii tested.
+
+**Nonlinear H** (PR #55: `obs_operator.is_linear` False, e.g.
+`PointwiseObservationOperator` g(L x) with strength c, `VelocityMagnitudeOperator`;
+an operator without `is_linear` counts as linear). The update is EnKF-style:
+
+- K_ens uses the cross-covariance of the f_i with H(f_i) and the covariance of H(f_i);
+  the innovation is y + e_i − H(f_i). This is the stochastic EnKF for nonlinear H.
+- `q_source="online"`: K_q uses r_i = (f_i − f'_i)/√2 and (H(f_i) − H(f'_i))/√2, the
+  same statistical linearisation as K_ens. Nothing else is needed.
+- `q_source="bank"` / `"fixed"`: H is linearised at each group's forecast mean f̄,
+  using `operator.jvp(f̄, v)`. Q̂J' and JQ̂J' come from J applied to the bank (bank) or
+  to unit vectors (fixed). These gains depend on the state, so they are recomputed every
+  call and not cached: fixed costs d JVPs per group and step. An operator without
+  `jvp` raises `NotImplementedError` (use online).
+- Localisation places each observation at its sensor. For a non-local observation
+  like the speed (Biot-Savart in the vorticity) this is an approximation.
+- Linear operators take exactly the previous code paths, and results are bitwise
+  unchanged (checked against the pre-change module for selection and block-average
+  operators, all Q sources, localised or not, capped or not, grouped or not).
+- File names: NS and urban runs append `states_tag(h)` (`__c<c>`) to the saved
+  states and to the correction diagnostics JSON, and `strength_results_path` to the
+  results file. So corrected runs of one scenario at different c stay apart, and
+  the `fc` tag hash does not need c. Tested: `tests/test_forecast_correction.py`
+  (dense EnKF-style and linearised references, c → 0 limit, speed operator),
+  `paper_experiments/tests/test_forecast_correction_ns_urban.py` (NS arctan / speed,
+  urban arctan-uvw, diagnostics names across c).
 
 ### 4.3 The Q̂ source
 
@@ -232,7 +259,7 @@ radii tested.
 - `q_source="bank"`: `build_residual_bank(posterior, states, num_steps, stepper, ...)`
   returns r = (f¹ − f²)/√2 as a tensor (save it with `torch.save`; `residual_bank`
   takes the tensor or the path). Q̂H' and HQ̂H' are formed from H applied to the bank
-  at use time and cached per (H, R). A known factor Q = B'B is the bank √N_b B.
+  at use time and cached per (H, R) (nonlinear H: from J_H(f̄), not cached). A known factor Q = B'B is the bank √N_b B.
 - `q_source="fixed"`: a known diagonal Q (`q_variance`, scalar or per state entry);
   K_q is formed in closed form and not localised.
 

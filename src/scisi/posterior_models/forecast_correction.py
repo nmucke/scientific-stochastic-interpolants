@@ -17,11 +17,17 @@ or ``posterior.forecast_correction = corr`` (every ``sample`` call): the hook ru
 :meth:`ForecastCorrection.correct` applies the update alone.
 
 Model (standardised) units throughout; ``H``, ``R`` are the likelihood's
-``obs_operator`` / ``original_variance``. The update assumes a linear(ised) ``H``:
-observation coordinates are ``H c / H 1``, and bank/fixed ``Q_hat H'`` and the cap
-apply ``H`` to increments. The online ``Q_hat`` reuses ``f_i``, which also enters
-the innovation (an O(1/E) bias). No ``d x d`` matrix is formed; linear algebra is
-float64, on the CPU when the state is on MPS.
+``obs_operator`` / ``original_variance``. The online ``Q_hat`` reuses ``f_i``, which
+also enters the innovation (an O(1/E) bias). No ``d x d`` matrix is formed; linear
+algebra is float64, on the CPU when the state is on MPS.
+
+Nonlinear ``H`` (``operator.is_linear`` False; a missing attribute means linear):
+``K_ens`` and the online ``K_q`` are EnKF-style (anomalies of ``H(f_i)`` and
+``(H(f_i) - H(f'_i)) / sqrt(2)``), the innovation uses ``H(f_i)``. ``q_source``
+bank / fixed linearise ``H`` at each group's forecast mean (``operator.jvp``; gains
+not cached). The cap measures ``H(x'_i + delta_i) - H(x'_i)``. Localisation places
+observations with the linear sensor map ``operator.inner`` (or explicit
+``obs_coords``). Linear operators take the linear code paths unchanged.
 """
 
 from __future__ import annotations
@@ -47,6 +53,21 @@ ROW_CHUNK = 4096  # state rows per chunk when applying d x m gains
 TAPER_CACHE_LIMIT = 2**26  # cache the [d, m] taper up to this many entries
 H_CHUNK = 256  # states per call when applying H to a bank or unit vectors
 _CACHE_SIZE = 16  # entries per operator cache (H may change every cycle)
+
+
+def _is_linear(operator: Any) -> bool:
+    """``operator.is_linear``; operators predating the attribute are linear."""
+    return bool(getattr(operator, "is_linear", True))
+
+
+def _sensor_map(operator: Any) -> Optional[Any]:
+    """The linear map that places the observations: ``operator`` itself if linear,
+    else its linear sensor map ``operator.inner`` (``SensorComposedOperator``), else
+    ``None``."""
+    if _is_linear(operator):
+        return operator
+    inner = getattr(operator, "inner", None)
+    return inner if inner is not None and _is_linear(inner) else None
 
 
 class _OperatorCache:
@@ -99,13 +120,17 @@ class CoordinateLocalisation:
 
     ``state_shape`` is the per-member state shape (``prod = d``). ``mask``: optional
     bool (state-shaped or ``[d]``); ``False`` entries get a zero taper row, so the
-    update never moves them. Observation coordinates are ``H c / H 1`` (the sensor
-    for selections, the block centre for block averages), so ``H`` stays free.
-    Tapers are cached per operator on the compute device and dtype.
+    update never moves them. Observation coordinates are ``L c / L 1`` (the sensor
+    for selections, the block centre for block averages), so ``H`` stays free. ``L``
+    is ``H`` when linear, else its linear sensor map ``H.inner`` (``g(L x)``, sensor
+    speed): a nonlinear observation sits at its sensor even when, like the speed,
+    it depends on the state non-locally. ``obs_coords`` (``[m, k]``) fixes the
+    coordinates instead (required for a nonlinear ``H`` without ``inner``). Tapers
+    are cached per sensor map on the compute device and dtype.
     """
 
     def __init__(self, state_coords: Tensor, kernel: Callable, state_shape: Sequence[int],
-                 mask: Optional[Tensor] = None) -> None:
+                 mask: Optional[Tensor] = None, obs_coords: Optional[Tensor] = None) -> None:
         self.state_coords = state_coords.detach().to(DTYPE).cpu()
         self.kernel = kernel
         self.state_shape = tuple(int(s) for s in state_shape)
@@ -113,9 +138,37 @@ class CoordinateLocalisation:
             raise ValueError("state_coords rows must match prod(state_shape)")
         self.keep = None if mask is None else (
             torch.as_tensor(mask).to(torch.bool).expand(self.state_shape).reshape(-1))
+        self.fixed_obs_coords = None if obs_coords is None else obs_coords.detach().to(DTYPE).cpu()
+        if self.fixed_obs_coords is not None and (
+                self.fixed_obs_coords.dim() != 2 or self.fixed_obs_coords.shape[1] != self.state_coords.shape[1]):
+            raise ValueError("obs_coords must be [m, k] with the state coordinates' k")
         self._cache = _OperatorCache()
 
+    def _placing(self, operator: Any) -> Any:
+        """The operator whose observations the tapers are built for (cache key)."""
+        if self.fixed_obs_coords is not None:
+            return operator
+        sensor = _sensor_map(operator)
+        if sensor is None:
+            raise ValueError(
+                f"cannot place the observations of the nonlinear {type(operator).__name__} "
+                "(no linear sensor map .inner); pass CoordinateLocalisation(obs_coords=...)")
+        if sensor is not operator and math.prod(self.state_shape) != getattr(
+                sensor, "num_dofs", math.prod(self.state_shape)):
+            raise ValueError(f"the sensor map of {type(operator).__name__} acts on "
+                             f"{sensor.num_dofs} entries, the state has {math.prod(self.state_shape)}; "
+                             "pass CoordinateLocalisation(obs_coords=...)")
+        return sensor
+
     def obs_coords(self, operator: Any) -> Tensor:
+        """``[m, k]`` observation coordinates of ``operator`` (class docstring)."""
+        if self.fixed_obs_coords is not None:
+            m = getattr(operator, "num_obs", self.fixed_obs_coords.shape[0])
+            if self.fixed_obs_coords.shape[0] != m:
+                raise ValueError(f"obs_coords has {self.fixed_obs_coords.shape[0]} rows, H has {m}")
+            return self.fixed_obs_coords
+        operator = self._placing(operator)
+
         def build() -> Tensor:
             k = self.state_coords.shape[1]
             weight = operator(torch.ones(1, *self.state_shape))
@@ -127,7 +180,7 @@ class CoordinateLocalisation:
         return self._cache.get(operator, "coords", build)
 
     def _block(self, operator: Any, rows: slice, ref: Tensor) -> Tensor:
-        oc = self.obs_coords(operator).to(ref.device)
+        oc = self.obs_coords(operator).to(ref.device)  # operator: already _placing's
         taper = self.kernel(self.state_coords[rows].to(ref.device), oc)
         if self.keep is not None:
             taper = taper * self.keep[rows, None].to(taper.device)
@@ -135,6 +188,7 @@ class CoordinateLocalisation:
 
     def state_obs(self, operator: Any, rows: slice, ref: Tensor) -> Tensor:
         """``[rows, m]`` state-observation taper on ``ref``'s device and dtype."""
+        operator = self._placing(operator)
         d, m = self.state_coords.shape[0], self.obs_coords(operator).shape[0]
         if d * m > TAPER_CACHE_LIMIT:
             return self._block(operator, rows, ref)
@@ -144,6 +198,7 @@ class CoordinateLocalisation:
 
     def obs_obs(self, operator: Any, ref: Tensor) -> Tensor:
         """``[m, m]`` observation-observation taper."""
+        operator = self._placing(operator)
 
         def build() -> Tensor:
             oc = self.obs_coords(operator).to(ref.device)
@@ -321,15 +376,18 @@ class ForecastCorrectionConfig:
             ``(f_i - f'_i) / sqrt(2)`` (same solver as ``K_ens``, rank ``E``).
             ``"bank"``: ``residual_bank`` (state-averaged; build it with the
             test-time forecast steps). ``"fixed"``: known diagonal ``Q`` from
-            ``q_variance`` (closed-form ``K_q``, not localised).
+            ``q_variance`` (closed-form ``K_q``, not localised). Nonlinear ``H``:
+            bank / fixed use ``J_H`` at each group's forecast mean, recomputed
+            every call (no cache); online needs no linearisation.
         residual_bank: ``[N_b, ...]`` residuals, or a ``torch.save`` path (tensor or
             dict with ``"residuals"``). ``Q = B' B`` is the bank ``sqrt(N_b) B``.
         q_variance: ``"fixed"``: scalar or per-state-entry variance.
         group_size: Members per independent sequence (contiguous); statistics are
             per group. The last group takes the remainder (one leftover member
             joins the previous group). ``None``: one ensemble.
-        update_cap: Optional cap on ``sqrt(u' S^-1 u / m)``, ``u = H delta_i``,
-            ``S = H P_f H' + R`` (localised); larger updates are scaled down.
+        update_cap: Optional cap on ``sqrt(u' S^-1 u / m)``, ``u = H delta_i``
+            (nonlinear ``H``: ``H(x'_i + delta_i) - H(x'_i)``), ``S = H P_f H' + R``
+            (localised); larger updates are scaled down.
         post_update: Optional ``post_update(x_corrected, x_guided) -> Tensor``.
         forecast_seed: If set, forecasts and ``e_i`` come from forked generators
             seeded with a hash of ``(forecast_seed, call counter)``: the sampler's
@@ -537,11 +595,18 @@ class ForecastCorrection:
         ``[1, m]``, one row per group or one per member. ``obs_noise_var``: ``R``,
         scalar or ``[m]``. ``f2``: second forecast (``q_source="online"``).
         ``perturbations``: optional ``[N, m]`` ``e_i`` instead of ``N(0, R)`` draws.
+        A nonlinear ``operator`` (``is_linear`` False) needs ``jvp(x, v)`` for
+        ``q_source`` bank / fixed (module docstring).
         """
         cfg = self.config
         online = cfg.q_source == "online"
         if online and f2 is None:
             raise ValueError("q_source='online' needs f2 (a second forecast)")
+        linear = _is_linear(operator)
+        if not (online or linear or callable(getattr(operator, "jvp", None))):
+            raise NotImplementedError(
+                f"q_source={cfg.q_source!r} with the nonlinear {type(operator).__name__} needs "
+                "operator.jvp(x, v) to linearise H; use q_source='online'")
         N, shape, sdev, sdtype = x.shape[0], x.shape, x.device, x.dtype
         dev = torch.device("cpu") if sdev.type == "mps" else sdev  # MPS: no float64 / cholesky_solve
         d = x[0].numel()
@@ -549,8 +614,21 @@ class ForecastCorrection:
         def flat(t: Tensor) -> Tensor:
             return t.reshape(t.shape[0], -1).to(dev).to(DTYPE)  # device first: MPS has no float64
 
+        def to_state(t: Tensor) -> Tensor:
+            return t.reshape(-1, *shape[1:]).to(sdtype).to(sdev)
+
         def apply_H(t: Tensor) -> Tensor:  # on the state's device/dtype (the operator's cache stays put)
-            return flat(operator(t.reshape(-1, *shape[1:]).to(sdtype).to(sdev)))
+            return flat(operator(to_state(t)))
+
+        def linearised_H(x_ref: Tensor) -> Callable[[Tensor], Tensor]:
+            """``v -> J_H(x_ref) v`` for a nonlinear ``H`` (bank / fixed ``K_q``)."""
+            ref = to_state(x_ref)
+
+            def apply(t: Tensor) -> Tensor:
+                v = to_state(t)
+                return flat(operator.jvp(ref.expand(v.shape[0], *shape[1:]).contiguous(), v))
+
+            return apply
 
         F, HF = flat(f), apply_H(f)
         m = HF.shape[1]
@@ -574,7 +652,14 @@ class ForecastCorrection:
             Rr, HRr = (F - flat(f2)) / math.sqrt(2.0), (HF - apply_H(f2)) / math.sqrt(2.0)
         loc = cfg.localisation
         loc_yy = None if loc is None else loc.obs_obs(operator, F)
-        Kq, q_rms = (None, None) if online else self._fixed_gain(operator, R, loc_yy, shape, apply_H, F)
+        Kq, q_rms = (None, None) if online or not linear else self._fixed_gain(
+            operator, R, loc_yy, shape, apply_H, F)
+        Kq_groups = {}  # nonlinear bank / fixed: K_q linearised at each group's forecast mean
+        if not (online or linear):
+            for g, sl in enumerate(slices):
+                Kq_groups[g] = self._fixed_gain(operator, R, loc_yy, shape,
+                                                linearised_H(F[sl].mean(0, keepdim=True)), F, cache=False)
+            q_rms = Kq_groups[0][1]
 
         groups = []  # (slice, L_ens, S_ens, [(X, HX, scale, Z)])
         for sl in slices:
@@ -602,6 +687,8 @@ class ForecastCorrection:
                         delta[sl, rows] += (((X[:, rows].T @ HX) * (scale * taper)) @ Z).T
         if Kq is not None:
             delta -= V @ Kq.T
+        for g, (Kg, _) in Kq_groups.items():
+            delta[slices[g]] -= V[slices[g]] @ Kg.T
         delta *= float(cfg.gain_scale)
 
         norm, stats = [], {k: [] for k in CorrectionDiagnostics.KEYS}
@@ -610,7 +697,12 @@ class ForecastCorrection:
             capped = torch.zeros(E, dtype=DTYPE, device=dev)
             if cfg.update_cap is not None:
                 cap = float(cfg.update_cap)
-                W = torch.linalg.solve_triangular(L, apply_H(delta[sl]).T, upper=False)
+                if linear:
+                    u = apply_H(delta[sl])
+                else:  # change of the predicted observation (no linearisation)
+                    xs = flat(x[sl])
+                    u = apply_H(xs + delta[sl]) - apply_H(xs)
+                W = torch.linalg.solve_triangular(L, u.T, upper=False)
                 size = W.pow(2).mean(0).sqrt()
                 capped = (size > cap).to(DTYPE)
                 delta[sl] *= torch.where(capped > 0, cap / size.clamp_min(1e-30), 1.0)[:, None]
@@ -640,8 +732,14 @@ class ForecastCorrection:
         return self._bank[1]
 
     def _fixed_gain(self, operator: Any, R: Tensor, loc_yy: Optional[Tensor], shape: torch.Size,
-                    apply_H: Callable[[Tensor], Tensor], ref: Tensor) -> tuple[Tensor, Tensor]:
-        """``(K_q [d, m], q_rms)`` for ``q_source`` bank or fixed, cached per operator."""
+                    apply_H: Callable[[Tensor], Tensor], ref: Tensor,
+                    cache: bool = True) -> tuple[Tensor, Tensor]:
+        """``(K_q [d, m], q_rms)`` for ``q_source`` bank or fixed, cached per operator.
+
+        ``apply_H``: the linear map applied to residuals / unit vectors (``H``, or
+        ``J_H(x_ref)`` with ``cache=False`` for a nonlinear ``H``); ``operator``
+        places the observations for localisation.
+        """
         cfg, loc = self.config, self.config.localisation
         d, dev = ref.shape[1], ref.device
         if cfg.q_source == "bank":
@@ -686,7 +784,7 @@ class ForecastCorrection:
                 K[rows] = torch.cholesky_solve(block.T, L).T
             return K, q_rms
 
-        return self._cache.get(operator, key, build)
+        return self._cache.get(operator, key, build) if cache else build()
 
 
 __all__ = [

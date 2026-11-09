@@ -1,5 +1,4 @@
-import pdb
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -159,8 +158,90 @@ get_observation_matrix_factory = {
 }
 
 
-class LinearObservationOperator(nn.Module):
+class ObservationOperator(nn.Module):
+    """Base class for (possibly nonlinear) observation operators ``y = h(x)``.
+
+    Shapes: ``forward(x)`` ``[B, C, H, W] -> [B, N_y]``; ``jvp(x, v)`` =
+    ``J_h(x_b) v_b`` -> ``[B, N_y]``; ``vjp(x, u)`` = ``J_h(x_b)^T u_b`` ->
+    ``[B, C, H, W]``; ``gram(x)`` = ``J_h(x_b) J_h(x_b)^T`` ``[B, N_y, N_y]``;
+    ``jacobian(x_ref)`` dense ``[N_y, N_x]`` at ONE state; ``linearize(x_ref)``
+    the linear map ``J_h(x_ref)`` (no offset). Derivatives are per batch member.
+    The defaults use ``torch.func`` (any differentiable ``forward``);
+    subclasses with an analytic Jacobian override them.
+
+    ``is_linear`` gates the linear-only paths (closed-form ``H H^T``,
+    ``obs_matrix`` / ``transpose``), which nonlinear operators refuse loudly.
+    """
+
+    is_linear: bool = False
+
+    def jvp(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Per-member Jacobian-vector product ``J_h(x) v``."""
+        _, out = torch.func.jvp(self.forward, (x,), (v,))
+        return out
+
+    def vjp(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        """Per-member vector-Jacobian product ``J_h(x)^T u``."""
+        _, pullback = torch.func.vjp(self.forward, x)
+        return pullback(u)[0]
+
+    def jacobian(self, x_ref: torch.Tensor, chunk: int = 256) -> torch.Tensor:
+        """Dense Jacobian ``[N_y, N_x]`` at a single state (batched VJPs)."""
+        x1 = x_ref.reshape(1, self.C, self.H, self.W)
+        eye = torch.eye(self.num_obs, device=x1.device, dtype=x1.dtype)
+        rows = []
+        for start in range(0, self.num_obs, chunk):
+            e = eye[start : start + chunk]
+            xb = x1.expand(e.shape[0], -1, -1, -1).contiguous()
+            rows.append(self.vjp(xb, e).reshape(e.shape[0], -1))
+        return torch.cat(rows, dim=0)
+
+    def gram(self, x: torch.Tensor, chunk_elems: int = 2**24) -> torch.Tensor:
+        """``J_h(x_b) J_h(x_b)^T``, ``[B, N_y, N_y]`` (chunked VJP -> JVP).
+
+        Each chunk of ``k`` basis vectors costs one batched VJP + JVP on
+        ``k * B`` states, ``k * B * N_x <= chunk_elems``.
+        """
+        b, n_y = x.shape[0], self.num_obs
+        k = max(1, chunk_elems // max(1, b * x[0].numel()))
+        eye = torch.eye(n_y, device=x.device, dtype=x.dtype)
+        out = x.new_empty(b, n_y, n_y)
+        for s in range(0, n_y, k):
+            e = eye[s : s + k]
+            kk = e.shape[0]
+            # Materialised: forward-mode AD rejects stride-0 (expanded) inputs.
+            u = e.unsqueeze(1).expand(kk, b, n_y).reshape(kk * b, n_y).contiguous()
+            xr = x.unsqueeze(0).expand(kk, *x.shape).reshape(kk * b, *x.shape[1:])
+            xr = xr.contiguous()
+            col = self.jvp(xr, self.vjp(xr, u).contiguous()).reshape(kk, b, n_y)
+            out[:, :, s : s + kk] = col.permute(1, 2, 0)
+        return out
+
+    def linearize(self, x_ref: torch.Tensor) -> "LinearizedObservationOperator":
+        """The linear map ``J_h(x_ref)`` (dense, no affine offset)."""
+        return LinearizedObservationOperator(
+            self.jacobian(x_ref), (self.C, self.H, self.W)
+        )
+
+
+def _cached_gram(op: nn.Module, src: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    """``H H^T`` of a dense ``src`` on ``ref``'s device/dtype, cached on ``op``.
+
+    The cache holds a reference to ``src`` and compares with ``is``, so a
+    reassigned matrix (``load_mask``) invalidates it and an id is never reused.
+    """
+    c = getattr(op, "_gram_cache", None)
+    if c is None or c[0] is not src or c[1].device != ref.device or c[1].dtype != ref.dtype:
+        H = src.to(device=ref.device, dtype=ref.dtype)
+        c = (src, H @ H.transpose(0, 1))
+        op._gram_cache = c
+    return c[1]
+
+
+class LinearObservationOperator(ObservationOperator):
     """Linear observation operator."""
+
+    is_linear = True
 
     def __init__(
         self,
@@ -314,12 +395,12 @@ class LinearObservationOperator(nn.Module):
         src = self.obs_matrix
         if (
             cache is None
-            or cache["src_id"] != id(src)
+            or cache["src"] is not src
             or cache["matrix"].device != ref.device
             or cache["matrix"].dtype != ref.dtype
         ):
             moved = src.to(device=ref.device, dtype=ref.dtype)
-            cache = {"src_id": id(src), "matrix": moved}
+            cache = {"src": src, "matrix": moved}
             self._obs_matrix_cache = cache
         return cache["matrix"]
 
@@ -341,13 +422,13 @@ class LinearObservationOperator(nn.Module):
         src = self.obs_indices
         if (
             cache is None
-            or cache["src_id"] != id(src)
+            or cache["src"] is not src
             or cache["idx"].device != ref.device
         ):
             idx = src.reshape(-1).to(dtype=torch.long)
             # One-time sanity check of the row <-> index correspondence.
             assert idx.numel() == self.num_obs
-            cache = {"src_id": id(src), "idx": idx.to(ref.device)}
+            cache = {"src": src, "idx": idx.to(ref.device)}
             self._sel_idx_cache = cache
         return cache["idx"]
 
@@ -406,3 +487,247 @@ class LinearObservationOperator(nn.Module):
         out = y @ self._matrix_on(y)
 
         return out.view(b, self.C, self.H, self.W)
+
+    # ------------------------------------------------------------------
+    # ObservationOperator interface (exact for a linear operator)
+    # ------------------------------------------------------------------
+    def jvp(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """``J v = H v`` (independent of ``x``)."""
+        return self.forward(v)
+
+    def vjp(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        """``J^T u = H^T u`` (independent of ``x``)."""
+        return self.transpose(u)
+
+    def gram(self, x: Optional[torch.Tensor] = None, chunk_elems: int = 0) -> torch.Tensor:
+        """``H H^T``, ``[N_y, N_y]`` (state independent; broadcasts over ``B``)."""
+        return _cached_gram(self, self.obs_matrix, self.obs_matrix if x is None else x)
+
+    def jacobian(self, x_ref: Optional[torch.Tensor] = None, chunk: int = 256) -> torch.Tensor:
+        """Dense ``H``."""
+        if x_ref is None:
+            return self.obs_matrix
+        return self._matrix_on(x_ref)
+
+    def linearize(self, x_ref: Optional[torch.Tensor] = None) -> "LinearObservationOperator":
+        """A linear operator is its own linearization."""
+        return self
+
+
+class LinearizedObservationOperator(ObservationOperator):
+    """Dense linear map ``y = J x`` (e.g. ``J = J_h(x_ref)`` from ``linearize``).
+
+    Only the linear part: no affine offset, so ``is_linear`` is truthful and
+    every linear code path (``obs_matrix``, ``transpose``, ``gram``) applies.
+    """
+
+    is_linear = True
+
+    def __init__(self, J: torch.Tensor, data_size: tuple[int, int, int]) -> None:
+        super().__init__()
+        self.obs_matrix = J
+        self.C, self.H, self.W = data_size
+        self.num_obs, self.num_dofs = J.shape
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        J = self.obs_matrix.to(device=x.device, dtype=x.dtype)
+        return x.reshape(x.shape[0], -1) @ J.T
+
+    def transpose(self, y: torch.Tensor) -> torch.Tensor:
+        J = self.obs_matrix.to(device=y.device, dtype=y.dtype)
+        return (y @ J).view(y.shape[0], self.C, self.H, self.W)
+
+    def jvp(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        return self.forward(v)
+
+    def vjp(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        return self.transpose(u)
+
+    def gram(self, x: Optional[torch.Tensor] = None, chunk_elems: int = 0) -> torch.Tensor:
+        """``J J^T``, ``[N_y, N_y]`` (cached)."""
+        return _cached_gram(self, self.obs_matrix, self.obs_matrix if x is None else x)
+
+    def jacobian(self, x_ref: Optional[torch.Tensor] = None, chunk: int = 256) -> torch.Tensor:
+        return self.obs_matrix
+
+    def linearize(self, x_ref: Optional[torch.Tensor] = None) -> "LinearizedObservationOperator":
+        return self
+
+
+# ----------------------------------------------------------------------
+# Elementwise nonlinearities: name -> (z, c, eps) -> (g(z), g'(z)). The
+# strength c -> 0 recovers g(z) = z for arctan / tanh / saturating / cubic / exp.
+# ----------------------------------------------------------------------
+def _tanh(z, c, eps):
+    th = torch.tanh(c * z)
+    return th / c, 1.0 - th**2
+
+
+def _saturating(z, c, eps):  # z / (1 + c|z|)  (SDA's Kolmogorov observation)
+    d = 1.0 + c * z.abs()
+    return z / d, 1.0 / d**2
+
+
+def _abs(z, c, eps):  # smoothed |z|  (non-injective)
+    r = torch.sqrt(z**2 + eps**2)
+    return r, z / r
+
+
+def _exp(z, c, eps):  # (exp(c z) - 1) / c
+    e = torch.exp(c * z)
+    return (e - 1.0) / c, e
+
+
+NONLINEARITIES: dict[str, Callable] = {
+    "identity": lambda z, c, eps: (z, torch.ones_like(z)),
+    "arctan": lambda z, c, eps: (torch.atan(c * z) / c, 1.0 / (1.0 + (c * z) ** 2)),
+    "tanh": _tanh,
+    "saturating": _saturating,
+    "cubic": lambda z, c, eps: (z + c * z**3, 1.0 + 3.0 * c * z**2),
+    "square": lambda z, c, eps: (c * z**2, 2.0 * c * z),  # non-injective
+    "abs": _abs,
+    "exp": _exp,
+}
+
+
+def _g_and_dg(name: str, z: torch.Tensor, c: float, eps: float):
+    """``(g(z), g'(z))`` of the named nonlinearity."""
+    if name not in NONLINEARITIES:
+        raise ValueError(f"Unknown nonlinearity: {name!r}")
+    return NONLINEARITIES[name](z, c, eps)
+
+
+class SensorComposedOperator(ObservationOperator):
+    """Nonlinear operator built on an inner linear sensor map ``L`` (``.inner``).
+
+    ``inner`` is a ``LinearObservationOperator`` or a dict of its constructor
+    kwargs (merged with ``**inner_kwargs``, e.g. hydra's ``data_size``). Grid
+    and mask metadata are delegated to ``inner``; ``obs_matrix`` /
+    ``transpose`` raise so linear-only code fails loudly.
+    """
+
+    is_linear = False
+
+    def __init__(self, inner: Any, **inner_kwargs: Any) -> None:
+        super().__init__()
+        if isinstance(inner, dict):
+            inner = LinearObservationOperator(**{**inner, **inner_kwargs})
+        self.inner = inner
+
+    @property
+    def C(self) -> int:  # type: ignore[override]
+        return self.inner.C
+
+    @property
+    def H(self) -> int:  # type: ignore[override]
+        return self.inner.H
+
+    @property
+    def W(self) -> int:  # type: ignore[override]
+        return self.inner.W
+
+    @property
+    def num_dofs(self) -> int:
+        return self.inner.num_dofs
+
+    @property
+    def num_obs(self) -> int:
+        return self.inner.num_obs
+
+    @property
+    def type(self) -> str:
+        return self.inner.type
+
+    @property
+    def seed(self) -> Optional[int]:
+        return self.inner.seed
+
+    @property
+    def obs_indices(self) -> torch.Tensor:
+        return self.inner.obs_indices
+
+    @property
+    def obs_indices_on_grid(self) -> torch.Tensor:
+        return self.inner.obs_indices_on_grid
+
+    @property
+    def obs_indices_c_h_w(self) -> torch.Tensor:
+        return self.inner.obs_indices_c_h_w
+
+    def save_mask(self, path: str) -> None:
+        self.inner.save_mask(path)
+
+    def load_mask(self, path: str) -> None:
+        self.inner.load_mask(path)
+
+    @property
+    def obs_matrix(self) -> torch.Tensor:
+        raise AttributeError(
+            f"{type(self).__name__} is nonlinear and has no obs_matrix; use "
+            ".jacobian(x_ref) / .linearize(x_ref), or .inner.obs_matrix for the "
+            "linear sensor map."
+        )
+
+    def transpose(self, y: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError(
+            "A nonlinear observation operator has no transpose; use .vjp(x, u)."
+        )
+
+
+class PointwiseObservationOperator(SensorComposedOperator):
+    """``h(x) = g(L x)``: linear sensor map ``L``, elementwise ``g``.
+
+    ``g`` is one of :data:`NONLINEARITIES` (``arctan``: EnSF / FlowDAS;
+    ``saturating`` ``z/(1+|z|)``: SDA's Kolmogorov flow; non-injective
+    ``square`` / ``abs``). Analytic Jacobian ``J_h(x) = diag(g'(L x)) L``, so
+    ``jvp`` / ``vjp`` / ``gram`` cost the same as ``L``.
+
+    Args:
+        inner: ``L`` (operator or dict of its kwargs).
+        nonlinearity: Name of ``g``.
+        strength: Nonlinearity strength ``c``.
+        eps: Smoothing for ``abs``.
+    """
+
+    def __init__(
+        self,
+        inner: Any,
+        nonlinearity: str = "arctan",
+        strength: float = 1.0,
+        eps: float = 1e-3,
+        **inner_kwargs: Any,
+    ) -> None:
+        super().__init__(inner, **inner_kwargs)
+        if nonlinearity not in NONLINEARITIES:
+            raise ValueError(
+                f"nonlinearity must be one of {tuple(NONLINEARITIES)}, got {nonlinearity!r}"
+            )
+        if strength <= 0 and nonlinearity not in ("identity", "abs"):
+            raise ValueError(f"strength must be > 0, got {strength!r}")
+        self.nonlinearity = nonlinearity
+        self.strength = float(strength)
+        self.eps = float(eps)
+
+    def g(self, z: torch.Tensor) -> torch.Tensor:
+        return _g_and_dg(self.nonlinearity, z, self.strength, self.eps)[0]
+
+    def dg(self, z: torch.Tensor) -> torch.Tensor:
+        return _g_and_dg(self.nonlinearity, z, self.strength, self.eps)[1]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.g(self.inner(x))
+
+    def jvp(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        return self.dg(self.inner(x)) * self.inner(v)
+
+    def vjp(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+        return self.inner.transpose(self.dg(self.inner(x)) * u)
+
+    def gram(self, x: torch.Tensor, chunk_elems: int = 0) -> torch.Tensor:
+        """``D (L L^T) D``, ``D = diag(g'(L x_b))``, ``[B, N_y, N_y]``."""
+        d = self.dg(self.inner(x))
+        return d.unsqueeze(-1) * self.inner.gram(x) * d.unsqueeze(-2)
+
+    def jacobian(self, x_ref: torch.Tensor, chunk: int = 256) -> torch.Tensor:
+        x1 = x_ref.reshape(1, self.C, self.H, self.W)
+        return self.dg(self.inner(x1)).reshape(-1, 1) * self.inner._matrix_on(x1)

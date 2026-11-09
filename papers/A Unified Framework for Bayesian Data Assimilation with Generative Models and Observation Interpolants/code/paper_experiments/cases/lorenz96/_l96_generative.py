@@ -184,97 +184,70 @@ def assimilate(
 CORRECTION_KEYS = (
     "enabled",
     "forecast_num_steps",
-    "forecast_mode",
     "localisation",
     "gain_scale",
     "q_source",
     "update_cap",
 )
+#: ``q_source`` values of a ``correction:`` block. ``exact`` is the library's
+#: ``fixed`` source with the true transition variance, supplied by the case.
+Q_SOURCES = ("online", "exact")
 
 
-def exact_residual_bank(dim_state: int, variance: float) -> torch.Tensor:
-    """``[d, 1, 1, d]`` residuals whose sample covariance is exactly ``variance * I``.
-
-    ``sqrt(variance * d) * e_j`` for the ``d`` unit vectors: ``(1/d) sum r r' = v I``.
-    Used with ``q_source="bank"`` to give the correction the exact ``K_q`` of the
-    true transition noise instead of an estimate.
-    """
-    eye = torch.eye(dim_state, dtype=torch.float32) * (variance * dim_state) ** 0.5
-    return eye.reshape(dim_state, 1, 1, dim_state)
-
-
-def correction_config(
-    problem: Problem,
-    settings: dict,
-    members: int,
-    q_variance: float,
-    compute_dtype: torch.dtype | None = torch.float64,
-):
+def correction_config(problem: Problem, settings: dict, members: int, q_variance: float):
     """``ForecastCorrectionConfig`` from a ``correction:`` block.
 
     Args:
-        settings: Keys of :data:`CORRECTION_KEYS`. ``localisation`` is a
-            Gaspari-Cohn radius in sites (``None``: none). ``q_source`` is
-            ``online`` (the library default), or ``exact``: the known transition
-            variance ``q_variance`` through :func:`exact_residual_bank` (the
-            trained samplers are not told Q; only the oracle uses this by default).
+        settings: Keys of :data:`CORRECTION_KEYS`; unknown keys are refused.
+            ``localisation`` is a Gaspari-Cohn radius in sites (``None``: none).
+            ``q_source`` is ``online`` (the library default: ``Q_hat`` from a second
+            forecast per member) or ``exact``: the known transition variance
+            ``q_variance`` (library ``q_source="fixed"``, closed-form
+            ``K_q = Q H' (H Q H' + R)^-1``). The trained samplers are not told Q;
+            only the oracle uses ``exact`` by default.
         members: Ensemble size ``E``; statistics are per sequence (``group_size``).
         q_variance: Transition-noise variance per site, in the units the states
             are corrected in.
     """
     from scisi.posterior_models.forecast_correction import (
         ForecastCorrectionConfig,
-        periodic_1d_localisation,
+        grid_localisation,
     )
 
     unknown = set(settings) - set(CORRECTION_KEYS)
     if unknown:
         raise ValueError(f"Unknown correction settings: {sorted(unknown)}")
-    radius = settings.get("localisation")
     q_source = settings.get("q_source", "online")
-    bank = None
-    if q_source == "exact":
-        q_source, bank = "bank", exact_residual_bank(problem.dim_state, q_variance)
+    if q_source not in Q_SOURCES:
+        raise ValueError(f"correction.q_source must be one of {Q_SOURCES}, got {q_source!r}")
+    exact = q_source == "exact"
+    radius = settings.get("localisation")
     steps = settings.get("forecast_num_steps")
+    cap = settings.get("update_cap")
     return ForecastCorrectionConfig(
         enabled=bool(settings.get("enabled", True)),
         forecast_num_steps=None if steps is None else int(steps),
-        forecast_mode=settings.get("forecast_mode", "prior"),
+        # On the [1, 1, d] layout: identical to ``enkf.periodic_taper(d, radius)``.
         localisation=None
         if radius is None
-        else periodic_1d_localisation(problem.dim_state, float(radius)),
+        else grid_localisation((1, 1, problem.dim_state), float(radius), periodic=True),
         gain_scale=float(settings.get("gain_scale", 1.0)),
-        q_source=q_source,
-        residual_bank=bank,
+        q_source="fixed" if exact else "online",
+        q_variance=float(q_variance) if exact else None,
         group_size=int(members),
-        update_cap=settings.get("update_cap"),
-        compute_dtype=compute_dtype,
+        update_cap=None if cap is None else float(cap),
     )
 
 
-def build_correction(
-    problem: Problem, stats: Standardisation, members: int, settings: dict, device: str
-):
-    """The correction of a generative cell, in the model's standardised units."""
+def build_correction(problem: Problem, stats: Standardisation, members: int, settings: dict):
+    """The correction of a generative cell, in the model's standardised units.
+
+    On MPS the library runs the update on the CPU in float64 by itself.
+    """
     from scisi.posterior_models.forecast_correction import ForecastCorrection
 
-    class OnCPU(ForecastCorrection):
-        """Runs the update on the CPU in float64 (MPS lacks both float64 and
-        ``cholesky_solve``). The forecasts still run on the sampler's device."""
-
-        def correct(self, x, f, y, *args, residuals=None, perturbations=None, **kwargs):
-            def cpu(t):
-                return None if t is None else t.detach().cpu()
-
-            out = super().correct(
-                cpu(x), cpu(f), cpu(y), *args,
-                residuals=cpu(residuals), perturbations=cpu(perturbations), **kwargs,
-            )
-            return out.to(x.device)
-
     q_model = problem.noise_std**2 / stats.std**2
-    cls = OnCPU if str(device).startswith("mps") else ForecastCorrection
-    return cls(correction_config(problem, settings, members, q_model))
+    return ForecastCorrection(correction_config(problem, settings, members, q_model))
 
 
 def assimilate_prior_enkf(
@@ -291,9 +264,9 @@ def assimilate_prior_enkf(
     """Unguided trained-prior forecast, then an EnKF analysis per sequence.
 
     The forecast is the unguided version of the posterior's own SDE/ODE
-    (``draw_unguided_forecast`` with mode ``prior``); the observation never enters
-    the sampler. The analysis is ``enkf.analyse`` (the same update as the
-    true-model EnKF cell) in physical units.
+    (``draw_unguided_forecast``); the observation never enters the sampler. The
+    analysis is ``enkf.analyse`` (the same update as the true-model EnKF cell) in
+    physical units.
 
     Args:
         initial: ``[S, E, d]`` physical units. observations: ``[S, T, d_y]``.
@@ -315,7 +288,6 @@ def assimilate_prior_enkf(
             x.unsqueeze(-1),
             num_steps=num_steps,
             stepper=stepper,
-            mode="prior",
             batch_size=x.shape[0],
         )
         forecast = stats.inverse(f.reshape(num_sequences, members, d).cpu().double())

@@ -44,6 +44,7 @@ KEY_METRICS = (
     "spread",
     "crps",
     "diverged_fraction",
+    "diverged_steps",
     "innovation_lag1",
     "nfe",
     "seconds",
@@ -71,6 +72,18 @@ def sequence_spread(directory: Path) -> list[dict[str, object]]:
     return rows
 
 
+def undefined_std_for_one_value(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """NaN instead of the shared library's 0.0 for a std over a single value.
+
+    The ``pf_reference`` cell runs for one seed only, and a std of 0 would read
+    as "no seed noise" rather than "not measured".
+    """
+    for row in rows:
+        if row["n_traj"] == 1:
+            row["std"] = math.nan
+    return rows
+
+
 def main() -> None:
     argparse.ArgumentParser(description=__doc__).parse_args()
     root = RESULTS / CASE
@@ -78,11 +91,13 @@ def main() -> None:
     if not by_seed:
         print(f"[{CASE}] no per-cell metric files in {root / 'metrics'}")
         return
-    rows = aggregate_scalar(by_seed)
+    rows = undefined_std_for_one_value(aggregate_scalar(by_seed))
     write_scalar_csv(root / "aggregated" / "all.csv", rows)
     write_per_step_csv(
         root / "aggregated" / "per_step.csv",
-        aggregate_per_step(discover_by_traj(root / "per_step")),
+        undefined_std_for_one_value(
+            aggregate_per_step(discover_by_traj(root / "per_step"))
+        ),
     )
     print_scalar_table(rows, KEY_METRICS)
     spread = sequence_spread(root / "per_sequence")

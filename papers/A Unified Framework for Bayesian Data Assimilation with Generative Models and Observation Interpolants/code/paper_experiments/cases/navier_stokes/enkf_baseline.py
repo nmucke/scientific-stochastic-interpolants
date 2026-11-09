@@ -66,6 +66,11 @@ import jax_cfd.base.grids as grids  # noqa: E402
 from cases.navier_stokes._ns_pipeline import AssimResult, TruthAndObs  # noqa: E402
 from scisi.likelihood_models.observation_operators import (  # noqa: E402
     LinearObservationOperator,
+    ObservationOperator,
+    PointwiseObservationOperator,
+)
+from scisi.likelihood_models.physics_observation_operators import (  # noqa: E402
+    VelocityMagnitudeOperator,
 )
 
 logger = logging.getLogger(__name__)
@@ -159,6 +164,53 @@ def _torch_to_np(x: torch.Tensor) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 
 
+def jax_pointwise_g(name: str, z: jnp.ndarray, c: float, eps: float) -> jnp.ndarray:
+    """jax port of ``observation_operators._g_and_dg`` (value only, same defs)."""
+    if name == "identity":
+        return z
+    if name == "arctan":
+        return jnp.arctan(c * z) / c
+    if name == "tanh":
+        return jnp.tanh(c * z) / c
+    if name == "saturating":
+        return z / (1.0 + c * jnp.abs(z))
+    if name == "cubic":
+        return z + c * z**3
+    if name == "square":
+        return c * z**2
+    if name == "abs":
+        return jnp.sqrt(z**2 + eps**2)
+    if name == "exp":
+        return (jnp.exp(c * z) - 1.0) / c
+    raise ValueError(f"Unknown nonlinearity: {name!r}")
+
+
+def jax_velocity_magnitude(
+    field_norm_128: jnp.ndarray,
+    norm_std: float,
+    norm_mean: float,
+    velocity_scale: float,
+    eps: float,
+    domain_length: float,
+) -> jnp.ndarray:
+    """jax port of ``VelocityMagnitudeOperator.speed`` on one ``(H, W)`` field.
+
+    Same conventions: axis 0 = x, axis 1 = y, ``psi_h = omega_h / |k|^2`` (mean
+    mode dropped), ``u = d psi/dy``, ``v = -d psi/dx``, Nyquist derivative zeroed.
+    """
+    N = field_norm_128.shape[-1]
+    omega = field_norm_128.reshape(N, N) * norm_std + norm_mean
+    k1 = jnp.fft.fftfreq(N, domain_length / N) * 2.0 * jnp.pi
+    k1d = k1.at[N // 2].set(0.0) if N % 2 == 0 else k1
+    kx, ky = k1.reshape(N, 1), k1.reshape(1, N)
+    k2 = kx**2 + ky**2
+    inv_k2 = jnp.where(k2 > 0, 1.0 / jnp.where(k2 > 0, k2, 1.0), 0.0)
+    w_h = jnp.fft.fft2(omega)
+    u = jnp.real(jnp.fft.ifft2(1j * k1d.reshape(1, N) * inv_k2 * w_h))
+    v = jnp.real(jnp.fft.ifft2(-1j * k1d.reshape(N, 1) * inv_k2 * w_h))
+    return jnp.sqrt(u**2 + v**2 + eps**2) / velocity_scale
+
+
 class TorchHObservationOperator:
     """jax-callable observation operator wrapping the torch ``H``.
 
@@ -169,17 +221,55 @@ class TorchHObservationOperator:
     The result lives in the SAME normalised observation space as the torch-side
     generative methods, using the exact same obs points / operator matrix.
 
+    NONLINEAR operators are ported to jax with the same definitions as the torch
+    side: ``PointwiseObservationOperator`` -> ``g(L x)`` (``jax_pointwise_g``,
+    ``L`` the inner sensor matrix) and ``VelocityMagnitudeOperator`` -> sensor
+    speed (``jax_velocity_magnitude``). The EnKF / LETKF libraries apply the
+    operator member-wise (``vmap(h)``), so the perturbed-observation EnKF uses
+    the ensemble statistics of ``h(members)`` (statistical linearisation) and the
+    PF weights use the exact nonlinear ``h``; localisation (``obs_coords``) is
+    unchanged. A linear operator takes the original dense ``H @ x`` path
+    (bit-identical).
+
+    APPROXIMATION (speed / ``VelocityMagnitudeOperator``): ``obs_coords`` places
+    each speed sensor at its grid point, so the localized EnKF / LETKF treat
+    speed sensors as POINT observations. The speed is non-local (each sensor
+    sees the whole vorticity field through the Biot-Savart kernel), so the
+    Gaspari-Cohn taper truncates real long-range sensitivities; the localized
+    baselines are an approximation for that scenario (the non-localized EnKF and
+    the PF are not affected).
+
     Two entry points are exposed to match the EnKF base class' expectations:
     ``__call__(u_spectral_256)`` (used by :class:`SpectralEnKF`) and
     ``physical_observation_operator(u_physical_256)`` (used by
     :class:`LocalizedSpectralEnKF`, which works in physical space).
     """
 
-    def __init__(self, obs_operator: LinearObservationOperator):
+    def __init__(self, obs_operator: ObservationOperator):
         self.obs_operator = obs_operator
         self.C, self.H, self.W = obs_operator.C, obs_operator.H, obs_operator.W
-        # Dense observation matrix in jax (num_obs, C*H*W), normalised-space H.
-        self._H = jnp.asarray(_torch_to_np(obs_operator.obs_matrix))
+        self._pre = None  # field -> field map applied BEFORE the sensor matrix
+        self._post = None  # elementwise map applied AFTER the sensor matrix
+        if getattr(obs_operator, "is_linear", True):
+            # Dense observation matrix in jax (num_obs, C*H*W), normalised-space H.
+            self._H = jnp.asarray(_torch_to_np(obs_operator.obs_matrix))
+        elif isinstance(obs_operator, PointwiseObservationOperator):
+            self._H = jnp.asarray(_torch_to_np(obs_operator.inner.obs_matrix))
+            name, c, eps = (
+                obs_operator.nonlinearity, obs_operator.strength, obs_operator.eps
+            )
+            self._post = lambda z: jax_pointwise_g(name, z, c, eps)
+        elif isinstance(obs_operator, VelocityMagnitudeOperator):
+            self._H = jnp.asarray(_torch_to_np(obs_operator.inner.obs_matrix))
+            op = obs_operator
+            self._pre = lambda f: jax_velocity_magnitude(
+                f, op.norm_std, op.norm_mean, op.velocity_scale, op.eps,
+                op.domain_length,
+            )
+        else:
+            raise NotImplementedError(
+                f"No jax port of observation operator {type(obs_operator).__name__}"
+            )
         # Observation coordinates in the 256^2 SOLVER frame, for the localized
         # EnKF's Gaspari-Cohn distance matrix. The 128^2 obs point (h, w) is the
         # co-located 256^2 point (2h, 2w). For the block-average super-res
@@ -193,8 +283,13 @@ class TorchHObservationOperator:
 
     def _apply_H_on_norm128(self, field_norm_128: jnp.ndarray) -> jnp.ndarray:
         """Apply the torch H (as a dense matrix) to a normalised 128^2 field."""
+        if self._pre is not None:
+            field_norm_128 = self._pre(field_norm_128)
         flat = field_norm_128.reshape(-1)
-        return self._H @ flat
+        out = self._H @ flat
+        if self._post is not None:
+            out = self._post(out)
+        return out
 
     def physical_observation_operator(
         self, u_physical_256: jnp.ndarray
@@ -285,7 +380,7 @@ def _spectral_ensemble_to_norm128_torch(
 
 def run_enkf_baseline(
     truth_obs: TruthAndObs,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     ensemble_size: int,
     variance: float,
     num_physical_steps: int,
@@ -412,7 +507,7 @@ DEFAULT_LETKF_LOCALIZATION_RADIUS = 20.0
 
 def run_letkf_baseline(
     truth_obs: TruthAndObs,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     ensemble_size: int,
     variance: float,
     num_physical_steps: int,
@@ -439,6 +534,10 @@ def run_letkf_baseline(
     config passes ``None`` it is defaulted to
     :data:`DEFAULT_LETKF_LOCALIZATION_RADIUS` (in 128-grid points) rather than
     building a non-localized variant.
+
+    For the non-local speed operator the localisation treats each speed sensor
+    as a point observation at its grid location -- an approximation (see
+    :class:`TorchHObservationOperator`).
     """
     obs_noise_std = float(variance) ** 0.5
     key = jax.random.PRNGKey(int(seed))
@@ -514,7 +613,7 @@ def run_letkf_baseline(
 
 def run_ensf_baseline(
     truth_obs: TruthAndObs,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     ensemble_size: int,
     variance: float,
     num_physical_steps: int,
@@ -555,7 +654,6 @@ def run_ensf_baseline(
     gen = torch.Generator(device="cpu").manual_seed(int(seed) + 7919)
 
     pde = _build_dynamics()
-    jax_H = TorchHObservationOperator(obs_operator)
     score_filter = EnsembleScoreFilter(analysis_steps=int(analysis_steps))
 
     ensemble_spectral = _init_ensemble_spectral(
@@ -635,7 +733,7 @@ def _systematic_resample(
 
 def run_particle_filter_baseline(
     truth_obs: TruthAndObs,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     ensemble_size: int,
     variance: float,
     num_physical_steps: int,

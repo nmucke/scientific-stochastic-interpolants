@@ -80,6 +80,14 @@ def load_curves(metric: str) -> dict[tuple[str, str], dict[int, float]]:
 
 def plot_metric(metric: str, label: str, out: Path) -> None:
     curves = load_curves(metric)
+    if not curves:
+        print(f"no {metric} curves, skipped")
+        return
+    known = {(method, variant) for method, variant, *_ in SERIES}
+    if not known & set(curves):
+        # Data present but no label matches: a renamed method would otherwise
+        # give an empty figure without any warning.
+        raise ValueError(f"No SERIES entry matches the {metric} curves {sorted(curves)}.")
     fig, ax = plt.subplots(figsize=(2 * SINGLE_FIGSIZE[0], 2 * SINGLE_FIGSIZE[1]))
     for method, variant, name, colour, style in SERIES:
         curve = curves.get((method, variant))

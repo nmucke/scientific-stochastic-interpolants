@@ -283,8 +283,8 @@ through a reduced test. `NEVER` = has not run.
 **Step 0. Tests. RAN.** A few minutes on an idle machine.
 
 ```bash
-cd "$REPO" && python -m pytest tests/test_lorenz96_solver.py tests/test_filters.py tests/test_periodic_1d.py tests/test_metrics.py -q
-cd "$PE" && MPLBACKEND=Agg python -m pytest tests/test_lorenz96_case.py tests/test_paths.py -q
+cd "$REPO" && python -m pytest tests/test_lorenz96_solver.py tests/test_filters.py tests/test_periodic_1d.py tests/test_metrics.py tests/test_lorenz96_data.py -q
+cd "$PE" && MPLBACKEND=Agg python -m pytest tests/test_lorenz96_case.py tests/test_lorenz96_gate.py tests/test_paths.py -q
 ```
 
 **Step 1. Gate. RAN on CPU.** About 25 min for the first command block and about
@@ -351,7 +351,11 @@ objective, MPS) and is exactly shift-equivariant under every lattice shift:
 | `MLP1d` | 592k | 0.491 | 17 s | not equivariant |
 
 The first three are within what a single short run can separate, so this is weak
-evidence. The ResNet's receptive field covers up to 31 sites, enough for d=16 and any d
+evidence. After this comparison, `PeriodicUNet1d`, `PeriodicTransformer1d`, `MLP1d`
+(and their helpers) were removed from `src/scisi/architectures/periodic_1d.py`, so
+step 3 cannot be rerun from this tree; they are in the git history at commit caa08af.
+`PeriodicResNet1d` was kept unchanged, and the trained checkpoints load strictly and
+give bitwise identical outputs after the removal. The ResNet's receptive field covers up to 31 sites, enough for d=16 and any d
 up to 31. `CircularConv1d` is a matmul over unfold because `nn.Conv1d` was about 100x
 slower on the Mac's CPU build without oneDNN; that may not apply on CUDA.
 
@@ -385,22 +389,32 @@ values into `methods:` in `configs/case/lorenz96.yaml`, which currently holds
 **defaults, not tuned values**, and is labelled so. A GPU makes it reasonable to extend
 `num_steps` to 100 and 200 and to try `jacobian_damping` in 0.9, 0.95 (see open
 question 1). Results append to `results/lorenz96/tuning/<method>__<keys>.csv`, so
-delete a stale file before a rerun. `enkf_large` was never tuned here.
+delete a stale file before a rerun. Each row records the base `methods:` settings
+(`base`, JSON) and `diverged_steps`, the (sequence, step) entries with a non-finite
+score (in practice: fewer than two members left). A row with `diverged_steps > 0` has infinite
+accuracy scores and cannot be selected. Appending to a file with other columns is
+refused; the partial CSVs from the Mac predate these two columns, so move them aside
+before tuning again. `enkf_large` was never tuned here.
 
 **Step 8. Final grid. NEVER at full size; every cell RAN (tiny) in tests.** Do not
 start until tuning is written into the config.
 
 ```bash
-cd "$PE" && PY=python JOBS=3 SEEDS="0 1 2" ./run_lorenz96_grid.sh
+cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96_grid.sh
 ```
 
-That script itself has never run. It does test references (24 runs of about 11 min, 6
-at once: about 45 min on the Mac), `prior-quality`, 8 cells x 3 seeds, the
-`pf_reference` cell once, then aggregation and figures. Cost per generative cell at
+That script itself has never run at full size (a dry run with a stub interpreter
+checked the skip and rerun logic). It does test references (24 runs of about 11 min, 6
+at once: about 45 min on the Mac), `prior-quality`, 14 cells x 3 seeds (the 8 plain
+cells first, then the 6 correction cells of section 13), the `pf_reference` cell once, then aggregation and figures. Cells run one at a time by
+default (`JOBS=1`), because concurrent cells inflate each other's `seconds`. A cell
+whose `results/lorenz96/metrics/` file exists is skipped, so after a failure just
+rerun the same command; `FORCE=1` reruns every cell. The script stops after the cell
+loop if any cell failed, before `pf_reference`, aggregation and figures. Cost per generative cell at
 batch 768 on MPS: `inflated` M=25 about 14.5 s per assimilation step (12 min per cell,
 24 min at M=50), `dps_jacobian_free` M=25 about 1 s (under a minute). Each cell also
 reruns one sequence for like-for-like timing, about 1/12 more. Measure again on the GPU.
-For honest `seconds` values, avoid running cells concurrently, or say so.
+For honest `seconds` values keep `JOBS=1`; if you raise it, say so.
 
 Outputs under `results/lorenz96/`: `metrics/`, `per_step/`, `per_sequence/`,
 `ensembles/` (about 4 MB per cell). Estimated total under 1 GB.
@@ -572,6 +586,16 @@ comparison was **not** run.
 Review findings did not make any data, model or reference stale. Tuning ran after the
 fixes.
 
+Review 4 (code review of caa08af, fixed on `review/lorenz96`): tuning could select a
+setting that diverged early (now `diverged_steps`, infinite scores); EnKF settings keys
+unchecked; NFE from a partial count; an over-broad `except AssertionError`; tuning and
+screen CSVs mixing runs (header check, `base` column); `reference_replicates` not a
+real option (must be 2); grid script ran 3 cells at once and could not resume; gate
+statistics untested. `driver._reference_task` now calls `pf_gate.run_pf`, and the PF
+refuses non-finite log weights. PF, reference, EnKF, oracle and checkpoint outputs
+were checked bitwise identical before and after, so the gate, references, models and
+data stay valid. The partial tuning CSVs need moving aside (step 7).
+
 ## 10. Rules
 
 - No tuning on the test split: `driver.py tune` reads validation only. Do not choose
@@ -635,10 +659,24 @@ running alongside:
 | `tests/test_lorenz96_case.py` (in `$PE`, final version) | 23 passed |
 | `tests/test_paths.py` (in `$PE`) | passed, in a run of 31 with the earlier case tests |
 
-The 20 xfails are strict and expected: they record that the U-Net is equivariant only
-under shifts of 4. A 1-epoch `train.py` smoke run after the device change finished and
+The 20 xfails were strict and expected: they recorded that the U-Net is equivariant
+only under shifts of 4. They went with the U-Net (section 7, step 3).
+
+After review 4, on Linux (Python 3.13, torch 2.9.0, CPU only, one core): the four
+root files above 119 passed (60 s), all of `$REPO/tests` 123 passed (adds
+`test_lorenz96_data.py`), `$PE` case and path tests 39 passed, and all of `$PE/tests`
+except `test_analytical_multistep.py` 54 passed (adds `test_lorenz96_gate.py`).
+`test_analytical_multistep.py` fails to collect in this clone because
+`analytical_utils` is not on disk; it fails the same way before review 4.
+
+At the freeze, a 1-epoch `train.py` smoke run after the device change finished and
 was deleted. No test touches CUDA, and the generative cells in tests use untrained
 networks on CPU with the Jacobian-free likelihood.
+
+After merging the forecast-residual correction (section 13) onto review 4, on the
+Mac (CPU, `OMP_NUM_THREADS=2`): the five root files of step 0 123 passed (22 s);
+`$PE` `test_lorenz96_case.py` 57 passed (review 4's 31, with `test_every_cell...` now
+over 15 cells, plus the correction tests), and step 0's `$PE` command 80 passed (25 s).
 
 ## 13. Forecast-residual correction (added 2026-11-09)
 
@@ -664,8 +702,12 @@ Both statistics are exact for `noise_stages: 1` only and raise otherwise.
 
 Configuration lives in `configs/case/lorenz96.yaml` (`methods.<cell>_fc.correction`, keys
 documented there): `forecast_num_steps` (null means the sampler's M), `localisation`
-(GC radius in sites), `gain_scale`, `q_source` (`online` | `exact`), `forecast_mode`,
-`update_cap`, `enabled`. A `_fc` cell inherits its plain cell's sampler block, so tuning
+(GC radius in sites), `gain_scale`, `q_source` (`online` | `exact`), `update_cap`,
+`enabled`; unknown keys are refused. `exact` is the library's `q_source="fixed"` with
+`q_variance` = the true transition variance (closed-form K_q); on this case it gives
+bitwise the same update as the earlier residual bank `sqrt(q d) e_j` it replaces,
+with and without localisation (H is a selection). The forecast is always the
+posterior's own unguided SDE/ODE (the old `forecast_mode` is gone). A `_fc` cell inherits its plain cell's sampler block, so tuning
 the plain cell also moves the corrected one. Plain cells never read the blocks. Off
 by default: only the `_fc` cells use it. CLI overrides use dotted keys:
 
@@ -690,9 +732,11 @@ figures plot the untagged default variants only. Tags take letters, digits, `.`,
 `prior_enkf*`, `enkf`, `enkf_large` and `oracle_fc`. `oracle`, `pf_matched`,
 `pf_subsample` and `pf_reference` take no settings, so `tune` does not offer them
 and `cell --set` refuses them. `--innovations` adds lag-1, msq and NFE columns (on by
-default for the new cells), and `--tag` keeps parallel jobs from writing to one CSV.
-If a rerun writes a column set the stored CSV lacks, the file is rewritten under the
-union of both headers (old rows blank in the new columns) before rows are appended.
+default for the new cells), `--set` changes the base settings (recorded in the
+`base` column), and `--tag` suffixes the CSV name
+(`tuning/<cell>__<keys>__<tag>.csv`), keeping parallel jobs and differently
+configured runs apart. As for every cell (step 7), appending to a CSV with other
+columns is refused, and a setting with `diverged_steps > 0` gets infinite scores.
 
 > **The final grid will NOT reproduce the validation table below.** The gains and
 > radii below were chosen with the sampler at `dps_jacobian_free` M=25, but the
@@ -703,9 +747,16 @@ union of both headers (old rows blank in the new columns) before rows are append
 > then re-tune the correction.
 
 **Off-identity.** Plain `si_sde`, `fm_ode` and `dm_sde` (Jacobian-free, M=25, 4
-validation sequences, real priors on MPS), plus `enkf` and `oracle`, are bitwise
-identical to the code at `HEAD` (`ec4f97c`). So is each `_fc` cell with
-`correction.enabled: false`. Tests check the same on the tiny case.
+validation sequences, real priors on MPS), plus `enkf` and `oracle`, were bitwise
+identical to the code before the correction (`ec4f97c`). After the merge onto review
+4, every plain cell (`si_sde`, `fm_ode`, `dm_sde`, `enkf`, `enkf_large`, `oracle`,
+`pf_*`) gives bitwise the ensembles, per-step and per-sequence values of review 4
+(`856074f`) on the tiny case (untrained networks, CPU); the only additions are the
+two innovation records. So is each `_fc` cell with `correction.enabled: false`
+(tested). The plain grid commands are unchanged (dry run).
+
+The table below was measured before the library rewrite of the correction and the
+merge onto review 4, and was not rerun since.
 
 ### Validation results (reduced settings)
 
