@@ -100,3 +100,134 @@ python paper_experiments/make_tables.py \
     --results paper_experiments/results/analytical_results.csv \
     --out paper_experiments/generated                            # LaTeX table
 ```
+
+## Multistep extension (sequential filtering)
+
+`multistep.py` runs `K` cycles of `x^{k+1} = A x^k + w_k`, `y^k = H x^k + e_k`, with
+member `i` of a method's posterior ensemble at cycle `k` as the anchor of member `i`
+at cycle `k + 1` (the `sample_trajectory` convention of the field cases, and the
+paper's "feeding each posterior sample back"). `A, Q, H, R` live under `system:` in
+`configs/case/analytical_multistep*.yaml`, defaulting to the paper's identities; the
+reference is the Kalman filter from `x^0` (`linear_system.py`). `driver.py` is
+untouched. With `num_cycles=1` and the defaults, every method's KL and sliced
+distance match the current single-step `driver.py` at equal `n_eval_samples`
+(`tests/test_analytical_multistep.py`). The parity is with this code, not with every
+published number: SURGE (SDA) gives a KL of about 3e-4 at `K = 1` in both drivers,
+where the manuscript's table, produced with older `src/` and config, reports 0.173.
+The manuscript's table uses 100000 samples, which is also the grid default.
+
+| Config | System | Why |
+|---|---|---|
+| `analytical_multistep` | `A = Q = H = R = I` | the paper's system |
+| `analytical_multistep_partial` | damped rotation `A`, `Q = diag(1, 0.25)`, `H = [1, 0]`, `R = 0.5` | an unobserved coordinate, non-identity `A`, anisotropic `Q`, slower covariance transient |
+
+A further system needs its own YAML and `scenario_name`: the label is what identifies
+a system in the results, and the figure script picks up every label it finds.
+
+### What a per-member update targets
+
+An exact sampler of `p(x^{k+1} | x^k_i, y^{k+1})` applied to every member does NOT
+give the filtering posterior once the ensemble has spread. The filter is
+
+    p(x^{k+1} | y^{1:k+1})  propto  sum_i p(y^{k+1} | x^k_i) p(x^{k+1} | x^k_i, y^{k+1})
+
+and the per-member update drops the weights `p(y^{k+1} | x^k_i)`. Its law is still
+Gaussian and available in closed form (`LinearGaussianSSM.member_chain_step`), with
+the fixed gain `Q H^T (H Q H^T + R)^{-1}` where the filter's gain adapts to the
+ensemble spread. For scalar `A = Q = H = R = 1` the steady variance is `2/3` against
+the filter's `(sqrt(5) - 1) / 2 = 0.618`, and the gain `0.5` against `0.618`. This
+is a property of the update rule, not a sampler error, so it does not shrink with
+`M` or `E`. Methods with cross-member weights (EnKF, particle filter, the SURGE rows,
+whose SMC weights include the member's marginal likelihood) do not have it.
+
+The output separates the two effects:
+
+* `kl_points`, `sliced_w2` -- to the Kalman posterior, the quantity of interest.
+  `kl_points` uses a sampled reference, as the single-step case does; `kl_exact` is
+  the same KL against the exact Kalman moments, with half the Monte-Carlo bias.
+* `kl_chain` -- to the member-chain law. For the full-covariance Ours rows it is the
+  accumulated sampler error. For rows that do not target that law (EnKF, particle
+  filter, SURGE, `adapted_shared`) it only restates the gap between chain and filter.
+* `Exact per-member chain` rows -- the score of a perfect per-member sampler. Not a
+  lower bound: a biased sampler can land closer to Kalman by accident.
+* `Kalman filter (sampled)` rows -- the Monte-Carlo floor of the estimators for iid
+  members. EnKF and particle-filter members interact, so their floor can differ.
+* `adapted_shared` variant -- Ours (shared) with members first resampled by the
+  closed-form `p(y^{k+1} | x^k_i)`. This is a diagnostic: for a learned prior that
+  predictive likelihood is not available in closed form.
+
+`sliced_w1` here is the single-step `sliced_w2` column: `wasserstein_distance`
+averages 1-D W1 distances, which is why the appendix table says sliced-`W_1`. In this
+case `sliced_w2` is a true sliced W2, so compare the two files on `sliced_w1`.
+
+### SURGE around Ours
+
+The grid's `<setting>_surge` cells hold SI-SDE and DM-SDE inside the SURGE SMC layer,
+as variants of the Ours rows: `surge_shared`, `surge_jacfree`, and `surge_unguided`
+(the same SMC, proposing from the prior; the ablation of the wrapped sampler). The
+likelihood is the guidance, so with the weights ignored a SURGE row moves members
+exactly as the plain row does (tested). `ess_threshold` is the existing rows'. FM-ODE
+is left out: SURGE's weight is a ratio of path measures with noise `g dW`, and adding
+noise to FM-ODE makes it DM-SDE. `NFE` counts two prior evaluations per step.
+
+SURGE supplies the missing weight without computing it. Its log-weight telescopes to
+
+    log p(y | x_1) - int u . dW - 1/2 int |u|^2 dt,    u = (w / g) G
+
+the likelihood at the endpoint times the Girsanov ratio from proposal to prior path,
+normalised over all members. For any proposal, the expected weight of member `i` is
+`E[p(y | x_1) | x^k_i] = p(y^{k+1} | x^k_i)`, so resampling across members applies the
+term in expectation. It needs `y`, `R`, the injected noise and the guidance, the same
+quantities a learned prior has, and not the closed-form predictive likelihood that
+`adapted_shared` uses. The prior in the target is the Euler chain of the model at `M`.
+
+The expectation is not the realisation. A Doob transform of the prior would make the
+weight exactly `p(y | x^k_i)`, with `w = g^2`. Ours injects `w = a + 1/2 g^2`, which
+preserves marginals but is not that transform (`w / g^2` is 1 to 50 for SI, 2500 to 1.5
+for DM over `tau`), so `int |u|^2 dt` adds weight variance that a better sampler for
+the per-member conditional does not remove. In low dimension the prior proposal is
+therefore at least as good as Ours inside SURGE: the gain comes from the weights, not
+from the wrapped sampler. See `diagnose_analytical_multistep_surge.py`.
+
+This is a particle filter, and it inherits the limit: terminal ESS falls with the
+observed dimension for every proposal, and the closed-form predictive weight too. The
+d = 2 rows do not show what happens at field scale; the same script runs d = 8 and 32.
+
+### Differences from the single-step code path
+
+* From cycle 2 on, SDA and SURGE (SDA) use `FullFirstStepDiffusionModel`.
+  `DenoiseDiffusionModel._compute_first_step` omits the velocity, so the first Euler
+  step loses `mu dt` and the result drifts with the size of the state. That is small
+  near the origin and grows on a random walk. `src/scisi` is unchanged because fixing
+  it there moves the single-step SDA rows; cycle 1 keeps the original for parity.
+* `E` is the true ensemble size, whereas the single-step rows record the unused
+  `ensemble_size` (64) and draw `n_eval_samples` members.
+* A cycle-mean row skips NaN cycles. A collapsed ensemble gives a NaN KL at that cycle;
+  `n_traj` in `per_step.csv` counts the seeds with a finite value.
+
+### Reading the baselines
+
+Baseline hyperparameters are the single-step `analytical` cells of
+`configs/method/*.yaml`, chosen for one cycle of the identity system. They are not
+tuned for sequential use on either system. FlowDAS at `M = 50` has `zeta = 0.004`, so
+guidance is close to off and its rows are near a free-running forecast; D-Flow also
+under-corrects. D-Flow and FIG never use `R`. On the partial system D-Flow's
+unobserved latent has no data gradient, so its Langevin noise accumulates with `M`.
+
+### Running it
+
+```bash
+EXPERIMENT_DIR="$PWD/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments"
+PY="$PWD/.venv/bin/python"
+bash "$EXPERIMENT_DIR/run_analytical_multistep_grid.sh"   # env: SETTINGS LINEUPS SEEDS M N_EVAL CYCLES ROOT PY
+"$PY" "$EXPERIMENT_DIR/aggregate_analytical_multistep.py"
+"$PY" "$EXPERIMENT_DIR/make_analytical_multistep_figures.py"
+"$PY" "$EXPERIMENT_DIR/diagnose_analytical_multistep_surge.py"   # weights behind the SURGE rows
+```
+
+Outputs: `results/analytical_multistep/aggregated/{all,per_step}.csv`, `table_*.md`,
+`generated/tab_analytical_multistep.tex`, and
+`figures/analytical_multistep/analytical_multistep_{error,surge}_vs_step.{pdf,png}`. In the
+per-step file `step` is 0-based, as in `common/per_step_io.py`; tables and figures
+use `k = step + 1`. `per_step_file` holds one seed, so a manual `run.py` call needs
+`seeds=[s]` and a `traj<s>` filename.

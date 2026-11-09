@@ -61,13 +61,14 @@ def test_relative_output_override_is_relative_to_launch(tmp_path, monkeypatch):
 
 def test_figure_defaults_stay_in_experiments():
     import make_analytical_figures
+    import make_analytical_multistep_figures
     import make_ablation_figures
     import temp_make_analytical_figures
     import make_ns_figures
     import make_urban_figures
     import make_sequential_da_tiles
 
-    for module in [make_analytical_figures, make_ns_figures, make_urban_figures,
+    for module in [make_analytical_figures, make_analytical_multistep_figures, make_ns_figures, make_urban_figures,
                    make_ablation_figures, temp_make_analytical_figures]:
         assert module.DEFAULT_OUT.is_relative_to(EXPERIMENT / "figures")
     assert make_sequential_da_tiles.OUT == EXPERIMENT / "figures/sequential_da"
