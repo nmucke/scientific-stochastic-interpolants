@@ -10,7 +10,9 @@ JOBS=${JOBS:-3}
 "$PY" cases/lorenz96/driver.py reference --split test
 "$PY" cases/lorenz96/driver.py prior-quality
 for seed in $SEEDS; do
-  for method in si_sde fm_ode dm_sde enkf enkf_large oracle pf_matched pf_subsample; do
+  # *_fc: the forecast-residual correction; prior_enkf*: trained prior + EnKF.
+  for method in si_sde fm_ode dm_sde si_sde_fc fm_ode_fc dm_sde_fc prior_enkf prior_enkf_fm \
+      enkf enkf_large oracle oracle_fc pf_matched pf_subsample; do
     echo "$method $seed"
   done
 done | xargs -P "$JOBS" -L 1 bash -c '"$0" cases/lorenz96/driver.py cell --method "$1" --seed "$2"' "$PY"

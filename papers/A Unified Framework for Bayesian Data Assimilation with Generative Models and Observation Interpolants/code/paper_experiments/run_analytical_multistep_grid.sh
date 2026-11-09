@@ -17,7 +17,18 @@
 # SURGE-wrapped Ours rows. The second is separate so those rows can join a finished
 # grid: the lineup files are skipped, not rewritten. It holds no reference rows.
 #
-# Env overrides: SETTINGS, LINEUPS, SEEDS, M, N_EVAL, CYCLES, ROOT, PY. N_EVAL defaults to
+# Forecast-residual correction (FORECAST_CORRECTION.md), not in the default LINEUPS:
+#   LINEUPS=fc     one cell per forecast step count S in FC_STEPS, holding only the
+#                  corrected Ours rows, <setting>_fc<S>[_bank][_g<E>]. The rows are
+#                  variants <jacfree|shared>_fc<S>[_bank][_g<E>].
+#   LINEUPS=group  <setting>_g<E>: EnKF and adapted_shared on the same groups of
+#                  FC_GROUP members, the comparators of a grouped fc cell.
+# FC_STEPS (default "1 2 5 10 25 50"), FC_Q_SOURCE (online | bank, default online),
+# FC_GROUP (members per independent ensemble; empty = all N_EVAL members),
+# FC_VARIANTS (plain Ours variants to correct, e.g. "shared"; empty = jacfree and
+# shared; a subset is part of the cell name).
+#
+# Env overrides: SETTINGS, LINEUPS, SEEDS, M, N_EVAL, CYCLES, ROOT, PY, FC_*. N_EVAL defaults to
 # the manuscript's 100000. Use another ROOT for smoke runs: the aggregation refuses
 # to mix horizons, and the figure script to mix M or E.
 # =============================================================================
@@ -32,6 +43,16 @@ SEEDS="${SEEDS:-0 1 2 3 4}"
 M="${M:-50}"
 N_EVAL="${N_EVAL:-100000}"
 CYCLES="${CYCLES:-20}"
+FC_STEPS="${FC_STEPS:-1 2 5 10 25 50}"
+FC_Q_SOURCE="${FC_Q_SOURCE:-online}"
+FC_GROUP="${FC_GROUP:-}"
+FC_VARIANTS="${FC_VARIANTS:-}"
+FC_SUFFIX=""; FC_ARGS=("+fc_q_source=$FC_Q_SOURCE")
+if [ -n "$FC_VARIANTS" ]; then
+  FC_SUFFIX="_${FC_VARIANTS// /-}"; FC_ARGS+=("+fc_variants=[${FC_VARIANTS// /,}]")
+fi
+[ "$FC_Q_SOURCE" = online ] || FC_SUFFIX="${FC_SUFFIX}_$FC_Q_SOURCE"
+if [ -n "$FC_GROUP" ]; then FC_SUFFIX="${FC_SUFFIX}_g$FC_GROUP"; FC_ARGS+=("+fc_group_size=$FC_GROUP"); fi
 mkdir -p "$ROOT/metrics" "$ROOT/per_step" "$ROOT/tmp"
 LOG="$ROOT/run_analytical_multistep_grid.log"
 
@@ -40,8 +61,20 @@ for SETTING in $SETTINGS; do
   CASE=analytical_multistep
   [ "$SETTING" = paper ] || CASE="analytical_multistep_$SETTING"
   for LINEUP in $LINEUPS; do
-  CELL="$SETTING"; EXTRA=()
-  if [ "$LINEUP" = surge ]; then CELL="${SETTING}_surge"; EXTRA=("+surge_only=true"); fi
+  # One "cell spec" per cell name: name|extra hydra args (space separated).
+  SPECS=()
+  case "$LINEUP" in
+    base)  SPECS=("$SETTING|") ;;
+    surge) SPECS=("${SETTING}_surge|+surge_only=true") ;;
+    fc)    for S in $FC_STEPS; do
+             SPECS+=("${SETTING}_fc${S}${FC_SUFFIX}|+fc_only=true +fc_steps=[$S] ${FC_ARGS[*]}")
+           done ;;
+    group) [ -n "$FC_GROUP" ] || { echo "[msgrid] LINEUPS=group needs FC_GROUP" | tee -a "$LOG"; exit 1; }
+           SPECS=("${SETTING}_g${FC_GROUP}|+group_only=true +fc_group_size=$FC_GROUP") ;;
+    *)     echo "[msgrid] unknown lineup $LINEUP" | tee -a "$LOG"; exit 1 ;;
+  esac
+  for SPEC in "${SPECS[@]}"; do
+  CELL="${SPEC%%|*}"; read -r -a EXTRA <<< "${SPEC#*|}"
   for SEED in $SEEDS; do
     NAME="${CELL}__M${M}__K${CYCLES}__E${N_EVAL}__traj${SEED}.csv"
     if [ -f "$ROOT/metrics/$NAME" ] && [ -f "$ROOT/per_step/$NAME" ]; then
@@ -60,6 +93,7 @@ for SETTING in $SETTINGS; do
     else
       echo "[msgrid] FAIL $NAME $(date +%T)" | tee -a "$LOG"
     fi
+  done
   done
   done
 done

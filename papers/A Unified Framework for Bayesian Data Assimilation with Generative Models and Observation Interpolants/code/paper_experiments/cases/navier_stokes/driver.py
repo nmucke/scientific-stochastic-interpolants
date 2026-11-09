@@ -40,6 +40,7 @@ from common.paths import FIGURES_ROOT, RESULTS_ROOT, output_path
 from common.seeding import mask_seed, obs_seed
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
+from cases.navier_stokes import _forecast_correction as fcw
 from cases.navier_stokes import _ns_figures, _ns_pipeline
 
 logger = logging.getLogger(__name__)
@@ -398,6 +399,12 @@ class NavierStokesRunner(ExperimentRunner):
 
         nfe = _ns_pipeline.attach_nfe_counter(model)
 
+        # Forecast-residual correction (case.forecast_correction; default off ->
+        # (None, None) and the run below is unchanged).
+        correction, fc_monitor = self._build_forecast_correction(
+            ctx, posterior, stepper, data_size, prior
+        )
+
         result = _ns_pipeline.run_assimilation(
             posterior=posterior,
             model=model,
@@ -417,7 +424,10 @@ class NavierStokesRunner(ExperimentRunner):
             divergence_rmse_threshold=self._cfg_get(
                 "divergence_rmse_threshold", None
             ),
+            forecast_correction=correction,
         )
+        if correction is not None:
+            self._write_fc_diagnostics(ctx, correction, fc_monitor)
 
         # Large-E reference ensemble for KL-at-points (cached per scenario+seed).
         reference = self._reference_trajectory(
@@ -805,9 +815,80 @@ class NavierStokesRunner(ExperimentRunner):
                         ctx, f"ablation:{axis}", metrics, E=E, M=M
                     )
 
+    # -- forecast-residual correction (FORECAST_CORRECTION.md) ------------- #
+
+    def _fc_settings(self) -> dict:
+        """Merged ``case.forecast_correction`` block (defaults: off)."""
+        cached = self.__dict__.get("_fc_cache")
+        if cached is None:
+            try:
+                case_cfg = self.config.case
+            except Exception:
+                case_cfg = None
+            cached = fcw.fc_settings(case_cfg)
+            self.__dict__["_fc_cache"] = cached
+        return cached
+
+    def _build_forecast_correction(self, ctx, posterior, stepper, data_size, prior):  # type: ignore[no-untyped-def]
+        """``(ForecastCorrection, monitor)`` for this cell, or ``(None, None)``.
+
+        Localisation is doubly periodic Gaspari-Cohn; the observation locations
+        (sensor cells / block centres) come from the operator. ``post_update``
+        (``zero_mean_increment: true``) removes the domain mean of the increment:
+        a localised gain is not a combination of whole anomaly fields, so the raw
+        update can shift the (fixed) mean vorticity. With ``diagnostics: true`` the
+        monitor records the enstrophy per band before/after and the Q share.
+        """
+        settings = self._fc_settings()
+        if not fcw.applies_to(settings, ctx.method.value):
+            return None, None
+        scen_key = SCENARIO_CONFIG_NAME[ctx.scenario]
+        loc = fcw.ns_localisation(settings, data_size, scen_key)
+        return fcw.build_correction(
+            settings,
+            posterior=posterior,
+            num_steps=ctx.num_steps,
+            stepper=stepper,
+            localisation=loc,
+            steppers=_ns_pipeline._STEPPERS,
+            constraint=(
+                fcw.zero_mean_increment
+                if bool(settings.get("zero_mean_increment", True)) else None
+            ),
+            step_diagnostics=fcw.ns_step_diagnostics,
+            prior=prior,
+        )
+
+    def _write_fc_diagnostics(self, ctx, correction, monitor) -> None:  # type: ignore[no-untyped-def]
+        """One JSON per cell: lag-1 innovation autocorrelation, Q share, spectra."""
+        settings = self._fc_settings()
+        root = output_path(
+            str(
+                settings.get("diagnostics_root")
+                or RESULTS_ROOT / "navier_stokes" / "forecast_correction"
+            )
+        )
+        fcw.write_cell_diagnostics(
+            root, self.case.value, ctx, self._variant(ctx.method, ctx.scenario),
+            settings, correction, monitor,
+        )
+
     # -- record emitters --------------------------------------------------- #
 
-    def _variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
+    def _variant(self, method, scenario=None) -> str | None:  # type: ignore[no-untyped-def]
+        """Tidy ``variant`` tag for a cell, with the forecast-correction suffix.
+
+        A cell run with the forecast correction (or its measure-only mode) gets
+        ``<base>_<suffix>`` (see ``_forecast_correction.variant_suffix``), so its
+        rows never aggregate with the plain ones; off -> exactly the old tag.
+        """
+        base = self._base_variant(method)
+        scen_key = SCENARIO_CONFIG_NAME.get(scenario) if scenario is not None else None
+        return fcw.variant_with_correction(
+            base, self._fc_settings(), getattr(method, "value", str(method)), scen_key
+        )
+
+    def _base_variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
         """Tidy ``variant`` tag for a cell: the Ours likelihood-covariance mode.
 
         Only the three Ours samplers carry a variant (``jacfree`` /``shared``,
@@ -826,7 +907,7 @@ class NavierStokesRunner(ExperimentRunner):
         return VARIANT_FROM_MODE.get(str(mode)) if mode is not None else None
 
     def _metric_rows(self, ctx, metrics):  # type: ignore[no-untyped-def]
-        variant = self._variant(ctx.method)
+        variant = self._variant(ctx.method, ctx.scenario)
         for metric in NS_FIELD_METRICS:
             yield ResultRecord(
                 case=self.case.value,
@@ -882,7 +963,7 @@ class NavierStokesRunner(ExperimentRunner):
             case=self.case.value,
             method=ctx.method.value,
             scenario=ctx.scenario.value,
-            variant=self._variant(ctx.method),
+            variant=self._variant(ctx.method, ctx.scenario),
             E=ctx.ensemble_size,
             M=ctx.num_steps,
             seed=ctx.seed,
@@ -915,7 +996,7 @@ class NavierStokesRunner(ExperimentRunner):
 
     def _todo_rows(self, ctx):  # type: ignore[no-untyped-def]
         """Emit NaN placeholder rows for unimplemented baselines (Phase 4)."""
-        variant = self._variant(ctx.method)
+        variant = self._variant(ctx.method, ctx.scenario)
         for metric in NS_FIELD_METRICS + (Metric.NFE, Metric.SECONDS):
             yield ResultRecord(
                 case=self.case.value,
@@ -960,7 +1041,7 @@ class NavierStokesRunner(ExperimentRunner):
 
         # Variant (Ours jacfree/shared) goes in the filename so both modes' states
         # coexist for the same (method, scenario, seed) instead of clobbering.
-        variant = self._variant(ctx.method)
+        variant = self._variant(ctx.method, ctx.scenario)
         var_tag = f"__{variant}" if variant else ""
         path = root / (
             f"{self.case.value}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}"

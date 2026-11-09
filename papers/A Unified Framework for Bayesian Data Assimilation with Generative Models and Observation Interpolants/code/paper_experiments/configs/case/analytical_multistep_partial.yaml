@@ -10,6 +10,16 @@ num_cycles: 20
 n_eval_samples: 4096       # the grid and the manuscript use 100000
 adapted_variant: true
 
+# Forecast-residual correction of the Ours rows (FORECAST_CORRECTION.md). Off by
+# default; off, every row is bit-for-bit unchanged. On, each Ours (jacfree, shared)
+# row gains corrected variants <variant>_fc<S>[_bank][_g<E>], one per S in fc_steps.
+forecast_correction: false
+fc_steps: null             # forecast_num_steps of the unguided forecasts; null = M
+fc_variants: null          # plain Ours variants to correct (jacfree, shared); null = both
+fc_q_source: online        # Q_hat: online (second forecast) | bank (residual bank)
+fc_group_size: null        # members per independent ensemble, e.g. 64; null = all
+fc_bank_size: 4096         # residual pairs in the bank (q_source = bank)
+
 system:
   A: [[0.9, 0.3], [-0.3, 0.9]]   # spectral radius sqrt(0.9) ~ 0.949
   Q: [[1.0, 0.0], [0.0, 0.25]]

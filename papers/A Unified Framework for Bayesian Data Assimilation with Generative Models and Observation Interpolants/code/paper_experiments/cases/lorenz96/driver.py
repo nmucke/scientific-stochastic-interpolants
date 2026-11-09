@@ -8,8 +8,13 @@ that prior and the method's own randomness.
     python cases/lorenz96/driver.py tune --method enkf --grid '{"inflation": [1.0, 1.1]}'
     python cases/lorenz96/driver.py reference --split test
     python cases/lorenz96/driver.py cell --method si_sde --seed 0
+    python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 \
+        --set correction.forecast_num_steps=5 --set correction.gain_scale=0.8
 
-``run_lorenz96_grid.sh`` runs all of it. Test sequences are never used to choose a
+Cells ending in ``_fc`` are the generative samplers (and the exact-kernel oracle)
+with the forecast-residual correction of ``FORECAST_CORRECTION.md``; ``prior_enkf``
+and ``prior_enkf_fm`` forecast with the unguided trained prior and update with the
+localised EnKF. ``run_lorenz96_grid.sh`` runs all of it. Test sequences are never used to choose a
 setting: ``tune`` reads the validation split only.
 """
 
@@ -77,18 +82,32 @@ GENERATIVE = {
     "fm_ode": Method.OURS_FM_ODE,
     "dm_sde": Method.OURS_DM_SDE,
 }
+# Corrected cell -> the plain cell whose sampler settings it starts from.
+CORRECTED = {"si_sde_fc": "si_sde", "fm_ode_fc": "fm_ode", "dm_sde_fc": "dm_sde"}
+# Trained-prior forecast + EnKF update -> the sampler whose prior forecasts.
+PRIOR_ENKF = {"prior_enkf": "si_sde", "prior_enkf_fm": "fm_ode"}
+FC_VARIANT = "forecast_correction"
 # name -> (tidy method label, variant)
 CELLS = {
     "si_sde": (Method.OURS_SI_SDE, None),
     "fm_ode": (Method.OURS_FM_ODE, None),
     "dm_sde": (Method.OURS_DM_SDE, None),
+    "si_sde_fc": (Method.OURS_SI_SDE, FC_VARIANT),
+    "fm_ode_fc": (Method.OURS_FM_ODE, FC_VARIANT),
+    "dm_sde_fc": (Method.OURS_DM_SDE, FC_VARIANT),
     "enkf": (Method.ENKF, "matched"),
     "enkf_large": (Method.ENKF, "large"),
+    "prior_enkf": (Method.ENKF, "trained_prior_si"),
+    "prior_enkf_fm": (Method.ENKF, "trained_prior_fm"),
     "oracle": (Method.ONE_STEP_ORACLE, None),
+    "oracle_fc": (Method.ONE_STEP_ORACLE, FC_VARIANT),
     "pf_matched": (Method.PARTICLE_FILTER, "matched"),
     "pf_subsample": (Method.PARTICLE_FILTER, "reference_subsample"),
     "pf_reference": (Method.PARTICLE_FILTER, "reference"),
 }
+# Per-sequence scalars (not per step) written next to the per-step metrics.
+INNOVATION_LAG1 = "innovation_lag1"
+INNOVATION_MSQ = "innovation_msq"
 
 
 def case_config():
@@ -100,8 +119,35 @@ def problem_of(cfg) -> Problem:
 
 
 def method_settings(cfg, name: str) -> dict:
+    """Settings of a cell; a corrected cell starts from its plain cell's settings."""
     node = cfg.methods.get(name)
-    return {} if node is None else OmegaConf.to_container(node)
+    own = {} if node is None else OmegaConf.to_container(node)
+    if name in CORRECTED:
+        return {**method_settings(cfg, CORRECTED[name]), **own}
+    return own
+
+
+def apply_overrides(settings: dict, assignments) -> dict:
+    """Apply ``key=value`` (dotted keys, JSON values) to a copy of ``settings``.
+
+    ``correction.forecast_num_steps=5`` sets ``settings["correction"]["forecast_num_steps"]``.
+    Values that are not JSON (``dps_jacobian_free``) are kept as strings.
+    """
+    out = json.loads(json.dumps(settings))
+    for assignment in assignments or ():
+        key, sep, raw = assignment.partition("=")
+        if not sep:
+            raise ValueError(f"Expected key=value, got {assignment!r}")
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            value = raw
+        node = out
+        *parents, leaf = key.split(".")
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = value
+    return out
 
 
 def load_sequences(problem: Problem, split: str, count: int) -> list[Sequence]:
@@ -269,6 +315,63 @@ class CellOutput:
     pseudo_steps: int | None
 
 
+def normalised_innovations(problem, previous, observation) -> torch.Tensor:
+    """``(y - H mean_i Phi(x_i)) / sqrt(diag(H P_f H') + q + r)`` for one step.
+
+    ``Phi`` is the deterministic Lorenz 96 flow over one interval, so
+    ``mean_i Phi(x_i)`` is the exact forecast mean of the member mixture under the
+    true model and ``Cov_i(Phi(x_i)) + q I`` its forecast covariance. The same
+    measure is used for every method, whatever its own forecast model.
+
+    Args:
+        previous: ``[E, d]`` analysis members at the previous step (finite ones).
+        observation: ``[d_y]``.
+    """
+    from scisi.dynamics.lorenz96 import integrate
+
+    model = problem.model
+    flow = integrate(previous.double(), model.steps_per_stage, problem.dt, problem.forcing)
+    H = problem.obs_matrix
+    projected = flow @ H.T
+    variance = projected.var(0) + problem.noise_std**2 + problem.obs_variance
+    return (observation.double() - projected.mean(0)) / variance.sqrt()
+
+
+def lag1_autocorrelation(z: torch.Tensor) -> float:
+    """Pooled lag-1 autocorrelation of normalised innovations ``[T, d_y]``.
+
+    ``sum_t z_t z_{t-1} / sqrt(sum_t z_t^2 sum_t z_{t-1}^2)`` over steps and sites:
+    zero for an optimal filter (innovations are white), positive when the analysis
+    under-uses the observations (FORECAST_CORRECTION.md, section 1).
+    """
+    z = z[torch.isfinite(z).all(-1)]
+    if z.shape[0] < 2:
+        return float("nan")
+    a, b = z[1:], z[:-1]
+    return float((a * b).sum() / ((a**2).sum() * (b**2).sum()).sqrt())
+
+
+def innovation_scores(problem, initial, ensemble, observations) -> dict[str, float]:
+    """Lag-1 autocorrelation and mean square of the normalised innovations.
+
+    Args:
+        initial: ``[E, d]`` members before the first step.
+        ensemble: ``[T, E, d]`` analysis members; observations: ``[T, d_y]``.
+    """
+    previous = torch.cat([initial[None].double(), ensemble.double()[:-1]])
+    rows = []
+    for members, y in zip(previous, observations):
+        alive = (torch.isfinite(members) & (members.abs() < DIVERGED_ABS)).all(-1)
+        if alive.sum() < 2:
+            rows.append(torch.full_like(y.double(), float("nan")))
+        else:
+            rows.append(normalised_innovations(problem, members[alive], y))
+    z = torch.stack(rows)
+    finite = z[torch.isfinite(z).all(-1)]
+    msq = float(finite.pow(2).mean()) if finite.numel() else float("nan")
+    return {INNOVATION_LAG1: lag1_autocorrelation(z), INNOVATION_MSQ: msq}
+
+
 def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
     radius = settings.get("localisation")
     taper = None if radius is None else periodic_taper(problem.dim_state, float(radius))
@@ -300,6 +403,125 @@ def run_oracle(problem, sequences, split, seed, members) -> CellOutput:
         x0 = initial_ensemble(problem, seq, members, split, index, seed)
         out.append(oracle.run(problem.model, x0, seq.observations, gen))
     return CellOutput(torch.stack(out), time.time() - start, None, members, None)
+
+
+def run_oracle_fc(problem, sequences, split, seed, members, settings) -> CellOutput:
+    """The exact one-step kernel per member, then the forecast-residual correction.
+
+    The guided draw is ``OneStepPosteriorOracle``'s exact kick update (here
+    ``noise_stages == 1``, so no inner SIR). The correction uses true-model
+    forecasts ``f_i ~ p(. | x^k_i)`` drawn independently, and by default the exact
+    transition variance for ``K_q`` (``correction.q_source: exact``), so what
+    remains is the Gaussian closure on the across-member part.
+    """
+    from cases.lorenz96._l96_generative import build_obs_operator, correction_config
+    from scisi.posterior_models.forecast_correction import ForecastCorrection
+
+    model = problem.model
+    if model.noise_stages != 1:
+        raise ValueError("oracle_fc implements the exact kernel for noise_stages=1 only.")
+    q, r = model.stage_variance, problem.obs_variance
+    H = problem.obs_matrix
+    m, d = H.shape
+    gain = q * H.T @ torch.linalg.inv(q * H @ H.T + r * torch.eye(m, dtype=H.dtype))
+    block = {"q_source": "exact", **settings.get("correction", {})}
+    corr = ForecastCorrection(correction_config(problem, block, members, q))
+    online = corr.config.q_source == "online"
+    operator = build_obs_operator(problem)
+    start = time.time()
+    out = []
+    for index, seq in enumerate(sequences):
+        gen = torch.Generator().manual_seed(
+            derive_seed(SEED_LABEL, "oracle-fc", split, index, seed)
+        )
+        x = initial_ensemble(problem, seq, members, split, index, seed)
+        steps = []
+        for y in seq.observations:
+            z = model.forecast_to_last_kick(x, gen)
+            kicked = z + q**0.5 * torch.randn(z.shape, generator=gen, dtype=z.dtype)
+            eps = r**0.5 * torch.randn(members, m, generator=gen, dtype=z.dtype)
+            guided = kicked + (y - kicked @ H.T - eps) @ gain.T
+            f = model.step(x, gen)
+            residuals = None
+            if online:
+                residuals = ((f - model.step(x, gen)) / 2**0.5).reshape(members, 1, 1, d)
+            x = corr.correct(
+                guided.reshape(members, 1, 1, d),
+                f.reshape(members, 1, 1, d),
+                y.reshape(1, m),
+                operator=operator,
+                obs_noise_var=r,
+                residuals=residuals,
+                perturbations=r**0.5
+                * torch.randn(members, m, generator=gen, dtype=z.dtype),
+            ).reshape(members, d)
+            steps.append(x)
+        out.append(torch.stack(steps))
+    return CellOutput(torch.stack(out), time.time() - start, None, members, None)
+
+
+def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings):
+    """Unguided trained-prior forecast + EnKF update (the alternative of section 2).
+
+    Same E, observations and initial ensembles as every other cell; the EnKF update
+    is the one of the ``enkf`` cell (``inflation``, ``localisation`` radius).
+    """
+    from cases.lorenz96._l96_generative import (
+        SamplerSettings,
+        Standardisation,
+        assimilate_prior_enkf,
+        build_posterior,
+        load_prior,
+    )
+    from cases.navier_stokes._ns_pipeline import attach_nfe_counter
+
+    settings = dict(settings)
+    prior = settings.pop("prior", PRIOR_ENKF[name])
+    radius = settings.pop("localisation", None)
+    inflation = float(settings.pop("inflation", 1.0))
+    sampler = SamplerSettings(**settings)
+    method = GENERATIVE[prior]
+    run = cfg.checkpoints.si_run if prior == "si_sde" else cfg.checkpoints.fm_run
+    stats = Standardisation.from_data(DATA_PATH, problem)
+    model = load_prior(run, resolve_device(cfg.evaluation.device))
+    posterior, stepper = build_posterior(method, model, problem, stats, sampler)
+    enkf = EnsembleKalmanFilter(
+        problem.obs_matrix,
+        problem.obs_variance,
+        inflation=inflation,
+        localisation=None
+        if radius is None
+        else periodic_taper(problem.dim_state, float(radius)),
+    )
+    initial = torch.stack(
+        [
+            initial_ensemble(problem, seq, members, split, index, seed)
+            for index, seq in enumerate(sequences)
+        ]
+    )
+    observations = torch.stack([seq.observations for seq in sequences])
+    generators = [
+        torch.Generator().manual_seed(
+            derive_seed(SEED_LABEL, "prior-enkf", split, index, seed)
+        )
+        for index in range(len(sequences))
+    ]
+    counter = attach_nfe_counter(model)
+    start = time.time()
+    ensembles = assimilate_prior_enkf(
+        posterior,
+        stepper,
+        stats,
+        initial,
+        observations,
+        sampler.num_steps,
+        derive_seed(SEED_LABEL, name, split, seed),
+        enkf,
+        generators,
+    )
+    seconds = time.time() - start
+    nfe = counter.count / observations.shape[1]
+    return CellOutput(ensembles, seconds, nfe, members, sampler.num_steps)
 
 
 def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
@@ -338,16 +560,25 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
         SamplerSettings,
         Standardisation,
         assimilate,
+        build_correction,
         build_posterior,
         load_prior,
     )
 
-    method = GENERATIVE[name]
-    run = cfg.checkpoints.si_run if name == "si_sde" else cfg.checkpoints.fm_run
+    settings = dict(settings)
+    block = settings.pop("correction", None)
+    # A corrected cell runs its plain cell's sampler and seed stream.
+    base_name = CORRECTED.get(name, name)
+    method = GENERATIVE[base_name]
+    run = cfg.checkpoints.si_run if base_name == "si_sde" else cfg.checkpoints.fm_run
     settings = SamplerSettings(**settings)
     stats = Standardisation.from_data(DATA_PATH, problem)
-    model = load_prior(run, resolve_device(cfg.evaluation.device))
+    device = resolve_device(cfg.evaluation.device)
+    model = load_prior(run, device)
     posterior, stepper = build_posterior(method, model, problem, stats, settings)
+    correction = None
+    if name in CORRECTED:
+        correction = build_correction(problem, stats, members, block or {}, device)
     initial = torch.stack(
         [
             initial_ensemble(problem, seq, members, split, index, seed)
@@ -367,7 +598,8 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
             initial,
             observations,
             settings.num_steps,
-            derive_seed(SEED_LABEL, name, split, seed),
+            derive_seed(SEED_LABEL, base_name, split, seed),
+            forecast_correction=correction,
         )
     except AssertionError as error:
         # The DM-SDE sampler asserts on a non-finite drift where the others carry
@@ -391,6 +623,10 @@ def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> Cel
         return run_enkf(problem, sequences, split, seed, size, settings)
     if name == "oracle":
         return run_oracle(problem, sequences, split, seed, members)
+    if name == "oracle_fc":
+        return run_oracle_fc(problem, sequences, split, seed, members, settings)
+    if name in PRIOR_ENKF:
+        return run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings)
     if name == "pf_matched":
         return run_pf_matched(problem, sequences, split, seed, members)
     if name == "pf_subsample":
@@ -403,13 +639,38 @@ def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> Cel
 # --------------------------------------------------------------------------- #
 
 
-def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[ResultRecord]:
-    """Run and score one (method, seed); writes per-step rows and the ensembles."""
+def score_cell(problem, output, sequences, split, seed):
+    """Per-step scores against the PF, plus innovation statistics per sequence."""
+    members = output.ensembles.shape[2]
+    scores, innovations = [], []
+    for index, (ens, seq) in enumerate(zip(output.ensembles, sequences)):
+        scores.append(
+            score_ensemble(ens, load_reference(split, index, 0, problem), seq.truth[1:])
+        )
+        initial = initial_ensemble(problem, seq, members, split, index, seed)
+        innovations.append(innovation_scores(problem, initial, ens, seq.observations))
+    return scores, innovations
+
+
+def evaluate_cell(
+    name: str,
+    seed: int,
+    cfg=None,
+    split: str = "test",
+    overrides=None,
+) -> list[ResultRecord]:
+    """Run and score one (method, seed); writes per-step rows and the ensembles.
+
+    ``overrides`` are ``key=value`` strings applied to the cell's settings (see
+    :func:`apply_overrides`).
+    """
     cfg = case_config() if cfg is None else cfg
     problem = problem_of(cfg)
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
     nfe = None
+    innovations = None
+    settings = apply_overrides(method_settings(cfg, name), overrides)
 
     if name == "pf_reference":
         # The second replicate against the first: the error of the reference itself.
@@ -431,11 +692,8 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         per_step_seconds = finite_mean(seconds) / problem.num_steps
         members, pseudo_steps = int(cfg.evaluation.reference_particles), None
     else:
-        output = run_method(cfg, name, problem, sequences, split, seed)
-        scores = [
-            score_ensemble(ens, load_reference(split, index, 0, problem), seq.truth[1:])
-            for index, (ens, seq) in enumerate(zip(output.ensembles, sequences))
-        ]
+        output = run_method(cfg, name, problem, sequences, split, seed, settings)
+        scores, innovations = score_cell(problem, output, sequences, split, seed)
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
         path = RESULTS / "ensembles" / f"{name}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -444,7 +702,7 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         # the run above batches sequences for the generative methods only.
         per_step_seconds = None
         if name != "pf_subsample":
-            timed = run_method(cfg, name, problem, sequences[:1], split, seed)
+            timed = run_method(cfg, name, problem, sequences[:1], split, seed, settings)
             per_step_seconds = timed.seconds / problem.num_steps
 
     common = dict(
@@ -469,6 +727,9 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         metric: [finite_mean(values) for values in sequences_values]
         for metric, sequences_values in by_metric.items()
     }
+    if innovations is not None:
+        for key in (INNOVATION_LAG1, INNOVATION_MSQ):
+            per_sequence[key] = [entry[key] for entry in innovations]
     per_step_file = cell_path("per_step", name, seed)
     per_step_file.parent.mkdir(parents=True, exist_ok=True)
     per_step_file.unlink(missing_ok=True)
@@ -505,7 +766,7 @@ def cell_path(kind: str, name: str, seed: int) -> Path:
 
 def cmd_cell(args) -> None:
     torch.set_num_threads(args.threads)
-    records = evaluate_cell(args.method, args.seed)
+    records = evaluate_cell(args.method, args.seed, overrides=args.set)
     path = cell_path("metrics", args.method, args.seed)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
@@ -521,38 +782,41 @@ def cmd_tune(args) -> None:
     cfg = case_config()
     problem = problem_of(cfg)
     sequences = load_sequences(problem, "validation", split_size(cfg, "validation"))
-    base = method_settings(cfg, args.method)
+    base = apply_overrides(method_settings(cfg, args.method), args.set)
     grid = json.loads(args.grid)
-    path = RESULTS / "tuning" / f"{args.method}__{'_'.join(grid)}.csv"
+    tag = f"__{args.tag}" if args.tag else ""
+    path = RESULTS / "tuning" / f"{args.method}__{'_'.join(grid)}{tag}.csv"
     path.parent.mkdir(parents=True, exist_ok=True)
     columns = [*grid, "seconds", *(m.value for m in TUNING_METRICS)]
+    # Corrected and trained-prior cells add the innovation statistics and cost.
+    extended = args.method in CORRECTED or args.method in PRIOR_ENKF or args.method == "oracle_fc"
+    if extended or args.innovations:
+        columns += [INNOVATION_LAG1, INNOVATION_MSQ, Metric.NFE.value]
     with open(path, "a", newline="") as handle:
         writer = csv.DictWriter(handle, columns)
         if handle.tell() == 0:
             writer.writeheader()
         for values in itertools.product(*grid.values()):
             override = dict(zip(grid, values))
-            output = run_method(
-                cfg,
-                args.method,
-                problem,
-                sequences,
-                "validation",
-                0,
-                {**base, **override},
+            settings = apply_overrides(
+                base, [f"{key}={json.dumps(value)}" for key, value in override.items()]
             )
-            scores = [
-                score_ensemble(
-                    ens, load_reference("validation", i, 0, problem), seq.truth[1:]
-                )
-                for i, (ens, seq) in enumerate(zip(output.ensembles, sequences))
-            ]
+            output = run_method(
+                cfg, args.method, problem, sequences, "validation", 0, settings
+            )
+            scores, innovations = score_cell(
+                problem, output, sequences, "validation", 0
+            )
             row = {
                 metric.value: finite_mean(
                     finite_mean(entry[metric.value]) for entry in scores
                 )
                 for metric in TUNING_METRICS
             }
+            if INNOVATION_LAG1 in columns:
+                for key in (INNOVATION_LAG1, INNOVATION_MSQ):
+                    row[key] = finite_mean(entry[key] for entry in innovations)
+                row[Metric.NFE.value] = output.nfe
             row.update(override, seconds=output.seconds)
             writer.writerow(row)
             handle.flush()
@@ -680,13 +944,36 @@ def main() -> None:
     reference.add_argument("--workers", type=int, default=6)
     reference.set_defaults(func=cmd_reference)
     tune = sub.add_parser("tune")
-    tune.add_argument("--method", choices=[*GENERATIVE, "enkf", "enkf_large"], required=True)
-    tune.add_argument("--grid", required=True, help="JSON: setting -> list of values")
+    tune.add_argument(
+        "--method",
+        choices=[
+            *GENERATIVE, *CORRECTED, *PRIOR_ENKF, "enkf", "enkf_large", "oracle",
+            "oracle_fc", "pf_matched", "pf_subsample",
+        ],
+        required=True,
+    )
+    tune.add_argument(
+        "--grid",
+        required=True,
+        help="JSON: setting -> list of values; dotted keys reach the correction block",
+    )
+    tune.add_argument("--set", action="append", help="key=value base override (repeatable)")
+    tune.add_argument("--tag", default="", help="suffix of the tuning file name")
+    tune.add_argument(
+        "--innovations", action="store_true", help="also log lag-1 innovations and NFE"
+    )
     tune.add_argument("--threads", type=int, default=2)
     tune.set_defaults(func=cmd_tune)
     cell = sub.add_parser("cell")
     cell.add_argument("--method", choices=sorted(CELLS), required=True)
     cell.add_argument("--seed", type=int, required=True)
+    cell.add_argument(
+        "--set",
+        action="append",
+        help="key=value override of the cell's settings, e.g. "
+        "correction.forecast_num_steps=5, correction.localisation=4, "
+        "correction.gain_scale=0.8 (repeatable; JSON values)",
+    )
     cell.add_argument("--threads", type=int, default=2)
     cell.set_defaults(func=cmd_cell)
     quality = sub.add_parser("prior-quality")

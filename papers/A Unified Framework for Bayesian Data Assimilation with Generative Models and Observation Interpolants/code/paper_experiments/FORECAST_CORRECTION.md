@@ -4,8 +4,8 @@ This note describes a correction for the bias in the paper's sequential (multi-s
 assimilation, how to implement it in this code base, and how to test it. It assumes no
 access to the session in which it was written.
 
-Status: **designed and checked in a linear-Gaussian model only. Not implemented in the
-library.** The numbers in section 6 come from scratch studies with closed-form transition
+Status: **implemented in the library (section 4); checked in linear-Gaussian models
+only.** The numbers in section 6 come from scratch studies with closed-form transition
 kernels and, where marked, the trained Lorenz 96 priors. They are preliminary.
 
 Branch `review/forecast-correction`, based on `review/lorenz96` (which carries the
@@ -115,86 +115,111 @@ repository's quadratic stochastic interpolant β̇(0)=0, so the τ=0 drift carri
 information and the pass must be at τ > 0. The scratch studies used τ between 0.05 and
 0.3 and disagreed on the best value; measure it.
 
-## 4. Implementation outline
+## 4. Implementation
+
+Implemented in `src/scisi/posterior_models/forecast_correction.py` (variant A), with
+tests in `tests/test_forecast_correction.py`. The docstrings are the reference; this
+section summarises the design and where it departs from the original outline.
 
 ### 4.1 Where it goes
 
-`BasePosterior.sample_trajectory` in `src/scisi/posterior_models/base_posterior.py` loops
-over physical steps. At an assimilation step it calls `self.sample(...)`, which returns
-`(base, field_history)`. `base` is the new state `[E, C, H, W]` (and is the start of the
-next step when `gaussian_base` is false); the last slot of `field_history` holds the same
-state. The free-running branch already shows how to draw an unguided forecast:
-`self.model.sample(...)` with the same `field_history`, `num_steps` and stepper.
+The correction runs inside `BasePosterior.sample`, right after `_post_sample` and
+before the new state is appended, so `field_history[..., -1]` is still each member's
+x^k_i (helper `BasePosterior._apply_forecast_correction`, identity when off). It is
+configured through the attribute `posterior.forecast_correction` (default `None`), or
+per call with `sample_trajectory(..., forecast_correction=corr)`, which sets the
+attribute for that call and restores it. Consequences:
 
-Add an optional argument, defaulting to `None`, so existing behaviour stays bit-for-bit:
+- Callers that drive `sample` directly (the multistep linear-Gaussian case) get it by
+  setting the attribute. When enabled, **every** `sample` call is corrected, including
+  single-step runs. It is opt-in, so that is intended.
+- Free-running steps of `sample_trajectory` call `self.model.sample` and are never
+  corrected.
+- It runs after the subclass `_post_sample`, so subclass overrides need not call it.
+  SMC posteriors (SURGE, SI with `resample=True`) raise: they resample `base` and
+  `field_history` together, so the pairing survives, but their weights already use
+  the observation, and a correction on top would count it twice in either order.
+- `DFlowPosterior` overrides `sample` and calls the helper itself. Any other override
+  must do the same; `sample_trajectory` raises if an enabled correction was not
+  applied at an assimilation step.
+- Default off is bit-for-bit identical (outputs and global RNG state), checked
+  against outputs saved before the change and in the tests.
 
-```python
-def sample_trajectory(..., analysis_correction: ForecastCorrection | None = None):
-    ...
-    if _is_assim_step(phys_idx):
-        prev_history = field_history                      # state x^k for every member
-        base, field_history = self.sample(...)            # guided x'_i
-        if analysis_correction is not None:
-            with torch.no_grad():
-                f, _ = self.model.sample(                 # unguided f_i, fresh noise
-                    base=None if self.gaussian_base else prev_base,
-                    field_history=prev_history, num_steps=num_steps,
-                    batch_size=batch_size, return_field_history=True,
-                    stepper=stepper, field_cond=..., pars_cond=..., **free_run_extra)
-            base = analysis_correction(x=base, f=f, y=cond["observations"])
-            field_history = torch.cat([field_history[..., :-1], base.unsqueeze(-1)], -1)
-```
+The original outline started the forecast from `prev_base` kept from before
+`self.sample`. That is unsafe for SI: `sample` writes the SI `base` in place
+(`base[sl] = ...`), so the kept tensor already holds x'_i. The implementation starts
+the forecast from `field_history[..., -1]`.
 
-Keep the noise of the unguided run independent of the guided one: draw it after the guided
-sample, or from a separate generator.
+The forecasts f_i (and the online residual forecast) are drawn under `no_grad` after
+the guided sample, from the global stream, or from a forked RNG with
+`forecast_seed`. They use `forecast_num_steps` (default: the sampler's `num_steps`)
+and `forecast_stepper` (default: the sampler's stepper).
+
+**Finding: the free-running branch is wrong for FM-SDE (DM-SDE).** It calls
+`FlowMatchingModel.sample(diffusion_term=g)`, which integrates `v dt + g dW`, without
+the score lift `1/2 g^2 s`. In the closed-form linear-Gaussian case at 50 steps its
+forecast variance is 1.25-1.30 Q, against 0.94-0.97 Q for the lifted SDE. The
+correction's default `forecast_mode="prior"` uses the lifted drift (the posterior's
+own drift without guidance). `"free_run"` reproduces the existing call. `"ode"` uses
+the FM ODE. The free-running branch itself is unchanged, to keep existing numbers;
+this affects only DM-SDE runs with `assimilate_every > 1`.
 
 ### 4.2 The correction module
 
-New file `src/scisi/posterior_models/forecast_correction.py`:
+`ForecastCorrectionConfig` fields, with defaults: `enabled=False`,
+`forecast_num_steps=None`, `forecast_stepper=None`, `forecast_mode="prior"`,
+`forecast_fn=None`, `localisation=None`, `gain_scale=1.0`, `q_source="online"`,
+`residual_bank=None`, `group_size=None`, `update_cap=None`, `post_update=None`,
+`obs_operator=None`, `obs_noise_var=None`, `forecast_seed=None`,
+`compute_dtype=float64`, `row_chunk=4096`, `callback=None`.
 
-```python
-class ForecastCorrection:
-    def __init__(self, obs_operator, obs_noise_var, q_bank, localisation, gain_scale=1.0): ...
-    def __call__(self, x, f, y):
-        # x, f: [E, C, H, W] in model (standardised) units; y: [E, m], one row per member
-        Hf  = H(f)                                  # [E, m]
-        Af  = f - f.mean(0);  AHf = Hf - Hf.mean(0)
-        PHt = loc_xy * (Af.T @ AHf) / (E - 1)       # [d, m], localised P_f H'
-        HPH = loc_yy * (AHf.T @ AHf) / (E - 1)      # [m, m]
-        K_ens = PHt @ inv(HPH + R)
-        K_q = QHt @ inv(HQH + R)                    # from the bank, see 4.3; cache per H, R
-        e = sqrt(R) * randn(E, m)
-        return x + gain_scale * (y + e - Hf) @ (K_ens - K_q).T
-```
+- **Units and H, R.** Everything is in model (standardised) units. By default H is
+  `likelihood_model.obs_operator` and R is `likelihood_model.original_variance`, which
+  every likelihood in the repository holds in model units. A diagonal `[m]` R or an
+  explicit operator can be passed instead.
+- **No d x d.** Per group, it forms the m x m innovation covariances (Cholesky) and
+  applies the d x m gains in row chunks. Without localisation the gain goes through
+  the E anomalies. H is applied in the state dtype, so the operator's cached matrix
+  is not recast. For the 32²→128² operator (m=1024) one group costs about E d m
+  multiply-adds, and the cached bank K_q is one d x m matrix per (H, R).
+- **Groups.** `group_size=E` treats each block of E contiguous members as an
+  independent ensemble. Observations may be `[1, m]`, one row per member, or one row
+  per group.
+- **Cap and hook.** `update_cap` limits sqrt(u' S⁻¹ u / m) with u = H δ_i and S the
+  localised H P_f H' + R. `post_update(x_new, x_guided)` runs after the update (for
+  projection or masks).
+- **Diagnostics.** `corr.diagnostics.records` holds one dict per corrected step, with
+  per-group innovation mean, mean squared normalised innovation, lag-1 product, update
+  RMS, forecast spread and cap fraction. `lag1_autocorrelation()` and `as_dict()`
+  summarise them, and `callback` receives each record.
 
-Notes:
+**Localisation.** The interface `Localisation.state_obs(H, rows)` / `obs_obs(H)` is
+built from coordinates and a kernel (`CoordinateLocalisation`). By default,
+observation coordinates are derived from H as `H c / H 1`, which gives the sensor
+location for selection operators and the block centre for block averages, so H stays
+free. The helpers are `periodic_1d_localisation` (identical to `enkf.periodic_taper`),
+`periodic_2d_localisation` and `grid_localisation`. `grid_localisation` takes
+non-periodic axes, several channels per site, `channel_coords` (e.g. levels for 3D)
+and a `[C, C]` `channel_taper`. Gaspari-Cohn uses chordal distance on periodic axes.
+The isotropic form is PSD by theory only in at most 3 embedding dimensions; on a 2D
+torus (4D embedding) it was PSD numerically for the radii tested. `combine="product"`
+is always PSD.
 
-- Work in the model's standardised units, and scale R accordingly, as the Lorenz 96 case
-  does (`_l96_generative.Standardisation`).
-- Never form d×d matrices. Use d×m and m×m: the observed dimension m is small for sparse
-  observations. For the super-resolution operators m is larger (32² = 1024 for 32²→128²);
-  then use an observation-space or local (LETKF-style) solve.
-- `LinearObservationOperator.forward` gives Hx as `[B, num_obs]`. `obs_indices_on_grid`
-  gives sensor locations for localisation. For block-average operators, use block centres.
-- Localisation: Gaspari-Cohn (`src/scisi/particle_filter/enkf.py`, `gaspari_cohn`) on the
-  distance between grid points and sensors for `loc_xy`, and between sensors for `loc_yy`.
-  Tune the radius on validation data only.
-- `gain_scale` defaults to 1. It exists for the calibration in 4.4.
+### 4.3 The Q̂ source
 
-### 4.3 The Q̂ bank
+- `q_source="online"` (default): a second unguided forecast per member gives
+  r_i = (f_i − f'_i)/√2 each step. It needs no artefact, follows the state, and uses
+  the same solver as K_ens. It costs one more prior run per member and step, and Q̂ has
+  rank E.
+- `q_source="bank"`: `ResidualBank` / `build_residual_bank(posterior, states,
+  num_steps, stepper, ...)` stores r = (f¹ − f²)/√2. Q̂H' and HQ̂H' are formed from H
+  applied to the bank at use time and cached per (H, R).
 
-K_q needs Q̂ H' and H Q̂ H', which depend on H. To keep H free at test time, store residual
-samples rather than a matrix:
-
-1. From validation (or training) states x, draw two unguided forecasts f¹, f² from the same
-   x. Then r = (f¹ − f²)/√2 has covariance Q(x).
-2. Store N such residual fields (N of a few hundred to a few thousand), in model units.
-3. At test time compute Q̂ H' = R_bank' (H R_bank) / N and H Q̂ H' = (H R_bank)' (H R_bank) / N,
-   localised as above, and cache them per (H, R).
-
-Caveat: Q is state-dependent for nonlinear dynamics, and the bank gives an average. An
-alternative is to estimate K_q online from a second unguided forecast per member, at one
-more prior run.
+**Few-step forecasts are approximate prior draws.** In the closed-form case, Euler
+FM-ODE at 5 steps gives variance 0.58 Q (0.23 Q at 2 steps), and SI-SDE at 2 steps
+gives 1.1 Q. This biases P_f. The online Q̂ inherits the same error, so K_ens and K_q
+stay consistent. A bank must be built with the forecast steps used at test time. That
+consistency is the reason for the online default.
 
 ### 4.4 Calibration against the realised gain
 

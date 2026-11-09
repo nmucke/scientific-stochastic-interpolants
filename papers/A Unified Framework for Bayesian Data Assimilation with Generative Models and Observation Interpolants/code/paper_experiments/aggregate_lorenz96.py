@@ -42,6 +42,7 @@ KEY_METRICS = (
     "spread",
     "crps",
     "diverged_fraction",
+    "innovation_lag1",
     "nfe",
     "seconds",
 )

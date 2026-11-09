@@ -136,12 +136,15 @@ def assimilate(
     observations: torch.Tensor,
     num_steps: int,
     seed: int,
+    forecast_correction=None,
 ) -> torch.Tensor:
     """Run the sampler over a batch of sequences.
 
     Args:
         initial: ``[S, E, d]`` initial ensembles in physical units.
         observations: ``[S, T, d_y]`` in physical units.
+        forecast_correction: Optional ``ForecastCorrection`` (see
+            :func:`build_correction`); ``None`` leaves the call exactly as before.
 
     Returns:
         ``[S, T, E, d]`` analysis ensembles in physical units.
@@ -157,6 +160,7 @@ def assimilate(
     y = y.permute(0, 2, 1).repeat_interleave(members, dim=0)  # [S E, d_y, T]
     # batch_size must cover every member: the sampler hands the unsliced observation
     # rows to each batch.
+    extra = {} if forecast_correction is None else {"forecast_correction": forecast_correction}
     trajectory = posterior.sample_trajectory(
         base=x0.clone(),
         field_history=x0.unsqueeze(-1).clone(),
@@ -166,6 +170,161 @@ def assimilate(
         num_steps=num_steps,
         num_physical_steps=steps + 1,
         stepper=stepper,
+        **extra,
     )
     states = trajectory[..., 1:].reshape(num_sequences, members, d, steps)
     return stats.inverse(states.permute(0, 3, 1, 2).double())
+
+
+# --------------------------------------------------------------------------- #
+# Forecast-residual correction and the "trained prior + EnKF" baseline
+# --------------------------------------------------------------------------- #
+
+#: Keys of a ``correction:`` block in ``configs/case/lorenz96.yaml``.
+CORRECTION_KEYS = (
+    "enabled",
+    "forecast_num_steps",
+    "forecast_mode",
+    "localisation",
+    "gain_scale",
+    "q_source",
+    "update_cap",
+)
+
+
+def exact_residual_bank(dim_state: int, variance: float) -> torch.Tensor:
+    """``[d, 1, 1, d]`` residuals whose sample covariance is exactly ``variance * I``.
+
+    ``sqrt(variance * d) * e_j`` for the ``d`` unit vectors: ``(1/d) sum r r' = v I``.
+    Used with ``q_source="bank"`` to give the correction the exact ``K_q`` of the
+    true transition noise instead of an estimate.
+    """
+    eye = torch.eye(dim_state, dtype=torch.float32) * (variance * dim_state) ** 0.5
+    return eye.reshape(dim_state, 1, 1, dim_state)
+
+
+def correction_config(
+    problem: Problem,
+    settings: dict,
+    members: int,
+    q_variance: float,
+    compute_dtype: torch.dtype | None = torch.float64,
+):
+    """``ForecastCorrectionConfig`` from a ``correction:`` block.
+
+    Args:
+        settings: Keys of :data:`CORRECTION_KEYS`. ``localisation`` is a
+            Gaspari-Cohn radius in sites (``None``: none). ``q_source`` is
+            ``online`` (the library default), or ``exact``: the known transition
+            variance ``q_variance`` through :func:`exact_residual_bank` (the
+            trained samplers are not told Q; only the oracle uses this by default).
+        members: Ensemble size ``E``; statistics are per sequence (``group_size``).
+        q_variance: Transition-noise variance per site, in the units the states
+            are corrected in.
+    """
+    from scisi.posterior_models.forecast_correction import (
+        ForecastCorrectionConfig,
+        periodic_1d_localisation,
+    )
+
+    unknown = set(settings) - set(CORRECTION_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown correction settings: {sorted(unknown)}")
+    radius = settings.get("localisation")
+    q_source = settings.get("q_source", "online")
+    bank = None
+    if q_source == "exact":
+        q_source, bank = "bank", exact_residual_bank(problem.dim_state, q_variance)
+    steps = settings.get("forecast_num_steps")
+    return ForecastCorrectionConfig(
+        enabled=bool(settings.get("enabled", True)),
+        forecast_num_steps=None if steps is None else int(steps),
+        forecast_mode=settings.get("forecast_mode", "prior"),
+        localisation=None
+        if radius is None
+        else periodic_1d_localisation(problem.dim_state, float(radius)),
+        gain_scale=float(settings.get("gain_scale", 1.0)),
+        q_source=q_source,
+        residual_bank=bank,
+        group_size=int(members),
+        update_cap=settings.get("update_cap"),
+        compute_dtype=compute_dtype,
+    )
+
+
+def build_correction(
+    problem: Problem, stats: Standardisation, members: int, settings: dict, device: str
+):
+    """The correction of a generative cell, in the model's standardised units."""
+    from scisi.posterior_models.forecast_correction import ForecastCorrection
+
+    class OnCPU(ForecastCorrection):
+        """Runs the update on the CPU in float64 (MPS lacks both float64 and
+        ``cholesky_solve``). The forecasts still run on the sampler's device."""
+
+        def correct(self, x, f, y, *args, residuals=None, perturbations=None, **kwargs):
+            def cpu(t):
+                return None if t is None else t.detach().cpu()
+
+            out = super().correct(
+                cpu(x), cpu(f), cpu(y), *args,
+                residuals=cpu(residuals), perturbations=cpu(perturbations), **kwargs,
+            )
+            return out.to(x.device)
+
+    q_model = problem.noise_std**2 / stats.std**2
+    cls = OnCPU if str(device).startswith("mps") else ForecastCorrection
+    return cls(correction_config(problem, settings, members, q_model))
+
+
+def assimilate_prior_enkf(
+    posterior,
+    stepper,
+    stats: Standardisation,
+    initial: torch.Tensor,
+    observations: torch.Tensor,
+    num_steps: int,
+    seed: int,
+    enkf,
+    generators: list[torch.Generator],
+) -> torch.Tensor:
+    """Unguided trained-prior forecast, then an EnKF analysis per sequence.
+
+    The forecast is the unguided version of the posterior's own SDE/ODE
+    (``draw_unguided_forecast`` with mode ``prior``); the observation never enters
+    the sampler. The analysis is ``enkf.analyse`` (the same update as the
+    true-model EnKF cell) in physical units.
+
+    Args:
+        initial: ``[S, E, d]`` physical units. observations: ``[S, T, d_y]``.
+        generators: One CPU generator per sequence for the EnKF perturbations.
+
+    Returns:
+        ``[S, T, E, d]`` analysis ensembles in physical units.
+    """
+    from scisi.posterior_models.forecast_correction import draw_unguided_forecast
+
+    num_sequences, members, d = initial.shape
+    device = posterior.device
+    torch.manual_seed(int(seed))
+    x = stats.forward(initial.float()).reshape(-1, 1, 1, d).to(device)
+    out = []
+    for t in range(observations.shape[1]):
+        f = draw_unguided_forecast(
+            posterior,
+            x.unsqueeze(-1),
+            num_steps=num_steps,
+            stepper=stepper,
+            mode="prior",
+            batch_size=x.shape[0],
+        )
+        forecast = stats.inverse(f.reshape(num_sequences, members, d).cpu().double())
+        analysis = torch.stack(
+            [
+                enkf.analyse(forecast[s], observations[s, t], generators[s])
+                for s in range(num_sequences)
+            ]
+        )
+        out.append(analysis)
+        x = stats.forward(analysis).float().reshape(-1, 1, 1, d).to(device)
+    return torch.stack(out, dim=1)

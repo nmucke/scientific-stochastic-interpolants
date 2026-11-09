@@ -191,6 +191,39 @@ This is a particle filter, and it inherits the limit: terminal ESS falls with th
 observed dimension for every proposal, and the closed-form predictive weight too. The
 d = 2 rows do not show what happens at field scale; the same script runs d = 8 and 32.
 
+### Forecast-residual correction
+
+`FORECAST_CORRECTION.md` (variant A, `scisi.posterior_models.forecast_correction`)
+adds the missing across-member part of the gain after each guided draw:
+`x''_i = x'_i + (K_ens - K_q)(y + e_i - H f_i)`, with `f_i` an unguided forecast
+from `x^k_i`. It is off by default, and off leaves every row bit-for-bit as it was.
+Corrected Ours rows are extra variants:
+
+| Variant | Meaning |
+|---|---|
+| `<jacfree\|shared>_fc<S>` | correction with `forecast_num_steps = S`, online `Q_hat` (a second forecast) |
+| `..._bank` | `Q_hat` from a residual bank, 4096 pairs from `N(0, I)` states at the same `S` |
+| `..._g<E>` | ensemble statistics over independent groups of `E` contiguous members (the last group takes the remainder); the pooled `N` members are scored |
+| `adapted_shared_g<E>`, EnKF `g<E>` | the comparators on the same groups (`LINEUPS=group`) |
+
+Switches (case YAML or `+key=value` on `run.py`): `forecast_correction` (add the
+corrected rows to the lineup), `fc_only` (a cell with only them), `fc_steps`
+(list of `S`; default `M`), `fc_variants`, `fc_q_source`, `fc_group_size`,
+`fc_bank_size`, `group_only`. The grid takes `LINEUPS=fc` (one cell per `S` in
+`FC_STEPS`) and `LINEUPS=group`, with `FC_STEPS`, `FC_VARIANTS`, `FC_Q_SOURCE`,
+`FC_GROUP`:
+
+```bash
+SETTINGS=paper LINEUPS=fc FC_VARIANTS=shared FC_STEPS="1 2 5 10 25 50" bash "$EXPERIMENT_DIR/run_analytical_multistep_grid.sh"
+SETTINGS=paper LINEUPS="fc group" FC_GROUP=64 FC_STEPS=5 SEEDS=0 bash "$EXPERIMENT_DIR/run_analytical_multistep_grid.sh"
+```
+
+`NFE` per cycle is `M + 2 S` (online) or `M + S` (bank; the bank's own cost is not
+counted). Cycle 1 shares the plain row's seed for the guided draw. The case wraps the
+library class (`GroupedForecastCorrection`) to allow a ragged last group, and to
+compute the unlocalised gain as `Z' (HX' X)`: the library's `(HX Z)' X` forms an
+`E x E` matrix, which does not fit at `E = 10^5`.
+
 ### Differences from the single-step code path
 
 * From cycle 2 on, SDA and SURGE (SDA) use `FullFirstStepDiffusionModel`.
@@ -225,7 +258,9 @@ bash "$EXPERIMENT_DIR/run_analytical_multistep_grid.sh"   # env: SETTINGS LINEUP
 
 Outputs: `results/analytical_multistep/aggregated/{all,per_step}.csv`, `table_*.md`,
 `generated/tab_analytical_multistep.tex`, and
-`figures/analytical_multistep/analytical_multistep_{error,surge}_vs_step.{pdf,png}`. In the
+`figures/analytical_multistep/analytical_multistep_{error,surge}_vs_step.{pdf,png}`; with
+corrected rows also `analytical_multistep_{correction_vs_step,error_vs_forecast_steps}`,
+`aggregated/correction_*.md` and `generated/tab_analytical_multistep_correction.tex`. In the
 per-step file `step` is 0-based, as in `common/per_step_io.py`; tables and figures
 use `k = step + 1`. `per_step_file` holds one seed, so a manual `run.py` call needs
 `seeds=[s]` and a `traj<s>` filename.

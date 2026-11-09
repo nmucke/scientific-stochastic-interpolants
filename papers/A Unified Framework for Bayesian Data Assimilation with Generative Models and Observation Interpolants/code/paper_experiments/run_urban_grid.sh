@@ -360,6 +360,45 @@ for g in $GRPS; do
   esac
 done
 
+# ---- forecast-residual correction (FORECAST_CORRECTION.md; DEFAULT OFF) -------
+# Applies to the Ours groups only (ours_jacfree / ours_shared_k*). With FC=off the
+# script is unchanged. FC=on corrects; FC=measure records the "measure before
+# fixing" diagnostics (lag-1 innovation autocorrelation, Q share) on a trajectory
+# identical to the plain run. Output files get a __fc... suffix and the rows a
+# distinct `variant` (<base>_fc_r.._g.._n.._q.._cap.. / <base>_fcdiag_n..), so
+# corrected and plain cells never collide. Empty knob = the case-YAML default.
+#   FC_STEPS  forecast_num_steps of f_i ('' = the sampler's M)
+#   FC_STEPPER sde | ode ('' = the sampler's)
+#   FC_RADIUS localisation half-width in grid cells ('null' = global)
+#   FC_GAIN   gain_scale        FC_CAP update_cap ('null' = none)
+#   FC_Q      online | bank     FC_BANK bank path   FC_BANK_IDX e.g. [0,1,2,3,4]
+#   FC_DIAG   true | false (per-step spectra/divergence + Q share; default true)
+#   FC_SEED   forecast_seed ('' = global stream)
+FC="${FC:-off}"
+FC_ARGS=(); FC_TAG=""
+case "$FC" in
+  off) ;;
+  on|measure)
+    FC_ARGS+=("case.forecast_correction.enabled=true")
+    if [ "$FC" = "measure" ]; then FC_ARGS+=("case.forecast_correction.mode=measure"); fi
+    [ -n "${FC_STEPS:-}" ]   && FC_ARGS+=("case.forecast_correction.forecast_num_steps=$FC_STEPS")
+    [ -n "${FC_STEPPER:-}" ] && FC_ARGS+=("case.forecast_correction.forecast_stepper=$FC_STEPPER")
+    [ -n "${FC_RADIUS:-}" ]  && FC_ARGS+=("case.forecast_correction.localisation_radius=$FC_RADIUS")
+    [ -n "${FC_GAIN:-}" ]    && FC_ARGS+=("case.forecast_correction.gain_scale=$FC_GAIN")
+    [ -n "${FC_CAP:-}" ]     && FC_ARGS+=("case.forecast_correction.update_cap=$FC_CAP")
+    [ -n "${FC_Q:-}" ]       && FC_ARGS+=("case.forecast_correction.q_source=$FC_Q")
+    [ -n "${FC_BANK:-}" ]    && FC_ARGS+=("case.forecast_correction.residual_bank=$FC_BANK")
+    [ -n "${FC_BANK_IDX:-}" ] && FC_ARGS+=("case.forecast_correction.bank_indices=$FC_BANK_IDX")
+    [ -n "${FC_SEED:-}" ]    && FC_ARGS+=("case.forecast_correction.forecast_seed=$FC_SEED")
+    FC_ARGS+=("case.forecast_correction.diagnostics=${FC_DIAG:-true}"
+              "case.forecast_correction.diagnostics_root=$ROOT/forecast_correction")
+    FC_TAG="__fc${FC}_n${FC_STEPS:-M}${FC_STEPPER:+_$FC_STEPPER}_r${FC_RADIUS:-d}_g${FC_GAIN:-d}_c${FC_CAP:-d}_q${FC_Q:-d}"
+    ;;
+  *) echo "[grid] FATAL: FC must be off|on|measure, got '$FC'" >&2; exit 1;;
+esac
+# (Expanded below as ${FC_ARGS[@]+"${FC_ARGS[@]}"}: bash < 4.4 treats an empty
+# array as unbound under `set -u`.)
+
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 # SURGE-only: bare "FlowDAS" / "SDA" are deliberately absent (see the header).
 BASELINES='["SURGE (FlowDAS)","SURGE (SDA)","Guided FM (FIG)"]'
@@ -431,10 +470,11 @@ for N in $TRAJ; do
     for M in $STEPS; do
       # ours jacfree
       if has_group ours_jacfree; then
-        run_cell "$MET/${SS}__M${M}__traj${N}__ours_jacfree.csv" "ours_jacfree/$SS/M$M/traj$N" \
+        run_cell "$MET/${SS}__M${M}__traj${N}__ours_jacfree${FC_TAG}.csv" "ours_jacfree${FC_TAG}/$SS/M$M/traj$N" \
           "+urban_methods=$OURS" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
           likelihood_mode=dps_jacobian_free \
-          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
+          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT" \
+          ${FC_ARGS[@]+"${FC_ARGS[@]}"}
       fi
       # ours shared -- one cell per requested refresh cadence k. lambda still comes
       # from the per-scenario table in configs/method/*.yaml; only k is set here.
@@ -446,11 +486,12 @@ for N in $TRAJ; do
         else
           KOUT="ours_shared_jac${K}"; KVAR="shared_jac${K}"
         fi
-        run_cell "$MET/${SS}__M${M}__traj${N}__${KOUT}.csv" "${KOUT}/$SS/M$M/traj$N" \
+        run_cell "$MET/${SS}__M${M}__traj${N}__${KOUT}${FC_TAG}.csv" "${KOUT}${FC_TAG}/$SS/M$M/traj$N" \
           "+urban_methods=$OURS" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
           likelihood_mode=inflated_shared \
           +jacobian_refresh_every=$K "+variant_override=$KVAR" \
-          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
+          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT" \
+          ${FC_ARGS[@]+"${FC_ARGS[@]}"}
       done
       # baselines (ignore likelihood_mode; run once per M)
       if has_group baselines; then

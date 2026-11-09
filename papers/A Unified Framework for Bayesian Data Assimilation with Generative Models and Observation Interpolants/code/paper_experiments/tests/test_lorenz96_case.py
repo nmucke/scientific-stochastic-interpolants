@@ -195,6 +195,8 @@ def tiny_case(tmp_path, monkeypatch):
     for name in driver.GENERATIVE:
         cfg.methods[name].num_steps = 3
         cfg.methods[name].likelihood_mode = "dps_jacobian_free"
+    for name in driver.PRIOR_ENKF:
+        cfg.methods[name].num_steps = 3
     monkeypatch.setattr(driver, "RESULTS", tmp_path)
     problem = driver.problem_of(cfg)
     for index, seq in enumerate(load_sequences(problem, "test", 2)):
@@ -206,7 +208,10 @@ def tiny_case(tmp_path, monkeypatch):
     def untrained(run, device="cpu"):
         name = "stochastic_interpolant" if run == cfg.checkpoints.si_run else "flow_matching"
         model_cfg = OmegaConf.load(config_dir / f"lorenz96_{name}.yaml").model
-        return hydra.utils.instantiate(model_cfg).eval()
+        # Fixed weights, so that two runs of a cell use the same network.
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            return hydra.utils.instantiate(model_cfg).eval()
 
     monkeypatch.setattr(generative, "load_prior", untrained)
     monkeypatch.setattr(
@@ -226,6 +231,8 @@ def test_every_cell_runs_and_writes_tidy_records(tiny_case, name):
     if name in driver.GENERATIVE:
         nfe = next(r.value for r in records if r.metric == Metric.NFE.value)
         assert nfe >= tiny_case.methods[name].num_steps
+    if name != "pf_reference":
+        assert {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ} <= metrics
     assert driver.cell_path("metrics", name, 0).name.endswith("__traj0__.csv")
     assert driver.cell_path("per_step", name, 0).exists()
 
@@ -290,3 +297,143 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     make_lorenz96_figures.plot_ess(figures)
     assert (figures / "lorenz96_rmse_vs_step.pdf").exists()
     assert (figures / "lorenz96_ess.pdf").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Forecast-residual correction and the trained-prior EnKF baseline
+# --------------------------------------------------------------------------- #
+
+
+def test_corrected_cells_start_from_their_plain_settings():
+    cfg = driver.case_config()
+    for fc, plain in driver.CORRECTED.items():
+        settings = driver.method_settings(cfg, fc)
+        own = driver.method_settings(cfg, plain)
+        assert {k: v for k, v in settings.items() if k != "correction"} == own
+        assert "correction" in settings
+        assert "correction" not in own
+
+
+def test_overrides_reach_nested_keys_and_keep_strings():
+    base = {"num_steps": 25, "correction": {"gain_scale": 1.0}}
+    out = driver.apply_overrides(
+        base,
+        [
+            "correction.forecast_num_steps=5",
+            "correction.localisation=null",
+            "likelihood_mode=dps_jacobian_free",
+        ],
+    )
+    assert out["correction"] == {
+        "gain_scale": 1.0,
+        "forecast_num_steps": 5,
+        "localisation": None,
+    }
+    assert out["likelihood_mode"] == "dps_jacobian_free"
+    assert base["correction"] == {"gain_scale": 1.0}  # not mutated
+
+
+def test_exact_residual_bank_has_the_transition_covariance():
+    bank = generative.exact_residual_bank(16, 0.3).reshape(16, -1).double()
+    torch.testing.assert_close(bank.T @ bank / 16, 0.3 * torch.eye(16, dtype=torch.float64))
+
+
+def test_lag1_autocorrelation_limits():
+    persistent = torch.ones(10, 4)
+    alternating = torch.tensor([(-1.0) ** t for t in range(10)]).reshape(-1, 1).repeat(1, 4)
+    assert driver.lag1_autocorrelation(persistent) == pytest.approx(1.0)
+    assert driver.lag1_autocorrelation(alternating) == pytest.approx(-1.0)
+    white = torch.randn(4000, 4, generator=torch.Generator().manual_seed(0))
+    assert abs(driver.lag1_autocorrelation(white)) < 0.05
+
+
+def test_normalised_innovations_use_the_true_forecast_mean(problem):
+    gen = torch.Generator().manual_seed(3)
+    members = torch.randn(32, problem.dim_state, generator=gen, dtype=torch.float64)
+    from scisi.dynamics.lorenz96 import integrate
+
+    flow = integrate(members, problem.model.steps_per_stage, problem.dt, problem.forcing)
+    y = (flow @ problem.obs_matrix.T).mean(0)
+    z = driver.normalised_innovations(problem, members, y)
+    torch.testing.assert_close(z, torch.zeros_like(z))
+
+
+@pytest.mark.parametrize("name", sorted(driver.CORRECTED))
+def test_disabled_correction_is_bit_identical_to_the_plain_cell(tiny_case, name):
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    plain = driver.CORRECTED[name]
+    settings = driver.method_settings(tiny_case, plain)
+    a = driver.run_method(tiny_case, plain, problem, sequences, "test", 0, settings)
+    off = dict(settings, correction={"enabled": False, "localisation": 4})
+    b = driver.run_method(tiny_case, name, problem, sequences, "test", 0, off)
+    assert torch.equal(a.ensembles, b.ensembles)
+    assert a.nfe == b.nfe
+
+
+@pytest.mark.parametrize("name", ["si_sde_fc", "fm_ode_fc"])
+def test_enabled_correction_costs_two_forecasts_of_its_own_step_count(tiny_case, name):
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    plain = driver.CORRECTED[name]
+    settings = driver.method_settings(tiny_case, plain)
+    a = driver.run_method(tiny_case, plain, problem, sequences, "test", 0, settings)
+    on = dict(settings, correction={"forecast_num_steps": 2, "localisation": 4})
+    b = driver.run_method(tiny_case, name, problem, sequences, "test", 0, on)
+    assert not torch.equal(a.ensembles, b.ensembles)
+    assert torch.isfinite(b.ensembles).all()
+    # Online Q_hat: two unguided forecasts per member and step.
+    assert b.nfe - a.nfe == pytest.approx(2 * 2)
+    # The guided draw of the first step is the plain cell's own (same seed stream);
+    # sequences are corrected independently, so changing one sequence's
+    # observations leaves the other's members unchanged.
+    mod = list(sequences)
+    mod[1] = driver.Sequence(
+        mod[1].prior_mean, mod[1].truth, mod[1].observations + 5.0
+    )
+    c = driver.run_method(tiny_case, name, problem, mod, "test", 0, on)
+    assert torch.equal(b.ensembles[0, 0], c.ensembles[0, 0])
+    assert not torch.equal(b.ensembles[1, 0], c.ensembles[1, 0])
+
+
+def test_oracle_fc_without_gain_is_the_exact_kernel_spread(tiny_case):
+    """gain_scale=0 leaves the exact one-step draws: their mean matches the oracle's."""
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 1)
+    big = 4000
+    zero = {"correction": {"gain_scale": 0.0, "localisation": None}}
+    a = driver.run_oracle_fc(problem, sequences, "test", 0, big, zero).ensembles
+    b = driver.run_oracle(problem, sequences, "test", 0, big).ensembles
+    # Same initial members, independent noise: first-step moments agree.
+    torch.testing.assert_close(a[0, 0].mean(0), b[0, 0].mean(0), atol=0.15, rtol=0)
+    torch.testing.assert_close(a[0, 0].var(0), b[0, 0].var(0), atol=0.15, rtol=0.1)
+
+
+def test_prior_enkf_uses_the_enkf_update_on_prior_forecasts(tiny_case, monkeypatch):
+    """With an identity 'prior' the cell is the EnKF on a persistence forecast."""
+    from cases.lorenz96._l96_generative import assimilate_prior_enkf
+    from scisi.particle_filter.enkf import EnsembleKalmanFilter
+
+    problem = driver.problem_of(tiny_case)
+    import scisi.posterior_models.forecast_correction as fc
+
+    monkeypatch.setattr(
+        fc, "draw_unguided_forecast", lambda posterior, history, **kw: history[..., -1]
+    )
+    stats = Standardisation(2.0, 3.0)
+    S, E, T = 2, 8, 3
+    initial = torch.randn(S, E, problem.dim_state, dtype=torch.float64)
+    obs = torch.randn(S, T, problem.obs_indices.numel(), dtype=torch.float64)
+    enkf = EnsembleKalmanFilter(problem.obs_matrix, problem.obs_variance)
+    posterior = SimpleNamespace(device="cpu")
+    out = assimilate_prior_enkf(
+        posterior, None, stats, initial, obs, 1, 0, enkf,
+        [torch.Generator().manual_seed(s) for s in range(S)],
+    )
+    for s in range(S):
+        gen = torch.Generator().manual_seed(s)
+        x = stats.forward(initial[s].float()).double() * 3.0 + 2.0  # float32 round trip
+        for t in range(T):
+            x = enkf.analyse(x, obs[s, t], gen)
+            torch.testing.assert_close(out[s, t], x, atol=1e-5, rtol=1e-5)
+            x = stats.inverse(stats.forward(x).float().double())

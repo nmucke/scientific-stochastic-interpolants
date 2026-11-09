@@ -1191,6 +1191,7 @@ def run_assimilation(
     batch_size: Optional[int] = None,
     assimilate_every: Optional[int] = None,
     assimilate_from: Optional[int] = None,
+    forecast_correction: Any = None,
 ) -> AssimResult:
     """Run one autoregressive assimilation and record NFE + wall-clock.
 
@@ -1220,6 +1221,11 @@ def run_assimilation(
     FREE-RUNS (prior only, same number of SDE steps) in between -- a harder,
     more realistic DA setting. The trajectory keeps every physical step, so the
     metrics score the free-running steps too.
+
+    ``forecast_correction`` (optional) is handed to ``sample_trajectory`` (a
+    ``ForecastCorrection``; see ``_forecast_correction.py``). ``None`` (default)
+    leaves the call exactly as before. Its unguided forecasts go through the
+    same drift network, so they are counted in ``nfe_per_step``.
 
     COST NORMALISATION: ``nfe_per_step`` / ``seconds_per_step`` stay per GENERATED
     PHYSICAL STEP (denominator ``n_assim = num_physical_steps - L``), NOT per
@@ -1289,6 +1295,8 @@ def run_assimilation(
         if batch_size < 1:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         sampling_input["batch_size"] = batch_size
+    if forecast_correction is not None:
+        sampling_input["forecast_correction"] = forecast_correction
     with timer:
         posterior_trajectory = posterior.sample_trajectory(**sampling_input)
 
