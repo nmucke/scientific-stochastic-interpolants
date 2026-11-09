@@ -102,6 +102,8 @@ def ess(log_w: torch.Tensor) -> float:
 def run_cell(runner, probe, name, d, k, seed, n, M) -> list[dict[str, object]]:
     system = runner.system()
     _, cycles = runner.trajectory(seed, n)
+    if not 2 <= k <= len(cycles):
+        raise ValueError(f"cycle k={k} needs a previous cycle: use 2 <= k <= {len(cycles)}")
     previous, cycle = cycles[k - 2], cycles[k - 1]
     generator = torch.Generator().manual_seed(1000 * seed + k)
     chol = torch.linalg.cholesky(previous.kalman_cov.double())
@@ -114,8 +116,12 @@ def run_cell(runner, probe, name, d, k, seed, n, M) -> list[dict[str, object]]:
         "slope": 1.0, "residual_sd": 0.0, "kl_no_resampling": "", "kl": "",
         "resamples": "", "anchors_kept": "",
     }]
-    threshold = runner._surge_ess_threshold(Method.SURGE_SDA, M)
+    thresholds = {
+        Method.OURS_SI_SDE: runner._surge_ess_threshold(Method.SURGE_FLOWDAS, M),
+        Method.OURS_DM_SDE: runner._surge_ess_threshold(Method.SURGE_SDA, M),
+    }
     for method, mode, proposal, label in PROPOSALS:
+        threshold = thresholds[method]
         probe.inject(proposal)
         row: dict[str, object] = {
             "system": name, "d": d, "k": k, "seed": seed, "proposal": label,

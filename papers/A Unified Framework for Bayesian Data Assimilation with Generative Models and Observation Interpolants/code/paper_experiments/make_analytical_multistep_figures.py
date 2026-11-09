@@ -37,7 +37,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker as mticker  # noqa: E402
 import numpy as np  # noqa: E402
 
-from common.seeding import SEED_LIST  # noqa: E402
 from figure_common import FIGURES_DIR, SERIES, _save_fig, apply_style  # noqa: E402
 
 ROOT = _here / "results" / "analytical_multistep"
@@ -121,10 +120,16 @@ def load(
     return out, *settings.pop()
 
 
+def full_seed_count(data) -> int:
+    """The seed count of a complete cell: the largest ``n_traj`` in the data."""
+    return max(entry[2] for curve in data.values() for entry in curve.values())
+
+
 def make_figure(
     data, systems: list[str], out_stem: Path, series: tuple[tuple, ...] = ALL_SERIES
 ) -> list[Path]:
     apply_style()
+    n_seeds = full_seed_count(data)
     fig, axes = plt.subplots(
         len(systems), len(METRICS), figsize=(11.0, 4.1 * len(systems)),
         squeeze=False, sharex=True,
@@ -152,7 +157,7 @@ def make_figure(
                     steps, np.maximum(mean - std, mean * 0.05), mean + std,
                     color=colour, alpha=0.10, linewidth=0, zorder=2,
                 )
-                partial = [s for s in steps if curve[s][2] < len(SEED_LIST)]
+                partial = [s for s in steps if curve[s][2] < n_seeds]
                 ax.plot(
                     partial, [curve[s][0] for s in partial], linestyle="none",
                     marker="x", markersize=6, color=colour, zorder=5,
@@ -178,7 +183,7 @@ def make_figure(
     return _save_fig(fig, out_stem)
 
 
-def _cell(entry: tuple[float, float, int] | None, tex: bool) -> str:
+def _cell(entry: tuple[float, float, int] | None, tex: bool, n_seeds: int) -> str:
     if entry is None:
         return "--"
     mean, std, n = entry
@@ -187,7 +192,7 @@ def _cell(entry: tuple[float, float, int] | None, tex: bool) -> str:
         return f"{fmt.format(mean)} (n=1)"
     pm = r"$\pm$" if tex else "+/-"
     text = f"{fmt.format(mean)} {pm} {fmt.format(std)}"
-    return text if n == len(SEED_LIST) else f"{text} (n={n})"
+    return text if n == n_seeds else f"{text} (n={n})"
 
 
 def table_rows(data, scenario: str, metric: str) -> list[tuple[str, Curve]]:
@@ -207,13 +212,14 @@ def table_cycles(data) -> list[int]:
 
 def write_markdown(data, scenario: str, path: Path, M: int, E: int) -> None:
     cycles = table_cycles(data)
+    n_seeds = full_seed_count(data)
     lines: list[str] = []
     for metric, title in METRICS:
         lines += [f"### {title} ({scenario}, M={M}, E={E})", ""]
         lines.append("| method | " + " | ".join(f"k={c}" for c in cycles) + " |")
         lines.append("|---|" + "---|" * len(cycles))
         for label, curve in table_rows(data, scenario, metric):
-            cells = [_cell(curve.get(c), tex=False) for c in cycles]
+            cells = [_cell(curve.get(c), tex=False, n_seeds=n_seeds) for c in cycles]
             lines.append(f"| {label} | " + " | ".join(cells) + " |")
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -221,6 +227,7 @@ def write_markdown(data, scenario: str, path: Path, M: int, E: int) -> None:
 
 def write_tex(data, systems: list[str], path: Path) -> None:
     cycles = table_cycles(data)
+    n_seeds = full_seed_count(data)
     body: list[str] = [rf"\begin{{tabular}}{{l{'c' * len(cycles)}}}", r"\toprule"]
     for scenario in systems:
         title = SYSTEM_LABELS.get(scenario, scenario)
@@ -232,7 +239,9 @@ def write_tex(data, systems: list[str], path: Path) -> None:
                 r"\midrule",
             ]
             for label, curve in table_rows(data, scenario, metric):
-                cells = " & ".join(_cell(curve.get(c), tex=True) for c in cycles)
+                cells = " & ".join(
+                    _cell(curve.get(c), tex=True, n_seeds=n_seeds) for c in cycles
+                )
                 body.append(rf"{label} & {cells} \\")
             body.append(r"\midrule")
     body[-1] = r"\bottomrule"
@@ -249,7 +258,7 @@ def main() -> None:
     ap.add_argument("--M", type=int, default=None)
     ap.add_argument("--E", type=int, default=None)
     args = ap.parse_args()
-    default_root = args.root == ROOT
+    default_root = args.root.resolve() == ROOT.resolve()
     out = args.out or (DEFAULT_OUT if default_root else args.root / "figures")
     tex = args.tex or (TEX_OUT if default_root else args.root / TEX_OUT.name)
 
