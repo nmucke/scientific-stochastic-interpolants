@@ -11,7 +11,17 @@ Reads ``<root>/aggregated/per_step.csv`` and writes
   that bear on the dropped ``p(y^{k+1} | x^k_i)`` weights: Ours with and without
   SURGE, the resampling diagnostic, the SURGE baselines and the two references.
 * ``tab_analytical_multistep.tex`` and ``<root>/aggregated/table_<system>.md`` --
-  mean +/- std at selected cycles. Every cycle is in ``per_step.csv``.
+  mean +/- std at selected cycles. Every cycle is in ``per_step.csv``. Corrected
+  rows (``<variant>_fc<S>``, see ``cases/analytical/multistep.py``) enter at the
+  forecast steps in ``FC_TABLE_STEPS``.
+* With corrected rows present (forecast-residual correction, FORECAST_CORRECTION.md):
+  ``analytical_multistep_correction_vs_step.{pdf,png}`` -- KL and the variance ratio
+  per cycle for plain Ours (shared), corrected Ours at ``FC_TABLE_STEPS``, the exact
+  chain, ``adapted_shared`` and EnKF; ``analytical_multistep_error_vs_forecast_steps.{pdf,png}``
+  -- cycle-mean KL to Kalman against the forecast steps ``S``, one line per sampler
+  and Q_hat source / group, with the plain, chain, adapted and EnKF levels; and
+  ``tab_analytical_multistep_correction.tex`` / ``<root>/aggregated/correction_<system>.md``
+  -- cycle means of every corrected row with cost (NFE, seconds per cycle).
 
 For the default root the outputs go to ``figures/analytical_multistep/`` and
 ``generated/``, otherwise under ``<root>``. Unlike the other metric figures this one
@@ -25,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -37,6 +48,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.ticker as mticker  # noqa: E402
 import numpy as np  # noqa: E402
 
+from cases.analytical.multistep import (  # noqa: E402
+    ADAPTED_VARIANT,
+    FC_DEFAULT_BANK_SIZE,
+    group_tag,
+    parse_fc_variant,
+)
 from figure_common import FIGURES_DIR, SERIES, _save_fig, apply_style  # noqa: E402
 
 ROOT = _here / "results" / "analytical_multistep"
@@ -78,6 +95,70 @@ REFERENCE_SERIES: tuple[tuple, ...] = (
     ("Exact per-member chain", None, "Exact per-member chain", "#000000", "-", "", False),
     ("Kalman filter (sampled)", None, "Sampling floor", "#999999", "-", "", False),
 )
+_OURS_STYLE: dict[str, tuple[str, str, str]] = {
+    "Ours (SI-SDE)": ("SI-SDE", "#0072B2", "o"),
+    "Ours (DM-SDE)": ("DM-SDE", "#009E73", "s"),
+    "Ours (FM-ODE)": ("FM-ODE", "#CC79A7", "^"),
+}
+_BASE_NAME = {"shared": "shared", "jacfree": "Jac-free"}
+FC_TABLE_STEPS: tuple[int, ...] = (5, 50)  # corrected rows in the per-cycle tables
+FC_FIGURE_STEPS: tuple[int, ...] = (2, 5, 50)
+
+
+def _bank_label(spec: dict) -> str:
+    """``", bank"``, plus the size when it is not the default."""
+    if spec["q_source"] != "bank":
+        return ""
+    size = spec.get("bank_size")
+    return ", bank" if size in (None, FC_DEFAULT_BANK_SIZE) else f", bank {size}"
+
+
+def group_sizes(variants) -> list[int]:
+    """Group sizes ``E`` in the data: of grouped corrected rows (``..._g<E>``) and of
+    the grouped comparators (EnKF ``g<E>``, ``adapted_shared_g<E>``)."""
+    sizes = set()
+    pattern = re.compile(rf"(?:{ADAPTED_VARIANT}_)?g(\d+)")
+    for variant in variants:
+        spec = parse_fc_variant(variant)
+        if spec and spec["group"]:
+            sizes.add(int(spec["group"]))
+        match = pattern.fullmatch(variant or "")
+        if match:
+            sizes.add(int(match.group(1)))
+    return sorted(sizes)
+
+
+def fc_label(method: str, variant: str) -> str:
+    spec = parse_fc_variant(variant)
+    name = _OURS_STYLE[method][0]
+    extra = "".join((
+        _bank_label(spec),
+        f", E={spec['group']}" if spec["group"] else "",
+    ))
+    return f"Ours {name} ({_BASE_NAME.get(spec['base'], spec['base'])}) + FC S={spec['steps']}{extra}"
+
+
+def fc_series(keys, steps: tuple[int, ...] | None = None) -> tuple[tuple, ...]:
+    """Series tuples of the corrected rows present in ``keys`` (scenario, method, variant, ...)."""
+    found = sorted(
+        {(k[1], k[2]) for k in keys if k[1] in _OURS_STYLE and parse_fc_variant(k[2])},
+        key=lambda mv: (
+            list(_OURS_STYLE).index(mv[0]), parse_fc_variant(mv[1])["base"] != "shared",
+            parse_fc_variant(mv[1])["q_source"], parse_fc_variant(mv[1])["bank_size"] or 0,
+            parse_fc_variant(mv[1])["group"] or 0, parse_fc_variant(mv[1])["steps"],
+        ),
+    )
+    out = []
+    for method, variant in found:
+        spec = parse_fc_variant(variant)
+        if steps is not None and spec["steps"] not in steps:
+            continue
+        _, colour, marker = _OURS_STYLE[method]
+        out.append((method, variant, fc_label(method, variant), colour,
+                    "-" if spec["base"] == "shared" else "--", marker, False))
+    return tuple(out)
+
+
 ALL_SERIES = (*SERIES, *ADAPTED_SERIES, *SURGE_SERIES, *REFERENCE_SERIES)
 FOCUS_KEYS: tuple[tuple[str, str | None], ...] = (
     ("Ours (SI-SDE)", "shared"),
@@ -196,10 +277,18 @@ def _cell(entry: tuple[float, float, int] | None, tex: bool, n_seeds: int) -> st
 
 
 def table_rows(data, scenario: str, metric: str) -> list[tuple[str, Curve]]:
-    """``(label, curve)`` for every series with data, in legend order."""
+    """``(label, curve)`` for every series with data, in legend order.
+
+    Corrected rows come last, at ``FC_TABLE_STEPS`` with online Q_hat and no groups.
+    """
+    corrected = tuple(
+        s for s in fc_series(data, FC_TABLE_STEPS)
+        if parse_fc_variant(s[1])["q_source"] == "online"
+        and parse_fc_variant(s[1])["group"] is None
+    )
     return [
         (label, curve)
-        for method, variant, label, *_ in ALL_SERIES
+        for method, variant, label, *_ in (*ALL_SERIES, *corrected)
         if (curve := data.get((scenario, method, variant, metric)))
     ]
 
@@ -250,6 +339,263 @@ def write_tex(data, systems: list[str], path: Path) -> None:
     path.write_text("\n".join(body) + "\n", encoding="utf-8")
 
 
+# -- forecast-residual correction --------------------------------------------- #
+
+FC_METRICS: tuple[tuple[str, str], ...] = (
+    ("kl_points", "KL to Kalman posterior"),
+    ("var_ratio", "tr(ensemble cov) / tr(Kalman cov)"),
+)
+FC_COMPARATORS: tuple[tuple, ...] = (
+    ("Ours (SI-SDE)", "shared", "Ours SI-SDE (shared), plain", "#0072B2", ":", "o", True),
+    ("Ours (DM-SDE)", "shared", "Ours DM-SDE (shared), plain", "#009E73", ":", "s", True),
+    ("Ours (FM-ODE)", "shared", "Ours FM-ODE (shared), plain", "#CC79A7", ":", "^", True),
+    ("Ours (SI-SDE)", "adapted_shared", "SI-SDE adapted_shared", "#56B4E9", "-.", "", False),
+    ("EnKF", None, "EnKF", "#E69F00", "-", "", False),
+    *REFERENCE_SERIES,
+)
+
+
+def make_correction_figure(data, systems: list[str], out_stem: Path) -> list[Path]:
+    """Per cycle: plain vs corrected Ours (shared, online, all members) and references."""
+    corrected = tuple(
+        s for s in fc_series(data, FC_FIGURE_STEPS)
+        if parse_fc_variant(s[1])["base"] == "shared"
+        and parse_fc_variant(s[1])["q_source"] == "online"
+        and parse_fc_variant(s[1])["group"] is None
+    )
+    styles = ("--", "-", (0, (1, 1)))
+    restyled = tuple(
+        (m, v, lab, c, styles[FC_FIGURE_STEPS.index(parse_fc_variant(v)["steps"]) % 3], mk, f)
+        for m, v, lab, c, _, mk, f in corrected
+    )
+    apply_style()
+    fig, axes = plt.subplots(
+        len(systems), len(FC_METRICS), figsize=(11.0, 4.1 * len(systems)),
+        squeeze=False, sharex=True,
+    )
+    handles: dict[str, object] = {}
+    series = (*FC_COMPARATORS, *restyled)
+    for row, scenario in enumerate(systems):
+        for col, (metric, ylabel) in enumerate(FC_METRICS):
+            ax = axes[row][col]
+            for method, variant, label, colour, ls, marker, filled in series:
+                curve = data.get((scenario, method, variant, metric))
+                if not curve:
+                    continue
+                steps = sorted(curve)
+                mean = np.array([curve[s][0] for s in steps])
+                (line,) = ax.plot(
+                    steps, mean, color=colour, linestyle=ls, marker=marker or None,
+                    markersize=3.5, markevery=3, linewidth=1.3 if marker else 2.0,
+                    markerfacecolor=colour if filled else "white",
+                )
+                handles.setdefault(label, line)
+            if metric == "kl_points":
+                ax.set_yscale("log")
+            else:
+                ax.axhline(1.0, color="#999999", linewidth=0.8)
+            ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+            ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+            ax.set_ylabel(ylabel)
+            ax.set_title(SYSTEM_LABELS.get(scenario, scenario), fontsize=11)
+            if row == len(systems) - 1:
+                ax.set_xlabel("Assimilation step $k$")
+    labels = [s[2] for s in series if s[2] in handles]
+    fig.legend(
+        [handles[label] for label in labels], labels, loc="lower center", ncol=3,
+        frameon=False, fontsize=8, bbox_to_anchor=(0.5, 0.0),
+    )
+    fig.tight_layout(rect=(0, 0.22 * 2 / max(len(systems), 2), 1, 1))
+    return _save_fig(fig, out_stem)
+
+
+ScalarKey = tuple[str, str, str | None, str]
+Scalar = dict[str, float]
+
+
+def load_scalar(path: Path, M: int, E: int) -> dict[ScalarKey, Scalar]:
+    """Cycle-mean rows of ``all.csv`` at one ``(M, E)``: value, std, NFE, seconds, n."""
+    out: dict[ScalarKey, Scalar] = {}
+    with open(path, encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            if int(row["M"]) != M or int(row["E"]) != E:
+                continue
+            out[(row["scenario"], row["method"], row["variant"] or None, row["metric"])] = {
+                "value": float(row["value"]), "std": float(row["std"] or "nan"),
+                "nfe": float(row["NFE"]) if row["NFE"] not in ("", None) else float("nan"),
+                "seconds": float(row["seconds"]) if row["seconds"] not in ("", None) else float("nan"),
+                "n": int(row["n_traj"]),
+            }
+    return out
+
+
+def make_forecast_steps_figure(scalar, systems: list[str], out_stem: Path) -> list[Path]:
+    """Cycle-mean KL to Kalman against the forecast steps S of the correction."""
+    apply_style()
+    fig, axes = plt.subplots(
+        len(systems), 2, figsize=(11.0, 4.1 * len(systems)), squeeze=False, sharex=True,
+    )
+    handles: dict[str, object] = {}
+    groups = group_sizes({key[2] for key in scalar})
+    for row, scenario in enumerate(systems):
+        for col, base in enumerate(("shared", "jacfree")):
+            ax = axes[row][col]
+            lines: dict[tuple, list[tuple[int, float, float]]] = defaultdict(list)
+            for (scen, method, variant, metric), entry in scalar.items():
+                spec = parse_fc_variant(variant)
+                if scen != scenario or metric != "kl_points" or not spec or spec["base"] != base:
+                    continue
+                lines[(method, spec["q_source"], spec["bank_size"], spec["group"])].append(
+                    (spec["steps"], entry["value"], entry["std"])
+                )
+            for (method, q, bank, group), points in sorted(
+                lines.items(),
+                key=lambda kv: (
+                    list(_OURS_STYLE).index(kv[0][0]), kv[0][1], kv[0][2] or 0, kv[0][3] or 0
+                ),
+            ):
+                name, colour, marker = _OURS_STYLE[method]
+                points.sort()
+                xs, ys, sd = (np.array(v) for v in zip(*points))
+                ls = "-" if group is None else "--"
+                label = f"{name} + FC" + _bank_label({"q_source": q, "bank_size": bank}) + (
+                    f", E={group}" if group else ""
+                )
+                (line,) = ax.plot(
+                    xs, ys, color=colour, linestyle=ls, marker=marker, markersize=5,
+                    markerfacecolor="white" if q == "bank" else colour, linewidth=1.3,
+                )
+                if group is None and len(points) > 1:
+                    ax.fill_between(xs, np.maximum(ys - sd, ys * 0.05), ys + sd,
+                                    color=colour, alpha=0.10, linewidth=0)
+                handles.setdefault(label, line)
+                plain = scalar.get((scenario, method, base, "kl_points"))
+                if plain:
+                    h = ax.axhline(plain["value"], color=colour, linestyle=":", linewidth=1.0)
+                    handles.setdefault(f"{name} ({_BASE_NAME[base]}), plain", h)
+            for method, variant, label, colour, ls in (
+                (REFERENCE_MEMBER_CHAIN_NAME, None, "Exact per-member chain", "#000000", "-"),
+                ("Ours (SI-SDE)", "adapted_shared", "SI-SDE adapted_shared", "#56B4E9", "-."),
+                ("EnKF", None, "EnKF", "#E69F00", "-"),
+                *(
+                    ("EnKF", group_tag(e), f"EnKF, E={e}", "#E69F00", "--")
+                    for e in groups
+                ),
+                ("Kalman filter (sampled)", None, "Sampling floor", "#999999", "-"),
+            ):
+                entry = scalar.get((scenario, method, variant, "kl_points"))
+                if entry:
+                    h = ax.axhline(entry["value"], color=colour, linestyle=ls, linewidth=1.2)
+                    handles.setdefault(label, h)
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xticks([1, 2, 5, 10, 25, 50])
+            ax.xaxis.set_major_formatter(mticker.ScalarFormatter())
+            ax.grid(True, which="major", linestyle="-", linewidth=0.6, alpha=0.25)
+            for side in ("top", "right"):
+                ax.spines[side].set_visible(False)
+            ax.set_ylabel("Cycle-mean KL to Kalman posterior")
+            ax.set_title(
+                f"{SYSTEM_LABELS.get(scenario, scenario)}: {_BASE_NAME[base]}", fontsize=11
+            )
+            if row == len(systems) - 1:
+                ax.set_xlabel("Forecast steps $S$ of the correction")
+    labels = list(handles)
+    fig.legend(
+        [handles[label] for label in labels], labels, loc="lower center", ncol=4,
+        frameon=False, fontsize=8, bbox_to_anchor=(0.5, 0.0),
+    )
+    fig.tight_layout(rect=(0, 0.2 * 2 / max(len(systems), 2), 1, 1))
+    return _save_fig(fig, out_stem)
+
+
+REFERENCE_MEMBER_CHAIN_NAME = "Exact per-member chain"
+CORRECTION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("kl_points", "KL"), ("kl_exact", "KL (exact moments)"),
+    ("var_ratio", "var ratio"), ("mean_err", "mean err"),
+)
+
+
+def correction_rows(scalar, scenario: str) -> list[tuple[str, str | None, str]]:
+    """``(method, variant, label)``: comparators first, then every corrected row."""
+    keys = {(k[1], k[2]) for k in scalar if k[0] == scenario and k[3] == "kl_points"}
+    groups = group_sizes(v for _, v in keys)
+    rows = [
+        (m, v, lab) for m, v, lab in (
+            (REFERENCE_KALMAN_NAME, None, "Sampling floor (Kalman, sampled)"),
+            (REFERENCE_MEMBER_CHAIN_NAME, None, "Exact per-member chain"),
+            ("EnKF", None, "EnKF"),
+            *(("EnKF", group_tag(e), f"EnKF, E={e}") for e in groups),
+            *(
+                (m, v, f"Ours {_OURS_STYLE[m][0]} ({_BASE_NAME.get(v, v)}), plain")
+                for m in _OURS_STYLE for v in ("shared", "jacfree")
+            ),
+            *((m, "adapted_shared", f"Ours {_OURS_STYLE[m][0]} adapted_shared") for m in _OURS_STYLE),
+            *((m, f"{ADAPTED_VARIANT}_{group_tag(e)}",
+               f"Ours {_OURS_STYLE[m][0]} adapted_shared, E={e}")
+              for e in groups for m in _OURS_STYLE),
+        ) if (m, v) in keys
+    ]
+    rows += [(m, v, lab) for m, v, lab, *_ in fc_series({(scenario, *mv) for mv in keys})]
+    return rows
+
+
+REFERENCE_KALMAN_NAME = "Kalman filter (sampled)"
+
+
+def _scalar_cell(entry: Scalar | None, tex: bool, n_seeds: int) -> str:
+    if entry is None:
+        return "--"
+    return _cell((entry["value"], entry["std"], entry["n"]), tex, n_seeds)
+
+
+def write_correction_tables(scalar, systems: list[str], md_dir: Path, tex_path: Path) -> list[Path]:
+    written: list[Path] = []
+    n_seeds = int(max(entry["n"] for entry in scalar.values()))
+    tex: list[str] = [
+        rf"\begin{{tabular}}{{l{'c' * len(CORRECTION_COLUMNS)}cc}}", r"\toprule",
+    ]
+    for scenario in systems:
+        rows = correction_rows(scalar, scenario)
+        if not any(parse_fc_variant(v) for _, v, _ in rows):
+            continue
+        head = [title for _, title in CORRECTION_COLUMNS] + ["NFE", "s / cycle"]
+        lines = [
+            f"### Cycle means, forecast-residual correction ({scenario})", "",
+            "| method | " + " | ".join(head) + " |", "|---|" + "---|" * len(head),
+        ]
+        tex += [
+            rf"\multicolumn{{{len(head) + 1}}}{{l}}{{{SYSTEM_LABELS.get(scenario, scenario)}}} \\",
+            "Method & " + " & ".join(head) + r" \\", r"\midrule",
+        ]
+        for method, variant, label in rows:
+            entries = [scalar.get((scenario, method, variant, m)) for m, _ in CORRECTION_COLUMNS]
+            cost = next((e for e in entries if e), None)
+            nfe = "--" if cost is None or not np.isfinite(cost["nfe"]) else f"{cost['nfe']:.0f}"
+            sec = "--" if cost is None or not np.isfinite(cost["seconds"]) else f"{cost['seconds']:.2f}"
+            lines.append(
+                f"| {label} | " + " | ".join(_scalar_cell(e, False, n_seeds) for e in entries)
+                + f" | {nfe} | {sec} |"
+            )
+            tex.append(
+                label.replace("_", r"\_") + " & " + " & ".join(_scalar_cell(e, True, n_seeds) for e in entries)
+                + f" & {nfe} & {sec} \\\\"
+            )
+        tex.append(r"\midrule")
+        target = md_dir / f"correction_{scenario.split(':')[-1]}.md"
+        target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        written.append(target)
+    if written:
+        tex[-1] = r"\bottomrule"
+        tex.append(r"\end{tabular}")
+        tex_path.parent.mkdir(parents=True, exist_ok=True)
+        tex_path.write_text("\n".join(tex) + "\n", encoding="utf-8")
+        written.append(tex_path)
+    return written
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", type=Path, default=ROOT)
@@ -282,6 +628,21 @@ def main() -> None:
         print(f"[table] wrote {target}")
     write_tex(data, systems, tex)
     print(f"[table] wrote {tex}")
+    if any(parse_fc_variant(key[2]) for key in data):
+        for written in make_correction_figure(
+            data, systems, out / "analytical_multistep_correction_vs_step"
+        ):
+            print(f"[fig] wrote {written}")
+        scalar = load_scalar(args.root / "aggregated" / "all.csv", M, E)
+        for written in make_forecast_steps_figure(
+            scalar, systems, out / "analytical_multistep_error_vs_forecast_steps"
+        ):
+            print(f"[fig] wrote {written}")
+        for written in write_correction_tables(
+            scalar, systems, args.root / "aggregated",
+            tex.with_name("tab_analytical_multistep_correction.tex"),
+        ):
+            print(f"[table] wrote {written}")
 
 
 if __name__ == "__main__":

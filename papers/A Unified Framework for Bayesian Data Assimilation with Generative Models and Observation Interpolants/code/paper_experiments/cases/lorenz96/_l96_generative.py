@@ -136,12 +136,15 @@ def assimilate(
     observations: torch.Tensor,
     num_steps: int,
     seed: int,
+    forecast_correction=None,
 ) -> torch.Tensor:
     """Run the sampler over a batch of sequences.
 
     Args:
         initial: ``[S, E, d]`` initial ensembles in physical units.
         observations: ``[S, T, d_y]`` in physical units.
+        forecast_correction: Optional ``ForecastCorrection`` (see
+            :func:`build_correction`); ``None`` leaves the call exactly as before.
 
     Returns:
         ``[S, T, E, d]`` analysis ensembles in physical units.
@@ -157,6 +160,7 @@ def assimilate(
     y = y.permute(0, 2, 1).repeat_interleave(members, dim=0)  # [S E, d_y, T]
     # batch_size must cover every member: the sampler hands the unsliced observation
     # rows to each batch.
+    extra = {} if forecast_correction is None else {"forecast_correction": forecast_correction}
     trajectory = posterior.sample_trajectory(
         base=x0.clone(),
         field_history=x0.unsqueeze(-1).clone(),
@@ -166,6 +170,133 @@ def assimilate(
         num_steps=num_steps,
         num_physical_steps=steps + 1,
         stepper=stepper,
+        **extra,
     )
     states = trajectory[..., 1:].reshape(num_sequences, members, d, steps)
     return stats.inverse(states.permute(0, 3, 1, 2).double())
+
+
+# --------------------------------------------------------------------------- #
+# Forecast-residual correction and the "trained prior + EnKF" baseline
+# --------------------------------------------------------------------------- #
+
+#: Keys of a ``correction:`` block in ``configs/case/lorenz96.yaml``.
+CORRECTION_KEYS = (
+    "enabled",
+    "forecast_num_steps",
+    "localisation",
+    "gain_scale",
+    "q_source",
+    "update_cap",
+)
+#: ``q_source`` values of a ``correction:`` block. ``exact`` is the library's
+#: ``fixed`` source with the true transition variance, supplied by the case.
+Q_SOURCES = ("online", "exact")
+
+
+def correction_config(problem: Problem, settings: dict, members: int, q_variance: float):
+    """``ForecastCorrectionConfig`` from a ``correction:`` block.
+
+    Args:
+        settings: Keys of :data:`CORRECTION_KEYS`; unknown keys are refused.
+            ``localisation`` is a Gaspari-Cohn radius in sites (``None``: none).
+            ``q_source`` is ``online`` (the library default: ``Q_hat`` from a second
+            forecast per member) or ``exact``: the known transition variance
+            ``q_variance`` (library ``q_source="fixed"``, closed-form
+            ``K_q = Q H' (H Q H' + R)^-1``). The trained samplers are not told Q;
+            only the oracle uses ``exact`` by default.
+        members: Ensemble size ``E``; statistics are per sequence (``group_size``).
+        q_variance: Transition-noise variance per site, in the units the states
+            are corrected in.
+    """
+    from scisi.posterior_models.forecast_correction import (
+        ForecastCorrectionConfig,
+        grid_localisation,
+    )
+
+    unknown = set(settings) - set(CORRECTION_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown correction settings: {sorted(unknown)}")
+    q_source = settings.get("q_source", "online")
+    if q_source not in Q_SOURCES:
+        raise ValueError(f"correction.q_source must be one of {Q_SOURCES}, got {q_source!r}")
+    exact = q_source == "exact"
+    radius = settings.get("localisation")
+    steps = settings.get("forecast_num_steps")
+    cap = settings.get("update_cap")
+    return ForecastCorrectionConfig(
+        enabled=bool(settings.get("enabled", True)),
+        forecast_num_steps=None if steps is None else int(steps),
+        # On the [1, 1, d] layout: identical to ``enkf.periodic_taper(d, radius)``.
+        localisation=None
+        if radius is None
+        else grid_localisation((1, 1, problem.dim_state), float(radius), periodic=True),
+        gain_scale=float(settings.get("gain_scale", 1.0)),
+        q_source="fixed" if exact else "online",
+        q_variance=float(q_variance) if exact else None,
+        group_size=int(members),
+        update_cap=None if cap is None else float(cap),
+    )
+
+
+def build_correction(problem: Problem, stats: Standardisation, members: int, settings: dict):
+    """The correction of a generative cell, in the model's standardised units.
+
+    On MPS the library runs the update on the CPU in float64 by itself.
+    """
+    from scisi.posterior_models.forecast_correction import ForecastCorrection
+
+    q_model = problem.noise_std**2 / stats.std**2
+    return ForecastCorrection(correction_config(problem, settings, members, q_model))
+
+
+def assimilate_prior_enkf(
+    posterior,
+    stepper,
+    stats: Standardisation,
+    initial: torch.Tensor,
+    observations: torch.Tensor,
+    num_steps: int,
+    seed: int,
+    enkf,
+    generators: list[torch.Generator],
+) -> torch.Tensor:
+    """Unguided trained-prior forecast, then an EnKF analysis per sequence.
+
+    The forecast is the unguided version of the posterior's own SDE/ODE
+    (``draw_unguided_forecast``); the observation never enters the sampler. The
+    analysis is ``enkf.analyse`` (the same update as the true-model EnKF cell) in
+    physical units.
+
+    Args:
+        initial: ``[S, E, d]`` physical units. observations: ``[S, T, d_y]``.
+        generators: One CPU generator per sequence for the EnKF perturbations.
+
+    Returns:
+        ``[S, T, E, d]`` analysis ensembles in physical units.
+    """
+    from scisi.posterior_models.forecast_correction import draw_unguided_forecast
+
+    num_sequences, members, d = initial.shape
+    device = posterior.device
+    torch.manual_seed(int(seed))
+    x = stats.forward(initial.float()).reshape(-1, 1, 1, d).to(device)
+    out = []
+    for t in range(observations.shape[1]):
+        f = draw_unguided_forecast(
+            posterior,
+            x.unsqueeze(-1),
+            num_steps=num_steps,
+            stepper=stepper,
+            batch_size=x.shape[0],
+        )
+        forecast = stats.inverse(f.reshape(num_sequences, members, d).cpu().double())
+        analysis = torch.stack(
+            [
+                enkf.analyse(forecast[s], observations[s, t], generators[s])
+                for s in range(num_sequences)
+            ]
+        )
+        out.append(analysis)
+        x = stats.forward(analysis).float().reshape(-1, 1, 1, d).to(device)
+    return torch.stack(out, dim=1)

@@ -4,6 +4,8 @@
 over the held-out sequences. This reduces them to mean +/- std over seeds, in
 ``results/lorenz96/aggregated/{all,per_step}.csv``. Seeds share the sequences, so that
 std is sampler noise only; ``sequence_spread.csv`` holds the spread over sequences.
+A tagged cell (``driver.py cell --tag``) is its own row: its variant is
+``<variant>_<tag>`` and its files ``lorenz96__<method>-<tag>__traj<seed>__.csv``.
 
     .venv/bin/python paper_experiments/aggregate_lorenz96.py
 """
@@ -43,6 +45,7 @@ KEY_METRICS = (
     "crps",
     "diverged_fraction",
     "diverged_steps",
+    "innovation_lag1",
     "nfe",
     "seconds",
 )
@@ -55,7 +58,16 @@ def sequence_spread(directory: Path) -> list[dict[str, object]]:
         cells[path.name.split("__")[1]].append(json.loads(path.read_text()))
     rows: list[dict[str, object]] = []
     for name, seeds in cells.items():
-        for metric in seeds[0]:
+        # A resumable grid can mix files written before and after a metric was
+        # added (e.g. the innovation diagnostics): keep the metrics every seed has.
+        shared = [m for m in seeds[0] if all(m in seed for seed in seeds)]
+        dropped = sorted(set().union(*seeds) - set(shared))
+        if dropped:
+            print(
+                f"[{CASE}] warning: {name}: not every seed has {dropped}; "
+                "dropped from sequence_spread (re-run those seeds to include them)"
+            )
+        for metric in shared:
             means = [
                 statistics.fmean(kept)
                 for kept in (

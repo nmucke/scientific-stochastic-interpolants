@@ -52,6 +52,7 @@ from common.obs_scenario import scenario_key, states_npz_fields, states_tag
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
 from cases.navier_stokes import _ns_pipeline
+from common import forecast_correction as fcw
 from cases.urban import _urban_pipeline
 
 logger = logging.getLogger(__name__)
@@ -183,7 +184,7 @@ SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
 WIRED_METHODS: frozenset = frozenset(METHOD_CONFIG_NAME)
 
 
-class UrbanRunner(ExperimentRunner):
+class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
     """Runner for the urban airflow case."""
 
     case = Case.URBAN
@@ -387,6 +388,10 @@ class UrbanRunner(ExperimentRunner):
 
         nfe = _urban_pipeline.attach_nfe_counter(model)
 
+        # Forecast-residual correction (case.forecast_correction; default off ->
+        # (None, None) and the run below is unchanged).
+        correction, fc_monitor = self._build_forecast_correction(ctx, data_size, fluid_mask)
+
         result = _urban_pipeline.run_assimilation(
             posterior=posterior,
             model=model,
@@ -422,7 +427,10 @@ class UrbanRunner(ExperimentRunner):
             # initial condition, scored against the same truth with the same
             # metrics. It is the floor every assimilating method must beat.
             **self._assimilation_schedule(extra["num_physical_steps"]),
+            forecast_correction=correction,
         )
+        if correction is not None:
+            self._write_fc_diagnostics(ctx, correction, fc_monitor, obs_operator)
 
         metrics = _urban_pipeline.compute_metrics(
             result=result,
@@ -474,9 +482,31 @@ class UrbanRunner(ExperimentRunner):
             "assimilate_from": self._cfg_get("assimilate_from", None),
         }
 
+    # -- forecast-residual correction (FORECAST_CORRECTION.md) ------------- #
+    # _fc_settings / _variant / _write_fc_diagnostics: fcw.ForecastCorrectionMixin.
+
+    def _build_forecast_correction(self, ctx, data_size, fluid_mask):  # type: ignore[no-untyped-def]
+        """``(ForecastCorrection, monitor)`` for this cell, or ``(None, None)``.
+
+        Gaspari-Cohn on the grid (``periodic`` per axis, default not), the four
+        channels of a site at distance 0; straight-line distances (not around
+        buildings). ``mask_obstacles: true`` keeps solid cells at their guided
+        values (zero taper there, and a ``post_update`` for the global gain).
+        Only assimilated steps are corrected.
+        """
+        settings = self._fc_settings()
+        if not fcw.applies_to(settings, ctx.method.value):
+            return None, None
+        periodic = tuple(bool(p) for p in settings.get("periodic") or (False, False))
+        mask = fluid_mask.to(bool).cpu() if settings.get("mask_obstacles", True) else None
+        return fcw.build_correction(
+            settings, case=self.case.value, ctx=ctx, state_shape=data_size,
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario], periodic=periodic, mask=mask,
+        )
+
     # -- record emitters --------------------------------------------------- #
 
-    def _variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
+    def _base_variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
         """Tidy ``variant`` tag: the Ours likelihood-covariance mode (jacfree /
         shared). ``None`` for every single-mode method. Mirrors the NS driver."""
         if method not in OURS_METHODS:

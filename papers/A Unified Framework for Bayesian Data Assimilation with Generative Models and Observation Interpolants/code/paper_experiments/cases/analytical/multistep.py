@@ -18,6 +18,10 @@ Two details a reader of the results needs:
 * From cycle 2 on, SDA and SURGE (SDA) use ``FullFirstStepDiffusionModel``, which
   corrects a first-step omission in ``DenoiseDiffusionModel`` that the single-step
   case does not expose. ``src/scisi`` is left as it is.
+* With ``forecast_correction`` (off by default) the Ours rows also run with the
+  forecast-residual correction of ``FORECAST_CORRECTION.md``, as variants
+  ``<variant>_fc<S>[_bank[<B>]][_g<E>]`` (:func:`fc_variant`). Off, every row is
+  bit-for-bit what it was.
 * ``sliced_w1`` is the single-step ``sliced_w2`` column under its correct name:
   ``analytical_utils.wasserstein_distance`` averages 1-D **W1** distances. In this
   case's output ``sliced_w2`` is a true sliced W2 (:func:`sliced_distances`).
@@ -26,6 +30,7 @@ Two details a reader of the results needs:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -55,6 +60,12 @@ from scisi.posterior_models.flow_matching_posterior import (
     FlowMatchingPosterior,
     endpoint_vanishing_diffusion,
 )
+from scisi.posterior_models.forecast_correction import (
+    ForecastCorrection,
+    ForecastCorrectionConfig,
+    build_residual_bank,
+)
+from scisi.sampling.sde_solvers import euler_maruyama_step
 from scisi.posterior_models.stochastic_interpolant_posterior import (
     StochasticInterpolantPosterior,
 )
@@ -103,6 +114,97 @@ ADAPTED_VARIANT = "adapted_shared"
 SURGE_PREFIX = "surge_"
 SURGE_UNGUIDED = f"{SURGE_PREFIX}unguided"  # the same SMC, no sampler inside it
 SURGE_WRAPPED: tuple[Method, ...] = (Method.OURS_SI_SDE, Method.OURS_DM_SDE)
+
+# Forecast-residual correction (FORECAST_CORRECTION.md, variant A) on the Ours rows.
+# A corrected row is ``<plain variant>_fc<forecast steps>``, plus ``_bank`` when Q_hat
+# comes from a residual bank instead of the online second forecast (``_bank<B>``
+# when the bank does not hold the default FC_DEFAULT_BANK_SIZE pairs), plus ``_g<E>``
+# when the ensemble statistics are taken over independent groups of E members (the
+# pooled N members are still what is scored). ``GROUP_ONLY`` cells hold the
+# grouped comparators: EnKF and ``adapted_shared`` on the same groups.
+FC_TAG = "_fc"
+FC_Q_SOURCES = ("online", "bank")
+FC_DEFAULT_BANK_SIZE = 4096
+
+
+def fc_variant(
+    base: str,
+    steps: int,
+    q_source: str = "online",
+    group: int | None = None,
+    bank_size: int | None = None,
+) -> str:
+    """Variant tag of a corrected row, e.g. ``shared_fc5``, ``jacfree_fc2_bank_g64``.
+
+    ``bank_size`` adds its digits to ``_bank`` only when it differs from
+    ``FC_DEFAULT_BANK_SIZE`` (``_bank1024``), so tags written before it existed
+    keep their meaning; it is ignored for ``q_source="online"``.
+    """
+    if q_source not in FC_Q_SOURCES:
+        raise ValueError(f"q_source must be one of {FC_Q_SOURCES}, got {q_source!r}")
+    tag = f"{base}{FC_TAG}{int(steps)}"
+    if q_source == "bank":
+        tag += "_bank"
+        if bank_size is not None and int(bank_size) != FC_DEFAULT_BANK_SIZE:
+            tag += str(int(bank_size))
+    if group is not None:
+        tag += f"_g{int(group)}"
+    return tag
+
+
+def fc_cell_suffix(
+    variants: Sequence[str] = (),
+    q_source: str = "online",
+    bank_size: int | None = None,
+    group: int | None = None,
+) -> str:
+    """Suffix of a grid fc cell after ``<setting>_fc<S>`` (run_analytical_multistep_grid.sh).
+
+    ``_<variants joined by ->`` when a subset is corrected, then the rows' own
+    :func:`fc_variant` suffix (``_bank[<B>]``, ``_g<E>``), so cell and variant names
+    follow one rule.
+    """
+    head = f"x{FC_TAG}0"
+    tail = fc_variant("x", 0, q_source, group, bank_size)[len(head):]
+    return (f"_{'-'.join(variants)}" if variants else "") + tail
+
+
+def group_tag(group: int) -> str:
+    return f"g{int(group)}"
+
+
+def parse_fc_variant(variant: str | None) -> dict[str, object] | None:
+    """``{base, steps, q_source, group, bank_size}`` of a corrected tag, else ``None``.
+
+    ``bank_size`` is ``None`` for an online row and ``FC_DEFAULT_BANK_SIZE`` for a
+    plain ``_bank`` tag.
+    """
+    match = re.fullmatch(r"(.+?)_fc(\d+)(_bank(\d+)?)?(?:_g(\d+))?", variant or "")
+    if match is None:
+        return None
+    bank = match.group(3) is not None
+    return {
+        "base": match.group(1),
+        "steps": int(match.group(2)),
+        "q_source": "bank" if bank else "online",
+        "group": int(match.group(5)) if match.group(5) else None,
+        "bank_size": (int(match.group(4) or FC_DEFAULT_BANK_SIZE) if bank else None),
+    }
+
+
+def _groups(n: int, group: int | None) -> list[slice]:
+    """Contiguous member groups of size ``group``: the library's partition for
+    ``ForecastCorrectionConfig.group_size`` (a single leftover member joins the
+    previous group), so the grouped comparators (EnKF, ``adapted_shared``) use
+    exactly the groups of the corrected rows."""
+    from scisi.posterior_models.forecast_correction import group_slices
+
+    return group_slices(n, group)
+
+
+def _per_group(fn: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor, group):
+    return torch.cat([fn(x[sl]) for sl in _groups(x.shape[0], group)])
+
 
 # Closed-form rows, one ensemble drawn straight from the named Gaussian per cycle.
 # The first is the Monte-Carlo floor of the metrics for iid members; the second is
@@ -221,8 +323,120 @@ class MultistepRunner(AnalyticalRunner):
         """Run only the SURGE-wrapped Ours rows, for cells added to a finished grid."""
         return bool(self._case_get("surge_only", False))
 
+    @property
+    def fc_only(self) -> bool:
+        """Run only the corrected Ours rows (a cell added to a finished grid)."""
+        return bool(self._case_get("fc_only", False))
+
+    @property
+    def group_only(self) -> bool:
+        """Run only the grouped comparators: EnKF and ``adapted_shared`` per group."""
+        return bool(self._case_get("group_only", False))
+
+    @property
+    def added_cell(self) -> bool:
+        """A cell joined to a finished grid: it holds no reference rows."""
+        return self.surge_only or self.fc_only or self.group_only
+
     def methods(self) -> Sequence[Method]:
-        return SURGE_WRAPPED if self.surge_only else super().methods()
+        if sum((self.surge_only, self.fc_only, self.group_only)) > 1:
+            raise ValueError("surge_only, fc_only and group_only are separate cells")
+        if self.surge_only:
+            return SURGE_WRAPPED
+        if self.fc_only:
+            return tuple(_OURS_SAMPLER)
+        if self.group_only:
+            if self.fc_group_size is None:
+                raise ValueError("group_only needs fc_group_size")
+            return (*_OURS_SAMPLER, Method.ENKF)
+        return super().methods()
+
+    # -- forecast correction -------------------------------------------------- #
+
+    @property
+    def fc_enabled(self) -> bool:
+        return self.fc_only or bool(self._case_get("forecast_correction", False))
+
+    def fc_steps(self, num_steps: int) -> list[int]:
+        """``forecast_num_steps`` values to run; default the sampler's ``M``."""
+        value = self._case_get("fc_steps", None)
+        if value is None:
+            return [int(num_steps)]
+        if isinstance(value, (int, float, str)):
+            value = [value]
+        return [int(v) for v in value]
+
+    @property
+    def fc_q_source(self) -> str:
+        value = str(self._case_get("fc_q_source", "online"))
+        if value not in FC_Q_SOURCES:
+            raise ValueError(f"fc_q_source must be one of {FC_Q_SOURCES}")
+        return value
+
+    @property
+    def fc_group_size(self) -> int | None:
+        value = self._case_get("fc_group_size", None)
+        return None if value in (None, "", "null") else int(value)
+
+    @property
+    def fc_bank_size(self) -> int:
+        return int(self._case_get("fc_bank_size", FC_DEFAULT_BANK_SIZE))
+
+    def _fc_modes(self, num_steps: int) -> list[tuple[str, str, dict]]:
+        """``(variant, likelihood_mode, spec)`` of the corrected Ours rows."""
+        if not self.fc_enabled:
+            return []
+        q, group, bank = self.fc_q_source, self.fc_group_size, self.fc_bank_size
+        bases = self._case_get("fc_variants", None)
+        bases = (
+            [name for name, _ in _OURS_VARIANTS] if bases is None
+            else [bases] if isinstance(bases, str) else [str(b) for b in bases]
+        )
+        unknown = set(bases) - {name for name, _ in _OURS_VARIANTS}
+        if unknown:
+            raise ValueError(f"fc_variants: unknown Ours variants {sorted(unknown)}")
+        return [
+            (fc_variant(name, steps, q, group, bank), mode,
+             {"base": name, "steps": steps, "q_source": q, "group": group})
+            for steps in self.fc_steps(num_steps)
+            for name, mode in _OURS_VARIANTS
+            if name in bases
+        ]
+
+    def _make_correction(self, spec: dict) -> ForecastCorrection:
+        """One correction per rollout; H and R come from each cycle's likelihood."""
+        return ForecastCorrection(
+            ForecastCorrectionConfig(
+                enabled=True,
+                forecast_num_steps=int(spec["steps"]),
+                q_source=str(spec["q_source"]),
+                # Filled at the first cycle (it needs the posterior); see _ours_cycle.
+                residual_bank=None,
+                group_size=spec["group"],
+            )
+        )
+
+    def _residual_bank(self, posterior, correction, num_steps, d, seed_key) -> None:
+        """Build the ``q_source="bank"`` residuals once per rollout.
+
+        Q does not depend on the state here, so the states are ``N(0, I)`` draws.
+        The bank uses the forecast's own steps and stepper (the consistency the
+        note asks for) and a forked RNG, so the global stream is untouched. Its
+        cost is not in ``NFE``: it is an offline artefact.
+        """
+        cfg = correction.config
+        if cfg.q_source != "bank" or cfg.residual_bank is not None:
+            return
+        size = self.fc_bank_size
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(derive_seed("multistep", "fc_bank", *seed_key))
+            states = torch.randn(size, 1, 1, d, 1)
+            cfg.residual_bank = build_residual_bank(
+                posterior, states,
+                num_steps=int(cfg.forecast_num_steps or num_steps),
+                stepper=cfg.forecast_stepper or euler_maruyama_step,
+                batch_size=size,
+            )
 
     def _case_get(self, key: str, default: object) -> object:
         cli = self._cfg_get(key, None)
@@ -363,13 +577,16 @@ class MultistepRunner(AnalyticalRunner):
         likelihood_mode: str | None,
         num_steps: int,
         surge: bool = False,
+        correction: ForecastCorrection | None = None,
+        bank_key: tuple = (),
     ) -> torch.Tensor:
         """``driver.draw_interpolant_posterior`` with one anchor per member.
 
         With ``surge`` the same likelihood is the guidance of a SURGE posterior, the
         way FlowDAS and SDA are wrapped: the proposal is this sampler's guided SDE,
         plus SMC weights and resampling across members. ``likelihood_mode=None``
-        takes the guidance out, leaving the SMC on the prior.
+        takes the guidance out, leaving the SMC on the prior. ``correction`` is set
+        on the posterior, so ``BasePosterior.sample`` applies it after the draw.
         """
         sampler = _OURS_SAMPLER[method]
         block = self._method_cfg(method).get("likelihood_model", {})
@@ -435,6 +652,11 @@ class MultistepRunner(AnalyticalRunner):
                     drift_time_shift=float(hp("drift_time_shift", 0.0)),
                 )
             base = None
+        if correction is not None:
+            if surge:
+                raise ValueError("the correction is not combined with SURGE")
+            self._residual_bank(posterior, correction, num_steps, d, bank_key)
+            posterior.forecast_correction = correction
         with torch.no_grad():
             out = posterior.sample(
                 base=base, batch_size=n, num_steps=num_steps,
@@ -647,25 +869,41 @@ class MultistepRunner(AnalyticalRunner):
     def evaluate(self, ctx: RunContext) -> Iterable[ResultRecord]:
         system = self.system()
         M = ctx.num_steps
+        group = self.fc_group_size
         if ctx.method in _OURS_SAMPLER:
+            # (variant, likelihood mode, correction spec or None)
             if self.surge_only:
-                modes = [(SURGE_PREFIX + name, mode) for name, mode in _OURS_VARIANTS]
-                modes.append((SURGE_UNGUIDED, None))
+                modes = [(SURGE_PREFIX + name, mode, None) for name, mode in _OURS_VARIANTS]
+                modes.append((SURGE_UNGUIDED, None, None))
+            elif self.fc_only:
+                modes = self._fc_modes(M)
+            elif self.group_only:
+                modes = [(f"{ADAPTED_VARIANT}_{group_tag(group)}", "inflated_shared", None)]
             else:
-                modes = list(_OURS_VARIANTS)
+                modes = [(name, mode, None) for name, mode in _OURS_VARIANTS]
                 if bool(self._case_get("adapted_variant", True)):
-                    modes.append((ADAPTED_VARIANT, "inflated_shared"))
-            for variant, mode in modes:
+                    modes.append((ADAPTED_VARIANT, "inflated_shared", None))
+                modes.extend(self._fc_modes(M))
+            for variant, mode, spec in modes:
                 # Cycle 1 shares the plain row's seed, so its noise is paired.
                 first_label = (
-                    "shared" if variant == ADAPTED_VARIANT
+                    "shared" if variant.startswith(ADAPTED_VARIANT)
+                    else spec["base"] if spec is not None
                     else variant.removeprefix(SURGE_PREFIX)
                 )
                 resampler = torch.Generator().manual_seed(
                     derive_seed("multistep", "adapted", ctx.method.value, ctx.seed)
                 )
+                correction = self._make_correction(spec) if spec is not None else None
+                # Steps per member per cycle: the guided draw, plus the forecast and
+                # (online Q_hat) its twin, each one prior pass per step.
+                nfe = M if spec is None else M + int(spec["steps"]) * (
+                    2 if spec["q_source"] == "online" else 1
+                )
+                resample_group = group if variant != ADAPTED_VARIANT else None
 
-                def draw(x, y, k, _variant=variant, _mode=mode, _label=first_label):
+                def draw(x, y, k, _variant=variant, _mode=mode, _label=first_label,
+                         _corr=correction, _nfe=nfe, _group=resample_group):
                     if k == 0:  # the single-step seed
                         torch.manual_seed(
                             derive_seed(
@@ -676,14 +914,20 @@ class MultistepRunner(AnalyticalRunner):
                         torch.manual_seed(
                             self._cycle_seed(ctx.method, _variant, ctx.seed, k)
                         )
-                        if _variant == ADAPTED_VARIANT:
-                            x = adapted_resample(system, x, y, resampler)
+                        if _variant.startswith(ADAPTED_VARIANT):
+                            x = _per_group(
+                                lambda xs: adapted_resample(system, xs, y, resampler),
+                                x, _group,
+                            )
                     if _variant.startswith(SURGE_PREFIX):
                         # Per step: the prior at x_k, then the reward at x_{k+1}.
                         return self._ours_cycle(
                             ctx.method, system, x, y, _mode, M, surge=True
                         ), 2 * M
-                    return self._ours_cycle(ctx.method, system, x, y, _mode, M), M
+                    return self._ours_cycle(
+                        ctx.method, system, x, y, _mode, M, correction=_corr,
+                        bank_key=(ctx.method.value, _variant, ctx.seed),
+                    ), _nfe
 
                 yield from self._rollout(ctx, variant, draw)
             return
@@ -691,14 +935,19 @@ class MultistepRunner(AnalyticalRunner):
         generator = torch.Generator().manual_seed(
             derive_seed("analytical", ctx.method.value, ctx.seed)
         )
+        variant = group_tag(group) if self.group_only else None
 
         def draw(x, y, k):
             # Cycle 1 runs on the state left by the runner's seed_everything(seed).
             if k > 0:
-                torch.manual_seed(self._cycle_seed(ctx.method, None, ctx.seed, k))
+                torch.manual_seed(self._cycle_seed(ctx.method, variant, ctx.seed, k))
+            if variant is not None:  # EnKF on independent groups of members
+                return _per_group(
+                    lambda xs: enkf_step(system, xs, y, generator), x, group
+                ), 1
             return self._baseline_cycle(ctx.method, system, x, y, M, generator, k)
 
-        yield from self._rollout(ctx, None, draw)
+        yield from self._rollout(ctx, variant, draw)
 
     def _reference_rows(self, seed: int) -> Iterable[ResultRecord]:
         """Score ensembles drawn straight from the two closed-form laws."""
@@ -726,7 +975,7 @@ class MultistepRunner(AnalyticalRunner):
         if self._cfg_get("per_step_file", None) is not None and len(self.seeds) > 1:
             raise ValueError("per_step_file holds one seed; run one seed per file")
         raw = ExperimentRunner.run(self, aggregate=False)
-        if not self.surge_only:  # the base cells already hold them
+        if not self.added_cell:  # the base cells already hold them
             for seed in self.seeds:
                 raw.extend(self._reference_rows(seed))
         return aggregate_over_seeds(raw) if aggregate else raw
@@ -755,7 +1004,24 @@ __all__ = [
     "SURGE_WRAPPED",
     "REFERENCE_KALMAN",
     "REFERENCE_MEMBER_CHAIN",
+    "FC_TAG",
+    "fc_variant",
+    "fc_cell_suffix",
+    "group_tag",
+    "parse_fc_variant",
     "sliced_distances",
     "kl_to_moments",
     "score_ensemble",
 ]
+
+
+if __name__ == "__main__":  # used by run_analytical_multistep_grid.sh
+    import sys
+
+    # fc-suffix "<variants>" <q_source> "<bank_size>" "<group>" (empty: unset)
+    if len(sys.argv) != 6 or sys.argv[1] != "fc-suffix":
+        sys.exit("usage: python -m cases.analytical.multistep fc-suffix "
+                 "'<variants>' <q_source> '<bank_size>' '<group>'")
+    _variants, _q, _bank, _group = sys.argv[2:]
+    print(fc_cell_suffix(_variants.split(), _q, int(_bank) if _bank else None,
+                         int(_group) if _group else None))

@@ -81,3 +81,35 @@ rmse_temperature, crps, crps_observed, crps_unobserved, spread_skill}` plus
 - Per-variable physical-space observation noise `sigma` (currently a single
   scalar `R = sigma^2 I` in normalised space; see `urban.yaml::variance`).
 - `fig:urban_fields` generation.
+
+## Forecast-residual correction (optional, default OFF)
+
+Shared switches, variant tags, diagnostics, cost and run order:
+[`cases/navier_stokes/README.md`](../navier_stokes/README.md#forecast-residual-correction-optional-default-off).
+Urban specifics:
+
+* **Only assimilated steps are corrected** (`assimilate_every=3` in the grid: 49
+  of 145 steps); the free-running steps call the prior directly.
+* **Localisation**: Gaspari-Cohn on the 128^2 grid, non-periodic by default
+  (`periodic: [false, false]`; the slice edges are not continuous in the data),
+  the four channels at a site at distance 0 (no cross-variable taper). With
+  `mask_obstacles: true` (default) the taper is zero on solid cells and a
+  `post_update` keeps their guided values (also for a global gain), so the update never moves state inside buildings. Distances are
+  straight lines and do not go around buildings. Default radius 8 m, **untuned**:
+  tune on validation rows (test rows 0 and 7 are scored by nothing; 6 is the
+  tuning row, 8 the foreign initial condition).
+* **No divergence projection.** The state is a horizontal slice of a 3D LES, so
+  it is not horizontally divergence-free (du/dx + dv/dy = -dw/dz); an earlier
+  increment projection onto zero added horizontal divergence was removed (it was
+  stronger than the physics requires and removed 65-70% of random u, v
+  increments). Only the obstacle mask is applied.
+* **Diagnostics**: the shared ones (lag-1 innovation autocorrelation,
+  `innovation_msq`, `q_share_state`, `cap_fraction`); no urban-specific per-step records.
+* **`forecast_seed` is shared across methods** (as for NS): seeded per (case, scenario,
+  test_index, seed, forecast_seed). The derived forecast seed does not include the method or variant, so different methods (or variants) of one scenario, trajectory and seed draw the same forecast noise; within a cell, successive correction calls are independent (the call counter).
+* Example (validation row 7): measure first, then correct:
+
+  ```bash
+  FC=on FC_OVERRIDES="gain_scale=0 forecast_seed=0" TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh
+  FC=on FC_OVERRIDES="forecast_seed=0 forecast_num_steps=10" TRAJ=7 SAVE_TRAJ=7 GRPS=ours_jacfree bash paper_experiments/run_urban_grid.sh
+  ```

@@ -120,3 +120,125 @@ trained diffusion checkpoint is weak. This is controlled by
 - The step-count benchmark (M=100 / 500) is still deferred.
 - Locked so far: FIG (k=1, c=80, w=0); OT-ODE (σ_y²=0, γ=4), from a traj1 /
   sparse-5% sweep vs the E=1000 EnKF posterior.
+
+## Forecast-residual correction (optional, default OFF)
+
+Background and derivation: [`FORECAST_CORRECTION.md`](../../FORECAST_CORRECTION.md).
+Library: `scisi.posterior_models.forecast_correction`. Case wiring (shared with
+urban): `common/forecast_correction.py`; NS-only pieces (zero-mean increment,
+enstrophy spectra): `cases/navier_stokes/_ns_correction.py`; grid switch:
+`common/fc_grid.sh`; tests: `tests/test_forecast_correction_ns_urban.py`. This
+section covers both cases; the urban README adds only the urban-specific parts.
+
+With `case.forecast_correction.enabled=false` (the default) nothing is built
+and every run, its `variant` and its file names are bit-for-bit what they were
+(tested). It only applies to the methods in `forecast_correction.methods`
+(default: the three Ours samplers), so baselines in the same run stay plain.
+SURGE posteriors refuse it (library).
+
+### Switches (`configs/case/{navier_stokes,urban}.yaml`, block `forecast_correction`)
+
+The YAML block is the only place defaults live.
+
+| key | default | meaning |
+| --- | --- | --- |
+| `enabled` | `false` | master switch |
+| `forecast_num_steps` | `null` (= M) | SDE/ODE steps of the unguided forecasts f_i (and of the online-Q forecast f'_i) |
+| `forecast_stepper` | `null` (= sampler's) | `sde` / `ode` (an ODE stepper is refused for SDE forecasts) |
+| `localisation_radius` | `8.0` | Gaspari-Cohn half-width in grid cells (support 16); `null` = global; or `{default: 8, sparse_1p5: 12}` |
+| `gain_scale` | `1.0` | multiplier on K_ens - K_q (note 4.4); `0` = measure only |
+| `update_cap` | `null` | optional Mahalanobis RMS cap per observation |
+| `q_source` | `online` | `online` (2nd forecast per member) or `bank` (`residual_bank`: a `torch.save`d tensor from `build_residual_bank`) |
+| `forecast_seed` | `null` | int: forecasts on a forked RNG, seeded per (case, scenario, test_index, seed, forecast_seed); the guided stream is that of the plain run |
+| `diagnostics` | `false` | per-step enstrophy spectra (NS) |
+| `zero_mean_increment` (NS) | `true` | remove the domain mean of the increment (see below) |
+| `periodic`, `mask_obstacles` (urban) | `[false, false]`, `true` | see the urban README |
+
+**One run** (`run.py`; any key of the block as `case.forecast_correction.<key>=...`):
+
+```bash
+python run.py case=navier_stokes '+ns_methods=["Ours (SI-SDE)"]' '+ns_scenarios=["sparse 5%"]' \
+    num_steps=50 likelihood_mode=dps_jacobian_free +test_index=2 \
+    case.forecast_correction.enabled=true case.forecast_correction.forecast_num_steps=10
+```
+
+**Grid scripts** (`run_ns_grid.sh`, `run_urban_grid.sh`; Ours groups only):
+`FC=on FC_OVERRIDES="forecast_num_steps=10 gain_scale=0.5" bash run_ns_grid.sh`.
+`FC_OVERRIDES` is a space-separated list of `<key>=<value>` for the block (Hydra
+syntax, no spaces inside a value, e.g. `localisation_radius={default:8,superres_16:12}`);
+`FC_DIAG=false` turns the per-step diagnostics off. `FC=off` (default) leaves the
+commands exactly as they were; skip/resume works as before (one file per setting).
+
+**Variant tag.** A corrected cell's rows get `variant=<base>_fc<steps|M>_<hash8>`
+(e.g. `jacfree_fc10_2204f643`) and its files the suffix `__fc<steps|M>_<hash8>`;
+`hash8` is the first 8 hex of the sha1 of every block key except `enabled`,
+`methods`, `diagnostics` and `diagnostics_root`, so two settings that change the
+numbers never share a tag. The grid takes the tag from
+`python -m common.forecast_correction tag <case> <overrides...>`, the same function
+the drivers use. The diagnostics JSON's `settings` records the full block.
+
+### Geometry
+
+* **NS**: doubly periodic Gaspari-Cohn (chordal distance) on the 128^2 grid. The
+  observation sites are read off H (`H c / H 1`): sensor cells for the sparse
+  masks, block centres for the 4x4 / 8x8 block averages.
+* **Zero mean.** A localised gain is not a combination of whole anomaly
+  fields, so the raw update can shift the domain-mean vorticity (contrary to the
+  remark in note 4.5). `zero_mean_increment` projects the increment onto zero
+  mean; the diagnostics log the shift before and after.
+* Default radius 8 follows the scratch result (localisation at 8 sites kept
+  85-103% of member enstrophy; global 42-50%). **It is not tuned. Tune radius and
+  `gain_scale` on validation trajectories only** (NS test rows 0-9, which the grid
+  does not score; e.g. `TRAJ="2 3" SAVE_TRAJ=2`).
+
+### Diagnostics ("measure before fixing", note 5 stage 3)
+
+Every corrected cell writes one JSON to `results/<case>/forecast_correction/`
+(`diagnostics_root`) and logs a one-line summary:
+
+* `lag1_autocorrelation`: lag-1 autocorrelation of the normalised forecast
+  innovations `ybar - H fbar` over assimilation steps (near 0 = no per-member
+  bias); `innovation_msq` per step (about 1 when calibrated); `cap_fraction`,
+  `update_rms`, `spread_rms`, `q_rms`.
+* `q_share_state` = `(q_rms / spread_rms)^2` = tr Q / tr P_f per step (library
+  diagnostics). Near 1 means Q dominates and the correction has little to add.
+* NS with `diagnostics: true`: `enstrophy_before` / `enstrophy_after` /
+  `enstrophy_ratio_bands` per band (edges 0.5, 2, 4, 8, 16, 32, 64, 91 in integer
+  wavenumbers), member min/median/max of the total ratio, increment domain mean
+  before/after.
+
+**Measuring without correcting**: `FC_OVERRIDES="gain_scale=0 forecast_seed=0"`.
+The update is zero and the forecasts come from a forked RNG, so the trajectory,
+and hence every metric, equals the plain run's (tested bit-for-bit on CPU); only
+NFE/seconds include the forecasts, and the rows carry their own tag.
+
+**`forecast_seed` is shared across methods.** The derived forecast seed does not include the method or variant, so different methods (or variants) of one scenario, trajectory and seed draw the same forecast noise; within a cell, successive correction calls are independent (the call counter).
+
+### Cost per assimilated step (network passes per member)
+
+* Online Q (default): `2 x forecast_num_steps` extra prior passes, no JVPs. Bank: `1 x forecast_num_steps`.
+* For comparison, the plain jacfree sampler costs about M passes per generated
+  step; shared mode adds JVPs. So at `forecast_num_steps = M` online roughly triples jacfree's NFE on NS
+  (every step assimilated); urban assimilates 49 of 145 steps, so the extra is
+  about `2 n_f x 49/145`, about +0.7 M per generated step. NFE in the tidy rows includes the forecasts.
+* Linear algebra (CPU, 2 threads, E=64, measured with the earlier wiring): NS 32^2
+  (m=1024) 0.25 s per step after a 2.5 s first call (taper build); sparse 5% 0.15 s;
+  urban sparse 1.5625% (m=1024) about 1 s. GPU timings are not measured.
+
+### Order of GPU runs (note section 5)
+
+1. Unit checks: `pytest tests/test_forecast_correction_lg.py tests/test_forecast_correction_ns_urban.py` and the library tests.
+2. Lorenz 96 with trained priors (`cases/lorenz96/`), including unguided prior + localised EnKF.
+3. **Measure before fixing** on NS and urban: `FC=on FC_OVERRIDES="gain_scale=0 forecast_seed=0"`, jacfree
+   group, M=50, E=64, one or two validation trajectories, all scenarios. If `lag1_autocorrelation` is near 0 and
+   `q_share_state` near 1, the correction is not warranted there; report that and stop.
+4. **Correction**, first settings: `FC=on FC_OVERRIDES="forecast_seed=0"` (forecast steps = M, radius 8, gain 1,
+   no cap, online Q, diagnostics on), jacfree group, same validation trajectories. Check that the enstrophy band
+   ratios stay near 1 (not the 42-50% of a global update) and lag-1 moves towards 0. Then tune on validation:
+   `localisation_radius` in {4, 8, 16}, `gain_scale` in {0.5, 1} (choose for lag-1 near 0), then
+   `forecast_num_steps` in {M, 20, 10} (check the forecast spread against the M-step one before trusting few
+   steps), optionally `update_cap=3` if `update_rms` shows outliers, then optionally `q_source=bank`.
+5. Paper grid with the chosen settings (both Ours groups), next to the plain cells.
+
+**Not wired:** the "unguided prior + EnKF update" alternative (note sections 2 and 5) is not available for NS or urban.
+It must be added as a baseline before any claim that the correction beats an EnKF on these cases.

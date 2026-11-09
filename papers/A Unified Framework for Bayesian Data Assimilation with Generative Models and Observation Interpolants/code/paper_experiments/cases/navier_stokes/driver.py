@@ -41,7 +41,8 @@ from common.seeding import mask_seed, obs_seed
 from common.obs_scenario import scenario_key, states_npz_fields, states_tag
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
-from cases.navier_stokes import _ns_figures, _ns_pipeline
+from common import forecast_correction as fcw
+from cases.navier_stokes import _ns_correction, _ns_figures, _ns_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ ABLATION_TAGS: tuple[str, ...] = (
 )
 
 
-class NavierStokesRunner(ExperimentRunner):
+class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
     """Runner for the Navier--Stokes benchmark."""
 
     case = Case.NAVIER_STOKES
@@ -417,6 +418,10 @@ class NavierStokesRunner(ExperimentRunner):
 
         nfe = _ns_pipeline.attach_nfe_counter(model)
 
+        # Forecast-residual correction (case.forecast_correction; default off ->
+        # (None, None) and the run below is unchanged).
+        correction, fc_monitor = self._build_forecast_correction(ctx, data_size)
+
         result = _ns_pipeline.run_assimilation(
             posterior=posterior,
             model=model,
@@ -436,7 +441,10 @@ class NavierStokesRunner(ExperimentRunner):
             divergence_rmse_threshold=self._cfg_get(
                 "divergence_rmse_threshold", None
             ),
+            forecast_correction=correction,
         )
+        if correction is not None:
+            self._write_fc_diagnostics(ctx, correction, fc_monitor, obs_operator)
 
         # Large-E reference ensemble for KL-at-points (cached per scenario+seed).
         reference = self._reference_trajectory(
@@ -831,9 +839,30 @@ class NavierStokesRunner(ExperimentRunner):
                         ctx, f"ablation:{axis}", metrics, E=E, M=M
                     )
 
+    # -- forecast-residual correction (FORECAST_CORRECTION.md) ------------- #
+    # _fc_settings / _variant / _write_fc_diagnostics: fcw.ForecastCorrectionMixin.
+
+    def _build_forecast_correction(self, ctx, data_size):  # type: ignore[no-untyped-def]
+        """``(ForecastCorrection, monitor)`` for this cell, or ``(None, None)``.
+
+        Doubly periodic Gaspari-Cohn localisation; ``zero_mean_increment: true``
+        removes the domain mean of the increment (a localised gain can shift the
+        fixed mean vorticity); ``diagnostics: true`` adds enstrophy per band.
+        """
+        settings = self._fc_settings()
+        if not fcw.applies_to(settings, ctx.method.value):
+            return None, None
+        return fcw.build_correction(
+            settings, case=self.case.value, ctx=ctx, state_shape=data_size,
+            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario], periodic=True,
+            constraint=(_ns_correction.zero_mean_increment
+                        if settings.get("zero_mean_increment", True) else None),
+            step_diagnostics=_ns_correction.ns_step_diagnostics,
+        )
+
     # -- record emitters --------------------------------------------------- #
 
-    def _variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
+    def _base_variant(self, method) -> str | None:  # type: ignore[no-untyped-def]
         """Tidy ``variant`` tag for a cell: the Ours likelihood-covariance mode.
 
         Only the three Ours samplers carry a variant (``jacfree`` /``shared``,

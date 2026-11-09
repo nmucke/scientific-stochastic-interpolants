@@ -360,6 +360,13 @@ for g in $GRPS; do
   esac
 done
 
+# ---- forecast-residual correction (FORECAST_CORRECTION.md; DEFAULT OFF) -------
+# Ours groups only (ours_jacfree / ours_shared_k*). FC=off: the script is unchanged.
+# FC=on [FC_OVERRIDES="key=value ..."] [FC_DIAG=true|false]: see common/fc_grid.sh.
+# Output files get a __fc<steps>_<hash8> suffix and the rows the same `variant`
+# suffix, so corrected and plain cells (and different settings) never collide.
+source "$PE_SCRIPT_DIR/common/fc_grid.sh" urban
+
 OURS='["Ours (SI-SDE)","Ours (DM-SDE)","Ours (FM-ODE)"]'
 # SURGE-only: bare "FlowDAS" / "SDA" are deliberately absent (see the header).
 BASELINES='["SURGE (FlowDAS)","SURGE (SDA)","Guided FM (FIG)"]'
@@ -431,10 +438,11 @@ for N in $TRAJ; do
     for M in $STEPS; do
       # ours jacfree
       if has_group ours_jacfree; then
-        run_cell "$MET/${SS}__M${M}__traj${N}__ours_jacfree.csv" "ours_jacfree/$SS/M$M/traj$N" \
+        run_cell "$MET/${SS}__M${M}__traj${N}__ours_jacfree${FC_TAG}.csv" "ours_jacfree${FC_TAG}/$SS/M$M/traj$N" \
           "+urban_methods=$OURS" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
           likelihood_mode=dps_jacobian_free \
-          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
+          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT" \
+          ${FC_ARGS[@]+"${FC_ARGS[@]}"}
       fi
       # ours shared -- one cell per requested refresh cadence k. lambda still comes
       # from the per-scenario table in configs/method/*.yaml; only k is set here.
@@ -446,11 +454,12 @@ for N in $TRAJ; do
         else
           KOUT="ours_shared_jac${K}"; KVAR="shared_jac${K}"
         fi
-        run_cell "$MET/${SS}__M${M}__traj${N}__${KOUT}.csv" "${KOUT}/$SS/M$M/traj$N" \
+        run_cell "$MET/${SS}__M${M}__traj${N}__${KOUT}${FC_TAG}.csv" "${KOUT}${FC_TAG}/$SS/M$M/traj$N" \
           "+urban_methods=$OURS" "+urban_scenarios=[\"$SCEN\"]" num_steps=$M \
           likelihood_mode=inflated_shared \
           +jacobian_refresh_every=$K "+variant_override=$KVAR" \
-          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT"
+          +save_states=$SAVE_STATES "+states_root=$STATES_ROOT" \
+          ${FC_ARGS[@]+"${FC_ARGS[@]}"}
       done
       # baselines (ignore likelihood_mode; run once per M)
       if has_group baselines; then

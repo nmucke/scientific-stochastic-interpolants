@@ -65,3 +65,28 @@ pde:
   forcing_amplitude: null # epsilon
   dt: null
   assimilation_interval: null  # Delta t between observations
+
+# Forecast-residual correction (FORECAST_CORRECTION.md; wiring in
+# common/forecast_correction.py). These are the ONLY defaults. OFF by default:
+# with enabled=false nothing is built and every run is bit-for-bit unchanged.
+# CLI: case.forecast_correction.enabled=true case.forecast_correction.forecast_num_steps=25 ...
+# A corrected cell gets the variant <base>_fc<steps>_<hash8> (hash of every key
+# below except enabled/methods/diagnostics*), so its rows never mix with plain ones.
+# Measure only (trajectory = the plain run's): gain_scale=0 forecast_seed=0 diagnostics=true.
+forecast_correction:
+  enabled: false
+  methods: ["Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)"]
+  forecast_num_steps: null   # SDE/ODE steps of the unguided forecasts; null = the sampler's M
+  forecast_stepper: null     # null = the sampler's; sde | ode
+  # Gaspari-Cohn half-width in grid cells on the doubly periodic grid; null =
+  # global (NOT recommended: cut member enstrophy to 42-50% in a scratch check).
+  # A mapping gives per-scenario values, e.g. {default: 8, superres_16: 12}. UNTUNED.
+  localisation_radius: 8.0
+  gain_scale: 1.0            # multiplier on K_ens - K_q (note 4.4); 0 = measure only
+  update_cap: null           # Mahalanobis RMS cap per observation; null = no cap
+  q_source: online           # online (2nd forecast per member) | bank
+  residual_bank: null        # q_source=bank: torch.save'd residual tensor (build_residual_bank)
+  forecast_seed: null        # int: forecasts on a forked RNG (seeded per scenario/traj/seed)
+  zero_mean_increment: true  # post_update: keep the domain-mean vorticity
+  diagnostics: false         # + enstrophy per band before/after, per step
+  diagnostics_root: null     # default results/navier_stokes/forecast_correction

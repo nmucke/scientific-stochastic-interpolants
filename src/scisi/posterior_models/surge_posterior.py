@@ -111,6 +111,10 @@ class SurgePosteriorBase(BasePosterior):
 
     #: ``"fm"`` or ``"si"`` -- set by the concrete subclass (informational).
     model_class: str = "fm"
+    #: SMC resampling permutes members inside ``sample``, so the forecast
+    #: correction's member <-> parent pairing does not hold (and the SMC weights
+    #: already target the filtering posterior).
+    supports_forecast_correction: bool = False
 
     def __init__(
         self,

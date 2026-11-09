@@ -4,6 +4,10 @@
   ``results/lorenz96/aggregated/per_step.csv``.
 * ``lorenz96_ess``              -- effective sample size of the reference over time.
 
+Only the default variants in ``SERIES`` are drawn; tagged sweep cells
+(``driver.py cell --tag``, variant ``<variant>_<tag>``) are in the aggregated CSVs
+but not in these figures.
+
     python paper_experiments/make_lorenz96_figures.py
     python paper_experiments/make_lorenz96_figures.py --out <dir>
 """
@@ -37,7 +41,13 @@ SERIES = (
     ("Ours (SI-SDE)", "", "Ours SI-SDE", "#0072B2", "-"),
     ("Ours (DM-SDE)", "", "Ours DM-SDE", "#009E73", "-"),
     ("Ours (FM-ODE)", "", "Ours FM-ODE", "#CC79A7", "-"),
+    ("Ours (SI-SDE)", "forecast_correction", "Ours SI-SDE + correction", "#0072B2", "--"),
+    ("Ours (DM-SDE)", "forecast_correction", "Ours DM-SDE + correction", "#009E73", "--"),
+    ("Ours (FM-ODE)", "forecast_correction", "Ours FM-ODE + correction", "#CC79A7", "--"),
     ("One-step oracle", "", "One-step oracle", "#D55E00", "--"),
+    ("One-step oracle", "forecast_correction", "Oracle + correction", "#D55E00", "-"),
+    ("EnKF", "trained_prior_si", "SI prior + EnKF", "#56B4E9", ":"),
+    ("EnKF", "trained_prior_fm", "FM prior + EnKF", "#56B4E9", "-."),
     ("EnKF", "matched", "EnKF (matched E)", "#000000", ":"),
     ("EnKF", "large", "EnKF (large E)", "#000000", "-."),
     ("Particle filter", "matched", "PF (matched E)", "#E69F00", ":"),

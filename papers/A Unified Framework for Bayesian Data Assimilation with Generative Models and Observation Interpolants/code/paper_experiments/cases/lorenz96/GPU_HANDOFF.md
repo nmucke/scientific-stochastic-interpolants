@@ -15,6 +15,11 @@ from a run that actually finished, unless it is marked as an estimate.
   EnKF against the PF, and the exact `inflated` likelihood is worse than the
   Jacobian-free one. See section 8 and open question 1.
 - **Nothing has been tested on CUDA or on Linux.**
+- **Forecast-residual correction (2026-11-09, validation only, section 13):** the
+  correction improves every trained sampler (SI-SDE 0.657 -> 0.434 mean error vs PF
+  at its tuned gain) but **does not beat the simple baseline** "unguided trained prior
+  + localised EnKF" (0.385 SI prior, 0.381-0.392 FM prior), which matches the
+  true-model EnKF (0.382).
 
 ## 2. Goal
 
@@ -400,8 +405,8 @@ cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96_grid.sh
 
 That script itself has never run at full size (a dry run with a stub interpreter
 checked the skip and rerun logic). It does test references (24 runs of about 11 min, 6
-at once: about 45 min on the Mac), `prior-quality`, 8 cells x 3 seeds, the
-`pf_reference` cell once, then aggregation and figures. Cells run one at a time by
+at once: about 45 min on the Mac), `prior-quality`, 14 cells x 3 seeds (the 8 plain
+cells first, then the 6 correction cells of section 13), the `pf_reference` cell once, then aggregation and figures. Cells run one at a time by
 default (`JOBS=1`), because concurrent cells inflate each other's `seconds`. A cell
 whose `results/lorenz96/metrics/` file exists is skipped, so after a failure just
 rerun the same command; `FORCE=1` reruns every cell. The script stops after the cell
@@ -667,3 +672,188 @@ except `test_analytical_multistep.py` 54 passed (adds `test_lorenz96_gate.py`).
 At the freeze, a 1-epoch `train.py` smoke run after the device change finished and
 was deleted. No test touches CUDA, and the generative cells in tests use untrained
 networks on CPU with the Jacobian-free likelihood.
+
+After merging the forecast-residual correction (section 13) onto review 4, on the
+Mac (CPU, `OMP_NUM_THREADS=2`): the five root files of step 0 123 passed (22 s);
+`$PE` `test_lorenz96_case.py` 57 passed (review 4's 31, with `test_every_cell...` now
+over 15 cells, plus the correction tests), and step 0's `$PE` command 80 passed (25 s).
+
+## 13. Forecast-residual correction (added 2026-11-09)
+
+Background and derivation: `FORECAST_CORRECTION.md` (sections 2, 4, 5). The library
+code is `src/scisi/posterior_models/forecast_correction.py`; this case only wires it in.
+
+### New cells
+
+| Cell | What | Tidy label (method, variant) |
+| --- | --- | --- |
+| `si_sde_fc`, `fm_ode_fc`, `dm_sde_fc` | the plain sampler (its settings **and** its seed stream) + variant A correction | `Ours (...)`, `forecast_correction` |
+| `prior_enkf` / `prior_enkf_fm` | unguided SI / FM prior forecast + the `enkf` cell's update (`EnsembleKalmanFilter.analyse`) | `EnKF`, `trained_prior_si` / `trained_prior_fm` |
+| `oracle_fc` | exact one-step kernel per member (as `oracle`) + correction with true-model forecasts and exact K_q | `One-step oracle`, `forecast_correction` |
+
+Every cell now also writes two per-sequence scalars: `innovation_lag1` (pooled lag-1
+autocorrelation of normalised innovations) and `innovation_msq`. Both use the
+**true-model** forecast of the analysis ensemble, mean_i Phi(x_i) with variance
+H Cov(Phi) H' + q + r, so they are the same measure for every method
+(`driver.innovation_scores`). Zero lag-1 means white innovations. The E=64
+PF-subsample floor is -0.05. Lag-1 is not mean-removed (a constant bias counts as
+correlation, as in the library's diagnostics) and pairs only adjacent finite steps.
+Both statistics are exact for `noise_stages: 1` only and are NaN (with a logged
+warning) otherwise.
+Plain cells skipped by a resumed grid keep their review-4 files without these keys, and
+`sequence_spread.csv` keeps only metrics every seed has: re-run those cells (`FORCE=1`)
+for their innovation metrics to appear for all seeds.
+
+Configuration lives in `configs/case/lorenz96.yaml` (`methods.<cell>_fc.correction`, keys
+documented there): `forecast_num_steps` (null means the sampler's M), `localisation`
+(GC radius in sites), `gain_scale`, `q_source` (`online` | `exact`), `update_cap`,
+`enabled`; unknown keys are refused. `exact` is the library's `q_source="fixed"` with
+`q_variance` = the true transition variance (closed-form K_q); on this case it gives
+bitwise the same update as the earlier residual bank `sqrt(q d) e_j` it replaces,
+with and without localisation (H is a selection). The forecast is always the
+posterior's own unguided SDE/ODE (the old `forecast_mode` is gone). A `_fc` cell inherits its plain cell's sampler block, so tuning
+the plain cell also moves the corrected one. Plain cells never read the blocks. Off
+by default: only the `_fc` cells use it. CLI overrides use dotted keys:
+
+```bash
+python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 --tag fs5_g0.5 \
+    --set correction.forecast_num_steps=5 --set correction.gain_scale=0.5
+python cases/lorenz96/driver.py tune --method fm_ode_fc --tag gain \
+    --set likelihood_mode=dps_jacobian_free --set num_steps=25 \
+    --grid '{"correction.localisation":[4],"correction.gain_scale":[0.5,0.75,1.0]}'
+```
+
+`cell --set` **requires `--tag`** (it is refused without one). The tag goes into
+every output path (`lorenz96__si_sde_fc-fs5_g0.5__traj0__.csv`, the per-sequence
+JSON, `ensembles/si_sde_fc-fs5_g0.5__seed0.pt`) and into the tidy variant
+(`forecast_correction_fs5_g0.5`), so a sweep cell never overwrites the default cell
+and the aggregator reports it as its own row. A
+`correction.enabled=false` run of a correction cell needs a tag (e.g. `off`), also
+when set in the YAML, so that row does not read as the corrected cell; a tag giving
+the label of an untagged cell (`si_sde --tag forecast_correction`) is refused. The
+figures plot the untagged default variants only. Tags take letters, digits, `.`, `=`,
+`-` and single `_`.
+
+`tune` accepts the cells that read settings: the samplers, their `_fc` cells,
+`prior_enkf*`, `enkf`, `enkf_large` and `oracle_fc`. `oracle`, `pf_matched`,
+`pf_subsample` and `pf_reference` take no settings, so `tune` does not offer them
+and `cell --set` refuses them. `--innovations` adds lag-1, msq and NFE columns (on by
+default for the new cells), `--set` changes the base settings (recorded in the
+`base` column), and `--tag` suffixes the CSV name
+(`tuning/<cell>__<keys>__<tag>.csv`), keeping parallel jobs and differently
+configured runs apart. As for every cell (step 7), appending to a CSV with other
+columns is refused, and a setting with `diverged_steps > 0` gets infinite scores.
+
+> **The final grid will NOT reproduce the validation table below.** The gains and
+> radii below were chosen with the sampler at `dps_jacobian_free` M=25, but the
+> `methods:` block still holds the untuned `inflated` M=50 defaults, and the `_fc`
+> cells inherit those. Running `run_lorenz96_grid.sh` as is scores the corrected
+> cells at `inflated` M=50 with a gain tuned for another sampler. First write the
+> chosen sampler settings into `methods:` (step 1 of "What the GPU run should add"),
+> then re-tune the correction.
+
+**Off-identity.** Plain `si_sde`, `fm_ode` and `dm_sde` (Jacobian-free, M=25, 4
+validation sequences, real priors on MPS), plus `enkf` and `oracle`, were bitwise
+identical to the code before the correction (`ec4f97c`). After the merge onto review
+4, every plain cell (`si_sde`, `fm_ode`, `dm_sde`, `enkf`, `enkf_large`, `oracle`,
+`pf_*`) gives bitwise the ensembles, per-step and per-sequence values of review 4
+(`856074f`) on the tiny case (untrained networks, CPU); the only additions are the
+two innovation records. So is each `_fc` cell with `correction.enabled: false`
+(tested). The plain grid commands are unchanged (dry run).
+
+The table below was measured before the library rewrite of the correction and the
+merge onto review 4, and was not rerun since.
+
+### Validation results (reduced settings)
+
+4 validation sequences, seed 0 only, E=64, the 8-epoch priors, sampler
+`dps_jacobian_free` M=25 (the best plain setting in section 8; the `methods:`
+block still holds the untuned `inflated` M=50 defaults). Mean and variance error are
+in PF posterior-std and log units. Lag-1: the PF subsample gives -0.05.
+
+| Method | mean err | var err | sliced W2 | RMSE | spread | lag-1 | NFE/step |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PF reference, 64 draws (floor) | 0.127 | 0.190 | 0.596 | 2.773 | 2.665 | -0.05 | - |
+| EnKF, true model, infl 1.0, loc 4 | **0.382** | 0.384 | **1.286** | 3.038 | 2.811 | 0.06 | - |
+| SI prior + EnKF (`prior_enkf`, M=25, loc 4) | 0.385 | 0.381 | 1.302 | 3.054 | 2.625 | 0.06 | 25 |
+| FM prior + EnKF (`prior_enkf_fm`, M=25) | 0.392 | 0.380 | 1.313 | 3.034 | 2.764 | 0.05 | 25 |
+| FM prior + EnKF, M=5 | **0.381** | 0.413 | 1.313 | 3.037 | 2.514 | 0.07 | 5 |
+| SI prior + EnKF, M=5 | 0.465 | 0.620 | 1.605 | 3.059 | 2.069 | 0.11 | 5 |
+| oracle (exact kernel), plain | 0.963 | 0.778 | 2.352 | 3.592 | 3.457 | 0.36 | - |
+| oracle_fc, loc 4, gain 1, exact K_q | 0.404 | 0.390 | 1.345 | 3.041 | 2.833 | 0.05 | - |
+| SI-SDE plain | 0.657 | 0.442 | 1.809 | 3.309 | 2.836 | 0.22 | 25 |
+| SI-SDE + corr, loc 4, gain 1 | 0.537 | 0.483 | 1.579 | 3.163 | 2.620 | -0.08 | 75 |
+| SI-SDE + corr, loc 4, gain 0.5 (chosen) | 0.434 | 0.511 | 1.427 | 3.068 | 2.502 | 0.06 | 75 |
+| FM-ODE plain | 0.628 | 0.476 | 1.786 | 3.296 | 2.999 | 0.20 | 25 |
+| FM-ODE + corr, loc 4, gain 1 | 0.574 | 0.497 | 1.603 | 3.115 | 2.804 | -0.07 | 75 |
+| FM-ODE + corr, loc 4, gain 0.5 (chosen) | 0.437 | 0.550 | 1.418 | 3.082 | 2.613 | 0.06 | 75 |
+| FM-ODE + corr, loc 4, gain 1, exact K_q | 0.421 | 0.542 | 1.376 | 3.040 | 2.620 | 0.05 | 50 |
+| DM-SDE plain | 0.680 | 0.499 | 1.853 | 3.317 | 3.075 | 0.24 | 25 |
+| DM-SDE + corr, loc 4, gain 1 | 0.510 | 0.455 | 1.492 | 3.058 | 2.808 | -0.05 | 75 |
+
+Tuning grids: EnKF inflation {1.0, 1.05} x radius {2, 4, 8}. Correction radius {2, 4, 8}
+at gain 1, then gain {0.25 (SI only), 0.5, 0.75} at radius 4. Oracle radius {none, 2,
+4, 8}. Selection by lowest sliced W2 (section 7):
+- radius 4 for every cell (8 is equal for SI and the oracle);
+- gain 0.5 for SI and FM. For SI, 0.25 was worse (0.513), so 0.5 is interior. For FM,
+  0.5 is the grid edge.
+
+DM-SDE was not gain-tuned and inherits the FM value. Gain 0.75 gives lag-1 ~0 (SI
+0.008, FM -0.012) but a slightly higher mean error (0.443, 0.464). Gain 1 over-corrects
+(lag-1 -0.07 to -0.08, below the PF floor). Exact K_q helps FM (0.574 -> 0.421 at gain
+1) and SI less (0.537 -> 0.506), so part of the gap comes from the online Q-hat or the
+sampler's realised gain differing from K_q (FORECAST_CORRECTION.md 4.4).
+
+Forecast-steps sweep (radius 4, **gain 1**, online Q-hat; the sweep ran before the gain
+was chosen, so it is not at the chosen gain), mean error / sliced W2 / lag-1 / NFE:
+
+| `forecast_num_steps` | SI-SDE + corr | FM-ODE + corr |
+| --- | --- | --- |
+| 1 | 0.688 / 1.901 / 0.23 / 27 | 0.747 / 1.916 / -0.13 / 27 |
+| 2 | 0.428 / 1.389 / 0.04 / 29 | 0.733 / 1.877 / -0.12 / 29 |
+| 5 | 0.524 / 1.554 / -0.05 / 35 | 0.653 / 1.746 / -0.09 / 35 |
+| 10 | 0.521 / 1.544 / -0.06 / 45 | 0.608 / 1.654 / -0.09 / 45 |
+| 25 (= M) | 0.537 / 1.579 / -0.08 / 75 | 0.574 / 1.603 / -0.07 / 75 |
+
+FM-ODE gets steadily worse with fewer steps. Few-step Euler ODE draws are
+under-dispersed and biased, which is consistent with the note. The SI value at 2 steps
+(0.428) is an outlier with one seed. A plausible reading, not tested: the 2-step SDE
+forecasts are over-dispersed (the note measured 1.1 Q), which acts like a lower
+effective gain, near the gain-0.5 optimum. Do not choose 2 steps from this alone.
+
+Cost: NFE per assimilation step = M + 2 x `forecast_num_steps` with the online
+Q-hat, or M + `forecast_num_steps` with `q_source: exact`. `prior_enkf` costs M (5
+suffices for FM). Wall-clock per cell (4 sequences batched, MPS, up to 4 jobs at once
+on a loaded machine, so only a rough guide): plain 30-34 s, corrected at 25 forecast
+steps 55-69 s, `prior_enkf` 10-14 s at M=25 and 2-5 s at M=5. Scoring (sliced W2
+against 4096 PF draws) took about 4 min per run here and dominates validation time.
+
+### Reading
+
+- **The correction is not an advantage here.** The best corrected sampler (0.43) still
+  trails `prior_enkf` (0.38-0.39) on mean error, sliced W2 and RMSE, at 3x the NFE, and
+  its variance error is worse (0.51-0.55 vs 0.38). That is the outcome
+  FORECAST_CORRECTION.md section 5 counts against the method. It matches the note's
+  expectation: this case has an exactly Gaussian kernel (`noise_stages=1`), so the
+  sampler's full-rank, non-Gaussian handling of Q buys nothing.
+- The dropped weight dominates the plain gap: the exact-kernel oracle goes from 0.963
+  to 0.404. Network error is the rest: trained+corrected 0.42-0.44 vs oracle_fc 0.40,
+  and `prior_enkf` 0.385 vs EnKF 0.382.
+- Corrected ensembles are under-dispersed (spread 2.50-2.62 vs PF 2.67 and EnKF 2.81).
+- The scratch-study figure of 0.41 for trained SI at gain 1 was not reproduced (0.537
+  here). The scratch scripts are not in the repository, so the difference is unexplained.
+
+### What the GPU run should add
+
+1. Write the chosen sampler settings into `methods:` (the corrected cells inherit
+   them), then tune on validation again with 40-epoch priors: gain {0.25, 0.5, 0.75,
+   1.0} for all three samplers, `q_source` {online, exact}, and the
+   `forecast_num_steps` sweep **at the chosen gain**, 3 seeds.
+2. Tune `prior_enkf` (inflation {1.0, 1.02, 1.05}, radius {4, 8}, M {5, 10, 25}). It
+   is the bar the correction must clear.
+3. Final grid: `SEEDS="0 1 2" ./run_lorenz96_grid.sh` now includes the six new
+   cells. Report `prior_enkf` next to the corrected cells in any table.
+4. If the paper keeps the correction, it needs a case where it beats `prior_enkf`:
+   a non-Gaussian kernel (`noise_stages > 1`, which needs a new gate, and new
+   innovation statistics: the current ones are NaN there) or E small for d.
+   State plainly if none is found.

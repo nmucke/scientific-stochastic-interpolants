@@ -304,6 +304,13 @@ class DFlowPosterior(BasePosterior):
 
         base = out
 
+        # Optional forecast-residual correction (default off: no-op), at the same
+        # point as in ``BasePosterior.sample``: before the new state is appended.
+        base = self._apply_forecast_correction(
+            base, field_history, observations, num_steps, stepper,
+            field_cond, pars_cond, batch_size,
+        )
+
         if return_field_history:
             field_history = torch.cat(
                 [field_history[:, :, :, :, 1:], base.unsqueeze(-1)], dim=-1

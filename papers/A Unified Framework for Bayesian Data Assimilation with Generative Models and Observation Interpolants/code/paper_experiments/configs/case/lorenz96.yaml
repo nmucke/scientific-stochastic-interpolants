@@ -38,3 +38,38 @@ methods:
   si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
   fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
   dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
+
+  # Forecast-residual correction (FORECAST_CORRECTION.md, variant A). A `<cell>_fc`
+  # cell runs the plain cell's sampler settings above (and its seed stream) with
+  # the correction on; the plain cells never read these blocks, so they are
+  # unchanged. `correction` keys:
+  #   forecast_num_steps  pseudo-time steps of the unguided forecasts f_i (null: the
+  #                       sampler's num_steps); few steps are approximate prior draws
+  #   localisation        Gaspari-Cohn radius in sites on the periodic lattice (null: none)
+  #   gain_scale          multiplier on K_ens - K_q; calibrate on validation only
+  #   q_source            online (second forecast per member, default) | exact (the true
+  #                       transition variance: closed-form K_q, library q_source=fixed)
+  #   update_cap          Mahalanobis cap on the update (null: none)
+  #   enabled             false gives the plain sampler, bit for bit
+  # Unknown keys are refused. The forecast is always the posterior's own unguided
+  # SDE/ODE.
+  # Chosen on validation (4 sequences, seed 0, E=64, 8-epoch priors, sampler at
+  # dps_jacobian_free M=25), by lowest sliced W2: radius 4 of {2, 4, 8}, gain 0.5 of
+  # {0.5, 0.75, 1.0}. gain 0.5 is the grid edge; DM-SDE inherits the FM values
+  # untested. See GPU_HANDOFF.md section 13.
+  # WARNING: the _fc cells inherit the plain blocks above, which are still the
+  # untuned `inflated` M=50 defaults, NOT the dps_jacobian_free M=25 these gains were
+  # chosen at. The final grid as configured does not reproduce the validation table;
+  # set the plain sampler blocks first, then re-tune the correction.
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  # Exact per-member kernel + correction, with the exact transition variance for K_q.
+  # Radius 4 of {none, 2, 4, 8} on validation.
+  oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
+  # Unguided trained-prior forecast + EnKF update (the update of the `enkf` cell).
+  # inflation / localisation are the `enkf` cell's keys; num_steps (and diffusion_scale
+  # for a DM-SDE prior) set the prior's forecast solver. inflation 1.0 and radius 4
+  # are the EnKF's validation optimum, not re-tuned for this cell.
+  prior_enkf: {prior: si_sde, num_steps: 25, inflation: 1.0, localisation: 4}
+  prior_enkf_fm: {prior: fm_ode, num_steps: 25, inflation: 1.0, localisation: 4}

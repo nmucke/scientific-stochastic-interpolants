@@ -20,6 +20,15 @@ MAX_BATCH_SIZE = 128
 class BasePosterior(nn.Module):
     """Base posterior."""
 
+    #: Whether an enabled ``forecast_correction`` is accepted. Subclasses whose
+    #: ``sample`` permutes members (SMC resampling) set False.
+    supports_forecast_correction: bool = True
+    #: Optional forecast-residual correction applied at the end of every
+    #: ``sample`` call (a ``ForecastCorrection`` or ``None``). ``None`` (default)
+    #: or a disabled correction: no effect, bit-for-bit. See
+    #: ``scisi.posterior_models.forecast_correction``.
+    forecast_correction = None
+
     def __init__(
         self,
         model: nn.Module,
@@ -115,6 +124,55 @@ class BasePosterior(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass."""
         pass
+
+    def _active_forecast_correction(self):
+        """The enabled ``ForecastCorrection`` on ``self`` (support checked), or ``None``."""
+        value = self.forecast_correction
+        if value is None:
+            return None
+        from scisi.posterior_models.forecast_correction import ForecastCorrection
+
+        if not isinstance(value, ForecastCorrection):
+            raise TypeError(
+                "forecast_correction must be a ForecastCorrection or None, got "
+                f"{type(value).__name__}"
+            )
+        if not value.enabled:
+            return None
+        value.check_supported(self)
+        return value
+
+    def _apply_forecast_correction(
+        self,
+        base: torch.Tensor,
+        field_history: torch.Tensor,
+        observations: torch.Tensor,
+        num_steps: int,
+        stepper: Callable,
+        field_cond: torch.Tensor | None,
+        pars_cond: torch.Tensor | None,
+        batch_size: int,
+    ) -> torch.Tensor:
+        """Forecast-residual correction of a guided sample; identity when off.
+
+        Call at the end of ``sample``, BEFORE the new state is appended, so that
+        ``field_history[..., -1]`` is each member's previous state. Subclasses
+        that override ``sample`` must call it there too (``DFlowPosterior`` does).
+        """
+        correction = self._active_forecast_correction()
+        if correction is None:
+            return base
+        return correction.apply(
+            self,
+            base=base,
+            prev_history=field_history,
+            observations=observations,
+            num_steps=num_steps,
+            stepper=stepper,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
+            batch_size=batch_size,
+        )
 
     def sample(
         self,
@@ -261,6 +319,15 @@ class BasePosterior(nn.Module):
                 field_history=field_history
             )
 
+            # Optional forecast-residual correction (default off: no-op). Runs
+            # after any subclass ``_post_sample`` and before the new state is
+            # appended, so ``field_history[..., -1]`` is still each member's
+            # previous state x^k_i. Draws its forecasts after the guided sample.
+            base = self._apply_forecast_correction(
+                base, field_history, observations, num_steps, stepper,
+                field_cond, pars_cond, batch_size,
+            )
+
         # Restore the caller-visible devices (no-ops when nothing was moved).
         base = base.to(out_device)
         field_history = field_history.to(fh_out_device)
@@ -289,6 +356,7 @@ class BasePosterior(nn.Module):
         step_callback: Callable[[int, torch.Tensor], bool] | None = None,
         assimilate_every: int = 1,
         assimilate_from: int | None = None,
+        forecast_correction=None,
     ) -> torch.Tensor:
         """Sample a trajectory from the diffusion model with posterior drift.
 
@@ -315,101 +383,133 @@ class BasePosterior(nn.Module):
         history ``assimilate_from=10, assimilate_every=10`` assimilates at physical
         steps 10, 20, 30, ... and free-runs 5..9, 11..19, ...  ``None`` starts at
         the first generated step (``len_field_history``).
+
+        FORECAST CORRECTION (``forecast_correction``). The correction lives in
+        ``sample`` (see ``self.forecast_correction``); this argument sets it for
+        the duration of this call only (the previous value is restored after).
+        ``None`` (default) keeps ``self.forecast_correction`` (itself ``None`` by
+        default); a disabled ``ForecastCorrection`` is bit-for-bit unchanged. When enabled, every
+        ASSIMILATED step is corrected inside ``sample`` and the corrected state
+        enters both ``base`` and ``field_history``; free-running steps call the
+        prior directly and are untouched. Diagnostics are reset at the start and
+        tagged with the physical index; the correction object is kept as
+        ``self.last_forecast_correction``.
         """
-        assimilate_every = int(assimilate_every)
-        if assimilate_every < 1:
-            raise ValueError(
-                f"assimilate_every must be >= 1, got {assimilate_every}"
-            )
-
-        len_field_history = field_history.shape[-1]
-
-        if (ensemble_size > 1) and (field_history.shape[0] == 1):
-            base, field_history, field_cond, pars_cond = self.model._prepare_batch(
-                batch_size=ensemble_size,
-                base=base,
-                field_history=field_history,
-                field_cond=field_cond,
-                pars_cond=pars_cond,
-            )
-
-        trajectory = [
-            field_history[..., i].cpu() for i in range(field_history.shape[-1])
-        ]
-
-        fixed_input = {
-            "num_steps": num_steps,
-            "batch_size": batch_size,
-            "return_field_history": True,
-            "stepper": stepper,
-        }
-
-        cond_input = lambda t_idx: {
-            "field_cond": (
-                field_cond[:, :, :, :, t_idx] if field_cond is not None else None
-            ),
-            "pars_cond": (
-                pars_cond[:, t_idx : t_idx + 1] if pars_cond is not None else None
-            ),
-            "observations": observations[:, :, t_idx],
-        }
-        # Prior-only (free-running) steps reuse the posterior's own SDE/ODE
-        # settings: same pseudo-time grid (num_steps), same stepper, same source
-        # convention, and the same diffusion schedule when one was supplied
-        # explicitly. ``self.default_diffusion_term`` means the schedule already IS
-        # the model's own, so the prior sampler resolves it itself.
-        free_run_extra: dict = (
-            {} if getattr(self, "default_diffusion_term", True)
-            else {"diffusion_term": self.diffusion_term}
-        )
-
-        assim_start = (
-            len_field_history if assimilate_from is None else int(assimilate_from)
-        )
-
-        def _is_assim_step(phys_idx: int) -> bool:
-            if phys_idx < assim_start:
-                return False
-            return (phys_idx - assim_start) % assimilate_every == 0
-
-        pbar = tqdm.tqdm(range(0, num_physical_steps - len_field_history))
-
-        for t_idx in pbar:
-            phys_idx = len_field_history + t_idx
-            if _is_assim_step(phys_idx):
-                base, field_history = self.sample(
-                    base=None if self.gaussian_base else base,
-                    field_history=field_history,
-                    **cond_input(t_idx),
-                    **fixed_input,  # type: ignore[arg-type]
+        swap = forecast_correction is not None
+        if swap:
+            previous, self.forecast_correction = self.forecast_correction, forecast_correction
+        try:
+            assimilate_every = int(assimilate_every)
+            if assimilate_every < 1:
+                raise ValueError(
+                    f"assimilate_every must be >= 1, got {assimilate_every}"
                 )
-            else:
-                # Free-running forecast: the trained PRIOR only. The observation at
-                # this physical step is deliberately not read.
-                cond = cond_input(t_idx)
-                with torch.no_grad():
-                    base, field_history = self.model.sample(
+
+            len_field_history = field_history.shape[-1]
+
+            correction = self._active_forecast_correction()
+            if correction is not None:
+                correction.reset()
+                self.last_forecast_correction = correction
+
+            if (ensemble_size > 1) and (field_history.shape[0] == 1):
+                base, field_history, field_cond, pars_cond = self.model._prepare_batch(
+                    batch_size=ensemble_size,
+                    base=base,
+                    field_history=field_history,
+                    field_cond=field_cond,
+                    pars_cond=pars_cond,
+                )
+
+            trajectory = [
+                field_history[..., i].cpu() for i in range(field_history.shape[-1])
+            ]
+
+            fixed_input = {
+                "num_steps": num_steps,
+                "batch_size": batch_size,
+                "return_field_history": True,
+                "stepper": stepper,
+            }
+
+            cond_input = lambda t_idx: {
+                "field_cond": (
+                    field_cond[:, :, :, :, t_idx] if field_cond is not None else None
+                ),
+                "pars_cond": (
+                    pars_cond[:, t_idx : t_idx + 1] if pars_cond is not None else None
+                ),
+                "observations": observations[:, :, t_idx],
+            }
+            # Prior-only (free-running) steps reuse the posterior's own SDE/ODE
+            # settings: same pseudo-time grid (num_steps), same stepper, same source
+            # convention, and the same diffusion schedule when one was supplied
+            # explicitly. ``self.default_diffusion_term`` means the schedule already IS
+            # the model's own, so the prior sampler resolves it itself.
+            free_run_extra: dict = (
+                {} if getattr(self, "default_diffusion_term", True)
+                else {"diffusion_term": self.diffusion_term}
+            )
+
+            assim_start = (
+                len_field_history if assimilate_from is None else int(assimilate_from)
+            )
+
+            def _is_assim_step(phys_idx: int) -> bool:
+                if phys_idx < assim_start:
+                    return False
+                return (phys_idx - assim_start) % assimilate_every == 0
+
+            pbar = tqdm.tqdm(range(0, num_physical_steps - len_field_history))
+
+            for t_idx in pbar:
+                phys_idx = len_field_history + t_idx
+                if _is_assim_step(phys_idx):
+                    if correction is not None:
+                        correction.current_phys_idx = phys_idx
+                        calls_before = correction._calls
+                    base, field_history = self.sample(
                         base=None if self.gaussian_base else base,
                         field_history=field_history,
-                        field_cond=cond["field_cond"],
-                        pars_cond=cond["pars_cond"],
-                        num_steps=num_steps,
-                        batch_size=batch_size,
-                        return_field_history=True,
-                        stepper=stepper,
-                        **free_run_extra,
+                        **cond_input(t_idx),
+                        **fixed_input,  # type: ignore[arg-type]
                     )
-            trajectory.append(base.cpu().clone())
+                    if correction is not None and correction._calls == calls_before:
+                        raise NotImplementedError(
+                            f"{type(self).__name__}.sample does not call "
+                            "_apply_forecast_correction; the forecast correction "
+                            "would be silently skipped."
+                        )
+                else:
+                    # Free-running forecast: the trained PRIOR only. The observation at
+                    # this physical step is deliberately not read.
+                    cond = cond_input(t_idx)
+                    with torch.no_grad():
+                        base, field_history = self.model.sample(
+                            base=None if self.gaussian_base else base,
+                            field_history=field_history,
+                            field_cond=cond["field_cond"],
+                            pars_cond=cond["pars_cond"],
+                            num_steps=num_steps,
+                            batch_size=batch_size,
+                            return_field_history=True,
+                            stepper=stepper,
+                            **free_run_extra,
+                        )
+                trajectory.append(base.cpu().clone())
 
-            if step_callback is not None and step_callback(
-                len_field_history + t_idx, base
-            ):
-                # Divergence guard tripped: stop this cell and pad the remaining
-                # physical steps with NaN so the trajectory keeps its full length
-                # (metrics mark the cell diverged) without integrating further.
-                remaining = (num_physical_steps - len_field_history) - (t_idx + 1)
-                nan_frame = torch.full_like(base.cpu(), float("nan"))
-                trajectory.extend(nan_frame.clone() for _ in range(remaining))
-                break
+                if step_callback is not None and step_callback(
+                    len_field_history + t_idx, base
+                ):
+                    # Divergence guard tripped: stop this cell and pad the remaining
+                    # physical steps with NaN so the trajectory keeps its full length
+                    # (metrics mark the cell diverged) without integrating further.
+                    remaining = (num_physical_steps - len_field_history) - (t_idx + 1)
+                    nan_frame = torch.full_like(base.cpu(), float("nan"))
+                    trajectory.extend(nan_frame.clone() for _ in range(remaining))
+                    break
 
-        return torch.stack(trajectory, dim=-1)
+            return torch.stack(trajectory, dim=-1)
+        finally:
+            if swap:
+                self.forecast_correction = previous

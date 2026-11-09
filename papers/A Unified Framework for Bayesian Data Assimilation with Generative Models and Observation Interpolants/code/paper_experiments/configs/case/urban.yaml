@@ -81,3 +81,26 @@ likelihood_ensemble_size: 25
 channels: [u, v, w, thl]
 data_path: data/udales            # author-provided .nc directory
 mask_path: data/udales/mask.npz   # solid-cell mask (mask==1 fluid, mask==0 solid)
+
+# Forecast-residual correction (FORECAST_CORRECTION.md; wiring in
+# common/forecast_correction.py). These are the ONLY defaults. OFF by default:
+# with enabled=false nothing is built and every run is unchanged. Updates fire
+# only at ASSIMILATED steps (assimilate_every). Variant <base>_fc<steps>_<hash8>
+# as for NS. Measure only: gain_scale=0 forecast_seed=0 diagnostics=true.
+forecast_correction:
+  enabled: false
+  methods: ["Ours (SI-SDE)", "Ours (DM-SDE)", "Ours (FM-ODE)"]
+  forecast_num_steps: null   # null = the sampler's M
+  forecast_stepper: null     # null = the sampler's; sde | ode
+  # Gaspari-Cohn half-width in grid cells (1 m); straight-line distance, the four
+  # channels at one site share a location. UNTUNED: tune on validation rows.
+  localisation_radius: 8.0
+  periodic: [false, false]   # (H, W); the slice edges are not continuous in the data
+  mask_obstacles: true       # solid cells keep their guided values (zero taper there)
+  gain_scale: 1.0
+  update_cap: null
+  q_source: online           # online | bank
+  residual_bank: null        # q_source=bank: torch.save'd residual tensor
+  forecast_seed: null
+  diagnostics: false
+  diagnostics_root: null     # default results/urban/forecast_correction
