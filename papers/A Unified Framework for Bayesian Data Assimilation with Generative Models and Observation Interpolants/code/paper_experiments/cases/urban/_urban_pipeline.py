@@ -49,7 +49,10 @@ from cases.navier_stokes._ns_pipeline import (
     load_prior,
     run_assimilation,
 )
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import (
+    LinearObservationOperator,
+    ObservationOperator,
+)
 from scisi.metrics.accuracy import ensemble_mean_rmse
 from scisi.metrics.calibration import crps, spread_skill
 
@@ -112,8 +115,8 @@ def build_obs_operator(
     data_size: tuple[int, int, int],
     mask_seed: int,
     fluid_mask: Optional[torch.Tensor] = None,
-) -> LinearObservationOperator:
-    """Build the scenario's observation operator with a shared seeded mask.
+) -> ObservationOperator:
+    """Build the scenario's (possibly nonlinear) observation operator.
 
     Mirrors ``_ns_pipeline.build_obs_operator`` but, for the SPARSE scenario,
     restricts the sensor pool to FLUID grid cells: a building-interior cell is
@@ -125,23 +128,52 @@ def build_obs_operator(
     ``data_size`` is the model-grid ``(C, H, W)``; ``fluid_mask`` is the boolean
     ``[C, H, W]`` keep-mask from :func:`fluid_keep_mask` (only consulted for the
     sparse operator).
+
+    Optional scenario keys (nonlinear scenarios, e.g. ``sparse_1p5_arctan_vel``):
+
+    * ``sensor_channels: [0, 1, 2]`` -- place sensors only on these state
+      channels (u, v, w). The budget is then ``percent_obs`` of THOSE channels'
+      dofs (``len(sensor_channels) * H * W``), drawn in their fluid cells.
+    * ``nonlinearity: {name, strength, eps}`` -- wrap the linear sensor map ``L``
+      as ``h(x) = g(L x)`` (``_ns_pipeline.wrap_nonlinearity``; ``name:
+      identity`` keeps ``L``, e.g. the linear control ``sparse_1p5_vel``). The mask API
+      (``obs_indices``, ``obs_indices_on_grid``, ...) is delegated to ``L``.
     """
     from omegaconf import OmegaConf
 
+    from cases.navier_stokes._ns_pipeline import wrap_nonlinearity
+
     obs_cfg = OmegaConf.to_container(scenario_cfg.obs_operator, resolve=True)
     obs_cfg.pop("_target_", None)
+    sensor_channels = scenario_cfg.get("sensor_channels", None)
+    if sensor_channels is not None:
+        sensor_channels = [int(c) for c in sensor_channels]
 
     if obs_cfg.get("type") == "random":
         obs_cfg["seed"] = int(mask_seed)
         operator = LinearObservationOperator(data_size=tuple(data_size), **obs_cfg)
-        if fluid_mask is not None:
-            _restrict_sensors_to_fluid(
-                operator, fluid_mask, percent_obs=float(obs_cfg["percent_obs"]),
-                seed=int(mask_seed),
+        pool = fluid_mask
+        if sensor_channels is not None:
+            C, H, W = data_size
+            if pool is None:
+                pool = torch.ones(C, H, W, dtype=torch.bool)
+            pool = _channel_keep_mask(pool.cpu().to(torch.bool), tuple(sensor_channels))
+        if pool is not None:
+            budget_dofs = (
+                operator.num_dofs
+                if sensor_channels is None
+                else len(sensor_channels) * operator.H * operator.W
             )
-        return operator
+            _restrict_sensors_to_fluid(
+                operator, pool, percent_obs=float(obs_cfg["percent_obs"]),
+                seed=int(mask_seed), budget_dofs=budget_dofs,
+            )
+    else:
+        if sensor_channels is not None:
+            raise ValueError("sensor_channels is only supported for type=random.")
+        operator = LinearObservationOperator(data_size=tuple(data_size), **obs_cfg)
 
-    return LinearObservationOperator(data_size=tuple(data_size), **obs_cfg)
+    return wrap_nonlinearity(operator, scenario_cfg)
 
 
 def _restrict_sensors_to_fluid(
@@ -149,6 +181,7 @@ def _restrict_sensors_to_fluid(
     fluid_mask: torch.Tensor,
     percent_obs: float,
     seed: int,
+    budget_dofs: Optional[int] = None,
 ) -> None:
     """Re-draw the sparse operator's sensors within the fluid cells, in place.
 
@@ -156,13 +189,17 @@ def _restrict_sensors_to_fluid(
     the permutation to the fluid dofs (``fluid_mask == True``) so no sensor lands
     inside a building. The sensor count is ``percent_obs`` of the FULL grid (the
     same budget as NS / the scenario config), placed entirely in fluid cells.
-    Seeded by the same ``mask_seed`` as the scenario so the mask is identical
-    across methods (reproducibility Section 9). Rebuilds ``obs_matrix`` /
-    ``obs_indices`` / ``num_obs`` to match the selection-operator contract.
+    ``budget_dofs`` overrides the "full grid" dof count (used when sensors are
+    restricted to a subset of channels). Seeded by the same ``mask_seed`` as the
+    scenario so the mask is identical across methods (reproducibility Section 9).
+    Rebuilds ``obs_matrix`` / ``obs_indices`` / ``num_obs`` to match the
+    selection-operator contract.
     """
     fluid_flat = fluid_mask.reshape(-1).to(torch.bool).cpu()
     fluid_dofs = torch.nonzero(fluid_flat).reshape(-1)
-    num_obs = int(operator.num_dofs * percent_obs)
+    if budget_dofs is None:
+        budget_dofs = operator.num_dofs
+    num_obs = int(budget_dofs * percent_obs)
     num_obs = min(num_obs, int(fluid_dofs.numel()))
 
     generator = torch.Generator().manual_seed(seed)
@@ -176,6 +213,7 @@ def _restrict_sensors_to_fluid(
     operator.num_obs = num_obs
     operator.obs_matrix = obs_matrix
     operator._obs_matrix_cache = None  # invalidate the device cache (load_mask peer)
+    operator._sel_idx_cache = None  # and the gather-index cache
 
 
 # --------------------------------------------------------------------------- #
@@ -214,7 +252,7 @@ def _channel_keep_mask(
 
 def compute_metrics(
     result: AssimResult,
-    obs_operator: LinearObservationOperator,
+    obs_operator: ObservationOperator,
     fluid_mask: torch.Tensor,
     len_field_history: int,
 ) -> dict[str, float]:

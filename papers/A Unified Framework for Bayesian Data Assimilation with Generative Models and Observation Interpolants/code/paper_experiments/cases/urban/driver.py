@@ -48,8 +48,10 @@ from collections.abc import Iterable, Sequence
 from common.runner import ExperimentRunner, RunContext
 from common.paths import FIGURES_ROOT, RESULTS_ROOT, output_path
 from common.seeding import mask_seed, obs_seed
+from common.obs_scenario import scenario_key, states_npz_fields, states_tag
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
+from cases.navier_stokes import _ns_pipeline
 from cases.urban import _urban_pipeline
 
 logger = logging.getLogger(__name__)
@@ -164,6 +166,12 @@ SCENARIO_CONFIG_NAME: dict[Scenario, str] = {
     # method YAML needs a matching `sparse_0p78:` row under its `urban:` block or
     # the knob silently falls back to `default`.
     Scenario.SPARSE_0p78: "sparse_0p78",
+    # Nonlinear (arctan) observation of the velocity channels u, v, w at 1/64,
+    # and its LINEAR control (same sensors + noise draws, h = L); opt-in via
+    # +urban_scenarios=[...] (not in URBAN_SCENARIOS). Both reuse the sparse_1p5
+    # hyperparameter rows (`hparam_scenario` in the YAML).
+    Scenario.SPARSE_1p5_ARCTAN_VEL: "sparse_1p5_arctan_vel",
+    Scenario.SPARSE_1p5_VEL: "sparse_1p5_vel",
 }
 
 # Every method that CAN be run for urban -- i.e. has a method config wired above.
@@ -209,7 +217,10 @@ class UrbanRunner(ExperimentRunner):
         root = Path(__file__).resolve().parents[2] / "configs" / "scenario"
         for scen in self.scenarios():
             name = SCENARIO_CONFIG_NAME[scen]
-            cfgs[scen.value] = OmegaConf.load(root / f"{name}.yaml")
+            cfgs[scen.value] = _ns_pipeline.apply_nonlinearity_overrides(
+                OmegaConf.load(root / f"{name}.yaml"),
+                strength=self._cfg_get("nonlinearity_strength", None),
+            )
         return cfgs
 
     def _method_cfgs(self) -> dict:
@@ -314,10 +325,12 @@ class UrbanRunner(ExperimentRunner):
 
         fluid_mask = _urban_pipeline.fluid_keep_mask(prior, num_channels, device)
 
+        # Mask + obs-noise seeds: the scenario label, or its `seed_scenario`.
+        seed_label = scenario_key(scen_cfg, "seed_scenario", ctx.scenario.value)
         obs_operator = _urban_pipeline.build_obs_operator(
             scenario_cfg=scen_cfg,
             data_size=data_size,
-            mask_seed=mask_seed(self.case.value, ctx.scenario.value),
+            mask_seed=mask_seed(self.case.value, seed_label),
             fluid_mask=fluid_mask,
         )
 
@@ -328,7 +341,7 @@ class UrbanRunner(ExperimentRunner):
             variance=extra["variance"],
             num_physical_steps=extra["num_physical_steps"],
             obs_noise_seed=obs_seed(
-                self.case.value, ctx.scenario.value, extra["test_index"], ctx.seed
+                self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
             # FOREIGN INITIAL CONDITION (opt-in; None = the truth's own past, the
@@ -365,7 +378,10 @@ class UrbanRunner(ExperimentRunner):
             # guidance scales until its `urban:` blocks are filled. scenario_key is
             # now safe to pass (symmetric with NS, ready for urban tuning).
             case_key=self.case.value,
-            scenario_key=SCENARIO_CONFIG_NAME[ctx.scenario],
+            scenario_key=scenario_key(
+                scen_cfg, "hparam_scenario", SCENARIO_CONFIG_NAME[ctx.scenario],
+                warn=True,
+            ),
             num_steps=ctx.num_steps,
         )
 
@@ -542,7 +558,9 @@ class UrbanRunner(ExperimentRunner):
             return re.sub(r"[^A-Za-z0-9]+", "_", str(s)).strip("_")
 
         variant = self._variant(ctx.method)
-        var_tag = f"__{variant}" if variant else ""
+        # Nonlinear operator strength c (``__c<c>``; "" for linear) so a c-sweep of
+        # the same scenario does not clobber its states.
+        var_tag = (f"__{variant}" if variant else "") + states_tag(obs_operator)
         path = root / (
             f"{self.case.value}__{_slug(ctx.method.value)}__{_slug(ctx.scenario.value)}"
             f"{var_tag}__seed{ctx.seed}__E{ctx.ensemble_size}_M{ctx.num_steps}.npz"
@@ -562,6 +580,13 @@ class UrbanRunner(ExperimentRunner):
             true_trajectory=_np(result.true_trajectory),            # [1, C, H, W, T]
             observations=_np(truth_obs.observations),
             obs_indices=_np(getattr(obs_operator, "obs_indices", np.empty(0))),
+            **states_npz_fields(
+                obs_operator,
+                hparam_scenario=scenario_key(
+                    self._scenario_cfgs()[ctx.scenario.value], "hparam_scenario",
+                    SCENARIO_CONFIG_NAME[ctx.scenario],
+                ),
+            ),
             nfe_per_step=float(result.nfe_per_step),
             seconds_per_step=float(result.seconds_per_step),
             seconds_total=float(result.seconds_per_step)

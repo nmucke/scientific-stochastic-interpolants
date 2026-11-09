@@ -29,12 +29,14 @@ bucket 0.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import math
 import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
 
+from common.obs_scenario import strength_from_filename
 from common.per_step_io import load_per_step
 from results_schema import SEED_AGGREGATED, ResultRecord, load_records
 
@@ -173,9 +175,20 @@ def aggregate_scalar(by_traj: dict[int, list[Path]]) -> list[dict[str, object]]:
     files first; see there for the reduction.
     """
     return aggregate_scalar_records({
-        traj: [r for path in paths for r in load_records(path)]
+        traj: [r for path in paths for r in _load_with_strength(path)]
         for traj, paths in by_traj.items()
     })
+
+
+def _load_with_strength(path: Path) -> list[ResultRecord]:
+    """Load one per-cell file; a ``__c<c>`` strength-sweep file (the tidy schema
+    has no strength column) gets ``" c=<c>"`` appended to its scenario label so
+    the c values of a sweep never fold into one cell. Other files: unchanged."""
+    records = load_records(path)
+    c = strength_from_filename(path.name)
+    if c is None:
+        return records
+    return [dataclasses.replace(r, scenario=f"{r.scenario} c={c}") for r in records]
 
 
 def aggregate_scalar_records(

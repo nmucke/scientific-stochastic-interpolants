@@ -38,7 +38,8 @@ target is the true posterior -- independent of which guidance is plugged in.
       injection weight -- so ``w grad_x G`` is exactly the plugged method's guided
       drift and the combo proposal IS that method's guided SDE (paper's
       ``Sigma grad_x G``). ``w`` = FlowDAS's ``zeta`` (via ``sde_weight``), SDA's
-      ``g^2``, ... ; the standalone-DPS ``SurgePosterior`` uses ``w = guidance_scale``.
+      ``g^2``, ... ; the standalone-DPS ``SurgePosterior`` uses the paper's
+      ``w = guidance_scale * g^2`` (``Sigma = g^2``).
 
     Reweight (incremental log-weight, Eq. 6 / Alg. 1), with u = (w / g) grad_x G
     (= Sigma^{-1/2} times the added drift w grad_x G):
@@ -96,7 +97,7 @@ from typing import Callable, Optional
 import torch
 import torch.nn as nn
 
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import ObservationOperator
 from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.posterior_models.base_posterior import BasePosterior
 
@@ -114,7 +115,7 @@ class SurgePosteriorBase(BasePosterior):
     def __init__(
         self,
         model: nn.Module,
-        obs_operator: LinearObservationOperator,
+        obs_operator: ObservationOperator,
         variance: float = 0.05,
         guidance_scale: float = 1.0,
         ess_threshold: float = 0.5,
@@ -129,7 +130,8 @@ class SurgePosteriorBase(BasePosterior):
                 or SI ``FollmerStochasticInterpolant``). Exposes ``.drift``,
                 ``.score`` (FM) / ``.interpolation.score_from_velocity`` (SI) and
                 ``.interpolation``.
-            obs_operator: Linear observation operator ``H``.
+            obs_operator: Observation operator ``h`` (linear or nonlinear; the reward
+                and DPS guidance use ``h(xhat_1)`` and autograd through it).
             variance: Observation-noise variance ``sigma^2`` (``R = sigma^2 I``).
                 Defines the SMC reward ``R = log p(y | x)``, so it MUST match the
                 true observation noise.
@@ -487,7 +489,7 @@ class SurgeFlowMatchingPosterior(SurgePosteriorBase):
     def __init__(
         self,
         model: nn.Module,
-        obs_operator: LinearObservationOperator,
+        obs_operator: ObservationOperator,
         variance: float = 0.05,
         guidance_scale: float = 1.0,
         ess_threshold: float = 0.5,
@@ -566,7 +568,7 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
     def __init__(
         self,
         model: nn.Module,
-        obs_operator: LinearObservationOperator,
+        obs_operator: ObservationOperator,
         variance: float = 0.05,
         guidance_scale: float = 1.0,
         ess_threshold: float = 0.5,
@@ -644,9 +646,18 @@ class SurgePosterior(SurgeFlowMatchingPosterior):
         return grad.detach(), reward.detach()
 
     def _injection_weight(self, t: torch.Tensor, g: torch.Tensor):
-        """Standalone DPS: scale the raw DPS score by ``guidance_scale`` directly
-        (there is no plugged likelihood to supply an injection weight)."""
-        return self.guidance_scale
+        """Standalone DPS: the paper's proposal drift ``Sigma grad_x G`` (Eq. 4,
+        ``Sigma = g^2``), times ``guidance_scale``.
+
+        ``w = guidance_scale`` alone (the pre-fix value, introduced when the
+        guidance was made pluggable) dropped the ``Sigma = g^2`` factor of the
+        original implementation: the raw ``1/sigma^2`` DPS score then entered
+        the drift unscaled, the Girsanov term ``u = (w/g) grad_x G`` exploded
+        and the SMC weights degenerated to ESS ~ 1 from the first step (even for
+        a linear ``H`` at ``R = 0.01``: collapsed ensemble), and an expanding
+        nonlinear ``h`` drove the single surviving lineage to non-finite values.
+        """
+        return self.guidance_scale * g**2
 
 
 __all__ = [

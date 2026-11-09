@@ -21,10 +21,19 @@ def save_ns_trajectories(
     result,  # AssimResult
     obs_operator,
     out_path: str | Path,
+    observations: torch.Tensor | None = None,
 ) -> Path:
     """fig:ns_trajectories -- truth / observed / posterior mean / spread.
 
     One scenario, the final assimilated step. Saved to ``out_path``.
+
+    The "Observed" panel: for a LINEAR operator it is the truth on the sensor
+    mask (unchanged). For a NONLINEAR operator ``h`` the observed quantity is not
+    the state (e.g. ``arctan`` or the flow speed), so ``mask * truth`` would be
+    misleading; when the assimilated ``observations`` ``[1, N_y, T]`` are given
+    and the sensors are point sensors, the panel scatters ``y`` at the sensor
+    locations on its own colour scale; otherwise it falls back to the sensor
+    mask itself.
     """
     import matplotlib
 
@@ -47,8 +56,31 @@ def save_ns_trajectories(
     fig, axes = plt.subplots(1, 4, figsize=(16, 4))
     axes[0].imshow(true_state, vmin=vmin, vmax=vmax)
     axes[0].set_title("Truth")
-    axes[1].imshow(obs_mask * true_state, vmin=vmin, vmax=vmax)
-    axes[1].set_title("Observed")
+    is_linear = bool(getattr(obs_operator, "is_linear", True))
+    if is_linear:
+        axes[1].imshow(obs_mask * true_state, vmin=vmin, vmax=vmax)
+        axes[1].set_title("Observed")
+    else:
+        nl_name = getattr(obs_operator, "nonlinearity", "h")
+        chw = None
+        if observations is not None and getattr(obs_operator, "type", None) in (
+            "grid", "random"
+        ):
+            try:
+                chw = obs_operator.obs_indices_c_h_w.cpu().numpy()
+            except Exception:  # pragma: no cover - defensive
+                chw = None
+        if chw is not None:
+            y_t = observations[0, :, t].detach().cpu().numpy()
+            axes[1].imshow(np.zeros_like(true_state.numpy()), cmap="Greys", vmin=0, vmax=1)
+            sc = axes[1].scatter(chw[:, 2], chw[:, 1], c=y_t, s=6, cmap="viridis")
+            axes[1].set_xlim(-0.5, true_state.shape[1] - 0.5)
+            axes[1].set_ylim(true_state.shape[0] - 0.5, -0.5)
+            fig.colorbar(sc, ax=axes[1], fraction=0.046)
+            axes[1].set_title(f"Observed y = {nl_name}(x) at sensors")
+        else:
+            axes[1].imshow(obs_mask, cmap="Greys")
+            axes[1].set_title(f"Sensors (h = {nl_name})")
     axes[2].imshow(post_mean, vmin=vmin, vmax=vmax)
     axes[2].set_title("Posterior mean")
     axes[3].imshow(post_std)

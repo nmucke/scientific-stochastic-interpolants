@@ -83,7 +83,6 @@ class GuidanceGaussianLikelihood(nn.Module):
         self.guidance_scale = float(guidance_scale)
         # FM anchor a0 = 0 -> the FM posterior's anchor assertion passes.
         self.anchor = "zeros"
-        self._HHt: Optional[torch.Tensor] = None
 
     def forward(
         self, x: torch.Tensor, observations: torch.Tensor, variance: torch.Tensor
@@ -200,22 +199,6 @@ class GuidanceGaussianLikelihood(nn.Module):
         log_likelihood = (-0.5 * diff_norm / self.original_variance).detach()
         return guidance.detach(), log_likelihood
 
-    def _get_HHt(self, ref: torch.Tensor) -> torch.Tensor:
-        """Return ``H H^T`` (cached), shape ``[N_y, N_y]`` (OT-ODE only).
-
-        Mirrors ``SDALikelihood._get_HHt`` (sda.py): builds the dense
-        Gram matrix from ``obs_operator.obs_matrix`` for the ``N_y x N_y``
-        covariance solve.
-        """
-        if (
-            self._HHt is None
-            or self._HHt.device != ref.device
-            or self._HHt.dtype != ref.dtype
-        ):
-            H = self.obs_operator.obs_matrix.to(device=ref.device, dtype=ref.dtype)
-            self._HHt = H @ H.transpose(0, 1)
-        return self._HHt
-
     def _score_ot_ode(
         self,
         observations: torch.Tensor,
@@ -295,6 +278,12 @@ class GuidanceGaussianLikelihood(nn.Module):
           ``gamma_t`` (``guidance_scale``, Pokle's adaptive weight, default 1)
           multiplies g.
 
+        NONLINEAR ``h``: OUR EKF-style extension (Pokle et al. treat linear
+        ``A`` only). Residual ``y - h(xhat_1)`` (autograd through ``h``) and,
+        per member, ``M_b = r_t^2 J_b J_b^T + sigma_y^2 I`` with ``J_b =
+        J_h(xhat_1_b)`` held fixed (``obs_operator.gram``; one ``N_y x N_y``
+        factorisation per member). Linear ``H`` keeps the shared cached ``H H^T``.
+
         Numerical stability: ``t`` is clamped to ``[1e-4, 1-1e-4]`` and the
         posterior-variance estimate ``r_t^2`` is floored at ``R2_FLOOR`` so the
         preconditioner ``M = r_t^2 H H^T + sigma_y^2 I`` stays invertible as
@@ -324,14 +313,27 @@ class GuidanceGaussianLikelihood(nn.Module):
         # depends on its own activations), so chunking is mathematically exact.
         _OT_CHUNK = 8  # members per backward pass; lower if still OOM
         B = x.shape[0]
+        # A single shared observation [1, N_y] is broadcast to the ensemble so the
+        # per-chunk slicing below never yields an empty observation chunk.
+        if observations.shape[0] == 1 and B > 1:
+            observations = observations.expand(B, *observations.shape[1:])
 
-        # Build the shared preconditioner M once (independent of x) and LU-
-        # factorise it once; the per-chunk solves below reuse the factors
-        # (``linalg.solve`` = ``lu_factor`` + ``lu_solve``, so this is the same
-        # computation done once instead of once per chunk).
-        HHt = self._get_HHt(x)  # [N_y, N_y]
-        M = r2_scalar * HHt
-        M.diagonal().add_(self.obs_variance)
+        # Build the preconditioner M once (shared [N_y, N_y] for linear H,
+        # per-member [B, N_y, N_y] for nonlinear h) and LU-factorise it once;
+        # the per-chunk solves below reuse the factors.
+        if self.obs_operator.is_linear:
+            M = r2_scalar * self.obs_operator.gram(x)  # [N_y, N_y]
+        else:
+            # Nonlinear h: per-member J J^T at xhat_1 = x + (1 - t) v (no grad).
+            with torch.no_grad():
+                v_ref = drift
+                if v_ref is None:
+                    v_ref = self.model.drift(
+                        x, t_clamped, field_history, field_cond, pars_cond
+                    )
+                xhat_ref = (x + (1.0 - t_grid) * v_ref).detach()
+                M = r2_scalar * self.obs_operator.gram(xhat_ref)  # [B, N_y, N_y]
+        M.diagonal(dim1=-2, dim2=-1).add_(self.obs_variance)
         M_lu, M_piv = torch.linalg.lu_factor(M)
 
         grad_chunks: list[torch.Tensor] = []
@@ -358,9 +360,14 @@ class GuidanceGaussianLikelihood(nn.Module):
                 xhat1_chunk = x_chunk + (1.0 - tg_chunk) * vel_chunk
                 res_chunk = obs_chunk - self.obs_operator(xhat1_chunk)  # [n, N_y]
                 # M is held fixed (no grad); gradient flows only through residual.
-                sol_chunk = torch.linalg.lu_solve(
-                    M_lu, M_piv, res_chunk.transpose(0, 1)
-                ).transpose(0, 1)  # [n, N_y]
+                if M_lu.dim() == 2:  # linear: one shared M for every RHS
+                    sol_chunk = torch.linalg.lu_solve(
+                        M_lu, M_piv, res_chunk.transpose(0, 1)
+                    ).transpose(0, 1)  # [n, N_y]
+                else:  # nonlinear: per-member M_b
+                    sol_chunk = torch.linalg.lu_solve(
+                        M_lu[sl], M_piv[sl], res_chunk.unsqueeze(-1)
+                    ).squeeze(-1)
                 quad_chunk = 0.5 * (res_chunk * sol_chunk).sum(dim=1)  # [n]
                 g_chunk = torch.autograd.grad(
                     outputs=quad_chunk.sum(), inputs=x_chunk
@@ -441,6 +448,13 @@ class FIGGaussianLikelihood(nn.Module):
     Returns ``(guidance, log_likelihood)`` to match the
     ``InterpolantGaussianLikelihood`` / ``GuidanceGaussianLikelihood`` interface
     so it plugs into ``FlowMatchingPosterior`` (stepper=ode) unchanged.
+
+    NONLINEAR ``h``: OUR EKF-style extension (FIG is defined for linear
+    inverse problems only). Per member, FIG runs verbatim on the first-order
+    model ``h(x) ~= J x + b`` at the denoised ``xhat_1 = x + (1 - t) v``,
+    ``J = J_h(xhat_1)`` (matrix-free ``jvp``), ``b = h(xhat_1) - J xhat_1``:
+    ``H := J``, ``y := y - b``, re-linearized every flow step. The reported
+    ``log_likelihood`` uses the true ``h``.
     """
 
     def __init__(
@@ -525,6 +539,21 @@ class FIGGaussianLikelihood(nn.Module):
         else:
             x_next_init = (x + drift * dt).detach()
 
+        # Linear map H of the corrector and its target: H, y for linear h;
+        # J = J_h(xhat_1) per member and y - b for nonlinear h (class docstring).
+        if self.obs_operator.is_linear:
+            H_apply = self.obs_operator
+            y_target = observations
+        else:
+            op = self.obs_operator
+            xhat_lin = (x if drift is None else x + (1.0 - t_grid) * drift).detach()
+
+            def H_apply(v: torch.Tensor) -> torch.Tensor:
+                return op.jvp(xhat_lin, v)
+
+            with torch.no_grad():
+                y_target = observations - (op(xhat_lin) - op.jvp(xhat_lin, xhat_lin))
+
         # Measurement interpolant y_t = t_next * y + w (1 - t) H(eps) (FIG Eq. 9).
         # t_next is our t + dt (their ``next_t``). w defaults to 0.
         if dt is not None:
@@ -532,12 +561,12 @@ class FIGGaussianLikelihood(nn.Module):
         else:
             t_next = t_clamped
         t_next_obs = t_next.reshape(t_next.shape[0], *([1] * (observations.dim() - 1)))
-        y_t = t_next_obs * observations
+        y_t = t_next_obs * y_target
         if self.interpolant_noise != 0.0:
             t_obs = t_clamped.reshape(
-                t_clamped.shape[0], *([1] * (x.dim() - 1))
+                t_clamped.shape[0], *([1] * (observations.dim() - 1))
             )
-            y_t = y_t + self.interpolant_noise * (1.0 - t_obs) * self.obs_operator(
+            y_t = y_t + self.interpolant_noise * (1.0 - t_obs) * H_apply(
                 torch.randn_like(x_next_init)
             )
 
@@ -565,7 +594,7 @@ class FIGGaussianLikelihood(nn.Module):
         with torch.enable_grad():
             for _ in range(max(self.guidance_steps, 1)):
                 x_g = x_next.detach().requires_grad_(True)
-                residual = y_t - self.obs_operator(x_g)
+                residual = y_t - H_apply(x_g)
                 # FIG differentiates the GLOBAL residual NORM -- a single scalar
                 # over the WHOLE batch, exactly as FIG_flow/sampler.py:
                 # ``norm = torch.linalg.norm(yt - H(x_next))`` (no per-sample

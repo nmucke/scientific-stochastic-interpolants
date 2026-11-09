@@ -1,0 +1,35 @@
+# NONLINEAR physics operator: the flow SPEED |u| at the SAME 5% seeded sensor
+# locations as sparse_5. The state is the normalised vorticity x; the operator
+# de-normalises (omega = norm_std * x + norm_mean), solves -Lap psi = omega by FFT
+# on the periodic [0, 2 pi]^2 box, u = d psi/dy, v = -d psi/dx (conventions of
+# scisi.metrics.spectral), and observes sqrt(u^2 + v^2 + eps^2) / velocity_scale
+# (VelocityMagnitudeOperator, src/scisi/likelihood_models/physics_observation_operators.py).
+#
+# Non-local (each sensor sees the whole vorticity field through the Biot-Savart
+# kernel) and non-injective (sign/direction of u are lost), unlike the pointwise
+# arctan. Raw speed on the NS test split: mean ~0.46, std ~0.24, max ~1.9, so
+# velocity_scale = 0.25 puts y on an O(1) (std ~1) scale comparable to the
+# normalised vorticity the linear scenarios observe; the case's R = 0.0025
+# (sigma = 0.05) is then applied to that scaled speed.
+#
+# NS only. Launch with +ns_scenarios='["sparse 5% speed"]'.
+name: sparse 5% speed
+type: sparse
+fraction: 0.05
+
+obs_operator:
+  _target_: scisi.likelihood_models.observation_operators.LinearObservationOperator
+  type: random
+  percent_obs: 0.05
+  seed: 42  # overridden by common.seeding.mask_seed(case, seed_scenario)
+
+nonlinearity:
+  operator: velocity_magnitude
+  norm_std: 3.09969       # NS preprocesser base std (mean 0)
+  norm_mean: 0.0
+  velocity_scale: 0.25    # y = speed / 0.25
+  eps: 1.0e-3             # smoothing at stagnation points (raw speed units)
+  domain_length: 6.283185307179586
+
+seed_scenario: sparse 5%
+hparam_scenario: sparse_5

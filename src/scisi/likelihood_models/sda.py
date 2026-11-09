@@ -41,6 +41,13 @@ subsampling ``H`` (``H H^T = I``) that coincides with the ``H H^T`` form used
 here, and for a general ``H`` this is the more faithful rendering of Eq. 15's
 ``A Gamma A^T``.
 
+NONLINEAR ``h``: the ``J J^T`` covariance is OUR EKF-style extension (SDA
+keeps the exact mean ``A(xhat_1)``, but its covariance is the linear-``A``
+form above and its code drops ``A`` from it). Per member,
+``Gamma_b = sigma^2 I + gamma_sda (sigma_tau / mu_tau)^2 J_b J_b^T`` with
+``J_b = J_h(xhat_1_b)`` held fixed (``obs_operator.gram``; one Cholesky per
+member), gradient through the exact residual ``y - h(xhat_1)``.
+
 Returns ``(score, log_likelihood)`` to match the
 ``InterpolantGaussianLikelihood`` / ``DPSGaussianLikelihood`` interface so it
 plugs into the existing SI / FM posteriors unchanged.
@@ -80,8 +87,9 @@ class SDALikelihood(nn.Module):
         self.model_class = model_class
         self.anchor = "x0" if model_class == "si" else "zeros"
         self.interpolant = self.model.interpolation
-        self._HHt: Optional[torch.Tensor] = None
-        self._HHt_eig: Optional[tuple[torch.Tensor, torch.Tensor]] = None
+        # (H H^T it was computed from, eigvals, eigvecs); H H^T is cached by
+        # the operator, so a mask reload yields a new tensor and invalidates it.
+        self._HHt_eig: Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
         # SDA's tunable spectral factor gamma in Gamma_tau = R + gamma (sigma/mu)^2 HH^T
         # (Rozet & Louppe Eq. 15; released-code default 1e-2).
         self.gamma_sda = float(gamma_sda)
@@ -95,17 +103,6 @@ class SDALikelihood(nn.Module):
         """Unused (score interface is the entry point)."""
         pass
 
-    def _get_HHt(self, ref: torch.Tensor) -> torch.Tensor:
-        """Return ``H H^T`` (cached), shape [N_y, N_y]."""
-        if (
-            self._HHt is None
-            or self._HHt.device != ref.device
-            or self._HHt.dtype != ref.dtype
-        ):
-            H = self.obs_operator.obs_matrix.to(device=ref.device, dtype=ref.dtype)
-            self._HHt = H @ H.transpose(0, 1)
-        return self._HHt
-
     def _get_HHt_eig(
         self, ref: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -118,15 +115,45 @@ class SDALikelihood(nn.Module):
         per-step ``torch.linalg.solve`` whose CUDA info-check synchronises the
         stream every step (a severe stall on a shared GPU).
         """
-        if (
-            self._HHt_eig is None
-            or self._HHt_eig[0].device != ref.device
-            or self._HHt_eig[0].dtype != ref.dtype
-        ):
-            HHt = self._get_HHt(ref)
+        HHt = self.obs_operator.gram(ref)
+        if self._HHt_eig is None or self._HHt_eig[0] is not HHt:
             eigvals, eigvecs = torch.linalg.eigh(HHt)
-            self._HHt_eig = (eigvals.detach(), eigvecs.detach())
-        return self._HHt_eig
+            self._HHt_eig = (HHt, eigvals.detach(), eigvecs.detach())
+        return self._HHt_eig[1], self._HHt_eig[2]
+
+    def _nonlinear_gamma_solve(
+        self,
+        xhat1: torch.Tensor,
+        rho: torch.Tensor,
+        residual: torch.Tensor,
+    ) -> torch.Tensor:
+        """``Gamma_b^{-1} r_b``, ``Gamma_b = sigma^2 I + rho J_b J_b^T``, ``J_b =
+        J_h(xhat1_b)``; ``Gamma`` is built without gradient, the solve is linear
+        in ``residual`` so autograd still gives the exact gradient w.r.t. ``r``.
+
+        Factorised in float64: ``rho J J^T`` can exceed ``sigma^2`` by many
+        orders of magnitude (expanding ``h``, e.g. ``cubic`` with ``J = 1 + 3 c
+        z^2``), which overflows / loses positive-definiteness in float32. A
+        non-finite ``J J^T`` means the sampler has already diverged (the
+        explicit guided step is stiff, ``~ g^2 J^2 / sigma^2``); that is
+        reported as such instead of as a Cholesky failure.
+        """
+        with torch.no_grad():
+            gram = self.obs_operator.gram(xhat1.detach()).to(torch.float64)
+            gamma = float(rho.detach()) * gram
+            gamma.diagonal(dim1=-2, dim2=-1).add_(self.original_variance)
+            chol, info = torch.linalg.cholesky_ex(gamma)  # [B, N_y, N_y]
+            if not bool(torch.isfinite(gram).all()) or bool((info != 0).any()):
+                bad = int(((info != 0) | ~torch.isfinite(gram).flatten(1).all(1)).sum())
+                raise FloatingPointError(
+                    f"SDA: Gamma = sigma^2 I + rho J J^T is not finite / PD for "
+                    f"{bad}/{gram.shape[0]} members (max |xhat1| = "
+                    f"{float(xhat1.detach().abs().max()):.3g}): the guided SDE has "
+                    "diverged -- the explicit guidance step ~ g^2 J^T Gamma^-1 J "
+                    "is stiff for this h / noise level; increase num_steps."
+                )
+        sol = torch.cholesky_solve(residual.to(torch.float64).unsqueeze(-1), chol)
+        return sol.squeeze(-1).to(residual.dtype)
 
     def _denoise(
         self,
@@ -201,9 +228,12 @@ class SDALikelihood(nn.Module):
             # detached, so the gradient still flows linearly through the residual
             # and grad = Gamma^{-1}(y - H xhat_1) is exact (Gamma symmetric PSD;
             # denom = sigma^2 + rho l >= sigma^2 > 0, so the inverse is well posed).
-            eigvals, Q = self._get_HHt_eig(x_g)  # l [N_y], Q [N_y, N_y]
-            denom = self.original_variance + rho * eigvals  # [N_y]
-            sol = ((residual @ Q) / denom) @ Q.transpose(0, 1)  # [B, N_y] = Gamma^-1 r
+            if self.obs_operator.is_linear:
+                eigvals, Q = self._get_HHt_eig(x_g)  # l [N_y], Q [N_y, N_y]
+                denom = self.original_variance + rho * eigvals  # [N_y]
+                sol = ((residual @ Q) / denom) @ Q.transpose(0, 1)  # [B, N_y]
+            else:
+                sol = self._nonlinear_gamma_solve(xhat1, rho, residual)
             weighted = 0.5 * (residual * sol).sum(dim=1)  # [B] = 1/2 ||r||^2_{Gamma^-1}
 
             grad = torch.autograd.grad(outputs=weighted.sum(), inputs=x_g)[0]

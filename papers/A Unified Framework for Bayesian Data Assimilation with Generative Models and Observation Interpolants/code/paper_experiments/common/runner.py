@@ -16,12 +16,14 @@ rebuilt samplers/metrics into. See the per-case ``driver.py`` for the TODO seams
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from common.aggregation import aggregate_over_seeds
+from common.obs_scenario import strength_results_path
 from common.seeding import SEED_LIST, seed_everything
 from results_schema import (
     Case,
@@ -132,10 +134,18 @@ class ExperimentRunner(ABC):
         return aggregate_over_seeds(raw) if aggregate else raw
 
     def write(self, records: Iterable[ResultRecord], path: str | Path) -> Path:
-        """Append ``records`` to the tidy results file at ``path``."""
-        path = Path(path)
+        """Append ``records`` to the tidy results file at ``path``.
+
+        With ``+nonlinearity_strength=c`` the rows go to ``<stem>__c<c><suffix>``
+        instead (the tidy schema has no strength column), so the rows of a
+        c-sweep never mix. Without the override the path is unchanged.
+        """
+        path = strength_results_path(
+            path, self._cfg_get("nonlinearity_strength", None)
+        )
         with ResultsWriter(path) as writer:
             writer.extend(records)
+        logging.getLogger(__name__).info("Results -> %s", path)
         return path
 
     # -- helpers ----------------------------------------------------------- #
