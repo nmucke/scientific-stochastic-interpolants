@@ -64,6 +64,7 @@ paper_experiments/
 | Case | Folder | What it tests | Key tables / figures |
 |---|---|---|---|
 | 1. Analytical linear–Gaussian | `cases/analytical` | correctness vs the closed-form posterior, no training | `tab:analytical_results`, `fig:analytical_panels` |
+| 1b. Sequential linear–Gaussian | `cases/analytical` (`multistep.py`) | tracking of the Kalman filter over `K` cycles, no training | `generated/tab_analytical_multistep.tex`, `analytical_multistep_error_vs_step` |
 | 2. Stochastic Navier–Stokes | `cases/navier_stokes` | learned prior, high-dim chaotic, the main benchmark | `tab:ns_accuracy`, `tab:ns_calibration_cost`, `tab:ablation`, `fig:ns_trajectories`, `fig:ns_diagnostics` |
 | 3. Urban airflow (uDALES) | `cases/urban` | multi-variable applied realism, solid obstacles; **generative-only, sparse-only, no KL/energy** | `tab:urban_accuracy`, `tab:urban_calibration_cost`, `fig:urban_fields` |
 
