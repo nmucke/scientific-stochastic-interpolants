@@ -43,6 +43,19 @@ def systematic_resample(
     return torch.searchsorted(cumulative, positions).clamp_(max=n - 1)
 
 
+def _check_finite(log_weights: torch.Tensor) -> None:
+    """Refuse non-finite log weights before resampling.
+
+    One NaN would otherwise poison the cumulative sum, and ``searchsorted`` would
+    silently put every resampled particle on the last one.
+    """
+    if not torch.isfinite(log_weights).all():
+        bad = int((~torch.isfinite(log_weights)).sum())
+        raise FloatingPointError(
+            f"{bad} of {log_weights.numel()} particle log weights are not finite."
+        )
+
+
 def effective_sample_size(log_weights: torch.Tensor) -> float:
     """Kish effective sample size of unnormalised log weights."""
     log_w = log_weights.double()
@@ -162,6 +175,7 @@ class BootstrapParticleFilter:
 
             if self.proposal == "optimal":
                 log_w = self._log_weights(z, y_x, H, S)
+                _check_finite(log_w)
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
                 x = self._kick_conditional(x, y_x, q, S, generator)
@@ -172,6 +186,7 @@ class BootstrapParticleFilter:
                         z[:, sl].shape, generator=generator, dtype=z.dtype
                     )
                 log_w = self._log_weights(z, y_x, H, R)
+                _check_finite(log_w)
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
 
