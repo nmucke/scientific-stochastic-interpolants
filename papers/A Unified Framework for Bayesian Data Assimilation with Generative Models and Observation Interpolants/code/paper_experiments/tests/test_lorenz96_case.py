@@ -266,8 +266,8 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     import make_lorenz96_figures
 
     root = tmp_path / "root"
-    root.mkdir()
-    (root / "lorenz96").symlink_to(tmp_path)
+    (root / "lorenz96").mkdir(parents=True)
+    (root / "lorenz96" / "linear").symlink_to(tmp_path)  # the linear sweep root
     monkeypatch.setattr(aggregate_lorenz96, "RESULTS", root)
     monkeypatch.setattr(make_lorenz96_figures, "RESULTS", root)
     for name, seed in (("enkf", 0), ("enkf", 1), ("pf_reference", 0)):
