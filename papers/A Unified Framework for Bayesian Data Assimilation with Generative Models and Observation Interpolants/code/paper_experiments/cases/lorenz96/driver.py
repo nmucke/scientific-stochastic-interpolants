@@ -16,7 +16,6 @@ setting: ``tune`` reads the validation split only.
 from __future__ import annotations
 
 import argparse
-import csv
 import itertools
 import json
 import math
@@ -40,8 +39,8 @@ from cases.lorenz96._l96_system import (  # noqa: E402
     Problem,
     Sequence,
     draw_prior_ensemble,
-    load_problem,
     make_sequence,
+    open_csv_for_append,
     resolve_device,
 )
 from common.paths import REPO_ROOT, RESULTS_ROOT  # noqa: E402
@@ -72,11 +71,6 @@ SEED_LABEL = "lorenz96-evaluation"
 DATA_PATH = REPO_ROOT / "data/lorenz96/data.npz"
 DIVERGED_ABS = 100.0  # about 25 climatological standard deviations
 
-GENERATIVE = {
-    "si_sde": Method.OURS_SI_SDE,
-    "fm_ode": Method.OURS_FM_ODE,
-    "dm_sde": Method.OURS_DM_SDE,
-}
 # name -> (tidy method label, variant)
 CELLS = {
     "si_sde": (Method.OURS_SI_SDE, None),
@@ -89,6 +83,11 @@ CELLS = {
     "pf_subsample": (Method.PARTICLE_FILTER, "reference_subsample"),
     "pf_reference": (Method.PARTICLE_FILTER, "reference"),
 }
+GENERATIVE = {
+    name: method for name, (method, _) in CELLS.items() if method.name.startswith("OURS_")
+}
+# (sequence, step) entries with a non-finite score: fewer than two members were left.
+DIVERGED_STEPS = "diverged_steps"
 
 
 def case_config():
@@ -165,6 +164,11 @@ def cmd_reference(args) -> None:
     problem = problem_of(cfg)
     sequences = load_sequences(problem, args.split, split_size(cfg, args.split))
     replicates = int(cfg.evaluation.reference_replicates)
+    if replicates != 2:
+        raise ValueError(
+            "evaluation.reference_replicates must be 2: pf_reference scores replicate "
+            "1 against 0, and pf_subsample draws from replicate 1."
+        )
     jobs = [
         (problem, seq, args.split, index, rep, int(cfg.evaluation.reference_particles))
         for index, seq in enumerate(sequences)
@@ -177,13 +181,10 @@ def cmd_reference(args) -> None:
             print(f"{args.split} {job[3]} replicate {job[4]}: {seconds:.0f}s", flush=True)
 
 
-def load_reference(
-    split: str, index: int, replicate: int = 0, problem: Problem | None = None
-) -> dict:
+def load_reference(split: str, index: int, replicate: int, problem: Problem) -> dict:
     """Load a stored reference, refusing one made for another system."""
     reference = torch.load(reference_path(split, index, replicate), weights_only=False)
-    expected = (problem or load_problem()).to_dict()
-    if reference["problem"] != expected:
+    if reference["problem"] != problem.to_dict():
         raise ValueError(f"Stale reference for {split} {index}: rerun `reference`.")
     return reference
 
@@ -249,6 +250,34 @@ def score_ensemble(ensemble, reference, truth) -> dict[str, list[float]]:
     return out
 
 
+def score_output(ensembles, sequences, split, problem) -> list[dict[str, list[float]]]:
+    """Score ensembles ``[S, T, E, d]`` of ``sequences`` against replicate 0."""
+    return [
+        score_ensemble(ens, load_reference(split, index, 0, problem), seq.truth[1:])
+        for index, (ens, seq) in enumerate(zip(ensembles, sequences))
+    ]
+
+
+def summarise(scores) -> dict[str, list[float]]:
+    """Per metric, the finite mean over steps of each sequence."""
+    return {
+        metric: [finite_mean(entry[metric]) for entry in scores] for metric in scores[0]
+    }
+
+
+def count_diverged_steps(scores) -> int:
+    """(sequence, step) entries at which any score is non-finite.
+
+    ``finite_mean`` leaves such entries out, so a method that blows up early would
+    otherwise be judged on its good steps only. This count keeps it visible.
+    """
+    total = 0
+    for entry in scores:
+        for values in zip(*entry.values()):
+            total += not all(math.isfinite(v) for v in values)
+    return total
+
+
 # --------------------------------------------------------------------------- #
 # Methods
 # --------------------------------------------------------------------------- #
@@ -263,13 +292,22 @@ class CellOutput:
     pseudo_steps: int | None
 
 
+@dataclass(frozen=True)
+class EnKFSettings:
+    """What is tuned on validation sequences for the EnKF; unknown keys are refused."""
+
+    inflation: float = 1.0
+    localisation: float | None = None  # Gaspari--Cohn radius, None for none
+
+
 def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
-    radius = settings.get("localisation")
+    settings = EnKFSettings(**settings)
+    radius = settings.localisation
     taper = None if radius is None else periodic_taper(problem.dim_state, float(radius))
     enkf = EnsembleKalmanFilter(
         problem.obs_matrix,
         problem.obs_variance,
-        inflation=float(settings.get("inflation", 1.0)),
+        inflation=float(settings.inflation),
         localisation=taper,
     )
     start = time.time()
@@ -353,6 +391,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
 
     counter = attach_nfe_counter(model)
     start = time.time()
+    nfe = None
     try:
         ensembles = assimilate(
             posterior,
@@ -363,14 +402,18 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
             settings.num_steps,
             derive_seed(SEED_LABEL, name, split, seed),
         )
+        nfe = counter.count / observations.shape[1]
     except AssertionError as error:
         # The DM-SDE sampler asserts on a non-finite drift where the others carry
-        # the NaN on. Count the whole cell as diverged rather than losing the run.
+        # the NaN on. Count the whole cell as diverged rather than losing the run;
+        # any other assertion is a bug and must crash. The partial count of network
+        # calls says nothing about the cost of a full run, so nfe stays None.
+        if name != "dm_sde" or "non-finite" not in str(error):
+            raise
         print(f"{name} diverged: {error}", flush=True)
         shape = (len(sequences), observations.shape[1], members, problem.dim_state)
         ensembles = torch.full(shape, float("nan"), dtype=torch.float64)
     seconds = time.time() - start
-    nfe = counter.count / observations.shape[1]
     return CellOutput(ensembles, seconds, nfe, members, settings.num_steps)
 
 
@@ -426,10 +469,7 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         members, pseudo_steps = int(cfg.evaluation.reference_particles), None
     else:
         output = run_method(cfg, name, problem, sequences, split, seed)
-        scores = [
-            score_ensemble(ens, load_reference(split, index, 0, problem), seq.truth[1:])
-            for index, (ens, seq) in enumerate(zip(output.ensembles, sequences))
-        ]
+        scores = score_output(output.ensembles, sequences, split, problem)
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
         path = RESULTS / "ensembles" / f"{name}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -452,17 +492,13 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         seconds=per_step_seconds,
         variant=variant,
     )
-    by_metric = {key: [entry[key] for entry in scores] for key in scores[0]}
     # Curves are averaged over sequences here: common.aggregate_lib then reduces
     # them over seeds, which are the buckets of this case.
     curves = {
-        metric: [finite_mean(at_step) for at_step in zip(*values)]
-        for metric, values in by_metric.items()
+        metric: [finite_mean(at_step) for at_step in zip(*(e[metric] for e in scores))]
+        for metric in scores[0]
     }
-    per_sequence = {
-        metric: [finite_mean(values) for values in sequences_values]
-        for metric, sequences_values in by_metric.items()
-    }
+    per_sequence = summarise(scores)
     per_step_file = cell_path("per_step", name, seed)
     per_step_file.parent.mkdir(parents=True, exist_ok=True)
     per_step_file.unlink(missing_ok=True)
@@ -483,11 +519,17 @@ def evaluate_cell(name: str, seed: int, cfg=None, split: str = "test") -> list[R
         )
     if nfe is not None:
         records.append(ResultRecord(metric=Metric.NFE.value, value=nfe, **common))
+    diverged = float(count_diverged_steps(scores))
+    records.append(ResultRecord(metric=DIVERGED_STEPS, value=diverged, **common))
     return records
 
 
 def finite_mean(values) -> float:
-    """Mean over finite entries; ``diverged_fraction`` records what was left out."""
+    """Mean over finite entries.
+
+    ``diverged_fraction`` records the members left out and ``diverged_steps`` the
+    (sequence, step) entries left out.
+    """
     kept = [value for value in values if math.isfinite(value)]
     return sum(kept) / len(kept) if kept else float("nan")
 
@@ -518,12 +560,17 @@ def cmd_tune(args) -> None:
     base = method_settings(cfg, args.method)
     grid = json.loads(args.grid)
     path = RESULTS / "tuning" / f"{args.method}__{'_'.join(grid)}.csv"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    columns = [*grid, "seconds", *(m.value for m in TUNING_METRICS)]
-    with open(path, "a", newline="") as handle:
-        writer = csv.DictWriter(handle, columns)
-        if handle.tell() == 0:
-            writer.writeheader()
+    # The base settings go into every row, and a file with other columns is
+    # refused, so rows of differently configured runs cannot mix unnoticed.
+    columns = [
+        *grid,
+        "base",
+        "seconds",
+        DIVERGED_STEPS,
+        *(m.value for m in TUNING_METRICS),
+    ]
+    handle, writer = open_csv_for_append(path, columns)
+    with handle:
         for values in itertools.product(*grid.values()):
             override = dict(zip(grid, values))
             output = run_method(
@@ -535,32 +582,35 @@ def cmd_tune(args) -> None:
                 0,
                 {**base, **override},
             )
-            scores = [
-                score_ensemble(
-                    ens, load_reference("validation", i, 0, problem), seq.truth[1:]
-                )
-                for i, (ens, seq) in enumerate(zip(output.ensembles, sequences))
-            ]
+            scores = score_output(output.ensembles, sequences, "validation", problem)
+            per_sequence = summarise(scores)
             row = {
-                metric.value: finite_mean(
-                    finite_mean(entry[metric.value]) for entry in scores
-                )
+                metric.value: finite_mean(per_sequence[metric.value])
                 for metric in TUNING_METRICS
             }
-            row.update(override, seconds=output.seconds)
+            diverged = count_diverged_steps(scores)
+            if diverged:
+                # Not eligible: a score over the surviving steps would flatter it.
+                row.update({metric.value: math.inf for metric in TUNING_SCORES})
+            row.update(
+                override,
+                base=json.dumps(base, sort_keys=True),
+                seconds=output.seconds,
+                **{DIVERGED_STEPS: diverged},
+            )
             writer.writerow(row)
             handle.flush()
             print(json.dumps(row), flush=True)
 
 
-TUNING_METRICS = (
+# Selection rule, fixed before results: lowest validation sliced_w2.
+TUNING_SCORES = (
     Metric.MEAN_ERROR_VS_PF,
     Metric.VAR_ERROR_VS_PF,
     Metric.SLICED_W2,
     Metric.RMSE,
-    Metric.SPREAD,
-    Metric.DIVERGED_FRACTION,
 )
+TUNING_METRICS = (*TUNING_SCORES, Metric.SPREAD, Metric.DIVERGED_FRACTION)
 
 
 def cmd_prior_quality(args) -> None:
@@ -627,6 +677,7 @@ def cmd_prior_quality(args) -> None:
         )
         print(label, json.dumps(report[label]), flush=True)
     path = RESULTS / "prior_quality.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))
 
 

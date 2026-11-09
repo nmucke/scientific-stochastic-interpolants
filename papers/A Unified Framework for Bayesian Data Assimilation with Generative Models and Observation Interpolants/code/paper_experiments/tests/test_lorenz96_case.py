@@ -290,3 +290,130 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     make_lorenz96_figures.plot_ess(figures)
     assert (figures / "lorenz96_rmse_vs_step.pdf").exists()
     assert (figures / "lorenz96_ess.pdf").exists()
+
+
+def test_enkf_rejects_unknown_settings(problem):
+    sequences = load_sequences(problem, "test", 1)
+    with pytest.raises(TypeError, match="inflaton"):
+        driver.run_enkf(problem, sequences, "test", 0, 8, {"inflaton": 1.1})
+
+
+@pytest.mark.parametrize("name", sorted(driver.GENERATIVE))
+def test_inflated_likelihood_runs_through_assimilate(tiny_case, name, monkeypatch):
+    built = []
+    real_build = generative.build_posterior
+
+    def spy(method, model, problem, stats, settings):
+        built.append(settings.likelihood_mode)
+        return real_build(method, model, problem, stats, settings)
+
+    monkeypatch.setattr(generative, "build_posterior", spy)
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    settings = {**driver.method_settings(tiny_case, name), "likelihood_mode": "inflated"}
+    out = driver.run_method(tiny_case, name, problem, sequences, "test", 0, settings)
+    assert built == ["inflated"]
+    assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert torch.isfinite(out.ensembles).all()
+    assert out.nfe >= settings["num_steps"]
+
+
+def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypatch):
+    def failing(message):
+        def assimilate(*args, **kwargs):
+            raise AssertionError(message)
+
+        return assimilate
+
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    drift = "FM-SDE prior drift is non-finite; use an endpoint-vanishing g_tau"
+    monkeypatch.setattr(generative, "assimilate", failing(drift))
+    out = driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
+    assert torch.isnan(out.ensembles).all() and out.nfe is None
+    records = driver.evaluate_cell("dm_sde", 0, tiny_case)
+    diverged = next(r.value for r in records if r.metric == driver.DIVERGED_STEPS)
+    assert diverged == 2 * problem.num_steps
+    assert Metric.NFE.value not in {r.metric for r in records}
+    with pytest.raises(AssertionError):  # the same message from another sampler
+        driver.run_method(tiny_case, "si_sde", problem, sequences, "test", 0)
+    monkeypatch.setattr(generative, "assimilate", failing("shapes differ"))
+    with pytest.raises(AssertionError, match="shapes differ"):
+        driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
+
+
+def test_count_diverged_steps_counts_non_finite_entries():
+    scores = [
+        {"a": [1.0, float("nan"), 2.0], "b": [0.0, 0.0, float("inf")]},
+        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0]},
+    ]
+    assert driver.count_diverged_steps(scores) == 2
+
+
+@pytest.fixture
+def tuning_case(tiny_case, monkeypatch):
+    tiny_case.evaluation.validation_sequences = 2
+    problem = driver.problem_of(tiny_case)
+    for index, seq in enumerate(load_sequences(problem, "validation", 2)):
+        driver._reference_task((problem, seq, "validation", index, 0, 256))
+    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    return tiny_case
+
+
+def test_tune_reads_validation_only_and_a_diverged_setting_is_ineligible(
+    tuning_case, tmp_path, monkeypatch
+):
+    splits = []
+    real_sequences, real_reference = driver.load_sequences, driver.load_reference
+    real_run = driver.run_method
+
+    def sequences_spy(problem, split, count):
+        splits.append(split)
+        return real_sequences(problem, split, count)
+
+    def reference_spy(split, *args):
+        splits.append(split)
+        return real_reference(split, *args)
+
+    def run_spy(cfg, name, problem, sequences, split, seed, settings=None):
+        splits.append(split)
+        out = real_run(cfg, name, problem, sequences, split, seed, settings)
+        if settings["inflation"] == 2.0:
+            out.ensembles[:, 1:] = float("nan")  # every member lost after step 0
+        return out
+
+    monkeypatch.setattr(driver, "load_sequences", sequences_spy)
+    monkeypatch.setattr(driver, "load_reference", reference_spy)
+    monkeypatch.setattr(driver, "run_method", run_spy)
+    args = SimpleNamespace(
+        method="enkf", grid=json.dumps({"inflation": [1.0, 2.0]}), threads=1
+    )
+    driver.cmd_tune(args)
+    assert splits and set(splits) == {"validation"}
+
+    path = tmp_path / "tuning" / "enkf__inflation.csv"
+    with open(path, encoding="utf-8") as handle:
+        good, bad = list(csv.DictReader(handle))
+    assert json.loads(good["base"]) == driver.method_settings(tuning_case, "enkf")
+    assert int(good["diverged_steps"]) == 0
+    assert math.isfinite(float(good[Metric.SLICED_W2.value]))
+    assert int(bad["diverged_steps"]) == 2 * (tuning_case.problem.num_steps - 1)
+    for metric in driver.TUNING_SCORES:
+        assert math.isinf(float(bad[metric.value]))
+    # Ranking by the selection metric can never pick the diverged setting.
+    best = min((good, bad), key=lambda row: float(row[Metric.SLICED_W2.value]))
+    assert best is good
+
+    driver.cmd_tune(args)  # same columns: appends
+    with open(path, encoding="utf-8") as handle:
+        assert len(list(csv.DictReader(handle))) == 4
+    path.write_text("inflation,seconds\n1.0,0.1\n")  # an older layout
+    with pytest.raises(ValueError, match="has columns"):
+        driver.cmd_tune(args)
+
+
+def test_reference_refuses_other_replicate_counts(tiny_case, monkeypatch):
+    tiny_case.evaluation.reference_replicates = 3
+    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    with pytest.raises(ValueError, match="reference_replicates must be 2"):
+        driver.cmd_reference(SimpleNamespace(split="test", workers=1))
