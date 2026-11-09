@@ -57,8 +57,8 @@ def test_config_blocks_hold_every_knob_and_m50():
 
 @pytest.mark.parametrize("name", CELLS)
 def test_cell_runs_and_writes_the_generative_metrics(small, name):
-    records = driver.evaluate_cell(name, 0, small)
-    reference = driver.evaluate_cell("fm_ode", 0, small)
+    records = driver.evaluate_cell(name, 0, small, allow_other_m=True)
+    reference = driver.evaluate_cell("fm_ode", 0, small, allow_other_m=True)
     assert {r.metric for r in records} == {r.metric for r in reference}
     expected = {
         Metric.MEAN_ERROR_VS_PF.value,
@@ -77,7 +77,7 @@ def test_cell_runs_and_writes_the_generative_metrics(small, name):
     method, variant = driver.CELLS[name]
     assert all(r.method == method.value and r.variant == variant for r in records)
     assert all(r.M == STEPS and r.E == small.evaluation.ensemble_size for r in records)
-    assert driver.cell_path("per_step", name, 0).exists()
+    assert driver.cell_file("per_step", name, 0, small).exists()
 
 
 @pytest.mark.parametrize("name", CELLS)
@@ -208,7 +208,7 @@ def test_only_the_sda_divergence_error_counts_as_diverged(small, monkeypatch):
     monkeypatch.setattr(generative, "assimilate", failing(diverged))
     out = run(small, "sda")
     assert torch.isnan(out.ensembles).all() and out.nfe is None
-    records = driver.evaluate_cell("sda", 0, small)
+    records = driver.evaluate_cell("sda", 0, small, allow_other_m=True)
     steps = next(r.value for r in records if r.metric == driver.DIVERGED_STEPS)
     assert steps == 2 * small.problem.num_steps
     with pytest.raises(FloatingPointError):  # the same error from another cell

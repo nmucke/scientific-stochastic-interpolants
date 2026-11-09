@@ -110,7 +110,7 @@ def test_config_blocks_are_complete_at_fixed_m():
 
 @pytest.mark.parametrize("name", SMC_CELLS)
 def test_smc_cell_runs_and_writes_ess_records(tiny_case, name):
-    records = driver.evaluate_cell(name, 0, tiny_case)
+    records = driver.evaluate_cell(name, 0, tiny_case, allow_other_m=True)
     metrics = {record.metric for record in records}
     assert {
         Metric.MEAN_ERROR_VS_PF.value,
@@ -132,11 +132,11 @@ def test_smc_cell_runs_and_writes_ess_records(tiny_case, name):
             if record.metric != SMC_RESAMPLES:
                 assert 0.0 < record.value <= 1.0 + 1e-9
     per_sequence = json.loads(
-        driver.cell_path("per_sequence", name, 0).with_suffix(".json").read_text()
+        driver.cell_file("per_sequence", name, 0, tiny_case).with_suffix(".json").read_text()
     )
     for key in SMC_KEYS:
         assert len(per_sequence[key]) == 2
-    with open(driver.cell_path("per_step", name, 0), encoding="utf-8") as handle:
+    with open(driver.cell_file("per_step", name, 0, tiny_case), encoding="utf-8") as handle:
         rows = [r for r in csv.DictReader(handle) if r["metric"] in SMC_KEYS]
     assert {(r["metric"], r["step"]) for r in rows} == {
         (key, str(step)) for key in SMC_KEYS for step in range(2)

@@ -146,12 +146,12 @@ KL_KNN = "kl_knn"
 ENERGY_DISTANCE = "energy_distance"
 # Every generative method runs exactly this many SDE/ODE steps per assimilation step
 # (D-Flow: SGLD steps) in tuning, fixed by design and not tuned: `tune` refuses any
-# other value unless --allow-other-m is passed (check_fixed_m).
+# other value unless --allow-other-m is passed (check_m).
 FIXED_NUM_STEPS = 50
 # The final grids additionally run every generative cell at these M (convergence in
 # the number of SDE/ODE steps), with the knobs tuned at FIXED_NUM_STEPS. Only
 # `cell --num-steps` reaches them; `tune` stays at FIXED_NUM_STEPS.
-SWEEP_NUM_STEPS = (25, 50, 100, 250)
+M_VALUES = SWEEP_NUM_STEPS = (25, 50, 100, 250)
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
@@ -854,7 +854,7 @@ def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
         run = pf.run(problem.model, x0.T.contiguous(), seq.observations, gen)
         out.append(run.samples)
         smc.append(pf_smc_record(run.ess, run.num_particles))
-    return CellOutput(torch.stack(out), time.time() - start, None, members, None, smc)
+    return CellOutput(torch.stack(out), time.time() - start, None, members, None, smc=smc)
 
 
 def run_subsample(problem, sequences, split, seed, members) -> CellOutput:
@@ -992,12 +992,17 @@ def evaluate_cell(
     overrides=None,
     tag: str = "",
     num_steps: int | None = None,
+    allow_other_m: bool = False,
+    write_metrics: bool = False,
 ) -> list[ResultRecord]:
-    """Run and score one (method, seed); writes per-step rows and the ensembles.
+    """Run and score one (method, seed); writes per-step rows and the ensembles
+    (and, with ``write_metrics``, the tidy metrics file ``cell`` writes).
 
     ``num_steps`` sets M of a generative cell (one with a ``num_steps`` setting);
-    it is refused for the others. A generative cell's output paths carry its M
-    (:func:`cell_path`), so the cells of the M sweep never overwrite each other.
+    it is refused for the others. M comes from the cell's settings: it must be in
+    :data:`M_VALUES` unless ``allow_other_m`` (:func:`check_m`), and a generative
+    cell's output paths carry it (:func:`cell_file`), so the cells of the M sweep
+    never overwrite each other.
 
     ``overrides`` are ``key=value`` strings applied to the cell's settings (see
     :func:`apply_overrides`); they need a ``tag``, which goes into every output
@@ -1006,8 +1011,13 @@ def evaluate_cell(
     """
     check_tag(name, tag, overrides)
     cfg = case_config() if cfg is None else cfg
+    settings = cell_settings(cfg, name, overrides, num_steps)
+    if not allow_other_m:
+        check_m(name, settings, M_VALUES)
+    check_correction_label(name, settings, tag)
     problem = problem_of(cfg)
     obs = problem.obs_label
+    m = settings.get("num_steps")
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
     variant = tagged_variant(variant, tag)
@@ -1015,9 +1025,6 @@ def evaluate_cell(
     innovations = None
     oracle_ess = None
     smc = None
-    settings = with_num_steps(name, apply_overrides(method_settings(cfg, name), overrides), num_steps)
-    check_correction_label(name, settings, tag)
-    m = settings.get("num_steps")
 
     if name == "pf_reference":
         # The second replicate against the first: the error of the reference itself.
@@ -1123,6 +1130,12 @@ def evaluate_cell(
         records.append(ResultRecord(metric=Metric.NFE.value, value=nfe, **common))
     diverged = float(count_diverged_steps(scores))
     records.append(ResultRecord(metric=DIVERGED_STEPS, value=diverged, **common))
+    if write_metrics:
+        path = cell_path("metrics", name, seed, tag, obs, m)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+        with ResultsWriter(path) as writer:
+            writer.extend(records)
     return records
 
 
@@ -1199,11 +1212,26 @@ def cell_path(
     """``lorenz96__<cell>[-<tag>][__M<M>]__traj<seed>__.csv`` under the sweep's root.
 
     Generative cells pass their M; M-independent cells (EnKF, PFs, oracle) have none.
+    Callers that have a config use :func:`cell_file`, which takes M from the settings.
     """
     # common.aggregate_lib buckets files by this token; here a bucket is a seed.
-    # run_lorenz96_grid.sh builds the untagged metrics path itself; keep them equal.
     label = cell_label(name, tag, num_steps)
     return results_dir(obs) / kind / f"lorenz96__{label}__traj{seed}__.csv"
+
+
+def cell_settings(cfg, name: str, overrides=None, num_steps: int | None = None) -> dict:
+    """The settings a cell runs with: its config block, ``overrides``, then M."""
+    return with_num_steps(name, apply_overrides(method_settings(cfg, name), overrides), num_steps)
+
+
+def cell_file(
+    kind: str, name: str, seed: int, cfg, tag: str = "", overrides=None,
+    num_steps: int | None = None,
+) -> Path:
+    """The output file of a cell run with these arguments (as :func:`evaluate_cell`
+    writes it): M comes from the cell's settings, so no caller passes it by hand."""
+    m = cell_settings(cfg, name, overrides, num_steps).get("num_steps")
+    return cell_path(kind, name, seed, tag, problem_of(cfg).obs_label, m)
 
 
 def with_num_steps(name: str, settings: dict, num_steps: int | None) -> dict:
@@ -1215,12 +1243,17 @@ def with_num_steps(name: str, settings: dict, num_steps: int | None) -> dict:
     return {**settings, "num_steps": int(num_steps)}
 
 
-def check_sweep_m(name: str, settings: dict) -> None:
-    """Refuse an M outside :data:`SWEEP_NUM_STEPS` and a decoupled forecast M."""
+def check_m(name: str, settings: dict, allowed) -> None:
+    """Refuse an M (``num_steps``) outside ``allowed`` and a decoupled forecast M.
+
+    ``tune`` allows the tuning M only, ``cell`` every M of the sweep. The
+    correction's ``forecast_num_steps`` must be null (the forecasts run at the
+    sampler's M), so a stray override cannot mix step counts into the tables.
+    """
     steps = settings.get("num_steps")
-    if steps is not None and int(steps) not in SWEEP_NUM_STEPS:
+    if steps is not None and int(steps) not in tuple(allowed):
         raise ValueError(
-            f"{name}: num_steps={steps}, but the final grid runs M in {SWEEP_NUM_STEPS}; "
+            f"{name}: num_steps={steps}, but this run allows M in {tuple(allowed)}; "
             "pass --allow-other-m to run it anyway."
         )
     forecast = settings.get("correction", {}).get("forecast_num_steps")
@@ -1231,52 +1264,18 @@ def check_sweep_m(name: str, settings: dict) -> None:
         )
 
 
-def check_fixed_m(name: str, settings: dict) -> None:
-    """Refuse a step count other than :data:`FIXED_NUM_STEPS`.
-
-    Checks ``num_steps`` and ``correction.forecast_num_steps`` (``None`` means the
-    sampler's M), so a stray override cannot mix step counts into the tables.
-    """
-    steps = settings.get("num_steps")
-    if steps is not None and int(steps) != FIXED_NUM_STEPS:
-        raise ValueError(
-            f"{name}: num_steps={steps}, but this case runs every generative method at "
-            f"M={FIXED_NUM_STEPS}; pass --allow-other-m to run it anyway."
-        )
-    forecast = settings.get("correction", {}).get("forecast_num_steps")
-    if forecast is not None and int(forecast) != FIXED_NUM_STEPS:
-        raise ValueError(
-            f"{name}: correction.forecast_num_steps={forecast}, but the forecasts run at "
-            f"M={FIXED_NUM_STEPS} (null); pass --allow-other-m to run it anyway."
-        )
-
-
 def cmd_cell(args) -> None:
     torch.set_num_threads(args.threads)
-    tag = getattr(args, "tag", "")
-    obs = getattr(args, "obs", "linear")
-    cfg = config_of(args)
-    num_steps = getattr(args, "num_steps", None)
-    settings = with_num_steps(
-        args.method,
-        apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None)),
-        num_steps,
-    )
-    if not getattr(args, "allow_other_m", False):
-        check_sweep_m(args.method, settings)
     records = evaluate_cell(
         args.method,
         args.seed,
-        cfg,
+        config_of(args),
         overrides=getattr(args, "set", None),
-        tag=tag,
-        num_steps=num_steps,
+        tag=getattr(args, "tag", ""),
+        num_steps=getattr(args, "num_steps", None),
+        allow_other_m=getattr(args, "allow_other_m", False),
+        write_metrics=True,
     )
-    path = cell_path("metrics", args.method, args.seed, tag, obs, settings.get("num_steps"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.unlink(missing_ok=True)
-    with ResultsWriter(path) as writer:
-        writer.extend(records)
     for record in records:
         print(f"{record.metric:20s} {record.value:.4f}", flush=True)
 
@@ -1317,7 +1316,7 @@ def cmd_tune(args) -> None:
                 base, [f"{key}={json.dumps(value)}" for key, value in override.items()]
             )
             if not getattr(args, "allow_other_m", False):
-                check_fixed_m(args.method, settings)
+                check_m(args.method, settings, (FIXED_NUM_STEPS,))
             output = run_method(
                 cfg,
                 args.method,

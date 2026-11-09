@@ -228,7 +228,7 @@ def tiny_case(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("name", sorted(driver.CELLS))
 def test_every_cell_runs_and_writes_tidy_records(tiny_case, name):
-    records = driver.evaluate_cell(name, 0, tiny_case)
+    records = driver.evaluate_cell(name, 0, tiny_case, allow_other_m=True, write_metrics=True)
     metrics = {record.metric for record in records}
     assert {Metric.MEAN_ERROR_VS_PF.value, Metric.RMSE.value} <= metrics
     assert all(record.seed == 0 for record in records)
@@ -237,8 +237,8 @@ def test_every_cell_runs_and_writes_tidy_records(tiny_case, name):
         assert nfe >= tiny_case.methods[name].num_steps
     if name != "pf_reference":
         assert {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ} <= metrics
-    assert driver.cell_path("metrics", name, 0).name.endswith("__traj0__.csv")
-    assert driver.cell_path("per_step", name, 0).exists()
+    assert driver.cell_file("metrics", name, 0, tiny_case).exists()
+    assert driver.cell_file("per_step", name, 0, tiny_case).exists()
 
 
 def test_reference_for_another_system_is_refused(tiny_case):
@@ -269,8 +269,8 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     import make_lorenz96_figures
 
     root = tmp_path / "root"
-    (root / "lorenz96").mkdir(parents=True)
-    (root / "lorenz96" / "linear").symlink_to(tmp_path)  # the linear sweep root
+    root.mkdir()
+    (root / "lorenz96").symlink_to(tmp_path)  # driver.RESULTS: holds the linear sweep root
     monkeypatch.setattr(aggregate_lorenz96, "RESULTS", root)
     monkeypatch.setattr(make_lorenz96_figures, "RESULTS", root)
     for name, seed in (("enkf", 0), ("enkf", 1), ("pf_reference", 0)):
@@ -370,7 +370,7 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
     monkeypatch.setattr(generative, "assimilate", failing(drift))
     out = driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
     assert torch.isnan(out.ensembles).all() and out.nfe is None
-    records = driver.evaluate_cell("dm_sde", 0, tiny_case)
+    records = driver.evaluate_cell("dm_sde", 0, tiny_case, allow_other_m=True)
     diverged = next(r.value for r in records if r.metric == driver.DIVERGED_STEPS)
     assert diverged == 2 * problem.num_steps
     assert Metric.NFE.value not in {r.metric for r in records}
@@ -788,7 +788,7 @@ def test_a_tag_cannot_reuse_an_untagged_cell_label():
 def test_a_disabled_correction_cell_needs_a_tag(tiny_case):
     tiny_case.methods.si_sde_fc.correction.enabled = False
     with pytest.raises(ValueError, match="enabled=false"):
-        driver.evaluate_cell("si_sde_fc", 0, tiny_case)
+        driver.evaluate_cell("si_sde_fc", 0, tiny_case, allow_other_m=True)
     off = {"correction": {"enabled": False}}
     driver.check_correction_label("si_sde_fc", off, "off")
     driver.check_correction_label("si_sde", off, "")

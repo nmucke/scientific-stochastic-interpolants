@@ -484,7 +484,7 @@ def tiny_arctan(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name", sorted(driver.CELLS))
 def test_every_cell_runs_on_the_arctan_case_and_is_deterministic(tiny_arctan, name, tmp_path):
     torch.set_num_threads(2)
-    records = driver.evaluate_cell(name, 0, tiny_arctan)
+    records = driver.evaluate_cell(name, 0, tiny_arctan, allow_other_m=True)
     metrics = {record.metric for record in records}
     assert {Metric.MEAN_ERROR_VS_PF.value, Metric.RMSE.value} <= metrics
     assert {record.scenario for record in records} == {"lorenz96_arctan"}
@@ -494,7 +494,8 @@ def test_every_cell_runs_on_the_arctan_case_and_is_deterministic(tiny_arctan, na
     if name in ("oracle", "oracle_fc"):
         ess = {r.metric: r.value for r in records}
         assert 1.0 <= ess[driver.ORACLE_ESS_MIN] <= ess[driver.ORACLE_ESS_MEAN] <= 64
-    assert driver.cell_path("per_step", name, 0, obs="arctan").exists()
+    assert driver.cell_file("per_step", name, 0, tiny_arctan).exists()
+    assert driver.cell_file("per_step", name, 0, tiny_arctan).parent == tmp_path / "arctan" / "per_step"
     assert not (tmp_path / "linear").exists()
     if name == "pf_reference":
         return
@@ -516,7 +517,7 @@ def test_arctan_samplers_take_the_arctan_observation_model(tiny_arctan, monkeypa
         return out
 
     monkeypatch.setattr(generative, "observation_model", spy)
-    driver.evaluate_cell("si_sde_fc", 0, tiny_arctan)
+    driver.evaluate_cell("si_sde_fc", 0, tiny_arctan, allow_other_m=True)
     assert seen and all(isinstance(o.operator, StandardisedArctanOperator) for o in seen)
     assert all(o.variance == 4.0 for o in seen)
 
