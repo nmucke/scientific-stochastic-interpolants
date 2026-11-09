@@ -44,9 +44,8 @@ GRIDS=(
   # if the SURGE cells do not read likelihood_mode / jacobian_damping).
   '2|surge_si_sde|si_sde|{"ess_threshold":[0.25,0.5,1.0]}'
   '2|surge_dm_sde|dm_sde|{"ess_threshold":[0.25,0.5,1.0]}'
-  '2|surge_unguided||{"ess_threshold":[0.25,0.5,1.0]}'
-  # PLACEHOLDER, if the SURGE cells expose particles per member:
-  # '2|surge_si_sde|si_sde|{"ess_threshold":[0.25,0.5,1.0],"particles_per_member":[1,2,4]}'
+  '2|surge_unguided_si||{"ess_threshold":[0.25,0.5,1.0]}'
+  '2|surge_unguided_dm||{"ess_threshold":[0.25,0.5,1.0]}'
   '2|surge_flowdas|flowdas|{"guidance_scale":{"times":[0.25,1,4]},"ess_threshold":[0.5,1.0]}'
   '2|surge_sda|sda|{"gamma_sda":{"times":[0.1,1,10]},"ess_threshold":[0.5,1.0]}'
 )

@@ -475,9 +475,9 @@ def test_tune_stage2_uses_the_stage1_picks(dry):
     assert proc.returncode == 0, proc.stderr
     tunes = {c.split("--method ")[1].split()[0]: c for c in calls if " tune " in f" {c} "}
     assert set(tunes) == {"si_sde_fc", "fm_ode_fc", "dm_sde_fc", "surge_si_sde", "surge_dm_sde",
-                          "surge_unguided", "surge_flowdas", "surge_sda"}
+                          "surge_unguided_si", "surge_unguided_dm", "surge_flowdas", "surge_sda"}
     assert "--set jacobian_damping=0.95 --set likelihood_mode=\"inflated\"" in tunes["si_sde_fc"]
-    assert "--set" not in tunes["surge_unguided"] and "--set" not in tunes["surge_flowdas"]
+    assert "--set" not in tunes["surge_unguided_si"] and "--set" not in tunes["surge_flowdas"]
     grid = json.loads(tunes["surge_flowdas"].split("--grid ")[1].split()[0])
     assert grid["guidance_scale"] == pytest.approx([0.016, 0.064, 0.256])
     grid = json.loads(tunes["surge_sda"].split("--grid ")[1].split()[0])

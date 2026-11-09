@@ -32,7 +32,7 @@ GENERATIVE_CELLS=(
   si_sde fm_ode dm_sde
   si_sde_fc fm_ode_fc dm_sde_fc prior_enkf prior_enkf_fm
   # SURGE (SMC) on our samplers, and the unguided SURGE control
-  surge_si_sde surge_dm_sde surge_unguided
+  surge_si_sde surge_dm_sde surge_unguided_si surge_unguided_dm
   # generative baselines
   flowdas surge_flowdas sda surge_sda dflow fig
 )

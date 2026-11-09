@@ -55,6 +55,7 @@ sys.path.insert(0, str(_here.parents[1]))
 
 from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
 from cases.lorenz96._l96_smc import SMC_KEYS, SURGE_CELLS, pf_smc_record  # noqa: E402
+from cases.lorenz96._l96_divergence import energy_distance, knn_kl  # noqa: E402
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
     OBS_OPERATORS,
@@ -140,10 +141,17 @@ NO_INITIAL_ENSEMBLE = ("pf_subsample",)
 TUNABLE = tuple(name for name in CELLS if name not in NO_SETTINGS)
 # (sequence, step) entries with a non-finite score; in practice fewer than two members left.
 DIVERGED_STEPS = "diverged_steps"
+# Per-step distances of the ensemble to the PF draws (_l96_divergence).
+KL_KNN = "kl_knn"
+ENERGY_DISTANCE = "energy_distance"
 # Every generative method runs exactly this many SDE/ODE steps per assimilation step
-# (D-Flow: SGLD steps), fixed by design and not tuned. `cell` and `tune` refuse any
+# (D-Flow: SGLD steps) in tuning, fixed by design and not tuned: `tune` refuses any
 # other value unless --allow-other-m is passed (check_fixed_m).
 FIXED_NUM_STEPS = 50
+# The final grids additionally run every generative cell at these M (convergence in
+# the number of SDE/ODE steps), with the knobs tuned at FIXED_NUM_STEPS. Only
+# `cell --num-steps` reaches them; `tune` stays at FIXED_NUM_STEPS.
+SWEEP_NUM_STEPS = (25, 50, 100, 250)
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
@@ -370,6 +378,16 @@ def score(mean, variance, samples, reference, truth) -> dict[str, list[float]]:
             nan
             if draws is None
             else sliced_wasserstein_w2(draws, reference["samples"][t].double())
+            for t, draws in enumerate(usable)
+        ],
+        # Nonparametric distances to the PF draws (_l96_divergence): KL(PF || ensemble)
+        # by 1-NN (biased at E = 64; pf_subsample gives the floor) and energy distance.
+        KL_KNN: [
+            nan if draws is None else knn_kl(reference["samples"][t].double(), draws)
+            for t, draws in enumerate(usable)
+        ],
+        ENERGY_DISTANCE: [
+            nan if draws is None else energy_distance(draws, reference["samples"][t].double())
             for t, draws in enumerate(usable)
         ],
         Metric.RMSE.value: (mean - truth).pow(2).mean(-1).sqrt().tolist(),
@@ -973,8 +991,13 @@ def evaluate_cell(
     split: str = "test",
     overrides=None,
     tag: str = "",
+    num_steps: int | None = None,
 ) -> list[ResultRecord]:
     """Run and score one (method, seed); writes per-step rows and the ensembles.
+
+    ``num_steps`` sets M of a generative cell (one with a ``num_steps`` setting);
+    it is refused for the others. A generative cell's output paths carry its M
+    (:func:`cell_path`), so the cells of the M sweep never overwrite each other.
 
     ``overrides`` are ``key=value`` strings applied to the cell's settings (see
     :func:`apply_overrides`); they need a ``tag``, which goes into every output
@@ -992,8 +1015,9 @@ def evaluate_cell(
     innovations = None
     oracle_ess = None
     smc = None
-    settings = apply_overrides(method_settings(cfg, name), overrides)
+    settings = with_num_steps(name, apply_overrides(method_settings(cfg, name), overrides), num_steps)
     check_correction_label(name, settings, tag)
+    m = settings.get("num_steps")
 
     if name == "pf_reference":
         # The second replicate against the first: the error of the reference itself.
@@ -1030,7 +1054,7 @@ def evaluate_cell(
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
         oracle_ess = output.oracle_ess
         smc = output.smc
-        path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
+        path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag, m)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(output.ensembles.float(), path)
         # Cost on equal terms: one sequence at this method's ensemble size, whereas
@@ -1073,13 +1097,13 @@ def evaluate_cell(
         curves[ORACLE_ESS_MIN] = oracle_ess.amin((0, 2)).tolist()
         per_sequence[ORACLE_ESS_MEAN] = oracle_ess.mean((1, 2)).tolist()
         per_sequence[ORACLE_ESS_MIN] = oracle_ess.amin((1, 2)).tolist()
-    per_step_file = cell_path("per_step", name, seed, tag, obs)
+    per_step_file = cell_path("per_step", name, seed, tag, obs, m)
     per_step_file.parent.mkdir(parents=True, exist_ok=True)
     per_step_file.unlink(missing_ok=True)
     append_per_step(
         per_step_file, per_step_rows(test_index=-1, per_step=curves, **common)
     )
-    sequence_file = cell_path("per_sequence", name, seed, tag, obs).with_suffix(".json")
+    sequence_file = cell_path("per_sequence", name, seed, tag, obs, m).with_suffix(".json")
     sequence_file.parent.mkdir(parents=True, exist_ok=True)
     sequence_file.write_text(json.dumps(per_sequence))
 
@@ -1163,14 +1187,48 @@ def tagged_variant(variant: str | None, tag: str) -> str | None:
     return f"{variant}_{tag}" if variant else tag
 
 
-def cell_label(name: str, tag: str = "") -> str:
-    return f"{name}-{tag}" if tag else name
+def cell_label(name: str, tag: str = "", num_steps: int | None = None) -> str:
+    """``<cell>[-<tag>][__M<M>]``: the file-name stem of a cell's outputs."""
+    label = f"{name}-{tag}" if tag else name
+    return label if num_steps is None else f"{label}__M{int(num_steps)}"
 
 
-def cell_path(kind: str, name: str, seed: int, tag: str = "", obs: str = "linear") -> Path:
+def cell_path(
+    kind: str, name: str, seed: int, tag: str = "", obs: str = "linear", num_steps: int | None = None
+) -> Path:
+    """``lorenz96__<cell>[-<tag>][__M<M>]__traj<seed>__.csv`` under the sweep's root.
+
+    Generative cells pass their M; M-independent cells (EnKF, PFs, oracle) have none.
+    """
     # common.aggregate_lib buckets files by this token; here a bucket is a seed.
     # run_lorenz96_grid.sh builds the untagged metrics path itself; keep them equal.
-    return results_dir(obs) / kind / f"lorenz96__{cell_label(name, tag)}__traj{seed}__.csv"
+    label = cell_label(name, tag, num_steps)
+    return results_dir(obs) / kind / f"lorenz96__{label}__traj{seed}__.csv"
+
+
+def with_num_steps(name: str, settings: dict, num_steps: int | None) -> dict:
+    """``settings`` with M set to ``num_steps``; refused for a cell without an M."""
+    if num_steps is None:
+        return settings
+    if "num_steps" not in settings:
+        raise ValueError(f"{name} has no SDE/ODE steps; --num-steps does not apply.")
+    return {**settings, "num_steps": int(num_steps)}
+
+
+def check_sweep_m(name: str, settings: dict) -> None:
+    """Refuse an M outside :data:`SWEEP_NUM_STEPS` and a decoupled forecast M."""
+    steps = settings.get("num_steps")
+    if steps is not None and int(steps) not in SWEEP_NUM_STEPS:
+        raise ValueError(
+            f"{name}: num_steps={steps}, but the final grid runs M in {SWEEP_NUM_STEPS}; "
+            "pass --allow-other-m to run it anyway."
+        )
+    forecast = settings.get("correction", {}).get("forecast_num_steps")
+    if forecast is not None:
+        raise ValueError(
+            f"{name}: correction.forecast_num_steps={forecast}, but the forecasts run at "
+            "the sampler's M (null); pass --allow-other-m to run it anyway."
+        )
 
 
 def check_fixed_m(name: str, settings: dict) -> None:
@@ -1198,15 +1256,23 @@ def cmd_cell(args) -> None:
     tag = getattr(args, "tag", "")
     obs = getattr(args, "obs", "linear")
     cfg = config_of(args)
-    if not getattr(args, "allow_other_m", False):
-        check_fixed_m(
-            args.method,
-            apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None)),
-        )
-    records = evaluate_cell(
-        args.method, args.seed, cfg, overrides=getattr(args, "set", None), tag=tag
+    num_steps = getattr(args, "num_steps", None)
+    settings = with_num_steps(
+        args.method,
+        apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None)),
+        num_steps,
     )
-    path = cell_path("metrics", args.method, args.seed, tag, obs)
+    if not getattr(args, "allow_other_m", False):
+        check_sweep_m(args.method, settings)
+    records = evaluate_cell(
+        args.method,
+        args.seed,
+        cfg,
+        overrides=getattr(args, "set", None),
+        tag=tag,
+        num_steps=num_steps,
+    )
+    path = cell_path("metrics", args.method, args.seed, tag, obs, settings.get("num_steps"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     with ResultsWriter(path) as writer:
@@ -1465,9 +1531,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cell.add_argument("--threads", type=int, default=2)
     cell.add_argument(
+        "--num-steps",
+        type=int,
+        default=None,
+        help=f"M of a generative cell, one of {SWEEP_NUM_STEPS} (default: the config's, "
+        f"{FIXED_NUM_STEPS}); refused for cells without SDE/ODE steps",
+    )
+    cell.add_argument(
         "--allow-other-m",
         action="store_true",
-        help=f"allow num_steps other than the fixed M={FIXED_NUM_STEPS}",
+        help=f"allow num_steps outside {SWEEP_NUM_STEPS}",
     )
     cell.set_defaults(func=cmd_cell)
     quality = sub.add_parser("prior-quality")

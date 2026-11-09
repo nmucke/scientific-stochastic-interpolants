@@ -22,7 +22,7 @@ OBS_CHOICES: tuple[str, ...] = ("linear", "arctan")
 # Tidy ``scenario`` per sweep (results_schema.Scenario values).
 SCENARIO_OF: dict[str, str] = {"linear": "lorenz96", "arctan": "lorenz96_arctan"}
 
-# Per-step and per-sequence metrics written by the SMC cells only (the five SURGE
+# Per-step and per-sequence metrics written by the SMC cells only (the six SURGE
 # cells and pf_matched); every other row leaves these table columns blank.
 SMC_ESS_FRACTION = "smc_ess_fraction"
 SMC_ESS_MIN_FRACTION = "smc_ess_min_fraction"
@@ -85,8 +85,10 @@ ROWS: tuple[Row, ...] = (
     Row("dm_sde_fc", DM, FC, "ours", "+ correction", "#009E73", "--"),
     Row("surge_si_sde", SI, "surge", "ours", "+ SURGE", "#0072B2", ":", smc=True),
     Row("surge_dm_sde", DM, "surge", "ours", "+ SURGE", "#009E73", ":", smc=True),
-    # The unguided SURGE control; its tidy label is an assumption (see README).
-    Row("surge_unguided", "SURGE", "unguided", "ours", "unguided control", "#999999", ":", smc=True),
+    # The same SURGE SMC proposing from the unguided prior, one per wrapped prior
+    # (the multistep convention): the ablation of the wrapped sampler.
+    Row("surge_unguided_si", SI, "surge_unguided", "ours", "SURGE, unguided", "#0072B2", "-.", smc=True),
+    Row("surge_unguided_dm", DM, "surge_unguided", "ours", "SURGE, unguided", "#009E73", "-.", smc=True),
     Row("flowdas", "FlowDAS", "", "baselines", "", "#882255", "-"),
     Row("surge_flowdas", "SURGE (FlowDAS)", "", "baselines", "", "#882255", ":", smc=True),
     Row("sda", "SDA", "", "baselines", "", "#44AA99", "-"),
