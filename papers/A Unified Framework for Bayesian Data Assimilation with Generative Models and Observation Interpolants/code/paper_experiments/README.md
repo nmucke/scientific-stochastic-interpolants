@@ -42,13 +42,14 @@ paper_experiments/
   run.py                     # hydra entrypoint: run a case driver -> tidy file
   configs/                   # mirrors paper/configs conventions
     benchmark.yaml           #   defaults: case + method + scenario
-    case/                    #   analytical, navier_stokes, urban
+    case/                    #   analytical, navier_stokes, urban, lorenz96
     method/                  #   si_sde, dm_sde, fm_ode + baselines
     scenario/                #   superres_32/16, sparse_5/1p5
   cases/
     analytical/              # Case 1 driver + README (closed-form posterior)
     navier_stokes/           # Case 2 driver + README (learned prior, main bench)
     urban/                   # Case 3 driver + README (uDALES, multi-variable)
+    lorenz96/                # Case 4 driver + README (particle-filter reference)
   common/
     seeding.py               # fixed seed list + per-(scenario,test,seed) seeds
     aggregation.py           # mean +/- std over seeds (reproducibility Sec 9)
@@ -67,6 +68,7 @@ paper_experiments/
 | 1b. Sequential linear–Gaussian | `cases/analytical` (`multistep.py`) | tracking of the Kalman filter over `K` cycles, no training | `generated/tab_analytical_multistep.tex`, `analytical_multistep_error_vs_step` |
 | 2. Stochastic Navier–Stokes | `cases/navier_stokes` | learned prior, high-dim chaotic, the main benchmark | `tab:ns_accuracy`, `tab:ns_calibration_cost`, `tab:ablation`, `fig:ns_trajectories`, `fig:ns_diagnostics` |
 | 3. Urban airflow (uDALES) | `cases/urban` | multi-variable applied realism, solid obstacles; **generative-only, sparse-only, no KL/energy** | `tab:urban_accuracy`, `tab:urban_calibration_cost`, `fig:urban_fields` |
+| 4. Stochastic Lorenz 96 | `cases/lorenz96` | learned priors against a converged particle-filter reference; review addition, in no table of the paper yet | none |
 
 Each case folder has its own `README.md` with the deliverables and TODO seams.
 

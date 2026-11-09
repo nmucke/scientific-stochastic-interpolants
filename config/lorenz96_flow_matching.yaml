@@ -1,0 +1,64 @@
+experiment_tracking:
+  project: lorenz96
+
+len_field_history: 1
+data_path: data/lorenz96/data.npz
+batch_size: 1024
+
+# Trajectories [0, 3800) train, [3800, 4000) validate. Held-out assimilation
+# sequences come from their own seed label and are not in this file.
+train_data:
+  _target_: scisi.data.lorenz96.make_loader
+  path: ${data_path}
+  trajectories: [0, 3800]
+  batch_size: ${batch_size}
+  shuffle: true
+  max_samples: null
+
+val_data:
+  _target_: scisi.data.lorenz96.make_loader
+  path: ${data_path}
+  trajectories: [3800, 4000]
+  batch_size: 8192
+  shuffle: false
+  max_samples: 65536
+
+model:
+  _target_: scisi.models.flow_matching_model.FlowMatchingModel
+  interpolation:
+    _target_: scisi.models.interpolations.LinearDeterministicInterpolation
+  drift_model:
+    _target_: scisi.architectures.periodic_1d.PeriodicResNet1d
+    len_field_history: ${len_field_history}
+    hidden_channels: 96
+    num_blocks: 4
+    kernel_size: 7
+    cond_embedding_dim: 64
+
+optimizer:
+  _target_: torch.optim.AdamW
+  lr: 0.001
+  weight_decay: 0.000001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: ${trainer.num_epochs}
+  eta_min: 0.00001
+
+loss_fn:
+  _target_: torch.nn.MSELoss
+
+trainer:
+  _target_: scisi.training.trainer.Trainer
+  num_epochs: 8
+  device: auto # cuda, then mps, then cpu; resolved in cases/lorenz96/train.py
+  early_stopping:
+    _target_: scisi.training.trainer.EarlyStopping
+    patience: 8
+  gradient_clipper:
+    _target_: scisi.training.gradient_clipping.EmaGradientClipper
+    ema_coef1: 0.9
+    ema_coef2: 0.99
+    max_norm_ratio: 2.0
+    clip_norm_ratio: 1.1
+  mixed_precision_warmup: 0

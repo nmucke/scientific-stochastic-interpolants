@@ -38,11 +38,12 @@ from typing import ClassVar
 
 
 class Case(str, Enum):
-    """The three test cases. Value is the tidy-file ``case`` string."""
+    """The test cases. Value is the tidy-file ``case`` string."""
 
     ANALYTICAL = "analytical"
     NAVIER_STOKES = "navier_stokes"
     URBAN = "urban"
+    LORENZ96 = "lorenz96"
 
 
 # --------------------------------------------------------------------------- #
@@ -54,7 +55,8 @@ class Method(str, Enum):
     """Canonical method labels. Value is the tidy-file ``method`` string.
 
     These map 1:1 to the row labels in ``sections/results.tex`` (see
-    ``make_tables.METHOD_ROW_ORDER`` and ``METHOD_LATEX_LABEL``).
+    ``make_tables.METHOD_ROW_ORDER`` and ``METHOD_LATEX_LABEL``), except
+    ``ONE_STEP_ORACLE``, which appears in no table of the paper yet.
     """
 
     # ---- FINAL PAPER METHOD LINEUP -------------------------------------- #
@@ -83,6 +85,9 @@ class Method(str, Enum):
     LETKF = "LETKF"
     PARTICLE_FILTER = "Particle filter"
     ENSEMBLE_SCORE_FILTER = "Ensemble score filter"
+    # The exact one-step posterior drawn per member without reweighting, on the true
+    # model: what the samplers would produce with perfect networks (Lorenz 96 only).
+    ONE_STEP_ORACLE = "One-step oracle"
 
     # ---- DEPRECATED (kept for back-compat with old result files; NOT in the
     # final paper lineup, removed from the run registry in driver.NS_METHODS). #
@@ -122,6 +127,7 @@ class Scenario(str, Enum):
     # Its LINEAR control: same uvw sensors + noise draws, h = L.
     SPARSE_1p5_VEL = "sparse 1.5625% (uvw)"
     ANALYTICAL = "analytical"  # Case 1 has a single (joint) scenario.
+    LORENZ96 = "lorenz96"  # one observation network, fixed in configs/case/lorenz96.yaml
 
 
 NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
@@ -168,7 +174,12 @@ class Metric(str, Enum):
 
     # (c) Distributional fidelity.
     KL_POINTS = "kl_points"  # KL at points (fields + analytical)
-    SLICED_W2 = "sliced_w2"  # Case 1 full joint
+    SLICED_W2 = "sliced_w2"  # Case 1 full joint; Lorenz 96 per-step posterior vs PF
+    # Against the particle-filter posterior (Lorenz 96).
+    MEAN_ERROR_VS_PF = "mean_error_vs_pf"  # RMS over sites, in posterior std units
+    VAR_ERROR_VS_PF = "var_error_vs_pf"  # RMS over sites of log(var / var_pf)
+    SPREAD = "spread"  # mean ensemble std over sites
+    DIVERGED_FRACTION = "diverged_fraction"  # members lost per step, 0 = none
 
     # (d) Cost.
     NFE = "nfe"  # network evals per assimilation step

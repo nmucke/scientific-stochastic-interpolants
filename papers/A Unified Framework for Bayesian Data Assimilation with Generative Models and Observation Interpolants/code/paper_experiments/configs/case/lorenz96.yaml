@@ -1,0 +1,40 @@
+# Case 4 -- stochastic Lorenz 96 with a particle-filter reference. Changing the
+# problem block invalidates the convergence evidence of cases/lorenz96/pf_gate.py.
+name: lorenz96
+project: lorenz96
+
+problem:
+  dim_state: 16
+  forcing: 8.0
+  dt: 0.01
+  interval: 0.2       # time between observations
+  noise_std: 1.0      # additive model noise per interval
+  noise_stages: 1     # kernel N(Phi(x), noise_std^2 I): the optimal proposal is exact
+  obs_stride: 4       # every fourth site observed
+  obs_variance: 4.0
+  prior_std: 1.0
+  num_steps: 50       # assimilation steps per sequence
+
+# Trained priors, under checkpoints/lorenz96/.
+checkpoints:
+  si_run: si
+  fm_run: fm
+
+evaluation:
+  test_sequences: 12
+  validation_sequences: 4
+  ensemble_size: 64        # E, matched across generative methods and EnKF
+  enkf_large_size: 2000
+  seeds: [0, 1, 2]        # also read by run.py through Lorenz96Runner
+  device: auto             # samplers only: cuda, then mps, then cpu
+  reference_particles: 4000000
+  reference_replicates: 2  # the second one measures the reference's own error
+
+# NOT TUNED YET: these are defaults, not chosen values. Set them from `driver.py tune`
+# on the validation split only (see GPU_HANDOFF.md) before the final grid.
+methods:
+  enkf: {inflation: 1.0, localisation: null}
+  enkf_large: {inflation: 1.0, localisation: null}
+  si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
