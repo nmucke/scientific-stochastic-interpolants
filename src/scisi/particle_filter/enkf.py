@@ -2,14 +2,15 @@
 
 Model-agnostic: the forecast is any object exposing ``step(x, generator)`` on an
 ensemble ``[E, d]`` and the observation model is linear and Gaussian,
-``y = H x + eps``, ``eps ~ N(0, R)``.
+``y = H x + eps``, ``eps ~ N(0, R)``, or pointwise nonlinear, ``y = g(H x) + eps``
+(``obs_nonlinearity``; predicted observations and ensemble cross-covariances).
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 
@@ -70,6 +71,14 @@ class EnsembleKalmanFilter:
         inflation: Multiplicative factor on forecast anomalies; ``1.0`` is none.
         localisation: Optional ``[d, d]`` taper applied by Schur product to the
             forecast covariance (see :func:`periodic_taper`).
+        obs_nonlinearity: Optional elementwise ``g`` of ``y = g(H x) + eps``,
+            returning ``(g(w), g'(w))`` (only ``g`` is used). ``None`` keeps the
+            linear update exactly as it was. Otherwise the update is the
+            stochastic EnKF with predicted observations ``g(H x_i)``: the gain is
+            ``C_xy (C_yy + R)^-1`` from the ensemble cross-covariances, localised
+            by ``C_xy * (rho H')`` and ``C_yy * (H rho H')`` (an observation sits
+            where ``H`` reads it). For ``g`` the identity this equals the linear
+            update up to rounding.
     """
 
     def __init__(
@@ -78,11 +87,13 @@ class EnsembleKalmanFilter:
         obs_variance: float,
         inflation: float = 1.0,
         localisation: Optional[torch.Tensor] = None,
+        obs_nonlinearity: Optional[Callable] = None,
     ) -> None:
         self.H = obs_matrix
         self.obs_variance = float(obs_variance)
         self.inflation = float(inflation)
         self.localisation = localisation
+        self.obs_nonlinearity = obs_nonlinearity
 
     def analyse(
         self,
@@ -91,6 +102,8 @@ class EnsembleKalmanFilter:
         generator: Optional[torch.Generator] = None,
     ) -> torch.Tensor:
         """Update a forecast ensemble ``[E, d]`` with one observation ``[d_y]``."""
+        if self.obs_nonlinearity is not None:
+            return self._analyse_nonlinear(forecast, observation, generator)
         members = forecast.shape[0]
         H = self.H.to(forecast)
         mean = forecast.mean(0, keepdim=True)
@@ -111,6 +124,40 @@ class EnsembleKalmanFilter:
         eps = eps - eps.mean(0, keepdim=True)
         innovation = observation.to(forecast) - forecast @ H.T - eps
         return forecast + torch.linalg.solve(S, innovation.T).T @ PHt.T
+
+    def _analyse_nonlinear(
+        self,
+        forecast: torch.Tensor,
+        observation: torch.Tensor,
+        generator: Optional[torch.Generator] = None,
+    ) -> torch.Tensor:
+        """Stochastic EnKF with predicted observations ``g(H x_i)`` (class docstring).
+
+        Same random draws, in the same order, as the linear update.
+        """
+        members = forecast.shape[0]
+        H = self.H.to(forecast)
+        mean = forecast.mean(0, keepdim=True)
+        anomalies = self.inflation * (forecast - mean)
+        forecast = mean + anomalies
+
+        predicted = self.obs_nonlinearity(forecast @ H.T)[0]  # [E, d_y]
+        obs_anomalies = predicted - predicted.mean(0, keepdim=True)
+        Cxy = anomalies.T @ obs_anomalies / (members - 1)  # [d, d_y]
+        Cyy = obs_anomalies.T @ obs_anomalies / (members - 1)
+        if self.localisation is not None:
+            rho = self.localisation.to(Cxy)
+            Cxy = Cxy * (rho @ H.T)
+            Cyy = Cyy * (H @ rho @ H.T)
+        S = Cyy + self.obs_variance * torch.eye(
+            H.shape[0], dtype=forecast.dtype, device=forecast.device
+        )
+        eps = self.obs_variance**0.5 * torch.randn(
+            members, H.shape[0], generator=generator, dtype=forecast.dtype
+        )
+        eps = eps - eps.mean(0, keepdim=True)
+        innovation = observation.to(forecast) - predicted - eps
+        return forecast + torch.linalg.solve(S, innovation.T).T @ Cxy.T
 
     def run(
         self,

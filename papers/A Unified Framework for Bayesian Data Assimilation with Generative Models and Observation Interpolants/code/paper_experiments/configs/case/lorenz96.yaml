@@ -15,6 +15,21 @@ problem:
   prior_std: 1.0
   num_steps: 50       # assimilation steps per sequence
 
+# Observation operators, selected with `driver.py --obs <name>` / `pf_gate.py --obs
+# <name>` / `driver.case_config(obs=<name>)`, which put the entry into
+# `problem.observation` (linear adds nothing, so the linear problem, its data and its
+# references are exactly those above). Both act on the same sites L x (every
+# obs_stride-th) in PHYSICAL units, with the same noise N(0, obs_variance I), the same
+# truths and the same noise draws; only h differs. Results: results/lorenz96/<name>/.
+observations:
+  linear: {operator: linear}
+  # h(x) = arctan(c L x) / c with c = 1 / sigma_clim. sigma_clim = per-site
+  # climatological std of the training split of data/lorenz96/data.npz (trajectories
+  # 0-3799, all 1000 steps, 3.8M states): per site 3.9838 - 3.9900, pooled
+  # sqrt(mean_i var_i) = 3.986648 (the stored all-entries std is 3.986649). So
+  # c = 1 / 3.986648 = 0.2508373. Not tuned; no strength sweep.
+  arctan: {operator: arctan, strength: 0.2508373}
+
 # Trained priors, under checkpoints/lorenz96/.
 checkpoints:
   si_run: si
@@ -75,3 +90,28 @@ methods:
   # are the EnKF's validation optimum, not re-tuned for this cell.
   prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
   prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+
+# Settings of the arctan problem (`--obs arctan`), read instead of `methods:` by
+# driver.case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
+# block above (themselves untuned defaults); tune on the arctan validation split.
+# Keep one plain block per cell, as above, so a new cell is added by copying its
+# `methods:` line here.
+methods_arctan:
+  enkf: {inflation: 1.0, localisation: null}
+  enkf_large: {inflation: 1.0, localisation: null}
+  si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  # q_source exact linearises h at each group's forecast mean for K_q (library).
+  oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
+  prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
+  prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+
+# The arctan one-step oracle (`oracle`, `oracle_fc` with --obs arctan) has no closed
+# form: per member, `proposals` draws from the exact transition, weighted by
+# p(y | h(x)), one picked (ImportanceOneStepOracle). Its per-member ESS is recorded.
+oracle_arctan:
+  proposals: 4096

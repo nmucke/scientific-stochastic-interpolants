@@ -21,6 +21,14 @@ used to choose a setting: ``tune`` reads the validation split only.
 every output path (``<cell>-<tag>``) and into the tidy ``variant``
 (``<variant>_<tag>``), so a sweep never overwrites, or is aggregated as, the
 default cell.
+
+``--obs {linear,arctan}`` (before the subcommand, default ``linear``) selects the
+observation operator (``observations:`` in ``configs/case/lorenz96.yaml``) and with
+it the settings block (``methods:`` or ``methods_arctan:``). Every output of a
+problem lives under ``results/lorenz96/<obs>/``, so the two sweeps never mix:
+
+    python cases/lorenz96/driver.py --obs arctan reference --split validation
+    python cases/lorenz96/driver.py --obs arctan cell --method enkf --seed 0
 """
 
 from __future__ import annotations
@@ -45,9 +53,10 @@ from omegaconf import OmegaConf
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parents[1]))
 
-from cases.lorenz96.pf_gate import run_pf  # noqa: E402
+from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
+    OBS_OPERATORS,
     Problem,
     Sequence,
     draw_prior_ensemble,
@@ -71,6 +80,7 @@ from scisi.metrics.calibration import crps  # noqa: E402
 from scisi.metrics.distributional import sliced_wasserstein_w2  # noqa: E402
 from scisi.particle_filter.bootstrap import (  # noqa: E402
     BootstrapParticleFilter,
+    ImportanceOneStepOracle,
     OneStepPosteriorOracle,
 )
 from scisi.particle_filter.enkf import (  # noqa: E402
@@ -78,7 +88,7 @@ from scisi.particle_filter.enkf import (  # noqa: E402
     periodic_taper,
 )
 
-RESULTS = RESULTS_ROOT / "lorenz96"
+RESULTS = RESULTS_ROOT / "lorenz96"  # the case; every output is under RESULTS / <obs>
 SEED_LABEL = "lorenz96-evaluation"
 DATA_PATH = REPO_ROOT / "data/lorenz96/data.npz"
 DIVERGED_ABS = 100.0  # about 25 climatological standard deviations
@@ -127,10 +137,61 @@ FIXED_NUM_STEPS = 50
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
+# Per-member ESS of the importance-sampling oracle (arctan `oracle` / `oracle_fc`):
+# per step the mean and the minimum over members (and sequences).
+ORACLE_ESS_MEAN = "oracle_ess_mean"
+ORACLE_ESS_MIN = "oracle_ess_min"
+# Tidy scenario label of each observation operator.
+SCENARIOS = {"linear": Scenario.LORENZ96, "arctan": Scenario.LORENZ96_ARCTAN}
+# Settings block of each observation operator in configs/case/lorenz96.yaml.
+METHODS_KEY = {"linear": "methods", "arctan": "methods_arctan"}
 
 
-def case_config():
-    return OmegaConf.load(CASE_CONFIG)
+def case_config(obs: str = "linear"):
+    """The case config for observation operator ``obs`` (:func:`configure`)."""
+    return configure(OmegaConf.load(CASE_CONFIG), obs)
+
+
+def configure(cfg, obs: str = "linear"):
+    """Select observation operator ``obs`` in a loaded case config, in place.
+
+    ``linear`` leaves ``problem`` and ``methods`` as they are. Otherwise
+    ``problem.observation`` is set from ``observations.<obs>`` and ``methods`` is
+    replaced by ``methods_<obs>``, so :func:`method_settings` and every cell read
+    the settings of that problem. ``cfg.obs`` records the choice; configuring an
+    already configured config for another operator is refused.
+    """
+    if obs not in OBS_OPERATORS:
+        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
+    current = cfg.get("obs")
+    if current is not None:
+        if current != obs:
+            raise ValueError(f"config is already set up for obs={current!r}, not {obs!r}")
+        return cfg
+    if obs != "linear":
+        cfg.problem.observation = OmegaConf.to_container(cfg.observations[obs])
+        cfg.methods = cfg[METHODS_KEY[obs]]
+    cfg.obs = obs
+    return cfg
+
+
+def config_of(args):
+    """The case config of a command's ``--obs``. The linear config is fetched by a
+    plain ``case_config()`` call (as before the option existed)."""
+    obs = getattr(args, "obs", "linear")
+    return case_config() if obs == "linear" else case_config(obs)
+
+
+def obs_of(cfg) -> str:
+    """Observation operator of a (possibly unconfigured, i.e. linear) config."""
+    return problem_of(cfg).obs_label
+
+
+def results_dir(obs: str) -> Path:
+    """Root of every output of the ``obs`` problem: ``results/lorenz96/<obs>``."""
+    if obs not in OBS_OPERATORS:
+        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
+    return RESULTS / obs
 
 
 def problem_of(cfg) -> Problem:
@@ -195,19 +256,23 @@ def initial_ensemble(problem, sequence, members, split, index, seed) -> torch.Te
 # --------------------------------------------------------------------------- #
 
 
-def reference_path(split: str, index: int, replicate: int) -> Path:
-    return RESULTS / "reference" / split / f"sequence{index}_replicate{replicate}.pt"
+def reference_path(split: str, index: int, replicate: int, obs: str = "linear") -> Path:
+    return (
+        results_dir(obs) / "reference" / split / f"sequence{index}_replicate{replicate}.pt"
+    )
 
 
 def _reference_task(job) -> float:
     problem, sequence, split, index, replicate, particles = job
     torch.set_num_threads(1)
+    # The seed does not depend on the operator: the arctan reference reuses the
+    # linear one's random streams (its proposal, and so its draws, differ).
     seed = derive_seed(SEED_LABEL, "reference", split, index, replicate)
     start = time.time()
     # The gate's own filter, so its validity carries over by construction.
     run = run_pf(problem, sequence, particles, seed)
     seconds = time.time() - start
-    path = reference_path(split, index, replicate)
+    path = reference_path(split, index, replicate, problem.obs_label)
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         dict(
@@ -226,7 +291,7 @@ def _reference_task(job) -> float:
 
 
 def cmd_reference(args) -> None:
-    cfg = case_config()
+    cfg = config_of(args)
     problem = problem_of(cfg)
     sequences = load_sequences(problem, args.split, split_size(cfg, args.split))
     replicates = int(cfg.evaluation.reference_replicates)
@@ -239,7 +304,7 @@ def cmd_reference(args) -> None:
         (problem, seq, args.split, index, rep, int(cfg.evaluation.reference_particles))
         for index, seq in enumerate(sequences)
         for rep in range(replicates)
-        if not reference_path(args.split, index, rep).exists()
+        if not reference_path(args.split, index, rep, problem.obs_label).exists()
     ]
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(args.workers, mp_context=context) as pool:
@@ -248,8 +313,14 @@ def cmd_reference(args) -> None:
 
 
 def load_reference(split: str, index: int, replicate: int, problem: Problem) -> dict:
-    """Load a stored reference, refusing one made for another system."""
-    reference = torch.load(reference_path(split, index, replicate), weights_only=False)
+    """Load a stored reference, refusing one made for another system.
+
+    The stored problem includes the observation operator (a linear one has no
+    ``observation`` key), so a reference of the other operator is refused even
+    if it were copied into this problem's directory.
+    """
+    path = reference_path(split, index, replicate, problem.obs_label)
+    reference = torch.load(path, weights_only=False)
     if reference["problem"] != problem.to_dict():
         raise ValueError(f"Stale reference for {split} {index}: rerun `reference`.")
     return reference
@@ -358,6 +429,19 @@ def normalised_innovations(problem, previous, observation) -> torch.Tensor:
     flow, so neither the mean nor the variance has this closed form; that case
     raises rather than report a wrong number.
 
+    Nonlinear ``h = g(L x)`` (arctan): ``y - E[h(x^f)]`` over the same forecast
+    mixture, divided by ``sqrt(Var[h(x^f)] + r)``, per site. The kick is independent
+    per site and ``g`` elementwise, so per member ``E[g(a + sqrt(q) xi)]`` and its
+    variance are 1D Gaussian integrals, computed by Gauss-Hermite quadrature
+    (:data:`HERMITE_NODES` nodes, exact up to quadrature error): the predictive
+    mean is ``mean_i m_i`` and the variance ``var_i(m_i) + mean_i v_i + r`` (the
+    linear formula when ``g`` is the identity). These are the exact predictive mean
+    and variance of the true-model forecast of the members, so for an exact filter
+    the normalised innovations are still uncorrelated in time (martingale
+    differences) with unit mean square, as in the linear case. What does not
+    carry over is Gaussianity: the innovations are non-Gaussian, so their
+    sampling spread and the PF-subsample floor differ from the linear problem's.
+
     Args:
         previous: ``[E, d]`` analysis members at the previous step (finite ones).
         observation: ``[d_y]``.
@@ -372,10 +456,28 @@ def normalised_innovations(problem, previous, observation) -> torch.Tensor:
         )
     steps = model.steps_per_stage * model.noise_stages  # the whole interval
     flow = integrate(previous.double(), steps, problem.dt, problem.forcing)
+    if not problem.linear_obs:
+        return _nonlinear_innovations(problem, flow, observation)
     H = problem.obs_matrix
     projected = flow @ H.T
     variance = projected.var(0) + problem.noise_std**2 + problem.obs_variance
     return (observation.double() - projected.mean(0)) / variance.sqrt()
+
+
+HERMITE_NODES = 40
+
+
+def _nonlinear_innovations(problem, flow, observation) -> torch.Tensor:
+    """Normalised innovations of a pointwise ``h`` (see :func:`normalised_innovations`)."""
+    nodes, weights = np.polynomial.hermite_e.hermegauss(HERMITE_NODES)
+    nodes = torch.as_tensor(nodes, dtype=torch.float64)
+    weights = torch.as_tensor(weights / weights.sum(), dtype=torch.float64)
+    a = flow[:, problem.obs_indices]  # [E, d_y]
+    values = problem.obs_nonlinearity(a[..., None] + problem.noise_std * nodes)[0]
+    m = (values * weights).sum(-1)  # E[g | member], [E, d_y]
+    v = (values.pow(2) * weights).sum(-1) - m.pow(2)
+    variance = m.var(0) + v.mean(0) + problem.obs_variance
+    return (observation.double() - m.mean(0)) / variance.sqrt()
 
 
 def lag1_autocorrelation(z: torch.Tensor) -> float:
@@ -470,6 +572,8 @@ class CellOutput:
     nfe: float | None  # network evaluations per assimilation step
     members: int
     pseudo_steps: int | None
+    # [S, T, E] per-member ESS of the importance-sampling oracle (arctan only).
+    oracle_ess: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -480,16 +584,23 @@ class EnKFSettings:
     localisation: float | None = None  # Gaspari--Cohn radius, None for none
 
 
-def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
-    settings = EnKFSettings(**settings)
+def build_enkf(problem, settings: EnKFSettings) -> EnsembleKalmanFilter:
+    """The stochastic EnKF of ``problem``: linear, or with predicted observations
+    ``h(x_i)`` and ensemble cross-covariances for a nonlinear ``h`` (same
+    localisation, observations placed at their sites)."""
     radius = settings.localisation
     taper = None if radius is None else periodic_taper(problem.dim_state, float(radius))
-    enkf = EnsembleKalmanFilter(
+    return EnsembleKalmanFilter(
         problem.obs_matrix,
         problem.obs_variance,
         inflation=float(settings.inflation),
         localisation=taper,
+        obs_nonlinearity=problem.obs_nonlinearity,
     )
+
+
+def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
+    enkf = build_enkf(problem, EnKFSettings(**settings))
     start = time.time()
     out = []
     for index, seq in enumerate(sequences):
@@ -501,7 +612,45 @@ def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
     return CellOutput(torch.stack(out), time.time() - start, None, members, None)
 
 
-def run_oracle(problem, sequences, split, seed, members) -> CellOutput:
+#: Candidates per member and step of the arctan oracle when the config has no
+#: ``oracle_arctan.proposals``.
+ORACLE_PROPOSALS = 4096
+
+
+def importance_oracle(problem, proposals: int = ORACLE_PROPOSALS) -> ImportanceOneStepOracle:
+    """The per-member one-step oracle for a nonlinear ``h`` (no closed form)."""
+    return ImportanceOneStepOracle(
+        problem.obs_matrix,
+        problem.obs_variance,
+        obs_nonlinearity=problem.obs_nonlinearity,
+        proposals=proposals,
+    )
+
+
+def oracle_proposals(cfg) -> int:
+    node = cfg.get("oracle_arctan")
+    return int(node.proposals) if node is not None else ORACLE_PROPOSALS
+
+
+def run_oracle(problem, sequences, split, seed, members, proposals=ORACLE_PROPOSALS) -> CellOutput:
+    """Exact one-step posterior per member: closed form when linear; for a
+    nonlinear ``h`` importance sampling from the exact transition
+    (:class:`ImportanceOneStepOracle`), whose per-member ESS is returned."""
+    if not problem.linear_obs:
+        oracle = importance_oracle(problem, proposals)
+        start = time.time()
+        out, ess = [], []
+        for index, seq in enumerate(sequences):
+            gen = torch.Generator().manual_seed(
+                derive_seed(SEED_LABEL, "oracle", split, index, seed)
+            )
+            x0 = initial_ensemble(problem, seq, members, split, index, seed)
+            result = oracle.run(problem.model, x0, seq.observations, gen)
+            out.append(result.analysis)
+            ess.append(result.ess)
+        return CellOutput(
+            torch.stack(out), time.time() - start, None, members, None, torch.stack(ess)
+        )
     oracle = OneStepPosteriorOracle(problem.obs_matrix, problem.obs_variance)
     start = time.time()
     out = []
@@ -514,16 +663,26 @@ def run_oracle(problem, sequences, split, seed, members) -> CellOutput:
     return CellOutput(torch.stack(out), time.time() - start, None, members, None)
 
 
-def run_oracle_fc(problem, sequences, split, seed, members, settings) -> CellOutput:
+def run_oracle_fc(
+    problem, sequences, split, seed, members, settings, proposals=ORACLE_PROPOSALS
+) -> CellOutput:
     """The exact one-step kernel per member, then the forecast-residual correction.
 
     The guided draw is ``OneStepPosteriorOracle``'s exact kick update (here
-    ``noise_stages == 1``, so no inner SIR). The correction uses true-model
-    forecasts ``f_i ~ p(. | x^k_i)`` drawn independently, and by default the exact
-    transition variance for ``K_q`` (``correction.q_source: exact``), so what
-    remains is the Gaussian closure on the across-member part.
+    ``noise_stages == 1``, so no inner SIR); for a nonlinear ``h`` it is the
+    importance-sampling oracle (:class:`ImportanceOneStepOracle`, ESS returned). The
+    correction uses true-model forecasts ``f_i ~ p(. | x^k_i)`` drawn independently,
+    and by default the exact transition variance for ``K_q``
+    (``correction.q_source: exact``; for a nonlinear ``h`` the library linearises
+    it at each group's forecast mean), so what remains is the Gaussian closure on
+    the across-member part. ``h`` and its Jacobian reach the correction through the
+    physical-units operator (:func:`_l96_generative.physical_obs_operator`).
     """
-    from cases.lorenz96._l96_generative import build_obs_operator, correction_config
+    from cases.lorenz96._l96_generative import (
+        build_obs_operator,
+        correction_config,
+        physical_obs_operator,
+    )
     from scisi.posterior_models.forecast_correction import ForecastCorrection
 
     unknown = set(settings) - {"correction"}
@@ -539,20 +698,26 @@ def run_oracle_fc(problem, sequences, split, seed, members, settings) -> CellOut
     block = {"q_source": "exact", **settings.get("correction", {})}
     corr = ForecastCorrection(correction_config(problem, block, members, q))
     online = corr.config.q_source == "online"
-    operator = build_obs_operator(problem)
+    linear = problem.linear_obs
+    operator = build_obs_operator(problem) if linear else physical_obs_operator(problem)
+    sampler = None if linear else importance_oracle(problem, proposals)
     start = time.time()
-    out = []
+    out, ess = [], []
     for index, seq in enumerate(sequences):
         gen = torch.Generator().manual_seed(
             derive_seed(SEED_LABEL, "oracle-fc", split, index, seed)
         )
         x = initial_ensemble(problem, seq, members, split, index, seed)
-        steps = []
+        steps, steps_ess = [], []
         for y in seq.observations:
-            z = model.forecast_to_last_kick(x, gen)
-            kicked = z + q**0.5 * torch.randn(z.shape, generator=gen, dtype=z.dtype)
-            eps = r**0.5 * torch.randn(members, m, generator=gen, dtype=z.dtype)
-            guided = kicked + (y - kicked @ H.T - eps) @ gain.T
+            if linear:
+                z = model.forecast_to_last_kick(x, gen)
+                kicked = z + q**0.5 * torch.randn(z.shape, generator=gen, dtype=z.dtype)
+                eps = r**0.5 * torch.randn(members, m, generator=gen, dtype=z.dtype)
+                guided = kicked + (y - kicked @ H.T - eps) @ gain.T
+            else:
+                guided, member_ess = sampler.draw(model, x, y, gen)
+                steps_ess.append(member_ess)
             f = model.step(x, gen)
             f2 = model.step(x, gen).reshape(members, 1, 1, d) if online else None
             x = corr.correct(
@@ -563,11 +728,20 @@ def run_oracle_fc(problem, sequences, split, seed, members, settings) -> CellOut
                 r,
                 f2=f2,
                 perturbations=r**0.5
-                * torch.randn(members, m, generator=gen, dtype=z.dtype),
+                * torch.randn(members, m, generator=gen, dtype=guided.dtype),
             ).reshape(members, d)
             steps.append(x)
         out.append(torch.stack(steps))
-    return CellOutput(torch.stack(out), time.time() - start, None, members, None)
+        if not linear:
+            ess.append(torch.stack(steps_ess))
+    return CellOutput(
+        torch.stack(out),
+        time.time() - start,
+        None,
+        members,
+        None,
+        None if linear else torch.stack(ess),
+    )
 
 
 def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings):
@@ -599,15 +773,7 @@ def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings
     stats = Standardisation.from_data(DATA_PATH, problem)
     model = load_prior(run, resolve_device(cfg.evaluation.device))
     posterior, stepper = build_posterior(GENERATIVE[prior], model, problem, stats, sampler)
-    radius = update.localisation
-    enkf = EnsembleKalmanFilter(
-        problem.obs_matrix,
-        problem.obs_variance,
-        inflation=float(update.inflation),
-        localisation=None
-        if radius is None
-        else periodic_taper(problem.dim_state, float(radius)),
-    )
+    enkf = build_enkf(problem, update)
     initial = torch.stack(
         [
             initial_ensemble(problem, seq, members, split, index, seed)
@@ -644,8 +810,9 @@ def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
     pf = BootstrapParticleFilter(
         problem.obs_matrix,
         problem.obs_variance,
-        "optimal",
+        reference_proposal(problem),
         num_saved_samples=members,
+        obs_nonlinearity=problem.obs_nonlinearity,
     )
     start = time.time()
     out = []
@@ -679,6 +846,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
         build_correction,
         build_posterior,
         load_prior,
+        observation_model,
     )
 
     settings = dict(settings)
@@ -717,6 +885,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
             settings.num_steps,
             derive_seed(SEED_LABEL, base_name, split, seed),
             forecast_correction=correction,
+            obs_to_model=observation_model(problem, stats).to_model,
         )
         nfe = counter.count / observations.shape[1]
     except AssertionError as error:
@@ -743,9 +912,11 @@ def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> Cel
         size = int(cfg.evaluation.enkf_large_size)
         return run_enkf(problem, sequences, split, seed, size, settings)
     if name == "oracle":
-        return run_oracle(problem, sequences, split, seed, members)
+        return run_oracle(problem, sequences, split, seed, members, oracle_proposals(cfg))
     if name == "oracle_fc":
-        return run_oracle_fc(problem, sequences, split, seed, members, settings)
+        return run_oracle_fc(
+            problem, sequences, split, seed, members, settings, oracle_proposals(cfg)
+        )
     if name in PRIOR_ENKF:
         return run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings)
     if name == "pf_matched":
@@ -778,11 +949,13 @@ def evaluate_cell(
     check_tag(name, tag, overrides)
     cfg = case_config() if cfg is None else cfg
     problem = problem_of(cfg)
+    obs = problem.obs_label
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
     variant = tagged_variant(variant, tag)
     nfe = None
     innovations = None
+    oracle_ess = None
     settings = apply_overrides(method_settings(cfg, name), overrides)
     check_correction_label(name, settings, tag)
 
@@ -817,7 +990,8 @@ def evaluate_cell(
             own_initial=name not in NO_INITIAL_ENSEMBLE,
         )
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
-        path = RESULTS / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
+        oracle_ess = output.oracle_ess
+        path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(output.ensembles.float(), path)
         # Cost on equal terms: one sequence at this method's ensemble size, whereas
@@ -830,7 +1004,7 @@ def evaluate_cell(
     common = dict(
         case=Case.LORENZ96.value,
         method=method.value,
-        scenario=Scenario.LORENZ96.value,
+        scenario=SCENARIOS[obs].value,
         E=members,
         M=pseudo_steps,
         seed=seed,
@@ -848,18 +1022,28 @@ def evaluate_cell(
     if innovations is not None:
         for key in (INNOVATION_LAG1, INNOVATION_MSQ):
             per_sequence[key] = [entry[key] for entry in innovations]
-    per_step_file = cell_path("per_step", name, seed, tag)
+    if oracle_ess is not None:
+        # [S, T, E]: per step the mean / minimum over members and sequences.
+        curves[ORACLE_ESS_MEAN] = oracle_ess.mean((0, 2)).tolist()
+        curves[ORACLE_ESS_MIN] = oracle_ess.amin((0, 2)).tolist()
+        per_sequence[ORACLE_ESS_MEAN] = oracle_ess.mean((1, 2)).tolist()
+        per_sequence[ORACLE_ESS_MIN] = oracle_ess.amin((1, 2)).tolist()
+    per_step_file = cell_path("per_step", name, seed, tag, obs)
     per_step_file.parent.mkdir(parents=True, exist_ok=True)
     per_step_file.unlink(missing_ok=True)
     append_per_step(
         per_step_file, per_step_rows(test_index=-1, per_step=curves, **common)
     )
-    sequence_file = cell_path("per_sequence", name, seed, tag).with_suffix(".json")
+    sequence_file = cell_path("per_sequence", name, seed, tag, obs).with_suffix(".json")
     sequence_file.parent.mkdir(parents=True, exist_ok=True)
     sequence_file.write_text(json.dumps(per_sequence))
 
     records = [
-        ResultRecord(metric=metric, value=finite_mean(values), **common)
+        ResultRecord(
+            metric=metric,
+            value=min(values) if metric == ORACLE_ESS_MIN else finite_mean(values),
+            **common,
+        )
         for metric, values in per_sequence.items()
     ]
     if per_step_seconds is not None:
@@ -938,10 +1122,10 @@ def cell_label(name: str, tag: str = "") -> str:
     return f"{name}-{tag}" if tag else name
 
 
-def cell_path(kind: str, name: str, seed: int, tag: str = "") -> Path:
+def cell_path(kind: str, name: str, seed: int, tag: str = "", obs: str = "linear") -> Path:
     # common.aggregate_lib buckets files by this token; here a bucket is a seed.
     # run_lorenz96_grid.sh builds the untagged metrics path itself; keep them equal.
-    return RESULTS / kind / f"lorenz96__{cell_label(name, tag)}__traj{seed}__.csv"
+    return results_dir(obs) / kind / f"lorenz96__{cell_label(name, tag)}__traj{seed}__.csv"
 
 
 def check_fixed_m(name: str, settings: dict) -> None:
@@ -967,14 +1151,17 @@ def check_fixed_m(name: str, settings: dict) -> None:
 def cmd_cell(args) -> None:
     torch.set_num_threads(args.threads)
     tag = getattr(args, "tag", "")
+    obs = getattr(args, "obs", "linear")
+    cfg = config_of(args)
     if not getattr(args, "allow_other_m", False):
-        cfg = case_config()
         check_fixed_m(
             args.method,
             apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None)),
         )
-    records = evaluate_cell(args.method, args.seed, overrides=getattr(args, "set", None), tag=tag)
-    path = cell_path("metrics", args.method, args.seed, tag)
+    records = evaluate_cell(
+        args.method, args.seed, cfg, overrides=getattr(args, "set", None), tag=tag
+    )
+    path = cell_path("metrics", args.method, args.seed, tag, obs)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     with ResultsWriter(path) as writer:
@@ -986,7 +1173,7 @@ def cmd_cell(args) -> None:
 def cmd_tune(args) -> None:
     """Grid over one method's settings on the validation split only."""
     torch.set_num_threads(args.threads)
-    cfg = case_config()
+    cfg = config_of(args)
     problem = problem_of(cfg)
     sequences = load_sequences(problem, "validation", split_size(cfg, "validation"))
     if args.method in NO_SETTINGS:
@@ -994,7 +1181,7 @@ def cmd_tune(args) -> None:
     base = apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None))
     grid = json.loads(args.grid)
     tag = f"__{args.tag}" if getattr(args, "tag", "") else ""
-    path = RESULTS / "tuning" / f"{args.method}__{'_'.join(grid)}{tag}.csv"
+    path = results_dir(problem.obs_label) / "tuning" / f"{args.method}__{'_'.join(grid)}{tag}.csv"
     # The base settings (after --set) go into every row, and a file with other
     # columns is refused, so rows of differently configured runs cannot mix
     # unnoticed. A run with other columns (--innovations) needs another --tag.
@@ -1077,7 +1264,7 @@ def cmd_prior_quality(args) -> None:
     from scisi.sampling.sde_solvers import euler_maruyama_step
 
     torch.set_num_threads(args.threads)
-    cfg = case_config()
+    cfg = config_of(args)
     problem = problem_of(cfg)
     stats = Standardisation.from_data(DATA_PATH, problem)
     with np.load(DATA_PATH) as data:
@@ -1128,7 +1315,9 @@ def cmd_prior_quality(args) -> None:
             num_steps=args.num_steps,
         )
         print(label, json.dumps(report[label]), flush=True)
-    path = RESULTS / "prior_quality.json"
+    # Observation-free, so the same for every operator; written under each
+    # operator's root anyway, so that each results/lorenz96/<obs>/ tree is complete.
+    path = results_dir(problem.obs_label) / "prior_quality.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2))
 
@@ -1153,8 +1342,13 @@ class Lorenz96Runner(ExperimentRunner):
     def __init__(self, config, *, seeds=None) -> None:
         super().__init__(config, seeds=list(config.case.evaluation.seeds))
         scenario = config.get("scenario", {}).get("name")
-        if scenario != Scenario.LORENZ96.value:
-            raise ValueError(f"Use scenario=lorenz96 with this case, not {scenario!r}.")
+        by_label = {s.value: obs for obs, s in SCENARIOS.items()}
+        if scenario not in by_label:
+            raise ValueError(
+                f"Use scenario=lorenz96 or scenario=lorenz96_arctan with this case, "
+                f"not {scenario!r}."
+            )
+        self.obs = by_label[scenario]
 
     def methods(self):
         method = Method(self.config.method.name)
@@ -1163,14 +1357,24 @@ class Lorenz96Runner(ExperimentRunner):
         return [method]
 
     def scenarios(self):
-        return [Scenario.LORENZ96]
+        return [SCENARIOS[self.obs]]
 
     def evaluate(self, ctx: RunContext):
-        return evaluate_cell(self._NAMES[ctx.method], ctx.seed, self.config.case)
+        # A plain copy: the composed Hydra node may be read-only / struct.
+        case = OmegaConf.create(OmegaConf.to_container(self.config.case, resolve=True))
+        cfg = configure(case, self.obs)
+        return evaluate_cell(self._NAMES[ctx.method], ctx.seed, cfg)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--obs",
+        choices=OBS_OPERATORS,
+        default="linear",
+        help="observation operator (before the subcommand); outputs go to "
+        "results/lorenz96/<obs>/",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     reference = sub.add_parser("reference")
     reference.add_argument("--split", choices=["validation", "test"], required=True)
@@ -1227,7 +1431,11 @@ def main() -> None:
     quality.add_argument("--num-steps", type=int, default=100)
     quality.add_argument("--threads", type=int, default=2)
     quality.set_defaults(func=cmd_prior_quality)
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
     args.func(args)
 
 

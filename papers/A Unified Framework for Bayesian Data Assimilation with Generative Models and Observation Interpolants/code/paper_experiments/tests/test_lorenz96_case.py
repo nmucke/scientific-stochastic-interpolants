@@ -286,7 +286,7 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
 
     monkeypatch.setattr(sys, "argv", ["aggregate_lorenz96.py"])
     aggregate_lorenz96.main()
-    aggregated = tmp_path / "aggregated"
+    aggregated = tmp_path / "linear" / "aggregated"
     with open(aggregated / "all.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     rmse = next(
@@ -427,7 +427,7 @@ def test_tune_reads_validation_only_and_a_diverged_setting_is_ineligible(
     driver.cmd_tune(args)
     assert splits and set(splits) == {"validation"}
 
-    path = tmp_path / "tuning" / "enkf__inflation.csv"
+    path = tmp_path / "linear" / "tuning" / "enkf__inflation.csv"
     with open(path, encoding="utf-8") as handle:
         good, bad = list(csv.DictReader(handle))
     assert json.loads(good["base"]) == driver.method_settings(tuning_case, "enkf")
@@ -539,10 +539,10 @@ def test_tagged_cells_are_kept_apart_from_the_default_cell(tiny_case, tmp_path):
     tagged = driver.cell_path("per_step", "enkf", 0, "infl1.05")
     assert tagged.name == "lorenz96__enkf-infl1.05__traj0__.csv" and tagged.exists()
     assert driver.cell_path("per_sequence", "enkf", 0, "infl1.05").with_suffix(".json").exists()
-    assert (tmp_path / "ensembles" / "enkf-infl1.05__seed0.pt").exists()
+    assert (tmp_path / "linear" / "ensembles" / "enkf-infl1.05__seed0.pt").exists()
     # The default cell's outputs are untouched.
     assert not driver.cell_path("per_step", "enkf", 0).exists()
-    assert not (tmp_path / "ensembles" / "enkf__seed0.pt").exists()
+    assert not (tmp_path / "linear" / "ensembles" / "enkf__seed0.pt").exists()
 
 
 def test_normalised_innovations_use_the_true_forecast_mean(problem):
@@ -718,7 +718,7 @@ def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypat
     assert [s["correction"]["gain_scale"] for s in seen] == [0.0, 0.5]
     assert all(s["correction"]["forecast_num_steps"] == 2 for s in seen)
     assert all(s["num_steps"] == tuning_case.methods.fm_ode.num_steps for s in seen)
-    path = tmp_path / "tuning" / "fm_ode_fc__correction.gain_scale__t.csv"
+    path = tmp_path / "linear" / "tuning" / "fm_ode_fc__correction.gain_scale__t.csv"
     with open(path, encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2

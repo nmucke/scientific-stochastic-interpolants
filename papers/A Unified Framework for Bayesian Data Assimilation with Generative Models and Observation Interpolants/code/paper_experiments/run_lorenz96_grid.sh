@@ -6,6 +6,9 @@
 # only does what is missing; FORCE=1 reruns every cell. References are skipped per
 # file by the driver itself.
 #
+# OBS=linear (default) or OBS=arctan selects the observation operator: settings from
+# `methods:` or `methods_arctan:`, outputs under results/lorenz96/$OBS/.
+#
 # JOBS=1 by default: cells running at the same time share the machine, which
 # inflates their `seconds` cost metric. Raise it only if those timings are not
 # reported, or say that they ran concurrently.
@@ -15,7 +18,8 @@ PY=${PY:-python}
 SEEDS=${SEEDS:-"0 1 2"}
 JOBS=${JOBS:-1}
 FORCE=${FORCE:-0}
-METRICS=results/lorenz96/metrics  # where driver.py cell writes; see cell_path
+OBS=${OBS:-linear}
+METRICS=results/lorenz96/$OBS/metrics  # where driver.py cell writes; see cell_path
 
 run_cell() {
   local method=$1 seed=$2
@@ -24,13 +28,13 @@ run_cell() {
     echo "skip $method seed $seed: $out exists (FORCE=1 reruns it)"
     return 0
   fi
-  "$PY" cases/lorenz96/driver.py cell --method "$method" --seed "$seed"
+  "$PY" cases/lorenz96/driver.py --obs "$OBS" cell --method "$method" --seed "$seed"
 }
 export -f run_cell
-export PY FORCE METRICS
+export PY FORCE METRICS OBS
 
-"$PY" cases/lorenz96/driver.py reference --split test
-"$PY" cases/lorenz96/driver.py prior-quality
+"$PY" cases/lorenz96/driver.py --obs "$OBS" reference --split test
+"$PY" cases/lorenz96/driver.py --obs "$OBS" prior-quality
 for seed in $SEEDS; do
   # The plain cells first, then *_fc (the forecast-residual correction) and
   # prior_enkf* (trained prior + EnKF).
@@ -41,5 +45,5 @@ for seed in $SEEDS; do
 done | xargs -P "$JOBS" -L 1 bash -c 'run_cell "$0" "$1"'
 # The reference does not depend on a seed.
 run_cell pf_reference 0
-"$PY" aggregate_lorenz96.py
-"$PY" make_lorenz96_figures.py
+"$PY" aggregate_lorenz96.py --obs "$OBS"
+"$PY" make_lorenz96_figures.py --obs "$OBS"

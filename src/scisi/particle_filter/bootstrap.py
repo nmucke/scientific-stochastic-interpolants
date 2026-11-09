@@ -18,16 +18,52 @@ and both target the same filtering distribution ``p(x^k | y^{1:k})``:
   it is SIR on the extended state with the last kick integrated out, which is valid
   for any stage count but is no longer fully adapted.
 
+Observations may also be pointwise nonlinear, ``y = g(H x) + eps`` with ``g``
+elementwise (``obs_nonlinearity``, returning ``(g(w), g'(w))``). The optimal
+proposal needs linear-Gaussian observations and refuses ``g``; two proposals stay
+exact for any ``g``:
+
+* ``"bootstrap"``: as above, with weight ``N(y; g(H x), r I)``.
+* ``"linearised"``: one-stage importance sampling with the optimal proposal of the
+  observation linearised at ``z``, ``g(H x) ~ g(H z) + diag(g'(H z)) H (x - z)``.
+  Each particle draws ``x ~ q(x | z, y) = N(m(z, y), P(z))`` and carries the exact
+  weight ``N(y; g(H x), r I) N(x; z, q I) / q(x | z, y)``, so the filter targets the
+  filtering distribution whatever ``g`` is; the linearisation only changes the
+  variance of the weights. Resampling happens after the kick. ``H`` must be a
+  selection (one-hot rows, distinct columns), so ``P`` is diagonal. For ``g`` the
+  identity the weight is ``N(y; H z, (q + r) I)``, the optimal proposal's weight.
+  The weights have finite variance when ``P > q / 2`` on every observed site, i.e.
+  ``r > q g'^2``; otherwise a warning is issued (still exact, but possibly
+  heavy-tailed weights).
+
 Particles are held state-major, ``[d, N]``, and processed in chunks.
 """
 
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
+
+#: ``w -> (g(w), g'(w))``, elementwise on observation-space values.
+Nonlinearity = Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]]
+
+
+def selection_indices(obs_matrix: torch.Tensor) -> torch.Tensor:
+    """Column of each row of a selection matrix (one-hot rows, distinct columns)."""
+    H = obs_matrix
+    one_hot = bool(((H == 0) | (H == 1)).all()) and bool((H.sum(1) == 1).all())
+    index = H.argmax(1)
+    if not one_hot or index.unique().numel() != index.numel():
+        raise ValueError("this proposal needs a selection observation matrix")
+    return index
+
+
+def _identity(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return w, torch.ones_like(w)
 
 
 def systematic_resample(
@@ -81,15 +117,19 @@ class ParticleFilterResult:
 
 
 class BootstrapParticleFilter:
-    """Sequential importance resampling with a bootstrap or optimal proposal.
+    """Sequential importance resampling with a bootstrap, optimal or linearised proposal.
 
     Args:
         obs_matrix: ``H`` of shape ``[d_y, d]``.
         obs_variance: Scalar ``r`` with ``R = r I``.
-        proposal: ``"bootstrap"`` or ``"optimal"``.
+        proposal: ``"bootstrap"``, ``"optimal"`` (linear observations only) or
+            ``"linearised"`` (selection ``H``; see the module docstring).
         chunk_size: Particles processed at once; bounds peak memory and keeps the
             RK4 working set in cache.
         num_saved_samples: Posterior draws kept per step for sample-based metrics.
+        obs_nonlinearity: Optional elementwise ``g`` of ``y = g(H x) + eps``,
+            returning ``(g(w), g'(w))``. ``None`` means linear observations and
+            leaves every linear code path as it was.
     """
 
     def __init__(
@@ -99,14 +139,22 @@ class BootstrapParticleFilter:
         proposal: str = "optimal",
         chunk_size: int = 1 << 15,
         num_saved_samples: int = 4096,
+        obs_nonlinearity: Optional[Nonlinearity] = None,
     ) -> None:
-        if proposal not in ("bootstrap", "optimal"):
+        if proposal not in ("bootstrap", "optimal", "linearised"):
             raise ValueError(f"unknown proposal {proposal!r}")
+        if proposal == "optimal" and obs_nonlinearity is not None:
+            raise ValueError(
+                "the optimal proposal needs linear observations; use 'linearised' "
+                "or 'bootstrap' with a nonlinear observation operator"
+            )
         self.H = obs_matrix.double()
         self.obs_variance = float(obs_variance)
         self.proposal = proposal
         self.chunk_size = int(chunk_size)
         self.num_saved_samples = int(num_saved_samples)
+        self.obs_nonlinearity = obs_nonlinearity
+        self.obs_index = selection_indices(self.H) if proposal == "linearised" else None
 
     def _forecast(self, model, x: torch.Tensor, generator) -> torch.Tensor:
         out = torch.empty_like(x)
@@ -179,6 +227,11 @@ class BootstrapParticleFilter:
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
                 x = self._kick_conditional(x, y_x, q, S, generator)
+            elif self.proposal == "linearised":
+                log_w = self._linearised_kick(z, y_x, q, generator)
+                _check_finite(log_w)
+                idx = systematic_resample(log_w, generator)
+                x = z[:, idx]
             else:
                 for start in range(0, z.shape[1], self.chunk_size):
                     sl = slice(start, start + self.chunk_size)
@@ -232,10 +285,59 @@ class BootstrapParticleFilter:
         cov: torch.Tensor,
     ) -> torch.Tensor:
         out = torch.empty(x.shape[1], dtype=torch.float64)
+        g = self.obs_nonlinearity
         for start in range(0, x.shape[1], self.chunk_size):
             sl = slice(start, start + self.chunk_size)
-            residual = (y[:, None] - H @ x[:, sl]).double()
+            if g is None:
+                residual = (y[:, None] - H @ x[:, sl]).double()
+            else:
+                residual = y[:, None].double() - g((H @ x[:, sl]).double())[0]
             out[sl] = self._log_gaussian(residual, cov)
+        return out
+
+    def _linearised_kick(
+        self, z: torch.Tensor, y: torch.Tensor, q: float, generator
+    ) -> torch.Tensor:
+        """Kick ``z`` in place from the linearised optimal proposal; return log weights.
+
+        Per observed site ``j`` (``w = z_j``, ``a = g'(w)``): ``s = q a^2 + r``,
+        ``m = w + q a (y_j - g(w)) / s``, ``P = q r / s``; unobserved sites get the
+        prior kick. The log weight is ``log N(y; g(H x), r I)`` plus, on the observed
+        sites, ``log N(x_j; w, q) - log N(x_j; m, P)`` (the unobserved factors
+        cancel exactly), evaluated in float64 at the stored value of ``x``.
+        """
+        g = self.obs_nonlinearity or _identity
+        r = self.obs_variance
+        index = self.obs_index
+        out = torch.empty(z.shape[1], dtype=torch.float64)
+        warned = False
+        for start in range(0, z.shape[1], self.chunk_size):
+            sl = slice(start, start + self.chunk_size)
+            xi = torch.randn(z[:, sl].shape, generator=generator, dtype=z.dtype)
+            w = z[index, sl].double()
+            gw, slope = g(w)
+            s = q * slope**2 + r
+            m = w + q * slope * (y[:, None].double() - gw) / s
+            P = q * r / s
+            if not warned and bool((P <= 0.5 * q).any()):
+                warnings.warn(
+                    "linearised proposal: P <= q/2 at some site, so the importance "
+                    "weights may have infinite variance (the filter stays exact).",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+                warned = True
+            kicked = (m + P.sqrt() * xi[index].double()).to(z.dtype)
+            z[:, sl] = z[:, sl] + q**0.5 * xi
+            z[index, sl] = kicked
+            x_obs = kicked.double()
+            residual = y[:, None].double() - g(x_obs)[0]
+            log_lik = -0.5 * (
+                residual.pow(2).sum(0) / r + w.shape[0] * math.log(2.0 * math.pi * r)
+            )
+            log_prior = -0.5 * ((x_obs - w).pow(2) / q + math.log(2.0 * math.pi * q)).sum(0)
+            log_prop = -0.5 * ((x_obs - m).pow(2) / P + (2.0 * math.pi * P).log()).sum(0)
+            out[sl] = log_lik + log_prior - log_prop
         return out
 
 
@@ -302,10 +404,102 @@ class OneStepPosteriorOracle:
         return torch.stack(analysis)
 
 
+@dataclass
+class ImportanceOracleResult:
+    """Analysis ensembles ``[T, E, d]`` and each member's Kish ESS ``[T, E]``."""
+
+    analysis: torch.Tensor
+    ess: torch.Tensor
+
+
+class ImportanceOneStepOracle:
+    """:class:`OneStepPosteriorOracle` for any observation likelihood, by importance sampling.
+
+    Each member independently draws ``x^n ~ p(x^n | x^{n-1}_i, y^n)``: ``proposals``
+    candidates from the TRUE transition ``p(. | x^{n-1}_i)`` (with one noise stage
+    the forecast is integrated once and only the kick is redrawn), weighted by
+    ``N(y; g(H x), r I)``, one of them picked by multinomial sampling. Exact as
+    ``proposals -> infinity`` (sampling importance resampling with one draw); the
+    per-member ESS of the candidate weights records how close it is. No
+    reweighting across members, as for the closed-form oracle.
+
+    Args:
+        obs_matrix: ``H`` ``[d_y, d]``. obs_variance: ``r``.
+        obs_nonlinearity: Elementwise ``g`` returning ``(g(w), g'(w))``; ``None``
+            is linear.
+        proposals: Candidates per member and step.
+        max_candidates: Candidates held in memory at once (members are chunked).
+    """
+
+    def __init__(
+        self,
+        obs_matrix: torch.Tensor,
+        obs_variance: float,
+        obs_nonlinearity: Optional[Nonlinearity] = None,
+        proposals: int = 4096,
+        max_candidates: int = 1 << 20,
+    ) -> None:
+        self.H = obs_matrix.double()
+        self.obs_variance = float(obs_variance)
+        self.obs_nonlinearity = obs_nonlinearity or _identity
+        self.proposals = int(proposals)
+        self.max_candidates = int(max_candidates)
+
+    def draw(
+        self, model, x: torch.Tensor, y: torch.Tensor, generator=None
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """One step from members ``[E, d]``: ``(new members [E, d], ESS [E])``."""
+        members, d = x.shape
+        P = self.proposals
+        H = self.H.to(x)
+        y = y.to(x)
+        q = float(model.stage_variance)
+        chunk = max(1, self.max_candidates // P)
+        out, ess = [], []
+        for start in range(0, members, chunk):
+            xs = x[start : start + chunk]
+            n = xs.shape[0]
+            if model.noise_stages == 1:
+                z = model.forecast_to_last_kick(xs, generator)
+                cand = z[:, None, :] + q**0.5 * torch.randn(
+                    n, P, d, generator=generator, dtype=x.dtype
+                )
+            else:
+                cand = model.step(xs.repeat_interleave(P, dim=0), generator).view(n, P, d)
+            residual = (y - self.obs_nonlinearity(cand @ H.T)[0]).double()
+            log_w = -0.5 * residual.pow(2).sum(-1) / self.obs_variance  # [n, P]
+            log_w = log_w - log_w.max(1, keepdim=True).values
+            w = log_w.exp()
+            w = w / w.sum(1, keepdim=True)
+            ess.append(1.0 / w.pow(2).sum(1))
+            pick = torch.multinomial(w, 1, generator=generator).squeeze(1)
+            out.append(cand[torch.arange(n), pick])
+        return torch.cat(out), torch.cat(ess)
+
+    def run(
+        self,
+        model,
+        initial_ensemble: torch.Tensor,
+        observations: torch.Tensor,
+        generator: Optional[torch.Generator] = None,
+    ) -> ImportanceOracleResult:
+        """Analysis ensembles ``[T, E, d]`` from an initial ``[E, d]``."""
+        x = initial_ensemble
+        analysis, ess = [], []
+        for y in observations:
+            x, e = self.draw(model, x, y, generator)
+            analysis.append(x)
+            ess.append(e)
+        return ImportanceOracleResult(torch.stack(analysis), torch.stack(ess))
+
+
 __all__ = [
     "BootstrapParticleFilter",
+    "ImportanceOneStepOracle",
+    "ImportanceOracleResult",
     "OneStepPosteriorOracle",
     "ParticleFilterResult",
     "effective_sample_size",
+    "selection_indices",
     "systematic_resample",
 ]

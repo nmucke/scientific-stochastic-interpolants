@@ -8,10 +8,20 @@ proposals. Replicate agreement alone cannot detect a filter that is consistently
 wrong, which is why all three exist. Sequences used here have their own seed range
 and are never the held-out test sequences.
 
-    python cases/lorenz96/pf_gate.py screen --grid d16 --out results/lorenz96/gate/screen_d16.csv
-    python cases/lorenz96/pf_gate.py converge --out results/lorenz96/gate/convergence.json
-    python cases/lorenz96/pf_gate.py calibrate --out results/lorenz96/gate/calibration.json
-    python cases/lorenz96/pf_gate.py cross-proposal --out results/lorenz96/gate/cross.json
+    python cases/lorenz96/pf_gate.py screen --grid d16 --out screen_d16.csv
+    python cases/lorenz96/pf_gate.py converge --out convergence.json
+    python cases/lorenz96/pf_gate.py calibrate --out calibration.json
+    python cases/lorenz96/pf_gate.py cross-proposal --out cross.json
+    python cases/lorenz96/pf_gate.py --obs arctan converge --out convergence_4e6.json
+
+``--obs {linear,arctan}`` (before the subcommand) selects the observation operator
+of ``configs/case/lorenz96.yaml``; a bare ``--out`` file name (and the default,
+``<command>.json``) lands in ``results/lorenz96/<obs>/gate/``. The procedure and
+``PASS_CRITERIA`` are the same for both operators. The filter is the reference's
+(:func:`reference_proposal`): the optimal proposal when linear, the linearised
+importance proposal for arctan, both exact. ``cross-proposal`` compares that
+proposal with the bootstrap; ``calibrate`` adds, for a nonlinear operator, the
+negative control of a filter that assumes linear observations.
 """
 
 from __future__ import annotations
@@ -33,11 +43,14 @@ _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parents[1]))
 
 from cases.lorenz96._l96_system import (  # noqa: E402
+    OBS_OPERATORS,
     Problem,
     draw_prior_ensemble,
+    load_problem,
     make_sequence,
     open_csv_for_append,
 )
+from common.paths import RESULTS_ROOT  # noqa: E402
 from common.seeding import derive_seed  # noqa: E402
 from scisi.particle_filter.bootstrap import (  # noqa: E402
     BootstrapParticleFilter,
@@ -55,19 +68,39 @@ GATE_SEED_LABEL = "gate"
 PF_CHUNK = 8192
 
 
-def run_pf(problem, sequence, n, seed, proposal="optimal"):
+def reference_proposal(problem) -> str:
+    """The proposal of the reference filter of ``problem``.
+
+    ``optimal`` (fully adapted, exact) for linear observations; for a nonlinear
+    ``h`` the optimal proposal is not available in closed form and ``linearised``
+    (importance sampling with the optimal proposal of ``h`` linearised at the
+    forecast, exact weights ``p(y | x) p(x | z) / q(x | z, y)``) is used, which is
+    exact for any ``h`` and reduces to the optimal proposal's weights as ``h``
+    becomes linear (``scisi.particle_filter.bootstrap``).
+    """
+    return "optimal" if problem.linear_obs else "linearised"
+
+
+def run_pf(problem, sequence, n, seed, proposal=None):
     """One float32 particle-filter run from the shared prior of ``sequence``.
 
     ``driver.py reference`` calls this same function, so what the gate validates is
-    exactly what produces the references.
+    exactly what produces the references. ``proposal`` defaults to
+    :func:`reference_proposal`.
     """
+    if proposal is None:
+        proposal = reference_proposal(problem)
     # Separate streams: reusing one seed makes the first kick equal the prior noise.
     gen = torch.Generator().manual_seed(derive_seed(seed, "filter"))
     particles = draw_prior_ensemble(
         problem, sequence, n, derive_seed(seed, "prior"), torch.float32
     ).T.contiguous()
     pf = BootstrapParticleFilter(
-        problem.obs_matrix, problem.obs_variance, proposal, chunk_size=PF_CHUNK
+        problem.obs_matrix,
+        problem.obs_variance,
+        proposal,
+        chunk_size=PF_CHUNK,
+        obs_nonlinearity=problem.obs_nonlinearity,
     )
     return pf.run(problem.model, particles, sequence.observations, gen)
 
@@ -179,11 +212,13 @@ SCREEN_STATS = (
 
 
 def cmd_screen(args):
+    if getattr(args, "obs", "linear") != "linear":
+        raise ValueError("screen designs the linear system only (its EnKF and oracle are linear).")
     grid = GRIDS[args.grid] if args.grid in GRIDS else json.loads(args.grid)
     keys = list(grid)
     columns = [*keys, "N", *SCREEN_STATS, "seconds"]
     # Refuses, before any run, a file written for another grid.
-    fh, writer = open_csv_for_append(Path(args.out), columns)
+    fh, writer = open_csv_for_append(out_path(args, "screen.csv"), columns)
     with fh:
         for values in itertools.product(*(grid[k] for k in keys)):
             problem = replace(Problem(num_steps=args.steps), **dict(zip(keys, values)))
@@ -305,13 +340,34 @@ def verdict(top_stats, rate):
     return dict(checks=checks, passed=all(checks.values()))
 
 
-def cmd_converge(args):
-    problem = replace(Problem(), **json.loads(args.problem))
-    out = Path(args.out)
+def gate_dir(obs: str) -> Path:
+    """``results/lorenz96/<obs>/gate``."""
+    if obs not in OBS_OPERATORS:
+        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
+    return RESULTS_ROOT / "lorenz96" / obs / "gate"
+
+
+def out_path(args, default: str) -> Path:
+    """``--out``: a bare file name (or the default) goes to :func:`gate_dir`."""
+    out = Path(getattr(args, "out", None) or default)
+    if out.parent == Path("."):
+        out = gate_dir(getattr(args, "obs", "linear")) / out
     out.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def gate_problem(args) -> Problem:
+    """The configured problem of ``--obs`` with the ``--problem`` JSON overrides."""
+    base = load_problem(obs=getattr(args, "obs", "linear"))
+    return replace(base, **json.loads(args.problem))
+
+
+def cmd_converge(args):
+    problem = gate_problem(args)
+    out = out_path(args, "convergence.json")
     report = dict(
         problem=problem.to_dict(),
-        proposal="optimal",
+        proposal=reference_proposal(problem),
         criteria=PASS_CRITERIA,
         replicates=args.replicates,
         skip=args.skip,
@@ -401,7 +457,8 @@ def calibration_stats(truths, runs, observed, skip):
 
 
 def cmd_calibrate(args):
-    problem = replace(Problem(), **json.loads(args.problem))
+    problem = gate_problem(args)
+    out = out_path(args, "calibration.json")
     report = dict(problem=problem.to_dict(), N=args.n, sequences=args.sequences)
     controls = dict(
         correct=problem,
@@ -409,20 +466,35 @@ def cmd_calibrate(args):
         wrong_model_noise_x0p5=replace(problem, noise_std=0.5 * problem.noise_std),
         wrong_forcing_6=replace(problem, forcing=6.0),
     )
+    if not problem.linear_obs:
+        # A filter that ignores the nonlinearity of h must fail too.
+        controls["wrong_obs_operator_linear"] = problem.dynamics()
     for label, assumed in controls.items():
         report[label] = calibration_summary(
             problem, assumed, args.sequences, args.n, args.skip, label, args.workers
         )
         print(label, json.dumps(report[label]), flush=True)
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(json.dumps(report, indent=2))
+        out.write_text(json.dumps(report, indent=2))
 
 
 def cmd_cross_proposal(args):
-    """Bootstrap against optimal on a system where BOTH converge, so that a
-    disagreement would be evidence of an error rather than bootstrap noise."""
-    problem = replace(Problem(), **json.loads(args.problem))
-    report = dict(problem=problem.to_dict(), N=args.n, replicates=args.replicates, sequences=[])
+    """Bootstrap against the reference proposal on a system where BOTH converge, so
+    that a disagreement would be evidence of an error rather than bootstrap noise.
+
+    The reference proposal is :func:`reference_proposal`: ``optimal`` when linear,
+    ``linearised`` for a nonlinear ``h``. The ``*_optimal`` keys of the report hold
+    the reference proposal's numbers in both cases (``proposals`` names it).
+    """
+    problem = gate_problem(args)
+    out = out_path(args, "cross_proposal.json")
+    reference = reference_proposal(problem)
+    report = dict(
+        problem=problem.to_dict(),
+        proposals=[reference, "bootstrap"],
+        N=args.n,
+        replicates=args.replicates,
+        sequences=[],
+    )
     for s in range(args.sequences):
         seed = derive_seed(GATE_SEED_LABEL, "cross", s)
         seq = make_sequence(problem, seed)
@@ -434,10 +506,10 @@ def cmd_cross_proposal(args):
                 ],
                 args.workers,
             )
-            for proposal in ("optimal", "bootstrap")
+            for proposal in (reference, "bootstrap")
         }
         reps = args.replicates
-        boot, opt = runs["bootstrap"], runs["optimal"]
+        boot, opt = runs["bootstrap"], runs[reference]
 
         def t_stat(get):
             a = torch.stack([get(r) for r in boot])
@@ -462,19 +534,25 @@ def cmd_cross_proposal(args):
         )
         print(json.dumps(entry), flush=True)
         report["sequences"].append(entry)
-        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(json.dumps(report, indent=2))
+        out.write_text(json.dumps(report, indent=2))
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--obs",
+        choices=OBS_OPERATORS,
+        default="linear",
+        help="observation operator (before the subcommand); bare --out names go "
+        "to results/lorenz96/<obs>/gate/",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     # Accepted after the subcommand, as in GPU_HANDOFF.md.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--threads", type=int, default=7)
     screen = sub.add_parser("screen", parents=[common])
     screen.add_argument("--grid", default="d16")
-    screen.add_argument("--out", required=True)
+    screen.add_argument("--out", default=None, help="file name or path (see --obs)")
     screen.add_argument("--n", type=int, default=100_000)
     screen.add_argument("--sequences", type=int, default=2)
     screen.add_argument("--steps", type=int, default=30)
@@ -483,7 +561,7 @@ def main():
     screen.set_defaults(func=cmd_screen)
     converge = sub.add_parser("converge", parents=[common])
     converge.add_argument("--problem", default="{}", help="JSON overrides of Problem")
-    converge.add_argument("--out", required=True)
+    converge.add_argument("--out", default=None, help="file name or path (see --obs)")
     converge.add_argument("--ladder", default="1e4,1e5,1e6")
     converge.add_argument("--replicates", type=int, default=8)
     converge.add_argument("--workers", type=int, default=6)
@@ -492,7 +570,7 @@ def main():
     converge.set_defaults(func=cmd_converge)
     calibrate = sub.add_parser("calibrate", parents=[common])
     calibrate.add_argument("--problem", default="{}", help="JSON overrides of Problem")
-    calibrate.add_argument("--out", required=True)
+    calibrate.add_argument("--out", default=None, help="file name or path (see --obs)")
     calibrate.add_argument("--n", type=int, default=100_000)
     calibrate.add_argument("--sequences", type=int, default=32)
     calibrate.add_argument("--skip", type=int, default=10)
@@ -500,13 +578,17 @@ def main():
     calibrate.set_defaults(func=cmd_calibrate)
     cross = sub.add_parser("cross-proposal", parents=[common])
     cross.add_argument("--problem", default="{}", help="JSON overrides of Problem")
-    cross.add_argument("--out", required=True)
+    cross.add_argument("--out", default=None, help="file name or path (see --obs)")
     cross.add_argument("--n", type=int, default=1_000_000)
     cross.add_argument("--replicates", type=int, default=8)
     cross.add_argument("--sequences", type=int, default=2)
     cross.add_argument("--workers", type=int, default=6)
     cross.set_defaults(func=cmd_cross_proposal)
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_parser().parse_args()
     torch.set_num_threads(args.threads)
     args.func(args)
 
