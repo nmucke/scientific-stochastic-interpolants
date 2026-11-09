@@ -55,6 +55,7 @@ fi
 if [ -n "$FC_GROUP" ]; then FC_SUFFIX="${FC_SUFFIX}_g$FC_GROUP"; FC_ARGS+=("+fc_group_size=$FC_GROUP"); fi
 mkdir -p "$ROOT/metrics" "$ROOT/per_step" "$ROOT/tmp"
 LOG="$ROOT/run_analytical_multistep_grid.log"
+FAILS=0
 
 echo "[msgrid] START $(date) | settings=[$SETTINGS] lineups=[$LINEUPS] seeds=[$SEEDS] M=$M K=$CYCLES E=$N_EVAL" | tee -a "$LOG"
 for SETTING in $SETTINGS; do
@@ -86,15 +87,18 @@ for SETTING in $SETTINGS; do
     echo "[msgrid] RUN  $NAME $(date +%T)" | tee -a "$LOG"
     if "$PY" -u "$PE_SCRIPT_DIR/run.py" "case=$CASE" "seeds=[$SEED]" "num_steps=$M" \
         "+n_eval_samples=$N_EVAL" "+num_cycles=$CYCLES" ${EXTRA[@]+"${EXTRA[@]}"} \
-        "results_file=$TMP_METRICS" "+per_step_file=$TMP_PER_STEP" >> "$LOG" 2>&1; then
+        "results_file=$TMP_METRICS" "+per_step_file=$TMP_PER_STEP" \
+        "hydra.run.dir=$ROOT/hydra/${NAME%.csv}" >> "$LOG" 2>&1; then
       mv -f "$TMP_METRICS" "$ROOT/metrics/$NAME"
       mv -f "$TMP_PER_STEP" "$ROOT/per_step/$NAME"
       echo "[msgrid] OK   $NAME $(date +%T)" | tee -a "$LOG"
     else
       echo "[msgrid] FAIL $NAME $(date +%T)" | tee -a "$LOG"
+      FAILS=$((FAILS + 1))
     fi
   done
   done
   done
 done
-echo "[msgrid] ALL DONE $(date)" | tee -a "$LOG"
+echo "[msgrid] ALL DONE $(date) | failed cells: $FAILS" | tee -a "$LOG"
+exit $((FAILS > 0))

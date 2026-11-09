@@ -110,9 +110,11 @@ paper's "feeding each posterior sample back"). `A, Q, H, R` live under `system:`
 `configs/case/analytical_multistep*.yaml`, defaulting to the paper's identities; the
 reference is the Kalman filter from `x^0` (`linear_system.py`). `driver.py` is
 untouched. With `num_cycles=1` and the defaults, every method's KL and sliced
-distance match the single-step case at equal `n_eval_samples`
-(`tests/test_analytical_multistep.py`). The manuscript's table uses 100000 samples,
-which is also the grid default.
+distance match the current single-step `driver.py` at equal `n_eval_samples`
+(`tests/test_analytical_multistep.py`). The parity is with this code, not with every
+published number: SURGE (SDA) gives a KL of about 3e-4 at `K = 1` in both drivers,
+where the manuscript's table, produced with older `src/` and config, reports 0.173.
+The manuscript's table uses 100000 samples, which is also the grid default.
 
 | Config | System | Why |
 |---|---|---|

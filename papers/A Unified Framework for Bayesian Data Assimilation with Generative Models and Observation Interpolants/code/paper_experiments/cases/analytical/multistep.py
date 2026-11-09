@@ -825,7 +825,9 @@ class MultistepRunner(AnalyticalRunner):
             )
             for metric, value in scores.items():
                 curves[metric].append(value)
-        yield from self._emit(ctx.method.value, ctx, variant, curves, nfe, seconds)
+        yield from self._emit(
+            ctx.method.value, ctx, variant, curves, nfe, seconds, diverged=diverged
+        )
 
     def _emit(
         self,
@@ -835,11 +837,14 @@ class MultistepRunner(AnalyticalRunner):
         curves: dict[str, list[float]],
         nfe: float,
         seconds: list[float],
+        diverged: bool = False,
     ) -> Iterable[ResultRecord]:
         """Per-cycle rows to the per-step file; the mean over cycles as tidy rows.
 
         The cycle mean skips NaN cycles, so one singular cycle does not remove the
-        seed from the across-seed mean; an all-NaN curve stays NaN.
+        seed from the across-seed mean; an all-NaN curve stays NaN. A diverged
+        rollout's cycle mean is NaN: averaging only its cycles before divergence
+        would count it as a full seed with a flattering score.
         """
         n = self._n_eval()
         mean_seconds = float(np.mean(seconds)) if seconds else None
@@ -855,7 +860,10 @@ class MultistepRunner(AnalyticalRunner):
             yield ResultRecord(
                 case=self.case.value, method=method, scenario=self.scenario_label,
                 metric=metric,
-                value=float(np.nanmean(values)) if np.isfinite(values).any() else float("nan"),
+                value=(
+                    float(np.nanmean(values))
+                    if not diverged and np.isfinite(values).any() else float("nan")
+                ),
                 E=n, M=ctx.num_steps,
                 seed=ctx.seed, nfe=float(nfe), seconds=mean_seconds, variant=variant,
             )
