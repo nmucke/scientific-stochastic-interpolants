@@ -1,7 +1,7 @@
 """Produce the figures of the Lorenz 96 case.
 
 * ``lorenz96_<metric>_vs_step`` -- each metric against the assimilation step, from
-  ``results/lorenz96/aggregated/per_step.csv``.
+  ``results/lorenz96/<obs>/aggregated/per_step.csv``.
 * ``lorenz96_ess``              -- effective sample size of the reference over time.
 
 Only the default variants in ``SERIES`` are drawn; tagged sweep cells
@@ -10,6 +10,7 @@ but not in these figures.
 
     python paper_experiments/make_lorenz96_figures.py
     python paper_experiments/make_lorenz96_figures.py --out <dir>
+    python paper_experiments/make_lorenz96_figures.py --obs arctan   # figures/lorenz96/arctan
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from figure_common import (  # noqa: E402
 )
 
 CASE = "lorenz96"
+OBS = "linear"  # set by --obs: which problem's results/lorenz96/<obs>/ to read
 # (method, variant, label, colour, linestyle); colours follow figure_common.
 SERIES = (
     ("Ours (SI-SDE)", "", "Ours SI-SDE", "#0072B2", "-"),
@@ -67,7 +69,7 @@ METRICS = {
 
 def load_curves(metric: str) -> dict[tuple[str, str], dict[int, float]]:
     curves: dict[tuple[str, str], dict[int, float]] = defaultdict(dict)
-    path = RESULTS / CASE / "aggregated" / "per_step.csv"
+    path = RESULTS / CASE / OBS / "aggregated" / "per_step.csv"
     if not path.exists():
         return curves
     with open(path, encoding="utf-8") as fh:
@@ -104,7 +106,7 @@ def plot_metric(metric: str, label: str, out: Path) -> None:
 
 
 def plot_ess(out: Path) -> None:
-    runs = sorted((RESULTS / CASE / "reference" / "test").glob("*_replicate0.pt"))
+    runs = sorted((RESULTS / CASE / OBS / "reference" / "test").glob("*_replicate0.pt"))
     if not runs:
         return
     fig, ax = plt.subplots(figsize=(2 * SINGLE_FIGSIZE[0], 2 * SINGLE_FIGSIZE[1]))
@@ -120,8 +122,13 @@ def plot_ess(out: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", type=Path, default=FIGURES_DIR / CASE)
+    parser.add_argument("--obs", choices=("linear", "arctan"), default="linear")
+    parser.add_argument("--out", type=Path, default=None, help="default figures/lorenz96/<obs>")
     args = parser.parse_args()
+    global OBS
+    OBS = args.obs
+    if args.out is None:
+        args.out = FIGURES_DIR / CASE / args.obs
     args.out.mkdir(parents=True, exist_ok=True)
     apply_style()
     for metric, label in METRICS.items():

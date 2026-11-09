@@ -22,7 +22,10 @@ from cases.lorenz96._l96_system import Problem
 from common.paths import REPO_ROOT
 from results_schema import Method
 from scisi.likelihood_models.gaussian_likelihood import InterpolantGaussianLikelihood
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import (
+    LinearObservationOperator,
+    PointwiseObservationOperator,
+)
 from scisi.posterior_models.flow_matching_posterior import (
     FlowMatchingPosterior,
     endpoint_vanishing_diffusion,
@@ -43,9 +46,14 @@ class Standardisation:
 
     @classmethod
     def from_data(cls, path: str | Path, problem: Problem) -> "Standardisation":
-        """Read the constants, refusing data simulated from another system."""
+        """Read the constants, refusing data simulated from another system.
+
+        The data hold states only, so they do not depend on the observation
+        operator: they are compared with the problem's linear-observation version,
+        which still refuses any other dynamics.
+        """
         with np.load(path) as data:
-            if json.loads(str(data["problem"])) != problem.to_dict():
+            if json.loads(str(data["problem"])) != problem.dynamics().to_dict():
                 raise ValueError(f"{path} was simulated from a different problem.")
             return cls(float(data["mean"]), float(data["std"]))
 
@@ -98,18 +106,76 @@ class ObservationModel:
     to_model: Callable[[torch.Tensor], torch.Tensor]
 
 
+class StandardisedArctanOperator(PointwiseObservationOperator):
+    """``h(z) = arctan(c (std L z + mean)) / c``: physical arctan observations of
+    standardised states ``z = (x - mean) / std``.
+
+    A :class:`PointwiseObservationOperator` ``g(L z)`` whose elementwise ``g`` folds
+    in the de-standardisation, ``g(w) = arctan(c (std w + mean)) / c`` and
+    ``g'(w) = std / (1 + (c (std w + mean))^2)``. Only ``g`` / ``dg`` are
+    overridden, so everything the likelihoods and the correction call (``forward``,
+    ``jvp``, ``vjp``, ``gram``, ``jacobian``, ``linearize``, and ``g`` / ``dg`` /
+    ``inner`` for ``inflated_shared`` and the statistical linearisation) is
+    consistent, and ``inner`` stays the linear selection that places the
+    observations for localisation. ``std = 1, mean = 0`` is the library's arctan.
+    """
+
+    def __init__(self, inner, strength: float, std: float = 1.0, mean: float = 0.0):
+        super().__init__(inner, nonlinearity="arctan", strength=strength)
+        self.std = float(std)
+        self.mean = float(mean)
+
+    def g(self, z: torch.Tensor) -> torch.Tensor:
+        return torch.atan(self.strength * (self.std * z + self.mean)) / self.strength
+
+    def dg(self, z: torch.Tensor) -> torch.Tensor:
+        cw = self.strength * (self.std * z + self.mean)
+        return self.std / (1.0 + cw**2)
+
+
 def observation_model(problem: Problem, stats: "Standardisation") -> ObservationModel:
     """The observation model of ``problem`` for samplers in standardised units.
 
     Linear selection: ``H`` commutes with the affine standardisation, so the
     observations are standardised like the states and ``R`` is divided by
     ``std**2`` (the behaviour of every cell before this helper existed).
+
+    Arctan: the operator maps standardised states to PHYSICAL observations,
+    ``arctan(c (std L z + mean)) / c`` (:class:`StandardisedArctanOperator`), so the
+    observations are used as they are (``to_model`` is the identity) and the
+    variance is the physical ``R``.
     """
+    if problem.linear_obs:
+        return ObservationModel(
+            operator=build_obs_operator(problem),
+            variance=problem.obs_variance / stats.std**2,
+            to_model=stats.forward,
+        )
+    if problem.obs_label != "arctan":
+        raise ValueError(f"No sampler observation model for {problem.obs_label!r}")
     return ObservationModel(
-        operator=build_obs_operator(problem),
-        variance=problem.obs_variance / stats.std**2,
-        to_model=stats.forward,
+        operator=StandardisedArctanOperator(
+            build_obs_operator(problem),
+            problem.observation.strength,
+            std=stats.std,
+            mean=stats.mean,
+        ),
+        variance=float(problem.obs_variance),
+        to_model=_identity,
     )
+
+
+def physical_obs_operator(problem: Problem):
+    """``h`` on PHYSICAL states ``[B, 1, 1, d]`` as an operator (the oracle's
+    correction): the linear selection, or the arctan operator with ``std = 1``,
+    ``mean = 0``."""
+    if problem.linear_obs:
+        return build_obs_operator(problem)
+    return StandardisedArctanOperator(build_obs_operator(problem), problem.observation.strength)
+
+
+def _identity(y: torch.Tensor) -> torch.Tensor:
+    return y
 
 
 def load_prior(run: str, device: str = "cpu") -> torch.nn.Module:

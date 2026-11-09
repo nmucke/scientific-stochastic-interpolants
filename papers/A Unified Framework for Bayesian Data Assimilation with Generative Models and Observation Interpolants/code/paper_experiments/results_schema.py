@@ -128,6 +128,8 @@ class Scenario(str, Enum):
     SPARSE_1p5_VEL = "sparse 1.5625% (uvw)"
     ANALYTICAL = "analytical"  # Case 1 has a single (joint) scenario.
     LORENZ96 = "lorenz96"  # one observation network, fixed in configs/case/lorenz96.yaml
+    # Same sites, truths and noise draws, h = arctan(c L x) / c (`driver.py --obs arctan`).
+    LORENZ96_ARCTAN = "lorenz96_arctan"
 
 
 NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
@@ -135,6 +137,7 @@ NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
     Scenario.SPARSE_5_SPEED,
     Scenario.SPARSE_1p5_ARCTAN_VEL,
     Scenario.SPARSE_1p5_VEL,
+    Scenario.LORENZ96_ARCTAN,
 )
 """Opt-in nonlinear-observation study scenarios (and the urban linear control)."""
 

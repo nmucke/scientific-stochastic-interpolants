@@ -2,12 +2,13 @@
 
 ``cases/lorenz96/driver.py cell`` writes one file per (method, seed), already averaged
 over the held-out sequences. This reduces them to mean +/- std over seeds, in
-``results/lorenz96/aggregated/{all,per_step}.csv``. Seeds share the sequences, so that
+``results/lorenz96/<obs>/aggregated/{all,per_step}.csv`` (``--obs linear`` by
+default, ``arctan`` for the arctan problem; the two never mix). Seeds share the sequences, so that
 std is sampler noise only; ``sequence_spread.csv`` holds the spread over sequences.
 A tagged cell (``driver.py cell --tag``) is its own row: its variant is
 ``<variant>_<tag>`` and its files ``lorenz96__<method>-<tag>__traj<seed>__.csv``.
 
-    .venv/bin/python paper_experiments/aggregate_lorenz96.py
+    .venv/bin/python paper_experiments/aggregate_lorenz96.py [--obs arctan]
 """
 
 from __future__ import annotations
@@ -94,8 +95,10 @@ def undefined_std_for_one_value(rows: list[dict[str, object]]) -> list[dict[str,
 
 
 def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
-    root = RESULTS / CASE
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--obs", choices=("linear", "arctan"), default="linear")
+    args = parser.parse_args()
+    root = RESULTS / CASE / args.obs
     by_seed = discover_by_traj(root / "metrics")
     if not by_seed:
         print(f"[{CASE}] no per-cell metric files in {root / 'metrics'}")

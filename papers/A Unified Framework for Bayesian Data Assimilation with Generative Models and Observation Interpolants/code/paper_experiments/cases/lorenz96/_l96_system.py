@@ -8,7 +8,8 @@ prior mean from seeds alone, so every method sees identical inputs.
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict, dataclass
+import functools
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import torch
@@ -18,10 +19,47 @@ from scisi.dynamics.lorenz96 import StochasticLorenz96
 
 CASE_CONFIG = Path(__file__).resolve().parents[2] / "configs/case/lorenz96.yaml"
 
+#: Observation operators of this case: ``driver.py --obs <name>``.
+OBS_OPERATORS = ("linear", "arctan")
+
+
+def arctan_nonlinearity(w: torch.Tensor, strength: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(arctan(c w) / c, 1 / (1 + (c w)^2))``: the library's ``arctan`` nonlinearity
+    (``observation_operators.NONLINEARITIES``), as a picklable function."""
+    cw = strength * w
+    return torch.atan(cw) / strength, 1.0 / (1.0 + cw**2)
+
+
+@dataclass(frozen=True)
+class Observation:
+    """The observation operator on the selected sites ``L x`` (physical units).
+
+    ``linear``: ``h(x) = L x``. ``arctan``: ``h(x) = arctan(c L x) / c`` with
+    ``c = strength``. The noise ``N(0, obs_variance I)`` is the same for both.
+    """
+
+    operator: str = "linear"
+    strength: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.operator not in OBS_OPERATORS:
+            raise ValueError(f"observation.operator must be one of {OBS_OPERATORS}, got {self.operator!r}")
+        if self.operator == "linear" and self.strength is not None:
+            raise ValueError("a linear observation takes no strength")
+        if self.operator == "arctan":
+            if self.strength is None or not float(self.strength) > 0:
+                raise ValueError(f"arctan needs a strength > 0, got {self.strength!r}")
+            object.__setattr__(self, "strength", float(self.strength))
+
 
 @dataclass(frozen=True)
 class Problem:
-    """Defaults are those of ``configs/case/lorenz96.yaml``."""
+    """Defaults are those of ``configs/case/lorenz96.yaml``.
+
+    ``observation`` (default linear) selects the observation operator. A linear
+    problem's :meth:`to_dict` has no ``observation`` key, exactly the dictionary
+    stored in the data and the linear references before the option existed.
+    """
 
     dim_state: int = 16
     forcing: float = 8.0
@@ -33,6 +71,41 @@ class Problem:
     obs_variance: float = 4.0
     prior_std: float = 1.0
     num_steps: int = 50
+    observation: Observation = field(default_factory=Observation)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.observation, dict):
+            object.__setattr__(self, "observation", Observation(**self.observation))
+        elif not isinstance(self.observation, Observation):
+            raise TypeError(f"observation must be a dict or Observation, got {self.observation!r}")
+
+    @property
+    def obs_label(self) -> str:
+        """``linear`` or ``arctan``: the results directory of this problem."""
+        return self.observation.operator
+
+    @property
+    def linear_obs(self) -> bool:
+        return self.observation.operator == "linear"
+
+    @property
+    def obs_nonlinearity(self):
+        """Elementwise ``g`` of ``h(x) = g(L x)`` as ``w -> (g(w), g'(w))``; ``None``
+        when linear (the filters then take their unchanged linear paths)."""
+        if self.linear_obs:
+            return None
+        return functools.partial(arctan_nonlinearity, strength=self.observation.strength)
+
+    def observe(self, x: torch.Tensor) -> torch.Tensor:
+        """``h(x)`` of physical states ``[..., d]`` -> ``[..., d_y]``."""
+        selected = x[..., self.obs_indices]
+        if self.linear_obs:
+            return selected
+        return self.obs_nonlinearity(selected)[0]
+
+    def dynamics(self) -> "Problem":
+        """The same problem with linear observations: what the data depend on."""
+        return replace(self, observation=Observation())
 
     @property
     def model(self) -> StochasticLorenz96:
@@ -54,7 +127,10 @@ class Problem:
         return torch.eye(self.dim_state, dtype=torch.float64)[self.obs_indices]
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        out = asdict(self)
+        if self.linear_obs:
+            del out["observation"]  # unchanged layout for the linear problem
+        return out
 
 
 def resolve_device(name: str) -> str:
@@ -66,8 +142,18 @@ def resolve_device(name: str) -> str:
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def load_problem(path: str | Path = CASE_CONFIG) -> Problem:
-    return Problem(**OmegaConf.to_container(OmegaConf.load(path).problem))
+def load_problem(path: str | Path = CASE_CONFIG, obs: str = "linear") -> Problem:
+    """The configured problem with observation operator ``obs``
+    (``observations.<obs>`` of the case config; ``linear`` adds nothing)."""
+    cfg = OmegaConf.load(path)
+    problem = Problem(**OmegaConf.to_container(cfg.problem))
+    if obs == "linear":
+        return problem
+    if obs not in OBS_OPERATORS:
+        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
+    return replace(
+        problem, observation=Observation(**OmegaConf.to_container(cfg.observations[obs]))
+    )
 
 
 @dataclass(frozen=True)
@@ -84,6 +170,11 @@ def make_sequence(problem: Problem, seed: int, spinup_intervals: int = 200) -> S
 
     ``prior_mean`` is an attractor state, so the prior is a genuine statement of
     uncertainty about ``x^0`` that all methods share.
+
+    Every draw (spin-up, ``x^0``, the model noise and the observation noise ``e``)
+    comes before and independently of the observation operator, so a nonlinear
+    problem has the same truth and the same ``e`` as the linear one:
+    ``y = h(truth) + e``.
     """
     gen = torch.Generator().manual_seed(int(seed))
     model = problem.model
@@ -98,7 +189,9 @@ def make_sequence(problem: Problem, seed: int, spinup_intervals: int = 200) -> S
         generator=gen,
         dtype=torch.float64,
     )
-    return Sequence(prior_mean, truth, truth[1:, problem.obs_indices] + noise)
+    if problem.linear_obs:
+        return Sequence(prior_mean, truth, truth[1:, problem.obs_indices] + noise)
+    return Sequence(prior_mean, truth, problem.observe(truth[1:]) + noise)
 
 
 def draw_prior_ensemble(
