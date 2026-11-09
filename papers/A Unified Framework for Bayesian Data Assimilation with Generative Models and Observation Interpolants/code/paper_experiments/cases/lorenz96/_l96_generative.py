@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import hydra
 import numpy as np
@@ -80,6 +81,37 @@ def build_obs_operator(problem: Problem) -> LinearObservationOperator:
     return operator
 
 
+@dataclass(frozen=True)
+class ObservationModel:
+    """How a sampler sees the observations, in the model's standardised units.
+
+    ``operator`` acts on standardised states ``[B, 1, 1, d]``; ``to_model`` maps
+    physical observations ``[..., d_y]`` into the units ``operator`` outputs, and
+    ``variance`` is the observation-noise variance in those units. Every generative
+    cell (ours, the baselines, the SURGE cells) takes its operator, variance and
+    observation transform from :func:`observation_model` only, so that a new
+    observation operator is wired in one place.
+    """
+
+    operator: object
+    variance: float
+    to_model: Callable[[torch.Tensor], torch.Tensor]
+
+
+def observation_model(problem: Problem, stats: "Standardisation") -> ObservationModel:
+    """The observation model of ``problem`` for samplers in standardised units.
+
+    Linear selection: ``H`` commutes with the affine standardisation, so the
+    observations are standardised like the states and ``R`` is divided by
+    ``std**2`` (the behaviour of every cell before this helper existed).
+    """
+    return ObservationModel(
+        operator=build_obs_operator(problem),
+        variance=problem.obs_variance / stats.std**2,
+        to_model=stats.forward,
+    )
+
+
 def load_prior(run: str, device: str = "cpu") -> torch.nn.Module:
     """Rebuild a trained prior from its checkpoint directory."""
     directory = REPO_ROOT / "checkpoints" / CHECKPOINT_PROJECT / run
@@ -99,10 +131,11 @@ def build_posterior(
 ):
     """Return ``(posterior, stepper)`` for one of the three samplers."""
     is_si = method is Method.OURS_SI_SDE
+    observed = observation_model(problem, stats)
     likelihood = InterpolantGaussianLikelihood(
         model=model,
-        obs_operator=build_obs_operator(problem),
-        variance=problem.obs_variance / stats.std**2,
+        obs_operator=observed.operator,
+        variance=observed.variance,
         likelihood_mode=settings.likelihood_mode,
         model_class="si" if is_si else "fm",
         jacobian_damping=settings.jacobian_damping,
@@ -137,6 +170,7 @@ def assimilate(
     num_steps: int,
     seed: int,
     forecast_correction=None,
+    obs_to_model: Callable[[torch.Tensor], torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """Run the sampler over a batch of sequences.
 
@@ -145,18 +179,22 @@ def assimilate(
         observations: ``[S, T, d_y]`` in physical units.
         forecast_correction: Optional ``ForecastCorrection`` (see
             :func:`build_correction`); ``None`` leaves the call exactly as before.
+        obs_to_model: ``ObservationModel.to_model`` of the cell; ``None`` means
+            ``stats.forward`` (linear selection).
 
     Returns:
         ``[S, T, E, d]`` analysis ensembles in physical units.
     """
     num_sequences, members, d = initial.shape
     steps = observations.shape[1]
-    mode = posterior.likelihood_model.likelihood_mode
+    # Baseline likelihoods (FlowDAS, SDA, ...) have no likelihood_mode.
+    mode = getattr(posterior.likelihood_model, "likelihood_mode", None)
     if num_sequences > 1 and mode == "inflated_shared":
         raise ValueError("inflated_shared averages over the batch, mixing sequences.")
     torch.manual_seed(int(seed))
     x0 = stats.forward(initial.float()).reshape(-1, 1, 1, d)
-    y = stats.forward(observations.float())  # [S, T, d_y]
+    to_model = stats.forward if obs_to_model is None else obs_to_model
+    y = to_model(observations.float())  # [S, T, d_y]
     y = y.permute(0, 2, 1).repeat_interleave(members, dim=0)  # [S E, d_y, T]
     # batch_size must cover every member: the sampler hands the unsliced observation
     # rows to each batch.

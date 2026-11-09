@@ -120,6 +120,10 @@ NO_INITIAL_ENSEMBLE = ("pf_subsample",)
 TUNABLE = tuple(name for name in CELLS if name not in NO_SETTINGS)
 # (sequence, step) entries with a non-finite score; in practice fewer than two members left.
 DIVERGED_STEPS = "diverged_steps"
+# Every generative method runs exactly this many SDE/ODE steps per assimilation step
+# (D-Flow: SGLD steps), fixed by design and not tuned. `cell` and `tune` refuse any
+# other value unless --allow-other-m is passed (check_fixed_m).
+FIXED_NUM_STEPS = 50
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
@@ -940,9 +944,35 @@ def cell_path(kind: str, name: str, seed: int, tag: str = "") -> Path:
     return RESULTS / kind / f"lorenz96__{cell_label(name, tag)}__traj{seed}__.csv"
 
 
+def check_fixed_m(name: str, settings: dict) -> None:
+    """Refuse a step count other than :data:`FIXED_NUM_STEPS`.
+
+    Checks ``num_steps`` and ``correction.forecast_num_steps`` (``None`` means the
+    sampler's M), so a stray override cannot mix step counts into the tables.
+    """
+    steps = settings.get("num_steps")
+    if steps is not None and int(steps) != FIXED_NUM_STEPS:
+        raise ValueError(
+            f"{name}: num_steps={steps}, but this case runs every generative method at "
+            f"M={FIXED_NUM_STEPS}; pass --allow-other-m to run it anyway."
+        )
+    forecast = settings.get("correction", {}).get("forecast_num_steps")
+    if forecast is not None and int(forecast) != FIXED_NUM_STEPS:
+        raise ValueError(
+            f"{name}: correction.forecast_num_steps={forecast}, but the forecasts run at "
+            f"M={FIXED_NUM_STEPS} (null); pass --allow-other-m to run it anyway."
+        )
+
+
 def cmd_cell(args) -> None:
     torch.set_num_threads(args.threads)
     tag = getattr(args, "tag", "")
+    if not getattr(args, "allow_other_m", False):
+        cfg = case_config()
+        check_fixed_m(
+            args.method,
+            apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None)),
+        )
     records = evaluate_cell(args.method, args.seed, overrides=getattr(args, "set", None), tag=tag)
     path = cell_path("metrics", args.method, args.seed, tag)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -988,6 +1018,8 @@ def cmd_tune(args) -> None:
             settings = apply_overrides(
                 base, [f"{key}={json.dumps(value)}" for key, value in override.items()]
             )
+            if not getattr(args, "allow_other_m", False):
+                check_fixed_m(args.method, settings)
             output = run_method(
                 cfg,
                 args.method,
@@ -1160,6 +1192,11 @@ def main() -> None:
         help="also log lag-1 innovations and NFE (always on for the new cells)",
     )
     tune.add_argument("--threads", type=int, default=2)
+    tune.add_argument(
+        "--allow-other-m",
+        action="store_true",
+        help=f"allow num_steps other than the fixed M={FIXED_NUM_STEPS}",
+    )
     tune.set_defaults(func=cmd_tune)
     cell = sub.add_parser("cell")
     cell.add_argument("--method", choices=sorted(CELLS), required=True)
@@ -1178,6 +1215,11 @@ def main() -> None:
         "<method>-<tag> and the tidy variant becomes <variant>_<tag>",
     )
     cell.add_argument("--threads", type=int, default=2)
+    cell.add_argument(
+        "--allow-other-m",
+        action="store_true",
+        help=f"allow num_steps other than the fixed M={FIXED_NUM_STEPS}",
+    )
     cell.set_defaults(func=cmd_cell)
     quality = sub.add_parser("prior-quality")
     quality.add_argument("--states", type=int, default=64)

@@ -712,6 +712,7 @@ def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypat
         tag="t",
         innovations=False,
         threads=1,
+        allow_other_m=True,  # the tiny case runs a few pseudo-steps, not M = 50
     )
     driver.cmd_tune(args)
     assert [s["correction"]["gain_scale"] for s in seen] == [0.0, 0.5]
