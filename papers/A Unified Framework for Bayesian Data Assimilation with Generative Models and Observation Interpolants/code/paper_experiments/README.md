@@ -252,7 +252,7 @@ These constrain the case drivers and are baked into the configs here:
 - `common/runner.py::ExperimentRunner.evaluate` — the stable contract; case
   drivers implement it.
 - `cases/analytical/driver.py` — GAP E4; analytic SI drift + three samplers; KL /
-  sliced-W2 via `analytical_utils`.
+  sliced-W2 via `cases/analytical/_metrics.py`.
 - `cases/navier_stokes/driver.py` — GAP E1 (block-average obs op), E4 (3
   samplers), E7/E9/E10/E11 (metrics), E12 (ablation knobs).
 - `cases/urban/driver.py` — GAP E2 (author data + solid-cell masking).
