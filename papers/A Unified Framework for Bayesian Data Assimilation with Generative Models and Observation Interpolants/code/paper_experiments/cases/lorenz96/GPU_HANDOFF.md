@@ -278,8 +278,8 @@ through a reduced test. `NEVER` = has not run.
 **Step 0. Tests. RAN.** A few minutes on an idle machine.
 
 ```bash
-cd "$REPO" && python -m pytest tests/test_lorenz96_solver.py tests/test_filters.py tests/test_periodic_1d.py tests/test_metrics.py -q
-cd "$PE" && MPLBACKEND=Agg python -m pytest tests/test_lorenz96_case.py tests/test_paths.py -q
+cd "$REPO" && python -m pytest tests/test_lorenz96_solver.py tests/test_filters.py tests/test_periodic_1d.py tests/test_metrics.py tests/test_lorenz96_data.py -q
+cd "$PE" && MPLBACKEND=Agg python -m pytest tests/test_lorenz96_case.py tests/test_lorenz96_gate.py tests/test_paths.py -q
 ```
 
 **Step 1. Gate. RAN on CPU.** About 25 min for the first command block and about
@@ -654,7 +654,16 @@ running alongside:
 | `tests/test_lorenz96_case.py` (in `$PE`, final version) | 23 passed |
 | `tests/test_paths.py` (in `$PE`) | passed, in a run of 31 with the earlier case tests |
 
-The 20 xfails are strict and expected: they record that the U-Net is equivariant only
-under shifts of 4. A 1-epoch `train.py` smoke run after the device change finished and
+The 20 xfails were strict and expected: they recorded that the U-Net is equivariant
+only under shifts of 4. They went with the U-Net (section 7, step 3).
+
+After review 4, on Linux (Python 3.13, torch 2.9.0, CPU only, one core): the four
+root files above 119 passed (60 s), all of `$REPO/tests` 123 passed (adds
+`test_lorenz96_data.py`), `$PE` case and path tests 39 passed, and all of `$PE/tests`
+except `test_analytical_multistep.py` 54 passed (adds `test_lorenz96_gate.py`).
+`test_analytical_multistep.py` fails to collect in this clone because
+`analytical_utils` is not on disk; it fails the same way before review 4.
+
+At the freeze, a 1-epoch `train.py` smoke run after the device change finished and
 was deleted. No test touches CUDA, and the generative cells in tests use untrained
 networks on CPU with the Jacobian-free likelihood.

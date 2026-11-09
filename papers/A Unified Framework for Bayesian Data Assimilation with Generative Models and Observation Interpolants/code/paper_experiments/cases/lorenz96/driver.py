@@ -86,7 +86,7 @@ CELLS = {
 GENERATIVE = {
     name: method for name, (method, _) in CELLS.items() if method.name.startswith("OURS_")
 }
-# (sequence, step) entries with a non-finite score: fewer than two members were left.
+# (sequence, step) entries with a non-finite score; in practice fewer than two members left.
 DIVERGED_STEPS = "diverged_steps"
 
 
