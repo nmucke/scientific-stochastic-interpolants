@@ -34,6 +34,7 @@ from omegaconf import OmegaConf
 _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parents[1]))
 
+from cases.lorenz96.pf_gate import run_pf  # noqa: E402
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
     Problem,
@@ -69,7 +70,6 @@ from scisi.particle_filter.enkf import (  # noqa: E402
 RESULTS = RESULTS_ROOT / "lorenz96"
 SEED_LABEL = "lorenz96-evaluation"
 DATA_PATH = REPO_ROOT / "data/lorenz96/data.npz"
-REFERENCE_CHUNK = 8192
 DIVERGED_ABS = 100.0  # about 25 climatological standard deviations
 
 GENERATIVE = {
@@ -138,15 +138,9 @@ def _reference_task(job) -> float:
     problem, sequence, split, index, replicate, particles = job
     torch.set_num_threads(1)
     seed = derive_seed(SEED_LABEL, "reference", split, index, replicate)
-    gen = torch.Generator().manual_seed(derive_seed(seed, "filter"))
     start = time.time()
-    x0 = draw_prior_ensemble(
-        problem, sequence, particles, derive_seed(seed, "prior"), torch.float32
-    ).T.contiguous()
-    pf = BootstrapParticleFilter(
-        problem.obs_matrix, problem.obs_variance, "optimal", chunk_size=REFERENCE_CHUNK
-    )
-    run = pf.run(problem.model, x0, sequence.observations, gen)
+    # The gate's own filter, so its validity carries over by construction.
+    run = run_pf(problem, sequence, particles, seed)
     seconds = time.time() - start
     path = reference_path(split, index, replicate)
     path.parent.mkdir(parents=True, exist_ok=True)

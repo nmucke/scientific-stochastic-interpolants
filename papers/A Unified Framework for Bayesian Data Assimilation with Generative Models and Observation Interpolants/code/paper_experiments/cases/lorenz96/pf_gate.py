@@ -17,7 +17,6 @@ and are never the held-out test sequences.
 from __future__ import annotations
 
 import argparse
-import csv
 import itertools
 import json
 import multiprocessing
@@ -37,6 +36,7 @@ from cases.lorenz96._l96_system import (  # noqa: E402
     Problem,
     draw_prior_ensemble,
     make_sequence,
+    open_csv_for_append,
 )
 from common.seeding import derive_seed  # noqa: E402
 from scisi.particle_filter.bootstrap import (  # noqa: E402
@@ -55,11 +55,16 @@ GATE_SEED_LABEL = "gate"
 PF_CHUNK = 8192
 
 
-def run_pf(problem, sequence, n, seed, proposal="optimal", dtype=torch.float32):
+def run_pf(problem, sequence, n, seed, proposal="optimal"):
+    """One float32 particle-filter run from the shared prior of ``sequence``.
+
+    ``driver.py reference`` calls this same function, so what the gate validates is
+    exactly what produces the references.
+    """
     # Separate streams: reusing one seed makes the first kick equal the prior noise.
     gen = torch.Generator().manual_seed(derive_seed(seed, "filter"))
     particles = draw_prior_ensemble(
-        problem, sequence, n, derive_seed(seed, "prior"), dtype
+        problem, sequence, n, derive_seed(seed, "prior"), torch.float32
     ).T.contiguous()
     pf = BootstrapParticleFilter(
         problem.obs_matrix, problem.obs_variance, proposal, chunk_size=PF_CHUNK
@@ -154,24 +159,38 @@ GRIDS = {
 }
 
 
+# Columns of ``screen_one``'s summary, in order.
+SCREEN_STATS = (
+    "ess_mean",
+    "ess_min",
+    "mc_gap",
+    "mc_var",
+    "enkf_gap",
+    "enkf_var",
+    "oracle_gap",
+    "oracle_var",
+    "skew",
+    "ex_kurt",
+    "post_std",
+    "rmse_pf",
+    "rmse_enkf",
+    "rmse_oracle",
+)
+
+
 def cmd_screen(args):
     grid = GRIDS[args.grid] if args.grid in GRIDS else json.loads(args.grid)
     keys = list(grid)
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not out.exists()
-    with open(out, "a", newline="") as fh:
-        writer = None
+    columns = [*keys, "N", *SCREEN_STATS, "seconds"]
+    # Refuses, before any run, a file written for another grid.
+    fh, writer = open_csv_for_append(Path(args.out), columns)
+    with fh:
         for values in itertools.product(*(grid[k] for k in keys)):
             problem = replace(Problem(num_steps=args.steps), **dict(zip(keys, values)))
             start = time.time()
             stats = screen_one(problem, args.n, args.sequences, args.enkf, args.skip)
             row = {**dict(zip(keys, values)), "N": args.n, **stats}
             row["seconds"] = time.time() - start
-            if writer is None:
-                writer = csv.DictWriter(fh, fieldnames=list(row))
-                if write_header:
-                    writer.writeheader()
             writer.writerow(row)
             fh.flush()
             print(
@@ -206,6 +225,13 @@ def rung_stats(runs, top, skip):
     Every error is that of a SINGLE run in units of the LOCAL posterior std, so
     neither averaging over replicates nor pooling over entries can hide it. The
     reference is the top rung, leaving the run out if it is itself a top run.
+
+    The leave-one-out makes the top rung's reference noisier than a lower rung's:
+    with ``R`` top replicates of ``N_top`` particles, a lower run's squared error
+    is about ``s^2 (1/N + 1/(R N_top))`` but a top run's is
+    ``s^2 (1 + 1/(R-1)) / N_top``. So the two-point rate of :func:`fit_rate` comes
+    out slightly shallower than -1/2 for exact Monte Carlo error: about -0.48 for
+    the ladder (1e5, 4e6) at ``R = 8``.
     """
     mean_err, var_err, cov_err, sw2 = [], [], [], []
     for i, run in enumerate(runs):
@@ -336,7 +362,6 @@ def calibration_summary(problem, assumed, sequences, n, skip, label, workers=1):
     unobserved coordinates alike. Filtering with a deliberately wrong ``assumed``
     is a negative control showing that the test can actually fail.
     """
-    z2, ranks = [], []
     observed = torch.zeros(problem.dim_state, dtype=torch.bool)
     observed[problem.obs_indices] = True
     seeds = [derive_seed(GATE_SEED_LABEL, "calibrate", s) for s in range(sequences)]
@@ -345,12 +370,21 @@ def calibration_summary(problem, assumed, sequences, n, skip, label, workers=1):
         [(assumed, seq, n, derive_seed(seed, label)) for seq, seed in zip(seqs, seeds)],
         workers,
     )
-    for seq, run in zip(seqs, runs):
-        truth = seq.truth[1:]
+    return calibration_stats([seq.truth[1:] for seq in seqs], runs, observed, skip)
+
+
+def calibration_stats(truths, runs, observed, skip):
+    """z^2 and truth ranks of filter runs against the truths ``[T, d]`` they track.
+
+    ``runs`` need ``mean``, ``variance`` ``[T, d]`` and ``samples`` ``[T, S, d]``.
+    """
+    z2, ranks = [], []
+    for truth, run in zip(truths, runs):
         z2.append(((truth - run.mean) ** 2 / run.variance)[skip:])
         ranks.append((run.samples.double() < truth[:, None, :]).double().mean(1)[skip:])
     z2 = torch.stack(z2)  # [S, T, d]
     ranks = torch.stack(ranks)
+    sequences = len(runs)
 
     def block(mask):
         per_sequence = z2[..., mask].mean((1, 2))
@@ -435,7 +469,10 @@ def cmd_cross_proposal(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    screen = sub.add_parser("screen")
+    # Accepted after the subcommand, as in GPU_HANDOFF.md.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--threads", type=int, default=7)
+    screen = sub.add_parser("screen", parents=[common])
     screen.add_argument("--grid", default="d16")
     screen.add_argument("--out", required=True)
     screen.add_argument("--n", type=int, default=100_000)
@@ -443,9 +480,8 @@ def main():
     screen.add_argument("--steps", type=int, default=30)
     screen.add_argument("--skip", type=int, default=10)
     screen.add_argument("--enkf", type=int, default=2000)
-    screen.add_argument("--threads", type=int, default=7)
     screen.set_defaults(func=cmd_screen)
-    converge = sub.add_parser("converge")
+    converge = sub.add_parser("converge", parents=[common])
     converge.add_argument("--problem", default="{}", help="JSON overrides of Problem")
     converge.add_argument("--out", required=True)
     converge.add_argument("--ladder", default="1e4,1e5,1e6")
@@ -453,24 +489,21 @@ def main():
     converge.add_argument("--workers", type=int, default=6)
     converge.add_argument("--sequences", type=int, default=3)
     converge.add_argument("--skip", type=int, default=10)
-    converge.add_argument("--threads", type=int, default=7)
     converge.set_defaults(func=cmd_converge)
-    calibrate = sub.add_parser("calibrate")
+    calibrate = sub.add_parser("calibrate", parents=[common])
     calibrate.add_argument("--problem", default="{}", help="JSON overrides of Problem")
     calibrate.add_argument("--out", required=True)
     calibrate.add_argument("--n", type=int, default=100_000)
     calibrate.add_argument("--sequences", type=int, default=32)
     calibrate.add_argument("--skip", type=int, default=10)
-    calibrate.add_argument("--threads", type=int, default=7)
     calibrate.add_argument("--workers", type=int, default=6)
     calibrate.set_defaults(func=cmd_calibrate)
-    cross = sub.add_parser("cross-proposal")
+    cross = sub.add_parser("cross-proposal", parents=[common])
     cross.add_argument("--problem", default="{}", help="JSON overrides of Problem")
     cross.add_argument("--out", required=True)
     cross.add_argument("--n", type=int, default=1_000_000)
     cross.add_argument("--replicates", type=int, default=8)
     cross.add_argument("--sequences", type=int, default=2)
-    cross.add_argument("--threads", type=int, default=7)
     cross.add_argument("--workers", type=int, default=6)
     cross.set_defaults(func=cmd_cross_proposal)
     args = parser.parse_args()
