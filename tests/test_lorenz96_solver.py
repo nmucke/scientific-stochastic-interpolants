@@ -10,7 +10,6 @@ from scisi.dynamics.lorenz96 import (
     integrate,
     integrate_state_major,
     lorenz96_rhs,
-    lyapunov_exponents,
     rk4_step,
 )
 
@@ -77,6 +76,18 @@ def test_state_major_path_matches_reference_rk4(d):
     assert torch.equal(x, original)  # the input must not be modified
 
 
+def test_state_major_float32_tracks_float64_over_one_interval():
+    """The PF reference runs in float32; one interval must stay close to float64."""
+    gen = torch.Generator().manual_seed(9)
+    model = StochasticLorenz96(dim_state=16, dt=0.01, interval=0.2)
+    x = model.spin_up(512, 50, gen).T.contiguous()  # [d, N] on the attractor
+    steps = model.steps_per_stage
+    single = integrate_state_major(x.float(), steps, model.dt, model.forcing)
+    double = integrate_state_major(x, steps, model.dt, model.forcing)
+    assert single.dtype == torch.float32
+    assert (single.double() - double).abs().max() < 1e-4
+
+
 def test_climatology_at_f8():
     # Long-run mean about 2.3 and standard deviation about 3.6 for F = 8.
     model = StochasticLorenz96(dim_state=40, dt=0.01, interval=0.05)
@@ -85,15 +96,6 @@ def test_climatology_at_f8():
     samples = model.trajectory(x, 200, gen)
     assert 2.1 < samples.mean().item() < 2.5
     assert 3.4 < samples.std().item() < 3.8
-
-
-def test_lyapunov_spectrum_at_f8():
-    # Published d = 40, F = 8 values: lambda_1 about 1.7, about 13 positive.
-    exponents = lyapunov_exponents(40, total_time=200.0, spinup_time=20.0)
-    assert 1.5 < exponents[0].item() < 1.9
-    assert 11 <= int((exponents > 0.02).sum()) <= 15
-    # d/dt log volume is exactly -d.
-    assert exponents.sum().item() == pytest.approx(-40.0, abs=0.5)
 
 
 def test_nearby_trajectories_separate_at_the_lyapunov_rate():

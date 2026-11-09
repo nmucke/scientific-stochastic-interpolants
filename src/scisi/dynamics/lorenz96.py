@@ -101,63 +101,6 @@ def integrate_state_major(
     return start
 
 
-def lyapunov_exponents(
-    dim_state: int,
-    forcing: float = 8.0,
-    dt: float = 0.01,
-    num_exponents: Optional[int] = None,
-    spinup_time: float = 50.0,
-    total_time: float = 500.0,
-    renorm_every: int = 10,
-    seed: int = 0,
-) -> torch.Tensor:
-    """Leading Lyapunov exponents by the Benettin QR method (float64).
-
-    Tangent vectors follow the exact linearisation of the vector field through
-    the same RK4 scheme as the state.
-    """
-    k = dim_state if num_exponents is None else num_exponents
-    gen = torch.Generator().manual_seed(seed)
-    x = forcing + 0.01 * torch.randn(dim_state, generator=gen, dtype=torch.float64)
-    x = integrate(x, int(spinup_time / dt), dt, forcing)
-
-    def tangent_rhs(state: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        # v: [d, k]; J v of the vector field at ``state``.
-        s_p1, s_m1, s_m2 = (torch.roll(state, s) for s in (-1, 1, 2))
-        v_p1, v_m1, v_m2 = (torch.roll(v, s, dims=0) for s in (-1, 1, 2))
-        return (
-            (v_p1 - v_m2) * s_m1.unsqueeze(1)
-            + (s_p1 - s_m2).unsqueeze(1) * v_m1
-            - v
-        )
-
-    def tangent_step(state: torch.Tensor, v: torch.Tensor):
-        k1 = lorenz96_rhs(state, forcing)
-        l1 = tangent_rhs(state, v)
-        s2, v2 = state + 0.5 * dt * k1, v + 0.5 * dt * l1
-        k2, l2 = lorenz96_rhs(s2, forcing), tangent_rhs(s2, v2)
-        s3, v3 = state + 0.5 * dt * k2, v + 0.5 * dt * l2
-        k3, l3 = lorenz96_rhs(s3, forcing), tangent_rhs(s3, v3)
-        s4, v4 = state + dt * k3, v + dt * l3
-        k4, l4 = lorenz96_rhs(s4, forcing), tangent_rhs(s4, v4)
-        return (
-            state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4),
-            v + (dt / 6.0) * (l1 + 2 * l2 + 2 * l3 + l4),
-        )
-
-    v = torch.linalg.qr(
-        torch.randn(dim_state, k, generator=gen, dtype=torch.float64)
-    )[0]
-    log_growth = torch.zeros(k, dtype=torch.float64)
-    num_blocks = int(total_time / (dt * renorm_every))
-    for _ in range(num_blocks):
-        for _ in range(renorm_every):
-            x, v = tangent_step(x, v)
-        v, r = torch.linalg.qr(v)
-        log_growth += torch.log(torch.abs(torch.diagonal(r)))
-    return log_growth / (num_blocks * renorm_every * dt)
-
-
 @dataclass(frozen=True)
 class StochasticLorenz96:
     """One assimilation interval of Lorenz 96 with additive Gaussian model noise."""
@@ -255,6 +198,5 @@ __all__ = [
     "integrate",
     "integrate_state_major",
     "lorenz96_rhs",
-    "lyapunov_exponents",
     "rk4_step",
 ]
