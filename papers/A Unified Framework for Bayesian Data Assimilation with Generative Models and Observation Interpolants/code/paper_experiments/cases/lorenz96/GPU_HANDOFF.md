@@ -346,7 +346,11 @@ objective, MPS) and is exactly shift-equivariant under every lattice shift:
 | `MLP1d` | 592k | 0.491 | 17 s | not equivariant |
 
 The first three are within what a single short run can separate, so this is weak
-evidence. The ResNet's receptive field covers up to 31 sites, enough for d=16 and any d
+evidence. After this comparison, `PeriodicUNet1d`, `PeriodicTransformer1d`, `MLP1d`
+(and their helpers) were removed from `src/scisi/architectures/periodic_1d.py`, so
+step 3 cannot be rerun from this tree; they are in the git history at commit caa08af.
+`PeriodicResNet1d` was kept unchanged, and the trained checkpoints load strictly and
+give bitwise identical outputs after the removal. The ResNet's receptive field covers up to 31 sites, enough for d=16 and any d
 up to 31. `CircularConv1d` is a matmul over unfold because `nn.Conv1d` was about 100x
 slower on the Mac's CPU build without oneDNN; that may not apply on CUDA.
 

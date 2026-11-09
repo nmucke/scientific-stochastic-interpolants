@@ -1,15 +1,10 @@
-"""Periodic 1D drift networks: symmetry, differentiability and library integration."""
+"""Periodic 1D drift network: symmetry, differentiability and library integration."""
 
 import pytest
 import torch
 import torch.nn as nn
 
-from scisi.architectures.periodic_1d import (
-    MLP1d,
-    PeriodicResNet1d,
-    PeriodicTransformer1d,
-    PeriodicUNet1d,
-)
+from scisi.architectures.periodic_1d import PeriodicResNet1d
 from scisi.dynamics.lorenz96 import integrate
 from scisi.likelihood_models.gaussian_likelihood import InterpolantGaussianLikelihood
 from scisi.likelihood_models.observation_operators import LinearObservationOperator
@@ -21,22 +16,13 @@ from scisi.models.interpolations import (
 )
 
 BATCH = 6
-UNET_FACTOR = 4
 
 BUILDERS = {
     "resnet": lambda d, L: PeriodicResNet1d(
         len_field_history=L, hidden_channels=32, num_blocks=4, kernel_size=7
     ),
-    "unet": lambda d, L: PeriodicUNet1d(
-        len_field_history=L, hidden_channels=[16, 32, 48], kernel_size=5
-    ),
-    "transformer": lambda d, L: PeriodicTransformer1d(
-        len_field_history=L, hidden_channels=32, num_blocks=2, num_heads=4
-    ),
-    "mlp": lambda d, L: MLP1d(dim_state=d, len_field_history=L, hidden_dim=128),
 }
 VARIANTS = list(BUILDERS)
-EQUIVARIANT = ["resnet", "unet", "transformer"]
 
 
 @pytest.fixture(autouse=True)
@@ -55,28 +41,6 @@ def inputs(batch=BATCH, d=24, L=1, dtype=torch.float32):
         torch.rand(batch, 1, dtype=dtype),
         torch.randn(batch, 1, 1, d, L, dtype=dtype),
     )
-
-
-def shift_cases():
-    """All (variant, shift) pairs, with the U-Net's limitation marked explicitly."""
-    cases = []
-    for name in EQUIVARIANT:
-        for shift in (1, 2, 3, 4, 5, 8, 11):
-            broken = name == "unet" and shift % UNET_FACTOR != 0
-            marks = (
-                [
-                    pytest.mark.xfail(
-                        strict=True,
-                        raises=AssertionError,
-                        reason="strided U-Net: equivariant only under multiples "
-                        f"of its factor {UNET_FACTOR}",
-                    )
-                ]
-                if broken
-                else []
-            )
-            cases.append(pytest.param(name, shift, marks=marks, id=f"{name}-{shift}"))
-    return cases
 
 
 # --- shapes and broadcasting -------------------------------------------------
@@ -125,48 +89,18 @@ def test_output_depends_on_time_and_previous_state(name):
     assert not torch.allclose(out, net(x, t, changed), atol=1e-4)
 
 
-@pytest.mark.parametrize(
-    "net",
-    [
-        PeriodicResNet1d(),
-        PeriodicUNet1d(),
-        PeriodicTransformer1d(),
-        MLP1d(dim_state=24),
-    ],
-    ids=VARIANTS,
-)
-def test_default_size(net):
+def test_default_size():
+    net = PeriodicResNet1d()
     assert 1e5 <= sum(p.numel() for p in net.parameters()) <= 1e6
     x, t, history = inputs()
     assert net(x, t, history).shape == x.shape
 
 
 # --- rejected input ----------------------------------------------------------
-@pytest.mark.parametrize("d", [18, 22])
-def test_unet_rejects_lattice_not_divisible_by_factor(d):
-    x, t, history = inputs(d=d)
-    with pytest.raises(ValueError, match="not divisible"):
-        build("unet", d)(x, t, history)
-
-
 def test_resnet_rejects_lattice_beyond_receptive_field():
     net = PeriodicResNet1d(hidden_channels=8, num_blocks=1, kernel_size=3)
     x, t, history = inputs(d=16)
     with pytest.raises(ValueError, match="Receptive field"):
-        net(x, t, history)
-
-
-def test_unet_rejects_lattice_beyond_receptive_field():
-    net = PeriodicUNet1d(hidden_channels=[8, 8], num_bottleneck_blocks=1, kernel_size=3)
-    x, t, history = inputs(d=16)
-    with pytest.raises(ValueError, match="receptive field"):
-        net(x, t, history)
-
-
-def test_transformer_rejects_lattice_beyond_bias_table():
-    net = PeriodicTransformer1d(hidden_channels=8, num_heads=2, max_dim_state=16)
-    x, t, history = inputs(d=24)
-    with pytest.raises(ValueError, match="max_dim_state"):
         net(x, t, history)
 
 
@@ -187,7 +121,8 @@ def test_rejects_unsupported_input(name):
 # --- translation equivariance ------------------------------------------------
 @pytest.mark.parametrize("dtype,tol", [(torch.float32, 1e-5), (torch.float64, 1e-12)])
 @pytest.mark.parametrize("d", [16, 24])
-@pytest.mark.parametrize("name,shift", shift_cases())
+@pytest.mark.parametrize("shift", [1, 2, 3, 4, 5, 8, 11])
+@pytest.mark.parametrize("name", VARIANTS)
 def test_translation_equivariance(name, shift, d, dtype, tol):
     net = build(name, d, L=2, dtype=dtype)
     x, t, history = inputs(d=d, L=2, dtype=dtype)
@@ -195,13 +130,6 @@ def test_translation_equivariance(name, shift, d, dtype, tol):
         rolled_then_net = net(x.roll(shift, -1), t, history.roll(shift, -2))
         net_then_rolled = net(x, t, history).roll(shift, -1)
     assert (rolled_then_net - net_then_rolled).abs().max() < tol
-
-
-def test_mlp_is_not_equivariant():
-    net = build("mlp")
-    x, t, history = inputs()
-    out = net(x.roll(1, -1), t, history.roll(1, -2))
-    assert not torch.allclose(out, net(x, t, history).roll(1, -1), atol=1e-3)
 
 
 # --- receptive field ---------------------------------------------------------
