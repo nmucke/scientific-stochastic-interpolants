@@ -384,22 +384,32 @@ values into `methods:` in `configs/case/lorenz96.yaml`, which currently holds
 **defaults, not tuned values**, and is labelled so. A GPU makes it reasonable to extend
 `num_steps` to 100 and 200 and to try `jacobian_damping` in 0.9, 0.95 (see open
 question 1). Results append to `results/lorenz96/tuning/<method>__<keys>.csv`, so
-delete a stale file before a rerun. `enkf_large` was never tuned here.
+delete a stale file before a rerun. Each row records the base `methods:` settings
+(`base`, JSON) and `diverged_steps`, the (sequence, step) entries with a non-finite
+score (in practice: fewer than two members left). A row with `diverged_steps > 0` has infinite
+accuracy scores and cannot be selected. Appending to a file with other columns is
+refused; the partial CSVs from the Mac predate these two columns, so move them aside
+before tuning again. `enkf_large` was never tuned here.
 
 **Step 8. Final grid. NEVER at full size; every cell RAN (tiny) in tests.** Do not
 start until tuning is written into the config.
 
 ```bash
-cd "$PE" && PY=python JOBS=3 SEEDS="0 1 2" ./run_lorenz96_grid.sh
+cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96_grid.sh
 ```
 
-That script itself has never run. It does test references (24 runs of about 11 min, 6
+That script itself has never run at full size (a dry run with a stub interpreter
+checked the skip and rerun logic). It does test references (24 runs of about 11 min, 6
 at once: about 45 min on the Mac), `prior-quality`, 8 cells x 3 seeds, the
-`pf_reference` cell once, then aggregation and figures. Cost per generative cell at
+`pf_reference` cell once, then aggregation and figures. Cells run one at a time by
+default (`JOBS=1`), because concurrent cells inflate each other's `seconds`. A cell
+whose `results/lorenz96/metrics/` file exists is skipped, so after a failure just
+rerun the same command; `FORCE=1` reruns every cell. The script stops after the cell
+loop if any cell failed, before `pf_reference`, aggregation and figures. Cost per generative cell at
 batch 768 on MPS: `inflated` M=25 about 14.5 s per assimilation step (12 min per cell,
 24 min at M=50), `dps_jacobian_free` M=25 about 1 s (under a minute). Each cell also
 reruns one sequence for like-for-like timing, about 1/12 more. Measure again on the GPU.
-For honest `seconds` values, avoid running cells concurrently, or say so.
+For honest `seconds` values keep `JOBS=1`; if you raise it, say so.
 
 Outputs under `results/lorenz96/`: `metrics/`, `per_step/`, `per_sequence/`,
 `ensembles/` (about 4 MB per cell). Estimated total under 1 GB.
@@ -570,6 +580,16 @@ comparison was **not** run.
 
 Review findings did not make any data, model or reference stale. Tuning ran after the
 fixes.
+
+Review 4 (code review of caa08af, fixed on `review/lorenz96`): tuning could select a
+setting that diverged early (now `diverged_steps`, infinite scores); EnKF settings keys
+unchecked; NFE from a partial count; an over-broad `except AssertionError`; tuning and
+screen CSVs mixing runs (header check, `base` column); `reference_replicates` not a
+real option (must be 2); grid script ran 3 cells at once and could not resume; gate
+statistics untested. `driver._reference_task` now calls `pf_gate.run_pf`, and the PF
+refuses non-finite log weights. PF, reference, EnKF, oracle and checkpoint outputs
+were checked bitwise identical before and after, so the gate, references, models and
+data stay valid. The partial tuning CSVs need moving aside (step 7).
 
 ## 10. Rules
 
