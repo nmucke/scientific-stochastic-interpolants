@@ -1,10 +1,58 @@
+import warnings
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 
-from scisi.likelihood_models.observation_operators import LinearObservationOperator
+from scisi.likelihood_models.observation_operators import (
+    LinearObservationOperator,
+    PointwiseObservationOperator,
+)
+
+# Gauss-Hermite nodes of the statistical linearization. Saturating g (arctan)
+# under the wide small-tau Gaussians converges slowly: 20 nodes leave ~1e-1
+# errors in E g at tau = 0.1, 64 ~1e-2. Elementwise [B, N_y, n] work.
+GH_NODES = 64
+
+
+class _MemberJacobian:
+    """Per-member ``J_b = J_h(x_lin[b])``: the slice of the linear-operator
+    interface the likelihood uses, via the operator's ``jvp`` / ``vjp`` /
+    ``gram`` (no dense Jacobian)."""
+
+    per_member = True
+
+    def __init__(self, obs_operator: nn.Module, x_lin: torch.Tensor) -> None:
+        self.obs = obs_operator
+        self.x_lin = x_lin
+        self.num_obs = int(obs_operator.num_obs)
+
+    # Materialised: forward-mode AD (torch.func defaults) rejects stride-0 views.
+    def __call__(self, v: torch.Tensor) -> torch.Tensor:
+        return self.obs.jvp(self.x_lin, v.contiguous())
+
+    def transpose(self, u: torch.Tensor) -> torch.Tensor:
+        return self.obs.vjp(self.x_lin, u.contiguous())
+
+    def gram(self, x: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return self.obs.gram(self.x_lin)
+
+
+def _gauss_hermite_moments(
+    obs: PointwiseObservationOperator, m: torch.Tensor, s2: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """``E g(z)``, ``E g'(z)``, ``Var g(z)`` for ``z ~ N(m, s2)`` per sensor."""
+    nodes, weights = np.polynomial.hermite_e.hermegauss(GH_NODES)
+    xi = torch.as_tensor(nodes, dtype=m.dtype, device=m.device)
+    w = torch.as_tensor(weights / np.sqrt(2.0 * np.pi), dtype=m.dtype, device=m.device)
+    Z = m.unsqueeze(-1) + s2.sqrt().unsqueeze(-1) * xi  # [B, N_y, n]
+    gZ = obs.g(Z)
+    mean = (gZ * w).sum(-1)
+    dmean = (obs.dg(Z) * w).sum(-1)
+    var = ((gZ - mean.unsqueeze(-1)) ** 2 * w).sum(-1)
+    return mean, dmean, var
 
 
 @contextmanager
@@ -76,6 +124,21 @@ class InterpolantGaussianLikelihood(nn.Module):
     its forward (``H @ x``), adjoint (``transpose`` = ``H^T @ .``) and dense
     ``obs_matrix``; both selection (sparse / strided) and block-average
     super-resolution operators (``H^T H`` non-diagonal) are handled correctly.
+
+    Nonlinear ``h`` (``obs_operator.is_linear`` False): with ``ybar = alpha
+    h(a0) + beta y`` the anchor cancels and the residual is the exact
+    per-member ``beta (y - h(xhat1))``, ``xhat1 = (x_tau - alpha a0 - mu_s) /
+    beta``; every ``H`` above becomes ``J = J_h(x_lin)``. ``inflated_shared``
+    shares only the NETWORK Jacobian: for a ``PointwiseObservationOperator``
+    ``h = g(L x)`` it linearizes ``h`` per member around the shared ``L
+    Sigma_s L^T``; for other operators it linearizes once at the ensemble mean of ``xhat1``
+    (dense ``J``, refreshed with the shared network Jacobian, so the cost per
+    refresh is that of the linear ``H J H^T`` build), which is unsafe for
+    non-injective ``h`` (warned at run time by ``_check_shared_descent``);
+    ``inflated`` / ``dps_jacobian_free`` linearize
+    per member via the operator's ``jvp`` / ``vjp`` / ``gram`` (``inflated``:
+    ``N_y`` network JVPs as for linear ``H``; jacfree: one ``gram``). Linear
+    operators take the unchanged linear path.
     """
 
     def __init__(
@@ -92,6 +155,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         sigma_bar_eig_floor: bool = False,
         isotropic_front_factor: bool = False,
         residual_step_cap: Optional[float] = None,
+        obs_linearization_method: str = "first_order",
     ) -> None:
         """Initialize the interpolant Gaussian likelihood.
 
@@ -99,9 +163,9 @@ class InterpolantGaussianLikelihood(nn.Module):
             model: Trained prior model (SI ``FollmerStochasticInterpolant`` or
                 ``FlowMatchingModel``). Supplies the interpolation schedules and
                 the score recovery.
-            obs_operator: Linear observation operator exposing the forward
-                ``H @ x``, the adjoint ``transpose`` (``H^T @ .``) and the dense
-                ``obs_matrix``.
+            obs_operator: An ``ObservationOperator``. Linear: forward ``H @ x``,
+                adjoint ``transpose`` and dense ``obs_matrix``; nonlinear: see
+                the class docstring.
             variance: Scalar observation-noise variance ``sigma**2`` (``R =
                 sigma**2 I``).
             ensemble_size: Ensemble size (kept for interface compatibility).
@@ -149,6 +213,13 @@ class InterpolantGaussianLikelihood(nn.Module):
                 ``||H Sbar|| <= kappa ||ybar - mu_bar||`` (schedule-consistent,
                 inactive in the healthy regime). ``None`` (default) applies no
                 cap.
+            obs_linearization_method: nonlinear ``h`` only. ``"first_order"``
+                (default; Taylor linearization, see the class docstring) or
+                ``"statistical"`` (``PointwiseObservationOperator`` only, per
+                member in every mode): per-sensor Gauss--Hermite moments of
+                ``g(z_k)``, ``z_k ~ N((L xhat1)_k, (L C L^T)_kk)``, ``C =
+                Sigma_s / beta^2``, giving the mean ``E g``, gain ``diag(E g')``
+                and extra variance ``Var g - (E g')^2 (L C L^T)_kk``.
         """
         super(InterpolantGaussianLikelihood, self).__init__()
         self.obs_operator = obs_operator
@@ -199,13 +270,38 @@ class InterpolantGaussianLikelihood(nn.Module):
             raise ValueError(
                 f"residual_step_cap must be > 0 or None, got {residual_step_cap!r}."
             )
-        # (t_last, steps_since, jvp_fn, HJHt) of the current shared Jacobian.
+        # (t_last, steps_since, jvp_fn, HJHt, lin) of the current shared Jacobian.
         # ``t_last`` tracks the last pseudo-time seen so repeated calls at the
         # same tau (extra ensemble batches) reuse the cache, and a tau DECREASE
         # (pseudo-time restarted -> next assimilation window) forces a refresh.
+        # ``lin``: nonlinear-h ensemble-mean linearization, refreshed with it.
         self._shared_jac_cache: Dict[str, Any] = {
             "t_last": None, "steps_since": 0, "jvp_fn": None, "HJHt": None,
+            "lin": None,
         }
+
+        if obs_linearization_method not in ("first_order", "statistical"):
+            raise ValueError(
+                "obs_linearization_method must be 'first_order' or 'statistical', "
+                f"got {obs_linearization_method!r}."
+            )
+        if (
+            obs_linearization_method == "statistical"
+            and not obs_operator.is_linear
+            and not isinstance(obs_operator, PointwiseObservationOperator)
+        ):
+            raise ValueError(
+                "obs_linearization_method='statistical' needs a "
+                "PointwiseObservationOperator."
+            )
+        self.obs_linearization_method = obs_linearization_method
+
+        # inflated_shared + nonlinear h: a pointwise h = g(L x) is linearized per
+        # member around the shared L Sigma_s L^T (cheap, safe for non-injective
+        # g); other operators are linearized once at the ensemble-mean xhat1.
+        self._shared_member_linearization = isinstance(
+            obs_operator, PointwiseObservationOperator
+        )
 
         if model_class not in ("si", "fm"):
             raise ValueError(
@@ -219,50 +315,37 @@ class InterpolantGaussianLikelihood(nn.Module):
         else:
             self.interpolant = self.model.interpolation
 
-        # Cached H H^T and adjoint basis columns (H, R time-independent).
-        self._HHt: Optional[torch.Tensor] = None
+        # Cached adjoint basis columns H^T e_j (H time-independent), keyed on
+        # the identity of the source ``obs_matrix`` (a reference is held), so
+        # ``load_mask`` / a refreshed linearization invalidates them. ``H H^T``
+        # is cached by the operator (``obs_operator.gram``).
         self._cols: Optional[torch.Tensor] = None
-        self._cols_key: Optional[tuple] = None
+        self._cols_src: Optional[torch.Tensor] = None
 
     # ------------------------------------------------------------------
     # Operator caches
     # ------------------------------------------------------------------
-    def _get_obs_matrix(self, ref: torch.Tensor) -> torch.Tensor:
-        """Return the dense observation matrix on ``ref``'s device/dtype."""
-        H = self.obs_operator.obs_matrix.to(device=ref.device, dtype=ref.dtype)
-        return H
-
-    def _get_HHt(self, ref: torch.Tensor) -> torch.Tensor:
-        """Return ``H H^T`` (cached), shape ``[N_y, N_y]``.
-
-        Time-independent, so it is formed ONCE instead of re-running the
-        ``[N_y, N_u] @ [N_u, N_y]`` matmul on every pseudo-time step.
-        """
-        if (
-            self._HHt is None
-            or self._HHt.device != ref.device
-            or self._HHt.dtype != ref.dtype
-        ):
-            H = self._get_obs_matrix(ref)
-            self._HHt = H @ H.transpose(0, 1)
-        return self._HHt
-
-    def _get_adjoint_basis(self, ref: torch.Tensor) -> torch.Tensor:
+    def _get_adjoint_basis(
+        self, ref: torch.Tensor, op: Optional[nn.Module] = None
+    ) -> torch.Tensor:
         """Return the grid tensors ``H^T e_j`` for all obs rows, ``[N_y, C, H, W]``.
 
         Time-independent (one grid tensor per observation basis vector), so it
         is built ONCE per device/dtype instead of allocating an ``N_y x N_u``
-        block on every ``H Sigma_s H^T`` build. Keyed on the identity of
-        ``obs_matrix`` so ``load_mask`` invalidates it.
+        block on every ``H Sigma_s H^T`` build.
         """
-        H = self._get_obs_matrix(ref)
-        key = (id(self.obs_operator.obs_matrix), H.device, H.dtype)
-        if self._cols is None or self._cols_key != key:
-            eye_y = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
-            self._cols = self.obs_operator.transpose(eye_y)
-            self._cols_key = key
+        op = self.obs_operator if op is None else op
+        src = op.obs_matrix
+        if (
+            self._cols is None
+            or self._cols_src is not src
+            or self._cols.device != ref.device
+            or self._cols.dtype != ref.dtype
+        ):
+            eye_y = torch.eye(src.shape[0], device=ref.device, dtype=ref.dtype)
+            self._cols = op.transpose(eye_y)
+            self._cols_src = src
         return self._cols
-
     # ------------------------------------------------------------------
     # Observation interpolant ybar_tau
     # ------------------------------------------------------------------
@@ -330,7 +413,7 @@ class InterpolantGaussianLikelihood(nn.Module):
     # Interpolant-likelihood score Sbar  (closed form, covariances detached)
     # ------------------------------------------------------------------
     def _build_HSHt(
-        self, x: torch.Tensor, sigma_s_apply: Callable
+        self, x: torch.Tensor, sigma_s_apply: Callable, op: Any = None
     ) -> torch.Tensor:
         """Form ``H Sigma_s H^T`` per ensemble member, shape [B, N_y, N_y].
 
@@ -338,51 +421,83 @@ class InterpolantGaussianLikelihood(nn.Module):
         observation basis vector is the same grid tensor for every member, but
         the full ``Sigma_s`` is state-dependent, so the Jacobian-vector product
         is evaluated at each member's ``x_b`` (one batched JVP per column).
+        For a per-member ``op`` (:class:`_MemberJacobian`) the column
+        ``J_b^T e_j`` differs per member and is one batched VJP.
         """
-        H = self._get_obs_matrix(x)  # [N_y, N_u]
-        N_y = H.shape[0]
+        op = self.obs_operator if op is None else op
         b = x.shape[0]
-        # H^T e_j on the grid, one per column (cached; time-independent).
-        cols = self._get_adjoint_basis(x)  # [N_y, C, H, W]
+        if getattr(op, "per_member", False):
+            N_y = op.num_obs
+            eye = torch.eye(N_y, device=x.device, dtype=x.dtype)
+            HSHt = torch.empty(b, N_y, N_y, device=x.device, dtype=x.dtype)
+            for j in range(N_y):
+                col = op.transpose(eye[j].expand(b, N_y))
+                HSHt[:, :, j] = op(sigma_s_apply(col))
+            return HSHt
 
-        HSHt = torch.empty(b, N_y, N_y, device=H.device, dtype=H.dtype)
+        # H^T e_j on the grid, one per column (cached; time-independent).
+        cols = self._get_adjoint_basis(x, op)  # [N_y, C, H, W]
+        N_y = cols.shape[0]
+
+        HSHt = torch.empty(b, N_y, N_y, device=x.device, dtype=x.dtype)
         for j in range(N_y):
             v = cols[j : j + 1].expand(b, *cols.shape[1:])  # [B, C, H, W]
-            HSHt[:, :, j] = self.obs_operator(sigma_s_apply(v))  # [B, N_y]
+            HSHt[:, :, j] = op(sigma_s_apply(v))  # [B, N_y]
         return HSHt
 
     def _build_HJHt_shared(
-        self, ref: torch.Tensor, jvp_fn: Callable
+        self, ref: torch.Tensor, jvp_fn: Callable, op: Any = None
     ) -> torch.Tensor:
         """Form the Jacobian-only ``H J H^T`` (shape ``[N_y, N_y]``).
 
         The ``inflated_shared`` approximation evaluates the network Jacobian
-        ``J`` once at the ensemble-mean state, so a single matrix is built and
-        reused for every member's RHS (vs the per-member ``[B, N_y, N_y]`` of
-        :meth:`_build_HSHt`). Columns are processed in chunks: ``jvp_fn``
-        broadcasts the captured mean state to the chunk's batch, turning
-        ``N_y`` single-column JVPs into ``ceil(N_y / chunk)`` batched ones.
-        Column ``j`` is ``H J (H^T e_j)``.
-
-        The schedule scalars are NOT baked in: the caller assembles
+        ONCE at the ensemble mean, so ``H J H^T`` is a single matrix. With the
+        split ``Sigma_s = c_iso I + c_jac J`` the caller assembles
         ``H Sigma_s H^T = c_iso H H^T + c_jac H J H^T`` per pseudo-step, so
         this matrix can be cached across steps (``jacobian_refresh_every > 1``)
         with the scalars staying exact -- only ``J`` is lagged.
         """
-        H = self._get_obs_matrix(ref)  # [N_y, N_u]
-        N_y = H.shape[0]
-        cols = self._get_adjoint_basis(ref)  # [N_y, C, H, W]
+        op = self.obs_operator if op is None else op
+        cols = self._get_adjoint_basis(ref, op)  # [N_y, C, H, W]
+        N_y = cols.shape[0]
 
-        HJHt = torch.empty(N_y, N_y, device=H.device, dtype=H.dtype)
+        HJHt = torch.empty(N_y, N_y, device=ref.device, dtype=ref.dtype)
         chunk = max(1, int(self.shared_sigma_chunk))
         for start in range(0, N_y, chunk):
             block = cols[start : start + chunk]  # [k, C, H, W]
-            # obs_operator(J block) is [k, N_y]; its row i is the (start+i)-th
+            # op(J block) is [k, N_y]; its row i is the (start+i)-th
             # COLUMN of H J H^T.
-            HJHt[:, start : start + block.shape[0]] = self.obs_operator(
+            HJHt[:, start : start + block.shape[0]] = op(
                 jvp_fn(block)
             ).transpose(0, 1)
         return HJHt
+
+    def _shared_HSHt(
+        self, x: torch.Tensor, jvp_fn: Callable, c_iso: Any, c_jac: Any, op: Any = None
+    ) -> torch.Tensor:
+        """``inflated_shared``: ``c_iso H H^T + c_jac H J H^T`` (fresh tensor).
+
+        Assembled with the CURRENT schedule scalars; the cached ``H J H^T`` is
+        the only lagged factor (exact for ``jacobian_refresh_every = 1``).
+        """
+        op = self.obs_operator if op is None else op
+        cache = self._shared_jac_cache
+        if cache["HJHt"] is None:
+            cache["HJHt"] = self._build_HJHt_shared(x, jvp_fn, op)
+        return (
+            float(c_iso.reshape(-1)[0]) * op.gram(x)
+            + float(c_jac.reshape(-1)[0]) * cache["HJHt"]
+        )
+
+    @staticmethod
+    def _solve(Sigma_bar: torch.Tensor, residual_obs: torch.Tensor) -> torch.Tensor:
+        """``Sigma_bar^{-1} r`` per member: shared ``[N_y, N_y]`` (factorised
+        once for every RHS) or batched ``[B, N_y, N_y]``."""
+        if Sigma_bar.dim() == 2:
+            return torch.linalg.solve(
+                Sigma_bar, residual_obs.transpose(0, 1)
+            ).transpose(0, 1)
+        return torch.linalg.solve(Sigma_bar, residual_obs.unsqueeze(-1)).squeeze(-1)
 
     def _interpolant_score(
         self,
@@ -392,6 +507,7 @@ class InterpolantGaussianLikelihood(nn.Module):
         beta: torch.Tensor,
         sigma_s_apply: Optional[Callable] = None,
         HSHt_shared: Optional[torch.Tensor] = None,
+        op: Any = None,
     ) -> torch.Tensor:
         """Closed-form Sbar = grad_xbar_mu^T Sigma_bar^{-1} (ybar - mu_bar).
 
@@ -411,9 +527,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         and solved for every member's RHS (``dps_jacobian_free``: ``rho H H^T``;
         ``inflated_shared``: the caller-assembled ``HSHt_shared``), or the
         per-member ``[B, N_y, N_y]`` batched solve of the exact ``inflated``
-        mode. In all cases the ``beta^2 R`` term is added on the diagonal in
-        place of forming ``beta^2 R * I`` explicitly (addition commutes,
-        identical result).
+        mode (and of jacfree with a per-member ``op``). In all cases the
+        ``beta^2 R`` term is added on the diagonal in place.
 
         Args:
             x: State tensor [B, C, H, W] (used for shape/device).
@@ -423,64 +538,46 @@ class InterpolantGaussianLikelihood(nn.Module):
             sigma_s_apply: Operator ``v -> Sigma_s v`` on grid tensors (full
                 modes); ``None`` -> isotropic ``Sigma_s = rho I``.
             HSHt_shared: ``inflated_shared`` only -- the assembled
-                ``H Sigma_s H^T`` (``[N_y, N_y]``, fresh tensor) built by the
-                caller from the cached ``H J H^T`` and the current schedule
-                scalars.
+                ``H Sigma_s H^T`` (``[N_y, N_y]``, fresh tensor).
+            op: Linear(ized) operator playing the role of ``H`` (default
+                ``obs_operator``): a shared ``LinearizedObservationOperator`` or a
+                per-member :class:`_MemberJacobian` (nonlinear ``h``).
 
         Returns:
             Sbar as a full-grid tensor [B, C, H, W].
         """
+        op = self.obs_operator if op is None else op
         beta_sq_R = float((beta.reshape(-1)[0] ** 2)) * self.original_variance
         rho_s = float(rho.reshape(-1)[0])
 
-        if sigma_s_apply is not None and not self.share_sigma_s:
-            # Exact inflated mode: Sigma_bar per member, batched solve.
-            HSHt = self._build_HSHt(x, sigma_s_apply)  # [B, N_y, N_y]
-            Sigma_bar = HSHt  # fresh tensor; add beta^2 R on the diagonals in place
+        if sigma_s_apply is None:
+            # Jacobian-free: Sigma_bar = beta^2 R + rho H H^T (fresh tensor).
+            Sigma_bar = rho_s * op.gram(x)
             Sigma_bar.diagonal(dim1=-2, dim2=-1).add_(beta_sq_R)
-            sol = torch.linalg.solve(
-                Sigma_bar, residual_obs.unsqueeze(-1)
-            ).squeeze(-1)  # [B, N_y]
-            Ht_sol = self.obs_operator.transpose(sol)  # [B, C, H, W]
-            # grad_xbar_mu front factor: (Sigma_s / rho_tau) applied on grid, or
-            # the isotropic H (Sbar = Ht_sol) when the front factor is damped.
-            sbar = (
-                Ht_sol
-                if self.isotropic_front_factor
-                else sigma_s_apply(Ht_sol) / rho_s
-            )
-            return self._cap_step(sbar, residual_obs)
-
-        # Shared covariance (dps_jacobian_free / inflated_shared): one
-        # [N_y, N_y] Sigma_bar for the whole ensemble, factorised once and
-        # solved for every member's RHS. Both inputs are fresh tensors, so
-        # the diagonal add mutates neither cache.
-        if HSHt_shared is not None:
-            Sigma_bar = HSHt_shared
+        elif not self.share_sigma_s:
+            # Exact inflated mode: Sigma_bar per member (fresh tensor).
+            Sigma_bar = self._build_HSHt(x, sigma_s_apply, op)
+            Sigma_bar.diagonal(dim1=-2, dim2=-1).add_(beta_sq_R)
+        else:
+            Sigma_bar = HSHt_shared  # fresh tensor
             Sigma_bar.diagonal().add_(beta_sq_R)
             if self.sigma_bar_eig_floor:
                 # Symmetrise + floor eigenvalues at the jacfree-equivalent value
                 # so the non-symmetric / shrinking H J H^T term can never make
                 # Sigma_bar^{-1} larger than the isotropic covariance would.
-                Sigma_bar = self._floor_sigma_bar(Sigma_bar, x, rho_s, beta_sq_R)
-        else:
-            Sigma_bar = rho_s * self._get_HHt(x)
-            Sigma_bar.diagonal().add_(beta_sq_R)
-        sol = torch.linalg.solve(
-            Sigma_bar, residual_obs.transpose(0, 1)
-        ).transpose(0, 1)  # [B, N_y]
-        Ht_sol = self.obs_operator.transpose(sol)  # [B, C, H, W]
+                Sigma_bar = self._floor_sigma_bar(Sigma_bar, x, rho_s, beta_sq_R, op)
+        Ht_sol = op.transpose(self._solve(Sigma_bar, residual_obs))  # [B, C, H, W]
         if sigma_s_apply is None:
             # Isotropic front factor rho/rho_tau = 1: Sbar is exactly H^T sol.
             return Ht_sol
-        # Shared Sigma_s front factor (broadcast over members), or the isotropic
-        # H front factor (Sbar = Ht_sol) when the front factor is damped.
+        # grad_xbar_mu front factor: (Sigma_s / rho_tau) applied on grid, or
+        # the isotropic H (Sbar = Ht_sol) when the front factor is damped.
         sbar = (
             Ht_sol
             if self.isotropic_front_factor
             else sigma_s_apply(Ht_sol) / rho_s
         )
-        return self._cap_step(sbar, residual_obs)
+        return self._cap_step(sbar, residual_obs, op)
 
     def _floor_sigma_bar(
         self,
@@ -488,6 +585,8 @@ class InterpolantGaussianLikelihood(nn.Module):
         x: torch.Tensor,
         rho_s: float,
         beta_sq_R: float,
+        op: Any = None,
+        HHt: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Symmetrise ``Sigma_bar`` and floor its eigenvalues (shared mode).
 
@@ -500,21 +599,29 @@ class InterpolantGaussianLikelihood(nn.Module):
         (theory has a symmetric ``Sigma_s``) and caps ``||Sigma_bar^{-1}||`` at
         the jacfree level, so a shrunk / indefinite Jacobian term can no longer
         blow the guidance up. ``N_y <= 1024`` -> the ``eigh`` is negligible.
+        A batched ``HHt`` (``[B, N_y, N_y]``, statistical linearization) gives a
+        per-member floor.
         """
-        HHt = self._get_HHt(x)
-        floor = beta_sq_R + rho_s * float(torch.linalg.eigvalsh(HHt)[0])
+        if HHt is None:
+            HHt = (self.obs_operator if op is None else op).gram(x)
         sym = 0.5 * (Sigma_bar + Sigma_bar.transpose(-2, -1))
         evals, evecs = torch.linalg.eigh(sym)
-        evals = evals.clamp_min(floor)
+        if HHt.dim() == 2:
+            floor = beta_sq_R + rho_s * float(torch.linalg.eigvalsh(HHt)[0])
+            evals = evals.clamp_min(floor)
+        else:
+            floor = beta_sq_R + rho_s * torch.linalg.eigvalsh(HHt)[..., :1]
+            evals = torch.maximum(evals, floor)
         return (evecs * evals.unsqueeze(-2)) @ evecs.transpose(-2, -1)
 
     def _cap_step(
-        self, sbar: torch.Tensor, residual_obs: torch.Tensor
+        self, sbar: torch.Tensor, residual_obs: torch.Tensor, op: Any = None
     ) -> torch.Tensor:
         """Relative per-member cap on the guidance (full modes; no-op if unset).
 
         Clamps each member so ``||H Sbar|| <= kappa ||ybar - mu_bar||`` with
-        ``kappa = self.residual_step_cap``: one guidance step can move the state
+        ``kappa = self.residual_step_cap`` (``H`` -> the linearization ``op``
+        for nonlinear ``h``): one guidance step can move the state
         at most ``kappa`` times the current observation-space residual. The cap
         is schedule-consistent (it scales with the residual, not a fixed
         constant) so it is inactive in the healthy regime and only bites the
@@ -523,13 +630,13 @@ class InterpolantGaussianLikelihood(nn.Module):
         """
         if self.residual_step_cap is None:
             return sbar
+        op = self.obs_operator if op is None else op
         b = sbar.shape[0]
-        hs_norm = self.obs_operator(sbar).reshape(b, -1).norm(dim=1)  # ||H Sbar||
+        hs_norm = op(sbar).reshape(b, -1).norm(dim=1)  # ||H Sbar||
         res_norm = residual_obs.reshape(b, -1).norm(dim=1)
         cap = self.residual_step_cap * res_norm
         scale = (cap / (hs_norm + 1e-12)).clamp(max=1.0)
         return sbar * scale.reshape(b, *([1] * (sbar.dim() - 1)))
-
     # ------------------------------------------------------------------
     # Public score interface
     # ------------------------------------------------------------------
@@ -584,15 +691,6 @@ class InterpolantGaussianLikelihood(nn.Module):
 
         beta = self.interpolant.beta(t_clamped)
 
-        # --- observation interpolant ybar_tau -------------------------------
-        if self.anchor == "x0":
-            base_obs = self.obs_operator(field_history[..., -1])
-        else:  # FM: a0 = 0
-            base_obs = torch.zeros_like(observations)
-        interpolant_obs = self._interpolate_observations(
-            observations, t_clamped, base_obs
-        )
-
         # --- source conditional moments mu_s, rho_tau -----------------------
         # These are grid-space, so use the rank-expanded ``t_grid``.
         if self.model_class == "si":
@@ -604,71 +702,65 @@ class InterpolantGaussianLikelihood(nn.Module):
             mu_s = self._source_mean_fm(score=score, t=t_grid)
             rho = self._source_cov_diag_fm(t_grid)
 
-        # --- likelihood mean mu_bar = H x - H mu_s --------------------------
-        mu_bar = self.obs_operator(x) - self.obs_operator(mu_s)
-
-        residual_obs = interpolant_obs - mu_bar  # ybar - mu_bar, [B, N_y]
-
         # --- full Sigma_s operator (inflated modes) --------------------------
         # Both full modes use the unified split Sigma_s = c_iso I + c_jac J
         # with the network Jacobian J applied by a forward-mode JVP; the
         # isotropic mode (dps_jacobian_free) leaves it None.
-        sigma_s_apply = None
-        hsht_shared = None
-        if self.use_full_sigma_s:
-            if self.share_sigma_s:
-                # inflated_shared: evaluate the Jacobian ONCE at the ensemble
-                # mean (pseudo-time tau is identical across members, so the
-                # schedule scalars are unchanged; only the state is averaged),
-                # refreshed every ``jacobian_refresh_every``-th pseudo-step.
-                c_iso, c_jac = self._sigma_s_coeffs(
-                    t_grid[:1], rho[:1] if rho.dim() > 0 else rho
-                )
-                c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
-                jvp_fn = self._refresh_shared_jacobian(
-                    x=x,
-                    t_clamped=t_clamped,
-                    t_net=t_net,
-                    field_history=field_history,
-                    field_cond=field_cond,
-                    pars_cond=pars_cond,
-                )
-                cache = self._shared_jac_cache
-                if cache["HJHt"] is None:
-                    cache["HJHt"] = self._build_HJHt_shared(x, jvp_fn)
-                # Assemble H Sigma_s H^T with the CURRENT schedule scalars; the
-                # cached H J H^T is the only lagged factor (and is exact for
-                # jacobian_refresh_every = 1). Scalar multiplication creates a
-                # fresh tensor, so neither cache is mutated downstream.
-                hsht_shared = (
-                    float(c_iso.reshape(-1)[0]) * self._get_HHt(x)
-                    + float(c_jac.reshape(-1)[0]) * cache["HJHt"]
-                )
-            else:
-                c_iso, c_jac = self._sigma_s_coeffs(t_grid, rho)
-                c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
-                jvp_fn = self._build_jvp_fn(
-                    x=x,
-                    t_net=t_net,
-                    field_history=field_history,
-                    field_cond=field_cond,
-                    pars_cond=pars_cond,
-                )
-
-            def sigma_s_apply(
-                v: torch.Tensor, _ci=c_iso, _cj=c_jac, _jvp=jvp_fn
-            ) -> torch.Tensor:
-                return _ci * v + _cj * _jvp(v)
-
-        # --- interpolant score Sbar (closed form) ---------------------------
-        sbar = self._interpolant_score(
+        sigma_s_apply, c_iso, c_jac, jvp_fn = self._sigma_s_operator(
             x=x,
-            residual_obs=residual_obs,
+            t_clamped=t_clamped,
+            t_grid=t_grid,
+            t_net=t_net,
             rho=rho,
-            beta=beta,
-            sigma_s_apply=sigma_s_apply,
-            HSHt_shared=hsht_shared,
+            field_history=field_history,
+            field_cond=field_cond,
+            pars_cond=pars_cond,
         )
+
+        if self.obs_operator.is_linear:
+            # --- observation interpolant ybar_tau ---------------------------
+            if self.anchor == "x0":
+                base_obs = self.obs_operator(field_history[..., -1])
+            else:  # FM: a0 = 0
+                base_obs = torch.zeros_like(observations)
+            interpolant_obs = self._interpolate_observations(
+                observations, t_clamped, base_obs
+            )
+
+            # --- likelihood mean mu_bar = H x - H mu_s ----------------------
+            mu_bar = self.obs_operator(x) - self.obs_operator(mu_s)
+
+            residual_obs = interpolant_obs - mu_bar  # ybar - mu_bar, [B, N_y]
+
+            hsht_shared = (
+                self._shared_HSHt(x, jvp_fn, c_iso, c_jac)
+                if self.share_sigma_s
+                else None
+            )
+
+            # --- interpolant score Sbar (closed form) -----------------------
+            sbar = self._interpolant_score(
+                x=x,
+                residual_obs=residual_obs,
+                rho=rho,
+                beta=beta,
+                sigma_s_apply=sigma_s_apply,
+                HSHt_shared=hsht_shared,
+            )
+        else:
+            sbar, residual_obs = self._score_nonlinear(
+                x=x,
+                observations=observations,
+                t_grid=t_grid,
+                beta=beta,
+                mu_s=mu_s,
+                rho=rho,
+                field_history=field_history,
+                sigma_s_apply=sigma_s_apply,
+                c_iso=c_iso,
+                c_jac=c_jac,
+                jvp_fn=jvp_fn,
+            )
 
         # Diagnostic log-likelihood (used for optional SMC resampling). The
         # tau >= dtau guard in the posterior loops keeps beta > 0, so no
@@ -680,8 +772,234 @@ class InterpolantGaussianLikelihood(nn.Module):
         return sbar, log_likelihood
 
     # ------------------------------------------------------------------
+    # Nonlinear observation operator h
+    # ------------------------------------------------------------------
+    def _score_nonlinear(
+        self,
+        x: torch.Tensor,
+        observations: torch.Tensor,
+        t_grid: torch.Tensor,
+        beta: torch.Tensor,
+        mu_s: torch.Tensor,
+        rho: torch.Tensor,
+        field_history: torch.Tensor,
+        sigma_s_apply: Optional[Callable],
+        c_iso: Optional[torch.Tensor],
+        c_jac: Optional[torch.Tensor],
+        jvp_fn: Optional[Callable],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(Sbar, residual)`` for a nonlinear ``h`` (see the class docstring).
+
+        Residual ``beta (y - h(xhat1))`` with the source-moment denoiser
+        ``xhat1 = (x_tau - alpha a0 - mu_s) / beta`` (for linear ``H`` exactly
+        ``ybar - mu_bar``); ``H -> J = J_h(x_lin)`` everywhere else, with
+        ``x_lin`` the ensemble mean of ``xhat1`` (``inflated_shared``) or
+        ``xhat1_b`` (other modes) -- never ``x_tau``.
+        """
+        alpha_g = self.interpolant.alpha(t_grid)
+        beta_g = self.interpolant.beta(t_grid)
+        if self.anchor == "x0":
+            xhat1 = (x - alpha_g * field_history[..., -1] - mu_s) / beta_g
+        else:  # FM: a0 = 0
+            xhat1 = (x - mu_s) / beta_g
+        xhat1 = xhat1.detach()
+
+        if self.obs_linearization_method == "statistical":
+            return self._score_statistical(
+                x, xhat1, observations, beta, rho, sigma_s_apply, c_iso, c_jac, jvp_fn
+            )
+        if self.share_sigma_s and self._shared_member_linearization:
+            # Shared network Jacobian, per-member pointwise J_h (see __init__).
+            return self._score_statistical(
+                x, xhat1, observations, beta, rho, sigma_s_apply, c_iso, c_jac,
+                jvp_fn, first_order=True,
+            )
+
+        residual_obs = beta * (observations - self.obs_operator(xhat1))  # [B, N_y]
+        hsht_shared = None
+        if self.share_sigma_s:
+            op: Any = self._shared_linearization(xhat1)
+            hsht_shared = self._shared_HSHt(x, jvp_fn, c_iso, c_jac, op)
+        else:
+            op = _MemberJacobian(self.obs_operator, xhat1)
+        sbar = self._interpolant_score(
+            x=x,
+            residual_obs=residual_obs,
+            rho=rho,
+            beta=beta,
+            sigma_s_apply=sigma_s_apply,
+            HSHt_shared=hsht_shared,
+            op=op,
+        )
+        if self.share_sigma_s:
+            self._check_shared_descent(xhat1, op, sbar)
+        return sbar, residual_obs
+
+    def _check_shared_descent(
+        self, xhat1: torch.Tensor, lin: Any, sbar: torch.Tensor
+    ) -> None:
+        """Warn when the ensemble-mean linearization gives ascent steps.
+
+        The shared step ``Sbar_b`` is built so that the shared model predicts
+        the observation change ``J_bar Sbar_b`` (aligned with the residual);
+        the member's actual first-order change is ``J_b Sbar_b``. If
+        ``<J_b Sbar_b, J_bar Sbar_b> < 0`` the two point in opposite
+        directions, i.e. the step moves the member AWAY from its observation
+        (``J_b`` and ``J_bar`` disagree in sign: the member sits on another
+        branch of a non-injective ``h``). Uncorrected this is the Riccati
+        runaway (Riccati blow-up ``dx ~ -x^2``) of a member on the other branch. Two ``h``-JVPs,
+        no network calls.
+        """
+        b = xhat1.shape[0]
+        own = self.obs_operator.jvp(xhat1, sbar).reshape(b, -1)
+        shared = lin(sbar).reshape(b, -1)
+        bad = (own * shared).sum(dim=1) < 0
+        if bool(bad.any()):
+            warnings.warn(
+                f"inflated_shared: the ensemble-mean linearization of the "
+                f"nonlinear observation operator gives {int(bad.sum())}/{b} "
+                "members an ASCENT step (their local Jacobian disagrees in sign "
+                "with the shared one, e.g. a non-injective h with members on "
+                "different branches). Such members can diverge; use "
+                "likelihood_mode='inflated' for this operator.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+    def _shared_linearization(self, xhat1: torch.Tensor) -> nn.Module:
+        """``J_h`` at the ensemble mean of ``xhat1`` (dense), cached with and
+        refreshed on the cadence of the shared network Jacobian."""
+        cache = self._shared_jac_cache
+        if cache["lin"] is None:
+            cache["lin"] = self.obs_operator.linearize(xhat1.mean(dim=0, keepdim=True))
+        return cache["lin"]
+
+    def _score_statistical(
+        self,
+        x: torch.Tensor,
+        xhat1: torch.Tensor,
+        observations: torch.Tensor,
+        beta: torch.Tensor,
+        rho: torch.Tensor,
+        sigma_s_apply: Optional[Callable],
+        c_iso: Optional[torch.Tensor],
+        c_jac: Optional[torch.Tensor],
+        jvp_fn: Optional[Callable],
+        first_order: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Statistical linearization of ``h = g(L x)`` (per member, any mode).
+
+        With ``M = L Sigma_s L^T`` (built as the linear code builds ``H Sigma_s
+        H^T`` with ``H := L``; same network-JVP cost), per sensor ``z_k ~
+        N((L xhat1)_k, s_k^2)``, ``s_k^2 = M_kk / beta^2``, ``m = E g(z)``,
+        ``D = diag(E g'(z))``:
+
+            Sigma_bar = beta^2 R + D M D + beta^2 diag(Var g - D^2 s^2),
+            Sbar      = (Sigma_s / rho) L^T D Sigma_bar^{-1} beta (y - m),
+
+        the first-order formula with ``g, g'`` replaced by their Gaussian
+        expectations plus the linearization-error variance. Identity ``g``
+        gives the linear result.
+
+        ``first_order=True``: the per-member Taylor linearization through the
+        same code, ``m = g(L xhat1)``, ``D = diag(g'(L xhat1))``, no extra
+        variance -- the ``inflated_shared`` route for a pointwise ``h`` (shared ``M``,
+        per-member ``D``).
+        """
+        obs = self.obs_operator
+        L = obs.inner
+        beta_s = float(beta.reshape(-1)[0])
+        beta_sq_R = beta_s**2 * self.original_variance
+        rho_s = float(rho.reshape(-1)[0])
+
+        if sigma_s_apply is None:
+            M = rho_s * L.gram(x)
+        elif self.share_sigma_s:
+            M = self._shared_HSHt(x, jvp_fn, c_iso, c_jac, L)
+        else:
+            M = self._build_HSHt(x, sigma_s_apply, L)
+
+        if first_order:
+            z = L(xhat1)
+            mh, D = obs.g(z), obs.dg(z)
+            s2 = var = torch.zeros_like(z)
+        else:
+            s2 = torch.diagonal(M, dim1=-2, dim2=-1).clamp_min(0.0) / beta_s**2
+            mh, D, var = _gauss_hermite_moments(obs, L(xhat1), s2)
+        residual_obs = beta * (observations - mh)  # [B, N_y]
+
+        Sigma_bar = D.unsqueeze(-1) * M * D.unsqueeze(-2)  # fresh [B, N_y, N_y]
+        diag = Sigma_bar.diagonal(dim1=-2, dim2=-1)
+        diag.add_(beta_sq_R)
+        diag.add_(beta_s**2 * (var - D**2 * s2).clamp_min(0.0))
+        if self.share_sigma_s and self.sigma_bar_eig_floor:
+            JJt = D.unsqueeze(-1) * L.gram(x) * D.unsqueeze(-2)
+            Sigma_bar = self._floor_sigma_bar(Sigma_bar, x, rho_s, beta_sq_R, HHt=JJt)
+
+        Ht_sol = L.transpose(D * self._solve(Sigma_bar, residual_obs))  # J^T sol
+        if sigma_s_apply is None:
+            return Ht_sol, residual_obs
+        sbar = (
+            Ht_sol
+            if self.isotropic_front_factor
+            else sigma_s_apply(Ht_sol) / rho_s
+        )
+        return self._cap_step(sbar, residual_obs, lambda v: D * L(v)), residual_obs
+    # ------------------------------------------------------------------
     # Full source covariance (Jacobian) operator
     # ------------------------------------------------------------------
+    def _sigma_s_operator(
+        self,
+        x: torch.Tensor,
+        t_clamped: torch.Tensor,
+        t_grid: torch.Tensor,
+        t_net: torch.Tensor,
+        rho: torch.Tensor,
+        field_history: Optional[torch.Tensor],
+        field_cond: Optional[torch.Tensor],
+        pars_cond: Optional[torch.Tensor],
+    ) -> tuple[Optional[Callable], Any, Any, Optional[Callable]]:
+        """``(sigma_s_apply, c_iso, c_jac, jvp_fn)`` for the full modes.
+
+        ``sigma_s_apply(v) = c_iso v + c_jac J v`` (``None`` everywhere for
+        ``dps_jacobian_free``). ``inflated_shared`` evaluates the Jacobian ONCE
+        at the ensemble mean (pseudo-time tau is identical across members, so
+        the schedule scalars are unchanged; only the state is averaged),
+        refreshed every ``jacobian_refresh_every``-th pseudo-step.
+        """
+        if not self.use_full_sigma_s:
+            return None, None, None, None
+        if self.share_sigma_s:
+            c_iso, c_jac = self._sigma_s_coeffs(
+                t_grid[:1], rho[:1] if rho.dim() > 0 else rho
+            )
+            c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
+            jvp_fn = self._refresh_shared_jacobian(
+                x=x,
+                t_clamped=t_clamped,
+                t_net=t_net,
+                field_history=field_history,
+                field_cond=field_cond,
+                pars_cond=pars_cond,
+            )
+        else:
+            c_iso, c_jac = self._sigma_s_coeffs(t_grid, rho)
+            c_jac = c_jac * self.jacobian_damping  # lambda-damp J (solve + front)
+            jvp_fn = self._build_jvp_fn(
+                x=x,
+                t_net=t_net,
+                field_history=field_history,
+                field_cond=field_cond,
+                pars_cond=pars_cond,
+            )
+
+        def sigma_s_apply(
+            v: torch.Tensor, _ci=c_iso, _cj=c_jac, _jvp=jvp_fn
+        ) -> torch.Tensor:
+            return _ci * v + _cj * _jvp(v)
+
+        return sigma_s_apply, c_iso, c_jac, jvp_fn
+
     def _sigma_s_coeffs(
         self, t: torch.Tensor, rho: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -811,6 +1129,7 @@ class InterpolantGaussianLikelihood(nn.Module):
                 pars_cond=_mean0(pars_cond),
             )
             cache["HJHt"] = None
+            cache["lin"] = None  # nonlinear h: re-linearize lazily
             cache["steps_since"] = 0
 
         return cache["jvp_fn"]

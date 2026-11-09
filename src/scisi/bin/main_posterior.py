@@ -132,10 +132,14 @@ def main(posterior_cfg: DictConfig) -> None:
     model.to("cuda")
 
     logger.info(f"Instantiating observation operator:")
-    logger.info(f"Type: {posterior_cfg.obs_operator.type}")
+    logger.info(f"Target: {posterior_cfg.obs_operator.get('_target_')}")
+    # `_convert_="all"` so a nonlinear operator's nested `inner:` block (the
+    # linear sensor map of PointwiseObservationOperator / VelocityMagnitudeOperator)
+    # arrives as a plain dict; `data_size` is then merged into it.
     obs_operator = hydra.utils.instantiate(
         posterior_cfg.obs_operator,
-        data_size=init_data["base"][0].shape,
+        data_size=tuple(init_data["base"][0].shape),
+        _convert_="all",
     )
     logger.info(f"Number of observations: {obs_operator.num_obs}")
     logger.info(
