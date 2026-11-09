@@ -54,6 +54,7 @@ _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parents[1]))
 
 from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
+from cases.lorenz96._l96_smc import SMC_KEYS, SURGE_CELLS, pf_smc_record  # noqa: E402
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
     OBS_OPERATORS,
@@ -120,13 +121,16 @@ CELLS = {
     "sda": (Method.SDA, None),
     "dflow": (Method.D_FLOW_SGLD, None),
     "fig": (Method.GUIDED_FM_FIG, None),
+    # SURGE SMC cells (_l96_smc.py): Ours inside SURGE, its unguided controls,
+    # SURGE + FlowDAS and SURGE + SDA. One sequence per sampler call.
+    **SURGE_CELLS,
 }
 BASELINE_CELLS = ("flowdas", "sda", "dflow", "fig")
 # The plain samplers; their corrected cells are in CORRECTED.
 GENERATIVE = {
     name: method
     for name, (method, _) in CELLS.items()
-    if method.name.startswith("OURS_") and name not in CORRECTED
+    if method.name.startswith("OURS_") and name not in CORRECTED and name not in SURGE_CELLS
 }
 # Cells that take no settings: an override or a tuning grid would be ignored.
 NO_SETTINGS = ("oracle", "pf_matched", "pf_subsample", "pf_reference")
@@ -580,6 +584,8 @@ class CellOutput:
     pseudo_steps: int | None
     # [S, T, E] per-member ESS of the importance-sampling oracle (arctan only).
     oracle_ess: torch.Tensor | None = None
+    # SMC cells only: per sequence, per-step lists of the _l96_smc.SMC_KEYS.
+    smc: list[dict[str, list[float]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -821,7 +827,7 @@ def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
         obs_nonlinearity=problem.obs_nonlinearity,
     )
     start = time.time()
-    out = []
+    out, smc = [], []
     for index, seq in enumerate(sequences):
         gen = torch.Generator().manual_seed(
             derive_seed(SEED_LABEL, "pf-matched", split, index, seed)
@@ -829,7 +835,8 @@ def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
         x0 = initial_ensemble(problem, seq, members, split, index, seed)
         run = pf.run(problem.model, x0.T.contiguous(), seq.observations, gen)
         out.append(run.samples)
-    return CellOutput(torch.stack(out), time.time() - start, None, members, None)
+        smc.append(pf_smc_record(run.ess, run.num_particles))
+    return CellOutput(torch.stack(out), time.time() - start, None, members, None, smc)
 
 
 def run_subsample(problem, sequences, split, seed, members) -> CellOutput:
@@ -933,6 +940,24 @@ def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> Cel
         from cases.lorenz96._l96_baselines import run_baseline
 
         return run_baseline(cfg, name, problem, sequences, split, seed, members, settings)
+    if name in SURGE_CELLS:
+        from cases.lorenz96._l96_smc import run_surge
+
+        run = run_surge(
+            cfg,
+            name,
+            problem,
+            sequences,
+            members,
+            settings,
+            initial=lambda index, seq: initial_ensemble(
+                problem, seq, members, split, index, seed
+            ),
+            seeds=[derive_seed(SEED_LABEL, name, split, i, seed) for i in range(len(sequences))],
+            data_path=DATA_PATH,
+            config_dir=CASE_CONFIG.parents[1] / "method",
+        )
+        return CellOutput(run.ensembles, run.seconds, run.nfe, members, run.pseudo_steps, smc=run.smc)
     return run_generative(cfg, name, problem, sequences, split, seed, members, settings)
 
 
@@ -966,6 +991,7 @@ def evaluate_cell(
     nfe = None
     innovations = None
     oracle_ess = None
+    smc = None
     settings = apply_overrides(method_settings(cfg, name), overrides)
     check_correction_label(name, settings, tag)
 
@@ -973,10 +999,12 @@ def evaluate_cell(
         # The second replicate against the first: the error of the reference itself.
         scores = []
         seconds = []
+        smc = []
         for index, seq in enumerate(sequences):
             ref = load_reference(split, index, 0, problem)
             other = load_reference(split, index, 1, problem)
             seconds.append(other["seconds"])
+            smc.append(pf_smc_record(other["ess"], other["num_particles"]))
             scores.append(
                 score(
                     other["mean"],
@@ -1001,6 +1029,7 @@ def evaluate_cell(
         )
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
         oracle_ess = output.oracle_ess
+        smc = output.smc
         path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(output.ensembles.float(), path)
@@ -1032,6 +1061,12 @@ def evaluate_cell(
     if innovations is not None:
         for key in (INNOVATION_LAG1, INNOVATION_MSQ):
             per_sequence[key] = [entry[key] for entry in innovations]
+    if smc is not None:
+        # ESS / resampling of the SMC cells (_l96_smc): curves averaged over
+        # sequences, per-sequence means over steps.
+        for key in SMC_KEYS:
+            curves[key] = [finite_mean(at_step) for at_step in zip(*(e[key] for e in smc))]
+            per_sequence[key] = [finite_mean(entry[key]) for entry in smc]
     if oracle_ess is not None:
         # [S, T, E]: per step the mean / minimum over members and sequences.
         curves[ORACLE_ESS_MEAN] = oracle_ess.mean((0, 2)).tolist()

@@ -198,6 +198,9 @@ def tiny_case(tmp_path, monkeypatch):
         cfg.methods[name].likelihood_mode = "dps_jacobian_free"
     for name in driver.PRIOR_ENKF:
         cfg.methods[name].num_steps = 3
+    for name in driver.SURGE_CELLS:
+        cfg.methods[name].num_steps = 3
+    cfg.methods.surge_flowdas.num_mc_samples = 4
     monkeypatch.setattr(driver, "RESULTS", tmp_path)
     problem = driver.problem_of(cfg)
     for index, seq in enumerate(load_sequences(problem, "test", 2)):

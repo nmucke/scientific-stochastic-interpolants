@@ -112,6 +112,24 @@ methods:
   dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6, burn: 100}
   # FIG: k (= table default), c (table default: 10.0), w (fixed 0)
   fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
+  # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
+  # One sequence per sampler call (SURGE normalises its weights over every member
+  # it is given); N = E = 64 particles, one per member (no particles-per-member knob
+  # exists). ess_threshold: resample when ESS/N falls below it (0.5 = multistep and
+  # configs/method/surge_*.yaml). Unknown keys are refused.
+  # Ours inside SURGE, built as the multistep case (SDE only): the keys of the plain
+  # si_sde / dm_sde blocks (own copies, not inherited) + ess_threshold.
+  surge_si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, ess_threshold: 0.5}
+  surge_dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0, ess_threshold: 0.5}
+  # The same SMC proposing from the unguided prior, one per wrapped prior.
+  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+  # NS constructions (_ns_pipeline.build_posterior); every knob of
+  # configs/method/surge_{flowdas,sda}.yaml is set here as a scalar (no NS tables;
+  # NS env overrides are refused). Values are those files' `default:` entries.
+  # guidance_scale = FlowDAS zeta; num_mc_samples = J; max_grad_norm null = no cap.
+  surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
 
 # Settings of the arctan problem (`--obs arctan`), read instead of `methods:` by
 # driver.case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
@@ -136,6 +154,13 @@ methods_arctan:
   sda: {num_steps: 50, gamma_sda: 0.01}
   dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6, burn: 100}
   fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
+  # SURGE SMC cells: see the comments in `methods:`.
+  surge_si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, ess_threshold: 0.5}
+  surge_dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0, ess_threshold: 0.5}
+  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+  surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
 
 # The arctan one-step oracle (`oracle`, `oracle_fc` with --obs arctan) has no closed
 # form: per member, `proposals` draws from the exact transition, weighted by
