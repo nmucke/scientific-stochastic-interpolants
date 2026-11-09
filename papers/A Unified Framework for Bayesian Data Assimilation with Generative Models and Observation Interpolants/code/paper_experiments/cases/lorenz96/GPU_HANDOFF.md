@@ -698,7 +698,11 @@ H Cov(Phi) H' + q + r, so they are the same measure for every method
 (`driver.innovation_scores`). Zero lag-1 means white innovations. The E=64
 PF-subsample floor is -0.05. Lag-1 is not mean-removed (a constant bias counts as
 correlation, as in the library's diagnostics) and pairs only adjacent finite steps.
-Both statistics are exact for `noise_stages: 1` only and raise otherwise.
+Both statistics are exact for `noise_stages: 1` only and are NaN (with a logged
+warning) otherwise.
+Plain cells skipped by a resumed grid keep their review-4 files without these keys, and
+`sequence_spread.csv` keeps only metrics every seed has: re-run those cells (`FORCE=1`)
+for their innovation metrics to appear for all seeds.
 
 Configuration lives in `configs/case/lorenz96.yaml` (`methods.<cell>_fc.correction`, keys
 documented there): `forecast_num_steps` (null means the sampler's M), `localisation`
@@ -723,8 +727,10 @@ python cases/lorenz96/driver.py tune --method fm_ode_fc --tag gain \
 every output path (`lorenz96__si_sde_fc-fs5_g0.5__traj0__.csv`, the per-sequence
 JSON, `ensembles/si_sde_fc-fs5_g0.5__seed0.pt`) and into the tidy variant
 (`forecast_correction_fs5_g0.5`), so a sweep cell never overwrites the default cell
-and the aggregator reports it as its own row. Tag `off` for a
-`correction.enabled=false` run, so that row does not read as the corrected cell. The
+and the aggregator reports it as its own row. A
+`correction.enabled=false` run of a correction cell needs a tag (e.g. `off`), also
+when set in the YAML, so that row does not read as the corrected cell; a tag giving
+the label of an untagged cell (`si_sde --tag forecast_correction`) is refused. The
 figures plot the untagged default variants only. Tags take letters, digits, `.`, `=`,
 `-` and single `_`.
 
@@ -849,5 +855,5 @@ against 4096 PF draws) took about 4 min per run here and dominates validation ti
    cells. Report `prior_enkf` next to the corrected cells in any table.
 4. If the paper keeps the correction, it needs a case where it beats `prior_enkf`:
    a non-Gaussian kernel (`noise_stages > 1`, which needs a new gate, and new
-   innovation statistics: `driver.normalised_innovations` raises there) or E small for d.
+   innovation statistics: the current ones are NaN there) or E small for d.
    State plainly if none is found.

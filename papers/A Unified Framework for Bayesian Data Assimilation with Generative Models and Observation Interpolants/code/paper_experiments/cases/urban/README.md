@@ -105,6 +105,8 @@ Urban specifics:
   increments). Only the obstacle mask is applied.
 * **Diagnostics**: the shared ones (lag-1 innovation autocorrelation,
   `innovation_msq`, `q_share_state`, `cap_fraction`); no urban-specific per-step records.
+* **`forecast_seed` is shared across methods** (as for NS): seeded per (case, scenario,
+  test_index, seed, forecast_seed). The derived forecast seed does not include the method or variant, so different methods (or variants) of one scenario, trajectory and seed draw the same forecast noise; within a cell, successive correction calls are independent (the call counter).
 * Example (validation row 7): measure first, then correct:
 
   ```bash

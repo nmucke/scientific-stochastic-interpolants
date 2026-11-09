@@ -737,3 +737,56 @@ def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypat
         driver.cmd_tune(SimpleNamespace(**vars(plain), innovations=True))
     with pytest.raises(ValueError, match="nothing to tune"):
         driver.cmd_tune(SimpleNamespace(method="oracle", grid="{}", threads=1))
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_sequence_spread_keeps_metrics_every_seed_has(tmp_path, capsys, order):
+    import aggregate_lorenz96
+
+    old = {Metric.RMSE.value: [1.0, 2.0]}  # a review-4 file: no innovation keys
+    new = {Metric.RMSE.value: [3.0, 5.0], driver.INNOVATION_LAG1: [0.1, 0.2]}
+    for seed, entries in zip(order, (old, new)):
+        (tmp_path / f"lorenz96__enkf__traj{seed}__.json").write_text(json.dumps(entries))
+    rows = aggregate_lorenz96.sequence_spread(tmp_path)
+    assert [r["metric"] for r in rows] == [Metric.RMSE.value]
+    assert rows[0]["std"] == pytest.approx(statistics.stdev([2.0, 3.5]))
+    assert driver.INNOVATION_LAG1 in capsys.readouterr().out
+
+
+def test_innovations_are_nan_with_a_warning_for_several_noise_stages(caplog):
+    problem = Problem(num_steps=3, noise_stages=2)
+    sequences = load_sequences(problem, "test", 2)
+    ensembles = torch.randn(2, 3, 6, problem.dim_state, dtype=torch.float64)
+    with caplog.at_level("WARNING"):
+        out = driver.innovation_output(ensembles, sequences, "test", 0, problem)
+    assert len(out) == 2
+    assert all(math.isnan(v) for entry in out for v in entry.values())
+    assert "noise_stages" in caplog.text
+
+
+def test_innovations_without_an_own_initial_ensemble_leave_out_the_first_step(problem):
+    gen = torch.Generator().manual_seed(0)
+    ensemble = torch.randn(4, 16, problem.dim_state, generator=gen, dtype=torch.float64)
+    observations = torch.randn(4, problem.obs_indices.numel(), generator=gen)
+    full = driver.innovation_scores(problem, ensemble[0], ensemble[1:], observations[1:])
+    skipped = driver.innovation_scores(problem, None, ensemble, observations)
+    assert skipped == pytest.approx(full)
+    assert driver.NO_INITIAL_ENSEMBLE == ("pf_subsample",)
+
+
+def test_a_tag_cannot_reuse_an_untagged_cell_label():
+    with pytest.raises(ValueError, match="untagged cell"):
+        driver.check_tag("si_sde", driver.FC_VARIANT, None)
+    driver.check_tag("si_sde", "fs5", None)
+    driver.check_tag("si_sde_fc", "off", None)
+
+
+def test_a_disabled_correction_cell_needs_a_tag(tiny_case):
+    tiny_case.methods.si_sde_fc.correction.enabled = False
+    with pytest.raises(ValueError, match="enabled=false"):
+        driver.evaluate_cell("si_sde_fc", 0, tiny_case)
+    off = {"correction": {"enabled": False}}
+    driver.check_correction_label("si_sde_fc", off, "off")
+    driver.check_correction_label("si_sde", off, "")
+    with pytest.raises(ValueError, match="enabled=false"):
+        driver.check_correction_label("oracle_fc", off, "")

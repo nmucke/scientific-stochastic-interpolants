@@ -212,6 +212,8 @@ The update is zero and the forecasts come from a forked RNG, so the trajectory,
 and hence every metric, equals the plain run's (tested bit-for-bit on CPU); only
 NFE/seconds include the forecasts, and the rows carry their own tag.
 
+**`forecast_seed` is shared across methods.** The derived forecast seed does not include the method or variant, so different methods (or variants) of one scenario, trajectory and seed draw the same forecast noise; within a cell, successive correction calls are independent (the call counter).
+
 ### Cost per assimilated step (network passes per member)
 
 * Online Q (default): `2 x forecast_num_steps` extra prior passes, no JVPs. Bank: `1 x forecast_num_steps`.

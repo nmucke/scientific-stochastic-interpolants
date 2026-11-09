@@ -495,11 +495,15 @@ def _unlocalised_gain(X: Tensor, HX: Tensor, Z: Tensor) -> Tensor:
     return (HX @ Z).T @ X  # E_in x E_out intermediate
 
 
-def _group_slices(n: int, group_size: Optional[int]) -> list[slice]:
+def group_slices(n: int, group_size: Optional[int]) -> list[slice]:
+    """The member groups of ``group_size``: contiguous slices of ``group_size``
+    members; a single leftover member joins the previous group."""
     if n < 2:
         raise ValueError("the correction needs at least 2 members")
     if group_size is None or int(group_size) >= n:
         return [slice(0, n)]
+    if int(group_size) < 2:
+        raise ValueError("group_size must be >= 2")
     starts = list(range(0, n, int(group_size)))
     if n - starts[-1] < 2:
         starts.pop()
@@ -636,7 +640,7 @@ class ForecastCorrection:
         if R.numel() not in (1, m):
             raise ValueError(f"obs_noise_var has {R.numel()} entries, expected 1 or {m}")
         R = R.expand(m)
-        slices = _group_slices(N, cfg.group_size)
+        slices = group_slices(N, cfg.group_size)
         Y = flat(y.reshape(-1, m))
         if Y.shape[0] == 1:
             Y = Y.expand(N, m)
@@ -796,4 +800,5 @@ __all__ = [
     "draw_unguided_forecast",
     "gaspari_cohn_kernel",
     "grid_localisation",
+    "group_slices",
 ]

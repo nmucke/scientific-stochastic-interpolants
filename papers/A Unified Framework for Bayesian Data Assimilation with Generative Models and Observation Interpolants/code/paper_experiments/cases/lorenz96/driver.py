@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import logging
 import math
 import multiprocessing
 import re
@@ -113,6 +114,9 @@ GENERATIVE = {
 }
 # Cells that take no settings: an override or a tuning grid would be ignored.
 NO_SETTINGS = ("oracle", "pf_matched", "pf_subsample", "pf_reference")
+# Cells whose step-0 members are not ``initial_ensemble``: their first innovation is
+# left out (``pf_subsample`` draws from the reference posterior at steps 1..T only).
+NO_INITIAL_ENSEMBLE = ("pf_subsample",)
 TUNABLE = tuple(name for name in CELLS if name not in NO_SETTINGS)
 # (sequence, step) entries with a non-finite score; in practice fewer than two members left.
 DIVERGED_STEPS = "diverged_steps"
@@ -395,9 +399,12 @@ def innovation_scores(problem, initial, ensemble, observations) -> dict[str, flo
     """Lag-1 autocorrelation and mean square of the normalised innovations.
 
     Args:
-        initial: ``[E, d]`` members before the first step.
+        initial: ``[E, d]`` members before the first step, or None when the cell
+            has none of its own: the first innovation is then NaN (left out).
         ensemble: ``[T, E, d]`` analysis members; observations: ``[T, d_y]``.
     """
+    if initial is None:
+        initial = torch.full_like(ensemble[0], float("nan"))
     previous = torch.cat([initial[None].double(), ensemble.double()[:-1]])
     rows = []
     for members, y in zip(previous, observations):
@@ -412,16 +419,34 @@ def innovation_scores(problem, initial, ensemble, observations) -> dict[str, flo
     return {INNOVATION_LAG1: lag1_autocorrelation(z), INNOVATION_MSQ: msq}
 
 
-def innovation_output(ensembles, sequences, split, seed, problem) -> list[dict[str, float]]:
+def innovation_output(
+    ensembles, sequences, split, seed, problem, own_initial=True
+) -> list[dict[str, float]]:
     """:func:`innovation_scores` of ensembles ``[S, T, E, d]``, one entry per sequence.
 
-    The initial members are the cell's own (they depend on the ensemble size).
+    The initial members are the cell's own (they depend on the ensemble size). A
+    cell that does not start from :func:`initial_ensemble` passes
+    ``own_initial=False`` and its first step is left out (:data:`NO_INITIAL_ENSEMBLE`).
+
+    For ``noise_stages != 1`` the statistics have no exact form
+    (:func:`normalised_innovations`): they are NaN, with a logged warning, so that
+    the cell still runs.
     """
+    if problem.model.noise_stages != 1:
+        logging.getLogger(__name__).warning(
+            "innovation statistics are exact for noise_stages=1 only (got %d); "
+            "recording NaN.",
+            problem.model.noise_stages,
+        )
+        nan = {INNOVATION_LAG1: float("nan"), INNOVATION_MSQ: float("nan")}
+        return [dict(nan) for _ in sequences]
     members = ensembles.shape[2]
     return [
         innovation_scores(
             problem,
-            initial_ensemble(problem, seq, members, split, index, seed),
+            initial_ensemble(problem, seq, members, split, index, seed)
+            if own_initial
+            else None,
             ens,
             seq.observations,
         )
@@ -755,6 +780,7 @@ def evaluate_cell(
     nfe = None
     innovations = None
     settings = apply_overrides(method_settings(cfg, name), overrides)
+    check_correction_label(name, settings, tag)
 
     if name == "pf_reference":
         # The second replicate against the first: the error of the reference itself.
@@ -778,7 +804,14 @@ def evaluate_cell(
     else:
         output = run_method(cfg, name, problem, sequences, split, seed, settings)
         scores = score_output(output.ensembles, sequences, split, problem)
-        innovations = innovation_output(output.ensembles, sequences, split, seed, problem)
+        innovations = innovation_output(
+            output.ensembles,
+            sequences,
+            split,
+            seed,
+            problem,
+            own_initial=name not in NO_INITIAL_ENSEMBLE,
+        )
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
         path = RESULTS / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -863,6 +896,30 @@ def check_tag(name: str, tag: str, overrides) -> None:
         raise ValueError(
             f"Bad tag {tag!r}: use letters, digits, '.', '=', '-' and single '_' "
             "(no '__', no 'traj<N>')."
+        )
+    if tag:
+        method, variant = CELLS[name]
+        labelled = (method, tagged_variant(variant, tag))
+        if labelled in CELLS.values():
+            raise ValueError(
+                f"Tag {tag!r} on {name} gives the label {labelled[0].value} / "
+                f"{labelled[1]}, the label of an untagged cell: the two would be "
+                "aggregated together. Choose another tag."
+            )
+
+
+def check_correction_label(name: str, settings: dict, tag: str) -> None:
+    """Refuse an untagged correction cell whose correction is disabled.
+
+    Its rows would be labelled ``forecast_correction`` though no correction ran
+    (``enabled: false`` set in the YAML, where ``--set``'s tag rule does not reach).
+    """
+    if CELLS[name][1] != FC_VARIANT or tag:
+        return
+    if not bool(settings.get("correction", {}).get("enabled", True)):
+        raise ValueError(
+            f"{name} has correction.enabled=false, so its rows would read as the "
+            "corrected cell: run it with a --tag (e.g. 'off')."
         )
 
 

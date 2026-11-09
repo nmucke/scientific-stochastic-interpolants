@@ -27,7 +27,7 @@
 # FC_GROUP (members per independent ensemble; empty = all N_EVAL members),
 # FC_VARIANTS (plain Ours variants to correct, e.g. "shared"; empty = jacfree and
 # shared; a subset is part of the cell name), FC_BANK_SIZE (residual pairs with
-# FC_Q_SOURCE=bank; empty = the case's 4096; any other size is part of the cell and
+# FC_Q_SOURCE=bank; empty = the case's FC_DEFAULT_BANK_SIZE; any other size is part of the cell and
 # variant name, _bank<B>). An empty FC_STEPS gives no fc cells: logged and counted
 # as a failure.
 #
@@ -52,16 +52,20 @@ FC_GROUP="${FC_GROUP:-}"
 FC_VARIANTS="${FC_VARIANTS:-}"
 FC_BANK_SIZE="${FC_BANK_SIZE:-}"
 FC_SUFFIX=""; FC_ARGS=("+fc_q_source=$FC_Q_SOURCE")
-if [ -n "$FC_VARIANTS" ]; then
-  FC_SUFFIX="_${FC_VARIANTS// /-}"; FC_ARGS+=("+fc_variants=[${FC_VARIANTS// /,}]")
-fi
-[ "$FC_Q_SOURCE" = online ] || FC_SUFFIX="${FC_SUFFIX}_$FC_Q_SOURCE"
+[ -z "$FC_VARIANTS" ] || FC_ARGS+=("+fc_variants=[${FC_VARIANTS// /,}]")
 if [ -n "$FC_BANK_SIZE" ]; then
   [ "$FC_Q_SOURCE" = bank ] || { echo "[msgrid] FC_BANK_SIZE needs FC_Q_SOURCE=bank" >&2; exit 1; }
   FC_ARGS+=("+fc_bank_size=$FC_BANK_SIZE")
-  [ "$FC_BANK_SIZE" = 4096 ] || FC_SUFFIX="${FC_SUFFIX}$FC_BANK_SIZE"
 fi
-if [ -n "$FC_GROUP" ]; then FC_SUFFIX="${FC_SUFFIX}_g$FC_GROUP"; FC_ARGS+=("+fc_group_size=$FC_GROUP"); fi
+[ -z "$FC_GROUP" ] || FC_ARGS+=("+fc_group_size=$FC_GROUP")
+# The fc cell suffix comes from cases/analytical/multistep.py (fc_cell_suffix), the
+# rule that also names the rows' variants; only computed when an fc lineup runs.
+case " $LINEUPS " in
+  *" fc "*)
+    FC_SUFFIX=$(cd "$PE_SCRIPT_DIR" && "$PY" -m cases.analytical.multistep fc-suffix \
+        "$FC_VARIANTS" "$FC_Q_SOURCE" "$FC_BANK_SIZE" "$FC_GROUP") \
+      || { echo "[msgrid] FATAL: bad FC_* settings" >&2; exit 1; } ;;
+esac
 mkdir -p "$ROOT/metrics" "$ROOT/per_step" "$ROOT/tmp"
 LOG="$ROOT/run_analytical_multistep_grid.log"
 FAILS=0

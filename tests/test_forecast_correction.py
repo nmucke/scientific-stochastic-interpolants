@@ -359,9 +359,9 @@ def test_statistics_are_per_group(lg, q_source, localised, sizes):
 
 
 def test_group_slices_merge_a_single_leftover():
-    assert fc._group_slices(10, 4) == [slice(0, 4), slice(4, 8), slice(8, 10)]
-    assert fc._group_slices(9, 4) == [slice(0, 4), slice(4, 9)]
-    assert fc._group_slices(5, None) == [slice(0, 5)]
+    assert fc.group_slices(10, 4) == [slice(0, 4), slice(4, 8), slice(8, 10)]
+    assert fc.group_slices(9, 4) == [slice(0, 4), slice(4, 9)]
+    assert fc.group_slices(5, None) == [slice(0, 5)]
 
 
 # --------------------------------------------------------------------------- #

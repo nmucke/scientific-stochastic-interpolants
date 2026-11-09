@@ -881,7 +881,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         return VARIANT_FROM_MODE.get(str(mode)) if mode is not None else None
 
     def _metric_rows(self, ctx, metrics):  # type: ignore[no-untyped-def]
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         for metric in NS_FIELD_METRICS:
             yield ResultRecord(
                 case=self.case.value,
@@ -937,7 +937,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             case=self.case.value,
             method=ctx.method.value,
             scenario=ctx.scenario.value,
-            variant=self._variant(ctx.method, ctx.scenario),
+            variant=self._variant(ctx.method),
             E=ctx.ensemble_size,
             M=ctx.num_steps,
             seed=ctx.seed,
@@ -970,7 +970,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
 
     def _todo_rows(self, ctx):  # type: ignore[no-untyped-def]
         """Emit NaN placeholder rows for unimplemented baselines (Phase 4)."""
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         for metric in NS_FIELD_METRICS + (Metric.NFE, Metric.SECONDS):
             yield ResultRecord(
                 case=self.case.value,
@@ -1015,7 +1015,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
 
         # Variant (Ours jacfree/shared) goes in the filename so both modes' states
         # coexist for the same (method, scenario, seed) instead of clobbering.
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         # Nonlinear operator strength c (``__c<c>``; "" for linear) so a c-sweep of
         # the same scenario does not clobber its states.
         var_tag = (f"__{variant}" if variant else "") + states_tag(obs_operator)

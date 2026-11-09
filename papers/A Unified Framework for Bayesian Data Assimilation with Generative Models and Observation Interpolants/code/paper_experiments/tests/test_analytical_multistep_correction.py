@@ -146,6 +146,8 @@ def _fake_python(tmp_path) -> Path:
     fake = tmp_path / "fake_python"
     fake.write_text(
         "#!/bin/sh\n"
+        # The grid asks the case for its fc cell suffix: hand that to Python.
+        f"[ \"$1\" = -m ] && exec \"{sys.executable}\" \"$@\"\n"
         "for a in \"$@\"; do case \"$a\" in results_file=*|+per_step_file=*) "
         ": > \"${a#*=}\" ;; esac; done\n"
         "echo \"$@\" >> \"$ROOT/args.txt\"\n"

@@ -58,7 +58,16 @@ def sequence_spread(directory: Path) -> list[dict[str, object]]:
         cells[path.name.split("__")[1]].append(json.loads(path.read_text()))
     rows: list[dict[str, object]] = []
     for name, seeds in cells.items():
-        for metric in seeds[0]:
+        # A resumable grid can mix files written before and after a metric was
+        # added (e.g. the innovation diagnostics): keep the metrics every seed has.
+        shared = [m for m in seeds[0] if all(m in seed for seed in seeds)]
+        dropped = sorted(set().union(*seeds) - set(shared))
+        if dropped:
+            print(
+                f"[{CASE}] warning: {name}: not every seed has {dropped}; "
+                "dropped from sequence_spread (re-run those seeds to include them)"
+            )
+        for metric in shared:
             means = [
                 statistics.fmean(kept)
                 for kept in (

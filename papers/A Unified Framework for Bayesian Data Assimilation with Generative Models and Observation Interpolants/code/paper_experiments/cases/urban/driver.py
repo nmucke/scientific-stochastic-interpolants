@@ -520,7 +520,7 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         return VARIANT_FROM_MODE.get(str(mode)) if mode is not None else None
 
     def _metric_rows(self, ctx, metrics):  # type: ignore[no-untyped-def]
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         for metric in URBAN_METRICS:
             yield ResultRecord(
                 case=self.case.value,
@@ -553,7 +553,7 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
 
     def _todo_rows(self, ctx):  # type: ignore[no-untyped-def]
         """Emit NaN placeholder rows for any non-wired method (defensive)."""
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         for metric in URBAN_METRICS + (Metric.NFE, Metric.SECONDS):
             yield ResultRecord(
                 case=self.case.value,
@@ -587,7 +587,7 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         def _slug(s: object) -> str:
             return re.sub(r"[^A-Za-z0-9]+", "_", str(s)).strip("_")
 
-        variant = self._variant(ctx.method, ctx.scenario)
+        variant = self._variant(ctx.method)
         # Nonlinear operator strength c (``__c<c>``; "" for linear) so a c-sweep of
         # the same scenario does not clobber its states.
         var_tag = (f"__{variant}" if variant else "") + states_tag(obs_operator)
@@ -666,7 +666,7 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             case=self.case.value,
             method=ctx.method.value,
             scenario=ctx.scenario.value,
-            variant=self._variant(ctx.method, ctx.scenario),
+            variant=self._variant(ctx.method),
             E=ctx.ensemble_size,
             M=ctx.num_steps,
             seed=ctx.seed,

@@ -232,12 +232,12 @@ def test_runner_variant_uses_case_block():
         case_cfg = OmegaConf.load(EXP / "configs" / "case" / f"{case}.yaml")
         cfg = OmegaConf.create({"case": case_cfg, "likelihood_mode": "dps_jacobian_free"})
         r = runner_cls(cfg, seeds=[0])
-        assert r._variant(Method.OURS_SI_SDE, Scenario.SPARSE_1p5) == "jacfree"
+        assert r._variant(Method.OURS_SI_SDE) == "jacfree"
         cfg.case.forecast_correction.enabled = True
         r = runner_cls(cfg, seeds=[0])
         expect = "jacfree_" + fcw.fc_tag(fcw.fc_settings(cfg.case))
-        assert r._variant(Method.OURS_SI_SDE, Scenario.SPARSE_1p5) == expect
-        assert r._variant(Method.SURGE_SDA, Scenario.SPARSE_1p5) is None
+        assert r._variant(Method.OURS_SI_SDE) == expect
+        assert r._variant(Method.SURGE_SDA) is None
 
 
 @pytest.mark.parametrize("case", ["navier_stokes", "urban"])
@@ -561,3 +561,13 @@ def test_diagnostics_files_are_apart_across_strengths(tmp_path):
     linear = runner._write_fc_diagnostics(ctx, corr, mon, _ns_ops()["sparse"])
     assert linear == runner._write_fc_diagnostics(ctx, corr, mon)  # linear: name unchanged
     assert "__c" not in linear.name
+
+
+def test_methods_may_name_only_the_ours_samplers():
+    s = {"enabled": True, "methods": ["Ours (SI-SDE)", "EnKF"]}
+    with pytest.raises(ValueError, match="EnKF"):
+        fcw.applies_to(s, "Ours (SI-SDE)")
+    with pytest.raises(ValueError, match="EnKF"):
+        fcw.variant_with_correction("jacfree", s, "EnKF")
+    assert fcw.ours_method_names() == {"Ours (SI-SDE)", "Ours (FM-ODE)", "Ours (DM-SDE)"}
+    assert fcw.applies_to(s, "EnKF", allowed=["Ours (SI-SDE)", "EnKF"])

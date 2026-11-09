@@ -23,13 +23,14 @@ implementation)::
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Collection, Mapping, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +57,30 @@ def fc_settings(case_cfg: Any) -> dict:
     return dict(block)
 
 
-def applies_to(settings: Mapping, method_name: str) -> bool:
-    """Whether the correction is switched on for this method."""
-    return bool(settings.get("enabled", False)) and str(method_name) in {
-        str(m) for m in settings.get("methods") or ()
-    }
+def ours_method_names() -> frozenset[str]:
+    """The ``Method`` values of the Ours samplers: the only ones the drivers correct."""
+    from results_schema import Method
+
+    return frozenset(m.value for m in Method if m.name.startswith("OURS_"))
+
+
+def applies_to(settings: Mapping, method_name: str,
+               allowed: Optional[Collection[str]] = None) -> bool:
+    """Whether the correction is switched on for this method.
+
+    ``methods`` may name only ``allowed`` methods (default: the Ours samplers,
+    :func:`ours_method_names`): the drivers build a correction for those only, so
+    any other name would tag rows and states as corrected without one. Others raise.
+    """
+    names = {str(m) for m in settings.get("methods") or ()}
+    allowed = ours_method_names() if allowed is None else {str(m) for m in allowed}
+    unknown = sorted(names - set(allowed))
+    if unknown:
+        raise ValueError(
+            f"forecast_correction.methods may name only {sorted(allowed)}; got {unknown} "
+            "(no correction is built for them)."
+        )
+    return bool(settings.get("enabled", False)) and str(method_name) in names
 
 
 def _canon(value: Any) -> Any:
@@ -278,18 +298,16 @@ class ForecastCorrectionMixin:
     """``_fc_settings`` / ``_variant`` / ``_write_fc_diagnostics`` for a case runner
     with ``config``, ``case`` and ``_base_variant(method)``."""
 
-    def _fc_settings(self) -> dict:
-        if "_fc_cache" not in self.__dict__:
-            try:
-                case_cfg = self.config.case  # type: ignore[attr-defined]
-            except Exception:
-                case_cfg = None
-            self.__dict__["_fc_cache"] = fc_settings(case_cfg)
-        return self.__dict__["_fc_cache"]
+    @functools.cached_property
+    def _fc_block(self) -> dict:
+        return fc_settings(getattr(self.config, "case", None))  # type: ignore[attr-defined]
 
-    def _variant(self, method, scenario=None) -> Optional[str]:  # type: ignore[no-untyped-def]
+    def _fc_settings(self) -> dict:
+        return self._fc_block
+
+    def _variant(self, method) -> Optional[str]:  # type: ignore[no-untyped-def]
         """Tidy ``variant``: ``_base_variant`` plus ``_fc<steps>_<hash>`` for a
-        corrected cell (off -> exactly the plain tag). ``scenario`` is unused."""
+        corrected cell (off -> exactly the plain tag)."""
         return variant_with_correction(
             self._base_variant(method), self._fc_settings(),  # type: ignore[attr-defined]
             getattr(method, "value", str(method)))

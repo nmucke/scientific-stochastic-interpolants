@@ -152,6 +152,23 @@ def fc_variant(
     return tag
 
 
+def fc_cell_suffix(
+    variants: Sequence[str] = (),
+    q_source: str = "online",
+    bank_size: int | None = None,
+    group: int | None = None,
+) -> str:
+    """Suffix of a grid fc cell after ``<setting>_fc<S>`` (run_analytical_multistep_grid.sh).
+
+    ``_<variants joined by ->`` when a subset is corrected, then the rows' own
+    :func:`fc_variant` suffix (``_bank[<B>]``, ``_g<E>``), so cell and variant names
+    follow one rule.
+    """
+    head = f"x{FC_TAG}0"
+    tail = fc_variant("x", 0, q_source, group, bank_size)[len(head):]
+    return (f"_{'-'.join(variants)}" if variants else "") + tail
+
+
 def group_tag(group: int) -> str:
     return f"g{int(group)}"
 
@@ -176,20 +193,13 @@ def parse_fc_variant(variant: str | None) -> dict[str, object] | None:
 
 
 def _groups(n: int, group: int | None) -> list[slice]:
-    """Contiguous member groups of size ``group``; the last one takes the remainder.
+    """Contiguous member groups of size ``group``: the library's partition for
+    ``ForecastCorrectionConfig.group_size`` (a single leftover member joins the
+    previous group), so the grouped comparators (EnKF, ``adapted_shared``) use
+    exactly the groups of the corrected rows."""
+    from scisi.posterior_models.forecast_correction import group_slices
 
-    The partition of the library's ``ForecastCorrectionConfig.group_size`` (a single
-    leftover member joins the previous group), so the grouped comparators (EnKF,
-    ``adapted_shared``) use exactly the groups of the corrected rows.
-    """
-    if group is None or group >= n:
-        return [slice(0, n)]
-    if group < 2:
-        raise ValueError("a group needs at least 2 members")
-    starts = list(range(0, n, group))
-    if n - starts[-1] < 2:  # never leave a single member on its own
-        starts.pop()
-    return [slice(a, b) for a, b in zip(starts, [*starts[1:], n])]
+    return group_slices(n, group)
 
 
 def _per_group(fn: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor, group):
@@ -996,9 +1006,22 @@ __all__ = [
     "REFERENCE_MEMBER_CHAIN",
     "FC_TAG",
     "fc_variant",
+    "fc_cell_suffix",
     "group_tag",
     "parse_fc_variant",
     "sliced_distances",
     "kl_to_moments",
     "score_ensemble",
 ]
+
+
+if __name__ == "__main__":  # used by run_analytical_multistep_grid.sh
+    import sys
+
+    # fc-suffix "<variants>" <q_source> "<bank_size>" "<group>" (empty: unset)
+    if len(sys.argv) != 6 or sys.argv[1] != "fc-suffix":
+        sys.exit("usage: python -m cases.analytical.multistep fc-suffix "
+                 "'<variants>' <q_source> '<bank_size>' '<group>'")
+    _variants, _q, _bank, _group = sys.argv[2:]
+    print(fc_cell_suffix(_variants.split(), _q, int(_bank) if _bank else None,
+                         int(_group) if _group else None))
