@@ -1,0 +1,17 @@
+# Sequential case on a system where the filter has a real transient: a damped
+# rotation observed through its first coordinate only. The rotation carries
+# information into the unobserved coordinate, so the system stays observable, and
+# the covariance needs ~12 cycles to settle to 1% against 3 for the identity system.
+name: analytical_multistep
+scenario_name: multistep:partial
+
+plot_dimension: 2
+num_cycles: 20
+n_eval_samples: 4096       # the grid and the manuscript use 100000
+adapted_variant: true
+
+system:
+  A: [[0.9, 0.3], [-0.3, 0.9]]   # spectral radius sqrt(0.9) ~ 0.949
+  Q: [[1.0, 0.0], [0.0, 0.25]]
+  H: [[1.0, 0.0]]
+  R: [[0.5]]

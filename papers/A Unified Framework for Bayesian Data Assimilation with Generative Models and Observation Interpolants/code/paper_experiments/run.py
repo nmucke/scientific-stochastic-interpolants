@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 # only the table pipeline is exercised).
 _RUNNERS = {
     "analytical": ("cases.analytical.driver", "AnalyticalRunner"),
+    "analytical_multistep": ("cases.analytical.multistep", "MultistepRunner"),
     "navier_stokes": ("cases.navier_stokes.driver", "NavierStokesRunner"),
     "urban": ("cases.urban.driver", "UrbanRunner"),
     "lorenz96": ("cases.lorenz96.driver", "Lorenz96Runner"),
