@@ -75,3 +75,22 @@ methods:
   # are the EnKF's validation optimum, not re-tuned for this cell.
   prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
   prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+
+  # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
+  # One sequence per sampler call (SURGE normalises its weights over every member
+  # it is given); N = E = 64 particles, one per member (no particles-per-member knob
+  # exists). ess_threshold: resample when ESS/N falls below it (0.5 = multistep and
+  # configs/method/surge_*.yaml). Unknown keys are refused.
+  # Ours inside SURGE, built as the multistep case (SDE only): the keys of the plain
+  # si_sde / dm_sde blocks (own copies, not inherited) + ess_threshold.
+  surge_si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, ess_threshold: 0.5}
+  surge_dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0, ess_threshold: 0.5}
+  # The same SMC proposing from the unguided prior, one per wrapped prior.
+  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+  # NS constructions (_ns_pipeline.build_posterior); every knob of
+  # configs/method/surge_{flowdas,sda}.yaml is set here as a scalar (no NS tables;
+  # NS env overrides are refused). Values are those files' `default:` entries.
+  # guidance_scale = FlowDAS zeta; num_mc_samples = J; max_grad_norm null = no cap.
+  surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
