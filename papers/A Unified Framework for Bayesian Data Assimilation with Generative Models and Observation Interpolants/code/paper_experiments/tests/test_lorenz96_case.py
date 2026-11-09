@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import statistics
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -262,26 +263,50 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     (root / "lorenz96").symlink_to(tmp_path)
     monkeypatch.setattr(aggregate_lorenz96, "RESULTS", root)
     monkeypatch.setattr(make_lorenz96_figures, "RESULTS", root)
-    for seed in (0, 1):
-        path = driver.cell_path("metrics", "enkf", seed)
+    for name, seed in (("enkf", 0), ("enkf", 1), ("pf_reference", 0)):
+        path = driver.cell_path("metrics", name, seed)
         path.parent.mkdir(parents=True, exist_ok=True)
         with ResultsWriter(path) as writer:
-            writer.extend(driver.evaluate_cell("enkf", seed, tiny_case))
+            writer.extend(driver.evaluate_cell(name, seed, tiny_case))
     # A diverged sequence must not stop the reduction.
     sequence_file = driver.cell_path("per_sequence", "enkf", 0).with_suffix(".json")
     entries = json.loads(sequence_file.read_text())
     entries[Metric.RMSE.value][0] = float("nan")
     sequence_file.write_text(json.dumps(entries))
+    other = json.loads(
+        driver.cell_path("per_sequence", "enkf", 1).with_suffix(".json").read_text()
+    )
 
     monkeypatch.setattr(sys, "argv", ["aggregate_lorenz96.py"])
     aggregate_lorenz96.main()
     aggregated = tmp_path / "aggregated"
     with open(aggregated / "all.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    rmse = next(r for r in rows if r["metric"] == Metric.RMSE.value)
-    assert rmse["method"] == "EnKF" and int(rmse["n_traj"]) == 2
-    assert (aggregated / "per_step.csv").exists()
-    assert (aggregated / "sequence_spread.csv").exists()
+    rmse = next(
+        r for r in rows if r["metric"] == Metric.RMSE.value and r["method"] == "EnKF"
+    )
+    assert int(rmse["n_traj"]) == 2 and float(rmse["std"]) > 0
+    # One seed: the std is not measured, so NaN rather than the library's 0.0.
+    reference = [r for r in rows if r["variant"] == "reference"]
+    assert reference and all(math.isnan(float(r["std"])) for r in reference)
+    assert any(r["metric"] == driver.DIVERGED_STEPS for r in reference)
+    with open(aggregated / "per_step.csv", encoding="utf-8") as handle:
+        per_step = list(csv.DictReader(handle))
+    assert all(
+        math.isnan(float(r["std"])) for r in per_step if r["variant"] == "reference"
+    )
+    with open(aggregated / "sequence_spread.csv", encoding="utf-8") as handle:
+        spread = {(r["cell"], r["metric"]): r for r in csv.DictReader(handle)}
+    # Sequence 0 keeps only seed 1, whose value was not replaced by NaN.
+    rmse_0 = other[Metric.RMSE.value][0]
+    rmse_1 = (entries[Metric.RMSE.value][1] + other[Metric.RMSE.value][1]) / 2
+    row = spread[("enkf", Metric.RMSE.value)]
+    assert int(row["n"]) == 2
+    assert float(row["std"]) == pytest.approx(abs(rmse_0 - rmse_1) / 2**0.5)
+    crps = [(a + b) / 2 for a, b in zip(entries["crps"], other["crps"])]
+    assert float(spread[("enkf", "crps")]["std"]) == pytest.approx(
+        statistics.stdev(crps)
+    )
 
     figures = tmp_path / "figures"
     figures.mkdir()
@@ -290,6 +315,10 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
     make_lorenz96_figures.plot_ess(figures)
     assert (figures / "lorenz96_rmse_vs_step.pdf").exists()
     assert (figures / "lorenz96_ess.pdf").exists()
+    # A label that matches no SERIES entry must not give an empty figure.
+    monkeypatch.setattr(make_lorenz96_figures, "SERIES", (("EnKF (renamed)", "", "x", "k", "-"),))
+    with pytest.raises(ValueError, match="No SERIES entry"):
+        make_lorenz96_figures.plot_metric("rmse", "RMSE", figures)
 
 
 def test_enkf_rejects_unknown_settings(problem):
