@@ -115,7 +115,13 @@ CELLS = {
     "pf_matched": (Method.PARTICLE_FILTER, "matched"),
     "pf_subsample": (Method.PARTICLE_FILTER, "reference_subsample"),
     "pf_reference": (Method.PARTICLE_FILTER, "reference"),
+    # Generative baselines, built by the NS build_posterior (_l96_baselines.py).
+    "flowdas": (Method.FLOWDAS, None),
+    "sda": (Method.SDA, None),
+    "dflow": (Method.D_FLOW_SGLD, None),
+    "fig": (Method.GUIDED_FM_FIG, None),
 }
+BASELINE_CELLS = ("flowdas", "sda", "dflow", "fig")
 # The plain samplers; their corrected cells are in CORRECTED.
 GENERATIVE = {
     name: method
@@ -923,6 +929,10 @@ def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> Cel
         return run_pf_matched(problem, sequences, split, seed, members)
     if name == "pf_subsample":
         return run_subsample(problem, sequences, split, seed, members)
+    if name in BASELINE_CELLS:
+        from cases.lorenz96._l96_baselines import run_baseline
+
+        return run_baseline(cfg, name, problem, sequences, split, seed, members, settings)
     return run_generative(cfg, name, problem, sequences, split, seed, members, settings)
 
 
