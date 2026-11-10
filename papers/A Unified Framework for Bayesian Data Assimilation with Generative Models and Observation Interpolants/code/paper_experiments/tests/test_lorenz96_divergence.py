@@ -53,3 +53,32 @@ def test_energy_distance_zero_for_equal_laws_positive_otherwise():
     assert abs(energy_distance(x, y)) < 0.01
     assert energy_distance(x, z) > 0.5
     assert math.isnan(energy_distance(x[:1], y))
+
+
+def test_pf_term_cache_is_exact_and_refuses_changed_draws(tmp_path):
+    import torch
+    from cases.lorenz96 import driver
+    from cases.lorenz96._l96_divergence import (
+        energy_distance_torch, energy_from_self_term, knn_kl_from_radii, knn_kl_torch,
+        pf_terms_match, scoring_device,
+    )
+
+    g = torch.Generator().manual_seed(0)
+    samples = torch.randn(3, 200, 4, generator=g, dtype=torch.float64)
+    samples[1, 10] = samples[1, 11]  # a duplicate PF row
+    ens = torch.randn(3, 16, 4, generator=g, dtype=torch.float64)
+    # As in score(): the cache is built on the scoring device, the draws live there.
+    samples, ens = samples.to(scoring_device()), ens.to(scoring_device())
+    path = tmp_path / "sequence0_replicate0.pt"
+    terms = driver.load_pf_terms(path, samples)
+    assert path.with_suffix(".pfterms.pt").exists()
+    for t in range(3):
+        ref = {"samples": samples, "pf_terms": terms}
+        assert knn_kl_from_radii(*driver.pf_side(ref, samples, t), ens[t]) == knn_kl_torch(samples[t], ens[t])
+        assert energy_from_self_term(ens[t], samples[t], driver.energy_self(ref, samples, t)) == (
+            energy_distance_torch(ens[t], samples[t]))
+    changed = samples.clone()
+    changed[2, 0, 0] += 1.0
+    assert not pf_terms_match(terms, changed)
+    fresh = driver.load_pf_terms(path, changed)  # recomputed, not the stale cache
+    assert pf_terms_match(fresh, changed)

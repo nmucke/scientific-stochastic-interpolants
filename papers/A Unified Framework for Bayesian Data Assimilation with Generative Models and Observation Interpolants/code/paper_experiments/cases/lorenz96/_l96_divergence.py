@@ -133,25 +133,45 @@ def _exact_cdist(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return torch.cdist(a, b, compute_mode="donot_use_mm_for_euclid_dist")
 
 
-def knn_kl_torch(x: torch.Tensor, y: torch.Tensor) -> float:
-    """Torch :func:`knn_kl`: ``KL(P || Q)`` by 1-NN on the unique rows of ``x``."""
+def pf_knn_radii(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """The ``P`` side of :func:`knn_kl_torch`: unique rows of ``x`` and their 1-NN radii."""
     x = torch.unique(x.to(torch.float64), dim=0)
+    if x.shape[0] < 2:
+        return x, torch.empty(0, dtype=torch.float64, device=x.device)
+    xx = _exact_cdist(x, x)
+    xx.fill_diagonal_(math.inf)
+    return x, xx.min(1).values
+
+
+def knn_kl_from_radii(x: torch.Tensor, r: torch.Tensor, y: torch.Tensor) -> float:
+    """:func:`knn_kl_torch` given ``(x, r) = pf_knn_radii(draws of P)``."""
     y = y.to(device=x.device, dtype=torch.float64)
     n, d = x.shape
     m = y.shape[0]
     if n < 2 or m < 1:
         return math.nan
-    xx = _exact_cdist(x, x)
-    xx.fill_diagonal_(math.inf)
-    r = xx.min(1).values
     if bool((r <= 0).any()):
         return math.nan
     s = _exact_cdist(x, y).min(1).values.clamp_min(np.finfo(np.float64).tiny)
     return float(d * torch.log(s / r).mean() + math.log(m / (n - 1.0)))
 
 
-def energy_distance_torch(x: torch.Tensor, y: torch.Tensor) -> float:
-    """Torch :func:`energy_distance` on the device of ``x``."""
+def knn_kl_torch(x: torch.Tensor, y: torch.Tensor) -> float:
+    """Torch :func:`knn_kl`: ``KL(P || Q)`` by 1-NN on the unique rows of ``x``."""
+    return knn_kl_from_radii(*pf_knn_radii(x), y)
+
+
+def energy_self_term(y: torch.Tensor) -> float:
+    """``E|Y - Y'|`` (U-statistic) of :func:`energy_distance_torch`; NaN for < 2 rows."""
+    y = y.to(torch.float64)
+    m = y.shape[0]
+    if m < 2:
+        return math.nan
+    return float(_exact_cdist(y, y).sum() / (m * (m - 1)))
+
+
+def energy_from_self_term(x: torch.Tensor, y: torch.Tensor, yy: float) -> float:
+    """:func:`energy_distance_torch` given ``yy = energy_self_term(y)``."""
     x = x.to(torch.float64)
     y = y.to(device=x.device, dtype=torch.float64)
     n, m = x.shape[0], y.shape[0]
@@ -159,5 +179,28 @@ def energy_distance_torch(x: torch.Tensor, y: torch.Tensor) -> float:
         return math.nan
     xy = _exact_cdist(x, y).mean()
     xx = _exact_cdist(x, x).sum() / (n * (n - 1))
-    yy = _exact_cdist(y, y).sum() / (m * (m - 1))
     return float(2 * xy - xx - yy)
+
+
+def energy_distance_torch(x: torch.Tensor, y: torch.Tensor) -> float:
+    """Torch :func:`energy_distance` on the device of ``x``."""
+    y = y.to(device=x.device, dtype=torch.float64)
+    return energy_from_self_term(x, y, energy_self_term(y))
+
+
+def pf_terms(samples, device) -> dict:
+    """Per step, the PF-only parts of the KL and energy scores (the costly 4096^2
+    distances) and a checksum of the draws they came from."""
+    radii, self_terms, checks = [], [], []
+    for draws in samples:
+        y = draws.to(device, torch.float64)
+        radii.append(pf_knn_radii(y)[1].cpu())
+        self_terms.append(energy_self_term(y))
+        checks.append(float(draws.double().sum()))
+    return {"radii": radii, "energy_self": self_terms, "checksum": checks, "shape": tuple(samples.shape)}
+
+
+def pf_terms_match(terms: dict, samples) -> bool:
+    return terms.get("shape") == tuple(samples.shape) and terms.get("checksum") == [
+        float(draws.double().sum()) for draws in samples
+    ]

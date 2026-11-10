@@ -41,6 +41,7 @@ import logging
 import math
 import multiprocessing
 import re
+import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -57,8 +58,10 @@ sys.path.insert(0, str(_here.parents[1]))
 from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
 from cases.lorenz96._l96_smc import SURGE_CELLS, pf_smc_record  # noqa: E402
 from cases.lorenz96._l96_divergence import (  # noqa: E402
-    energy_distance_torch,
-    knn_kl_torch,
+    energy_from_self_term,
+    knn_kl_from_radii,
+    pf_terms,
+    pf_terms_match,
     scoring_device,
     sliced_w2_torch,
 )
@@ -267,12 +270,52 @@ def load_reference(split: str, index: int, replicate: int, problem: Problem) -> 
     reference = torch.load(path, weights_only=False)
     if reference["problem"] != problem.to_dict():
         raise ValueError(f"Stale reference for {split} {index}: rerun `reference`.")
+    reference["pf_terms"] = load_pf_terms(path, reference["samples"])
     return reference
+
+
+def load_pf_terms(path: Path, samples) -> dict:
+    """The reference's PF-only score terms (:func:`pf_terms`), cached next to it.
+
+    The cache holds a checksum of the draws and is recomputed when they differ, so a
+    regenerated reference never reuses stale terms.
+    """
+    cache = path.with_suffix(".pfterms.pt")
+    if cache.exists():
+        terms = torch.load(cache, weights_only=False)
+        if pf_terms_match(terms, samples):
+            return terms
+    terms = pf_terms(samples, scoring_device())
+    tmp = cache.with_suffix(f".tmp{os.getpid()}")
+    torch.save(terms, tmp)
+    os.replace(tmp, cache)
+    return terms
 
 
 # --------------------------------------------------------------------------- #
 # Scoring
 # --------------------------------------------------------------------------- #
+
+
+def pf_side(reference, ref_samples, t):
+    """Unique PF rows and their 1-NN radii at step ``t`` (cached terms when present)."""
+    from cases.lorenz96._l96_divergence import pf_knn_radii
+
+    terms = reference.get("pf_terms")
+    if terms is None:
+        return pf_knn_radii(ref_samples[t])
+    unique = torch.unique(ref_samples[t], dim=0)
+    radii = terms["radii"][t].to(unique.device)
+    if radii.shape[0] != (unique.shape[0] if unique.shape[0] >= 2 else 0):
+        raise ValueError("cached PF radii do not match the reference draws")
+    return unique, radii
+
+
+def energy_self(reference, ref_samples, t) -> float:
+    from cases.lorenz96._l96_divergence import energy_self_term
+
+    terms = reference.get("pf_terms")
+    return energy_self_term(ref_samples[t]) if terms is None else terms["energy_self"][t]
 
 
 def score(mean, variance, samples, reference, truth) -> dict[str, list[float]]:
@@ -314,11 +357,15 @@ def score(mean, variance, samples, reference, truth) -> dict[str, list[float]]:
         ],
         # KL(PF || ensemble) by 1-NN (biased at E = 64; pf_subsample gives the floor).
         KL_KNN: [
-            nan if draws is None else knn_kl_torch(ref_samples[t], draws)
+            nan
+            if draws is None
+            else knn_kl_from_radii(*pf_side(reference, ref_samples, t), draws)
             for t, draws in enumerate(usable)
         ],
         ENERGY_DISTANCE: [
-            nan if draws is None else energy_distance_torch(draws, ref_samples[t])
+            nan
+            if draws is None
+            else energy_from_self_term(draws, ref_samples[t], energy_self(reference, ref_samples, t))
             for t, draws in enumerate(usable)
         ],
         Metric.RMSE.value: (mean - truth).pow(2).mean(-1).sqrt().tolist(),
