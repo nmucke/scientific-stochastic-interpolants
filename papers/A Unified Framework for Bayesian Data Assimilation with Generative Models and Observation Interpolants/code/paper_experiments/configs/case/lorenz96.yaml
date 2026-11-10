@@ -45,10 +45,12 @@ evaluation:
   reference_particles: 4000000
   reference_replicates: 2  # the second one measures the reference's own error
 
-# Every generative method runs M = num_steps = 50, fixed by design and not tuned
-# (driver.FIXED_NUM_STEPS; `cell`/`tune` refuse other values without --allow-other-m).
-# NOT TUNED YET: these are defaults, not chosen values. Set them from `driver.py tune`
-# on the validation split only (see GPU_HANDOFF.md) before the final grid.
+# Every generative method is tuned at M = num_steps = 50 (lorenz96_lineup.HEADLINE_M;
+# `tune` refuses another M without --allow-other-m) and the final grid runs it at
+# every M of lorenz96_lineup.M_VALUES with these picks (`cell --num-steps M`).
+# NOT TUNED YET: these are defaults, not chosen values. `run_lorenz96.sh tune <obs>`
+# then `run_lorenz96.sh apply <obs>` write the validation picks into this block
+# (`methods_arctan:` for arctan) before the final grid.
 methods:
   enkf: {inflation: 1.0, localisation: null}
   enkf_large: {inflation: 1.0, localisation: null}
@@ -97,7 +99,7 @@ methods:
   # a table's `default:`); unknown keys are refused, and so is any FLOWDAS_* /
   # SDA_* / FIG_* / DFLOW_* environment override. Networks as on NS: FlowDAS on the
   # SI prior, SDA on the FM-derived diffusion prior, D-Flow and FIG on the FM prior.
-  # num_steps is M (fixed at 50); for D-Flow it is the SGLD chain length, and the
+  # num_steps is M (50 when tuning); for D-Flow it is the SGLD chain length, and the
   # differentiable rollout keeps ode_steps midpoint steps.
   # NOT TUNED: the values are the `analytical` case's M=50 entries of the method
   # YAMLs (the other vector-state case), not chosen on Lorenz 96. Where they
@@ -107,9 +109,9 @@ methods:
   # SDA: gamma in Gamma = R + gamma (sigma/mu)^2 H H^T (= table default)
   sda: {num_steps: 50, gamma_sda: 0.01}
   # D-Flow SGLD: eta, s, lambda, omega, delta, ode_steps (= table defaults / fixed
-  # scalars). burn is stored but never read by DFlowPosterior (it returns the chain
-  # endpoint), so burn > num_steps has no effect.
-  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6, burn: 100}
+  # scalars). The method YAML's burn reaches build_posterior unchanged; DFlowPosterior
+  # never reads it (it returns the chain endpoint).
+  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
   # FIG: k (= table default), c (table default: 10.0), w (fixed 0)
   fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
   # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
@@ -117,10 +119,11 @@ methods:
   # it is given); N = E = 64 particles, one per member (no particles-per-member knob
   # exists). ess_threshold: resample when ESS/N falls below it (0.5 = multistep and
   # configs/method/surge_*.yaml). Unknown keys are refused.
-  # Ours inside SURGE, built as the multistep case (SDE only): the keys of the plain
-  # si_sde / dm_sde blocks (own copies, not inherited) + ess_threshold.
-  surge_si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, ess_threshold: 0.5}
-  surge_dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0, ess_threshold: 0.5}
+  # Ours inside SURGE, built as the multistep case (SDE only): like a `_fc` cell it
+  # runs the plain si_sde / dm_sde block above (inherited, so tuning the plain cell
+  # moves it too); its own block adds ess_threshold.
+  surge_si_sde: {ess_threshold: 0.5}
+  surge_dm_sde: {ess_threshold: 0.5}
   # The same SMC proposing from the unguided prior, one per wrapped prior.
   surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
   surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
@@ -132,7 +135,7 @@ methods:
   surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
 
 # Settings of the arctan problem (`--obs arctan`), read instead of `methods:` by
-# driver.case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
+# case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
 # block above (themselves untuned defaults); tune on the arctan validation split.
 # Keep one plain block per cell, as above, so a new cell is added by copying its
 # `methods:` line here.
@@ -152,11 +155,11 @@ methods_arctan:
   # Generative baselines: see the comments in `methods:`.
   flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
   sda: {num_steps: 50, gamma_sda: 0.01}
-  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6, burn: 100}
+  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
   fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
   # SURGE SMC cells: see the comments in `methods:`.
-  surge_si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, ess_threshold: 0.5}
-  surge_dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0, ess_threshold: 0.5}
+  surge_si_sde: {ess_threshold: 0.5}
+  surge_dm_sde: {ess_threshold: 0.5}
   surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
   surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
   surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}

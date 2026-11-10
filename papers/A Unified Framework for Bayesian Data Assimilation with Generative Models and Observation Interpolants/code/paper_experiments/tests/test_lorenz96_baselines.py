@@ -1,4 +1,6 @@
-"""Generative baselines on Lorenz 96 (FlowDAS, SDA, D-Flow, FIG) on the tiny case."""
+"""The NS-built cells on Lorenz 96 (FlowDAS, SDA, D-Flow, FIG and the two SURGE
+baselines) on the tiny case. That every cell runs, writes its metrics and is
+deterministic is test_lorenz96_case.test_every_cell_runs_..."""
 
 from __future__ import annotations
 
@@ -17,20 +19,17 @@ import cases.lorenz96._l96_generative as generative  # noqa: E402
 import cases.navier_stokes._ns_pipeline as ns_pipeline  # noqa: E402
 from cases.lorenz96 import driver  # noqa: E402
 from cases.lorenz96.driver import load_sequences  # noqa: E402
-from results_schema import Metric  # noqa: E402
 from test_lorenz96_case import tiny_case  # noqa: E402,F401  (fixture)
 
-CELLS = sorted(baselines.BASELINES)
-STEPS = 3
+CELLS = sorted(baselines.BASELINE_CELLS)
+NS_CELLS = sorted(baselines.NS_CELLS)
+STEPS = 3  # test_lorenz96_case.TINY_STEPS
 ODE_STEPS = 2
 
 
 @pytest.fixture
 def small(tiny_case):  # noqa: F811
-    """The tiny case with the baselines at a few steps."""
-    for name in CELLS:
-        tiny_case.methods[name].num_steps = STEPS
-    tiny_case.methods.dflow.ode_steps = ODE_STEPS
+    """The tiny case: the baselines at STEPS pseudo-steps, D-Flow at ODE_STEPS."""
     return tiny_case
 
 
@@ -41,55 +40,24 @@ def run(cfg, name, count=2, settings=None):
 
 
 def test_cells_are_registered_with_their_labels():
-    for name, method in baselines.BASELINES.items():
+    for name, (_, method, _, _) in baselines.NS_CELLS.items():
         assert driver.CELLS[name] == (method, None)
         assert name in driver.TUNABLE
         assert name not in driver.GENERATIVE
 
 
 def test_config_blocks_hold_every_knob_and_m50():
-    cfg = driver.case_config()
-    for name in CELLS:
-        steps, knobs = baselines.cell_settings(name, driver.method_settings(cfg, name))
-        assert steps == driver.FIXED_NUM_STEPS
-        assert set(knobs) == set(baselines.KNOBS[name])
+    for obs in ("linear", "arctan"):
+        cfg = driver.case_config(obs)
+        for name in NS_CELLS:
+            steps, knobs = baselines.ns_settings(name, driver.method_settings(cfg, name))
+            assert steps == driver.FIXED_NUM_STEPS
+            assert {b: set(k) for b, k in knobs.items()} == {
+                b: set(k) for b, k in baselines.NS_CELLS[name][3].items()
+            }
 
 
-@pytest.mark.parametrize("name", CELLS)
-def test_cell_runs_and_writes_the_generative_metrics(small, name):
-    records = driver.evaluate_cell(name, 0, small, allow_other_m=True)
-    reference = driver.evaluate_cell("fm_ode", 0, small, allow_other_m=True)
-    assert {r.metric for r in records} == {r.metric for r in reference}
-    expected = {
-        Metric.MEAN_ERROR_VS_PF.value,
-        Metric.VAR_ERROR_VS_PF.value,
-        Metric.SLICED_W2.value,
-        Metric.RMSE.value,
-        Metric.SPREAD.value,
-        Metric.CRPS.value,
-        Metric.NFE.value,
-        Metric.SECONDS.value,
-        driver.INNOVATION_LAG1,
-        driver.INNOVATION_MSQ,
-        driver.DIVERGED_STEPS,
-    }
-    assert expected <= {r.metric for r in records}
-    method, variant = driver.CELLS[name]
-    assert all(r.method == method.value and r.variant == variant for r in records)
-    assert all(r.M == STEPS and r.E == small.evaluation.ensemble_size for r in records)
-    assert driver.cell_file("per_step", name, 0, small).exists()
-
-
-@pytest.mark.parametrize("name", CELLS)
-def test_cell_is_deterministic(small, name):
-    a = run(small, name)
-    b = run(small, name)
-    assert a.ensembles.shape == (2, small.problem.num_steps, 6, small.problem.dim_state)
-    torch.testing.assert_close(a.ensembles, b.ensembles, rtol=0, atol=0, equal_nan=True)
-    assert a.nfe == b.nfe
-
-
-# What runs per assimilation step at M steps (NFE_MEANING), counted on the network.
+# What runs per assimilation step at M steps (module docstring), counted on the network.
 EXPECTED_NFE = {
     "flowdas": 1 + 2 * (STEPS - 1),
     "sda": 1 + 2 * (STEPS - 1),
@@ -112,6 +80,8 @@ def test_nfe_counts_the_calls_that_run(small, name):
         ("dflow", "DFLOW_STEP_SIZE"),
         ("fig", "FIG_C"),
         ("fig", "FIG_ANYTHING_NEW"),
+        ("surge_sda", "FLOWDAS_ZETA"),
+        ("surge_flowdas", "FLOWDAS_MAX_GRAD_NORM"),
     ],
 )
 def test_env_override_is_refused(small, monkeypatch, name, variable):
@@ -120,7 +90,7 @@ def test_env_override_is_refused(small, monkeypatch, name, variable):
         run(small, name)
 
 
-@pytest.mark.parametrize("name", CELLS)
+@pytest.mark.parametrize("name", NS_CELLS)
 def test_build_posterior_gets_only_scalars_from_the_case(small, monkeypatch, name):
     seen = {}
     real = ns_pipeline.build_posterior
@@ -146,21 +116,29 @@ def test_build_posterior_gets_only_scalars_from_the_case(small, monkeypatch, nam
         value is None or isinstance(value, (bool, int, float, str)) for value in leaves(plain)
     )
     block = driver.method_settings(small, name)
-    for key in baselines.KNOBS[name]:
-        assert plain["likelihood_model"][key] == block[key]
+    for section, keys in baselines.NS_CELLS[name][3].items():
+        for key in keys:
+            assert plain[section][key] == block[key]
     assert seen["num_steps"] == STEPS
-    assert seen["method_name"] == baselines.BASELINES[name].value
+    assert seen["method_name"] == baselines.NS_CELLS[name][1].value
     assert seen["likelihood_ensemble_size"] == small.evaluation.ensemble_size
+    # Only the network the method runs on is loaded.
+    network = baselines.NS_CELLS[name][2]
+    prior = seen["prior"]
+    assert (prior.si_model is not None) == (network == "si")
+    assert (prior.diffusion_model is not None) == (network == "diffusion")
 
 
-@pytest.mark.parametrize("name", CELLS)
+@pytest.mark.parametrize("name", NS_CELLS)
 def test_unknown_and_missing_knobs_are_refused(small, name):
     settings = driver.method_settings(small, name)
     with pytest.raises(ValueError, match="unknown"):
         run(small, name, settings={**settings, "typo": 1})
-    knob = next(iter(baselines.KNOBS[name]))
+    knob = next(iter(next(iter(baselines.NS_CELLS[name][3].values()))))
     with pytest.raises(ValueError, match="missing"):
         run(small, name, settings={k: v for k, v in settings.items() if k != knob})
+    with pytest.raises(ValueError, match="must be a number"):
+        run(small, name, settings={**settings, knob: {"default": 1.0}})
 
 
 def test_a_null_knob_that_would_fall_back_is_refused(small):

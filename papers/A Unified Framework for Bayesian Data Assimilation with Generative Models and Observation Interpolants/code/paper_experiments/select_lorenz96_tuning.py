@@ -1,4 +1,5 @@
-"""Select the Lorenz 96 tuning picks by the fixed rule; never edits the config.
+"""Select the Lorenz 96 tuning picks by the fixed rule, and (``apply``) write them
+into the config.
 
 Rule (fixed before results, GPU_HANDOFF.md step 7): per cell, the row with the
 lowest validation ``sliced_w2``. A row with ``diverged_steps > 0`` (the driver
@@ -7,7 +8,7 @@ writes ``inf`` scores for it) or a non-finite ``sliced_w2`` is not eligible.
 Actions (``--obs linear|arctan`` picks the sweep root ``results/lorenz96/<obs>/``):
 
 ``select`` (default)
-    Reads ``tuning/*__s<stage>.csv`` (the files ``tune_lorenz96.sh`` writes; the
+    Reads ``tuning/*__s<stage>.csv`` (the files ``run_lorenz96.sh tune`` writes; the
     cell is the file name up to the first ``__``, the grid keys are the columns
     before ``base``) and writes ``tuning/selected_stage<stage>.yaml`` -- per cell
     the tuned keys (``tuned``, nested, ready to paste into ``methods:`` for the
@@ -16,8 +17,19 @@ Actions (``--obs linear|arctan`` picks the sweep root ``results/lorenz96/<obs>/`
     ``tuning/selected_stage<stage>.md``: every grid, its row counts, the chosen row
     and the gap to the runner-up.
 
+``apply``
+    Writes the picks of ``selected_stage1.yaml`` then ``selected_stage2.yaml`` into
+    ``methods:`` (linear) / ``methods_arctan:`` (arctan) of
+    ``configs/case/lorenz96.yaml``: per picked cell, its own block with the tuned keys
+    merged in (nested keys too, so ``correction.gain_scale`` keeps the block's
+    ``localisation`` and ``forecast_num_steps``). Only those cells' one-line blocks
+    of that section are rewritten, every other line (comments included) is kept
+    byte for byte, and the result is re-read and checked before it is written.
+    Keys a stage-2 cell got from its parent by ``--set`` are not copied: the parent's
+    own pick is applied to the parent, and the cell inherits it.
+
 ``resolve --parent P --grid G``
-    For ``tune_lorenz96.sh`` stage 2: reads ``selected_stage1.yaml``, replaces each
+    For ``run_lorenz96.sh tune`` stage 2: reads ``selected_stage1.yaml``, replaces each
     ``{"times": [f, ...]}`` value of ``G`` by the parent's stage-1 pick times each
     ``f``, and prints the resolved grid JSON on the first line, then one ``--set``
     string per line: the parent's stage-1 picks for the keys not in the grid.
@@ -49,12 +61,12 @@ _here = Path(__file__).resolve().parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
-from lorenz96_lineup import OBS_CHOICES, sweep_root  # noqa: E402
+from lorenz96_lineup import CONFIG_BLOCK, OBS_CHOICES, set_dotted, sweep_root  # noqa: E402
 
 RESULTS = _here / "results"
+CASE_CONFIG = _here / "configs" / "case" / "lorenz96.yaml"
 SCORE = "sliced_w2"
 DIVERGED_STEPS = "diverged_steps"
-CONFIG_BLOCK = {"linear": "methods", "arctan": "methods_arctan"}
 
 
 def tuning_dir(obs: str) -> Path:
@@ -107,29 +119,11 @@ def eligible(row: dict) -> bool:
 
 def nested(flat: dict) -> dict:
     """``{"correction.gain_scale": 0.5}`` -> ``{"correction": {"gain_scale": 0.5}}``."""
-    out: dict = {}
-    for key, value in flat.items():
-        node = out
-        *parents, leaf = key.split(".")
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = value
-    return out
+    return set_dotted({}, flat)
 
 
 def set_strings(flat: dict) -> list[str]:
     return [f"{key}={json.dumps(value)}" for key, value in flat.items()]
-
-
-def apply_flat(settings: dict, flat: dict) -> dict:
-    out = json.loads(json.dumps(settings))
-    for key, value in flat.items():
-        node = out
-        *parents, leaf = key.split(".")
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = value
-    return out
 
 
 def select(obs: str, stage: int) -> tuple[dict, str]:
@@ -143,8 +137,8 @@ def select(obs: str, stage: int) -> tuple[dict, str]:
         f"# Lorenz 96 tuning, {obs} sweep, stage {stage}",
         "",
         f"Rule: lowest validation `{SCORE}`; rows with `{DIVERGED_STEPS} > 0` or a "
-        "non-finite score are not eligible. Settings go into "
-        f"`{CONFIG_BLOCK[obs]}:` of `configs/case/lorenz96.yaml` by hand.",
+        "non-finite score are not eligible. `select_lorenz96_tuning.py apply` writes "
+        f"them into `{CONFIG_BLOCK[obs]}:` of `configs/case/lorenz96.yaml`.",
         "",
     ]
     if not files:
@@ -174,7 +168,7 @@ def select(obs: str, stage: int) -> tuple[dict, str]:
         picks[cell] = {
             "tuned": nested(tuned),
             "set": set_strings(tuned),
-            "full": apply_flat(base, tuned),
+            "full": set_dotted(base, tuned),
             SCORE: score,
             "file": path.name,
         }
@@ -211,9 +205,9 @@ def write_selection(obs: str, stage: int) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     header = (
         f"# Lorenz 96 {obs} sweep, tuning stage {stage}: picks by lowest validation "
-        f"{SCORE}\n# (select_lorenz96_tuning.py). Paste each cell's `tuned` block into "
-        f"`{CONFIG_BLOCK[obs]}:`\n# of configs/case/lorenz96.yaml after review; this "
-        "file does not change the config.\n"
+        f"{SCORE}\n# (select_lorenz96_tuning.py). After review, `apply` merges each "
+        f"cell's `tuned` block into\n# `{CONFIG_BLOCK[obs]}:` of "
+        "configs/case/lorenz96.yaml; selecting does not change the config.\n"
     )
     out.write_text(header + yaml.safe_dump(picks, sort_keys=True), encoding="utf-8")
     out.with_suffix(".md").write_text(summary, encoding="utf-8")
@@ -278,19 +272,91 @@ def status(obs: str, cell: str, grid: dict, stage: int) -> tuple[str, Path]:
     return ("complete" if wanted <= found else "partial"), path
 
 
+def _merge(block: dict, tuned: dict) -> dict:
+    out = dict(block)
+    for key, value in tuned.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _flow(value) -> str:
+    """One YAML flow-style value (``{a: 1, b: {c: null}}``), keys in order."""
+    return yaml.safe_dump(value, default_flow_style=True, sort_keys=False, width=10**9).strip()
+
+
+def apply(obs: str, config: Path | None = None) -> dict[str, dict]:
+    """Merge the stage-1 then stage-2 picks into the ``obs`` settings block.
+
+    Returns ``{cell: new own block}``. The file keeps every other line; each picked
+    cell must have a one-line ``  <cell>: {...}`` block in its section.
+    """
+    from omegaconf import OmegaConf
+
+    config = CASE_CONFIG if config is None else config
+    section = CONFIG_BLOCK[obs]
+    picks: dict[str, dict] = {}
+    for stage in (1, 2):
+        path = tuning_dir(obs) / f"selected_stage{stage}.yaml"
+        if path.exists():
+            for cell, pick in (yaml.safe_load(path.read_text()) or {}).items():
+                picks[cell] = _merge(picks.get(cell, {}), pick["tuned"])
+    if not picks:
+        raise FileNotFoundError(f"No selected_stage*.yaml with picks in {tuning_dir(obs)}.")
+    before = OmegaConf.to_container(OmegaConf.load(config))
+    lines = config.read_text(encoding="utf-8").splitlines(keepends=True)
+    head = next((i for i, line in enumerate(lines) if line.rstrip() == f"{section}:"), None)
+    if head is None:
+        raise ValueError(f"{config} has no top-level `{section}:` line.")
+    end = next(
+        (i for i in range(head + 1, len(lines))
+         if lines[i].strip() and not lines[i].startswith((" ", "#"))),
+        len(lines),
+    )
+    blocks = {}
+    for cell, tuned in picks.items():
+        new = _merge(before[section].get(cell) or {}, tuned)
+        where = [i for i in range(head + 1, end) if lines[i].startswith(f"  {cell}: {{")]
+        if len(where) != 1 or not lines[where[0]].rstrip().endswith("}"):
+            raise ValueError(f"{section}.{cell} is not one `  {cell}: {{...}}` line of {config}.")
+        lines[where[0]] = f"  {cell}: {_flow(new)}\n"
+        blocks[cell] = new
+    text = "".join(lines)
+    after = OmegaConf.to_container(OmegaConf.create(text))
+    expected = json.loads(json.dumps(before))
+    for cell, new in blocks.items():
+        expected[section][cell] = new
+    if after != expected:
+        raise RuntimeError(f"Writing the picks into {config} would change other entries; nothing written.")
+    config.write_text(text, encoding="utf-8")
+    for cell, new in blocks.items():
+        print(f"{section}.{cell}: {_flow(new)}")
+    return blocks
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("action", nargs="?", default="select", choices=["select", "resolve", "status"])
+    parser.add_argument(
+        "action", nargs="?", default="select", choices=["select", "apply", "resolve", "status"]
+    )
     parser.add_argument("--obs", choices=OBS_CHOICES, default="linear")
     parser.add_argument("--stage", type=int, choices=[1, 2], default=1)
     parser.add_argument("--parent", default="", help="resolve: the stage-1 cell to start from")
     parser.add_argument("--cell", help="status: the tuned cell")
     parser.add_argument("--grid", help="resolve/status: the grid JSON")
+    parser.add_argument(
+        "--set", action="append", help="status: the job's --set overrides (key=value)"
+    )
     args = parser.parse_args()
     if args.action == "select":
         write_selection(args.obs, args.stage)
+        return
+    if args.action == "apply":
+        apply(args.obs)
         return
     if args.grid is None:
         parser.error(f"{args.action} needs --grid")

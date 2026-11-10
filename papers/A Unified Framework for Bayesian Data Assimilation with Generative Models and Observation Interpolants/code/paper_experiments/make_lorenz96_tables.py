@@ -27,10 +27,8 @@ reference; lag-1: closest to zero). Rows of the aggregated file that are not in
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 _here = Path(__file__).resolve().parent
@@ -47,12 +45,11 @@ from lorenz96_lineup import (  # noqa: E402
     OBS_CHOICES,
     ROW_OF,
     ROWS,
-    SCENARIO_OF,
     SMC_ESS_FRACTION,
     SMC_RESAMPLES,
-    as_m,
-    norm_variant,
+    Entry,
     pick_m,
+    read_aggregated,
     sweep_root,
 )
 
@@ -91,38 +88,15 @@ VS_M_METRICS: tuple[str, ...] = ("sliced_w2", KL_KNN)
 # Rows never bold: the reference posterior itself and its subsample.
 NOT_BOLD_GROUPS = ("reference",)
 
-Entry = tuple[float, float, int]  # mean, std, seeds
 
-
-def load_by_m(path: Path, obs: str) -> tuple[dict, list[tuple[str, str]]]:
-    """``{(method, variant): {metric: {M: (mean, std, n)}}}`` and the unlisted rows."""
-    data: dict[tuple[str, str], dict[str, dict]] = defaultdict(lambda: defaultdict(dict))
-    unlisted: set[tuple[str, str]] = set()
-    with open(path, encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            if row["scenario"] != SCENARIO_OF[obs]:
-                raise ValueError(
-                    f"{path}: scenario {row['scenario']!r} in the {obs!r} sweep "
-                    f"(expected {SCENARIO_OF[obs]!r}); the sweeps must not mix."
-                )
-            key = (row["method"], norm_variant(row.get("variant")))
-            if key not in ROW_OF:
-                unlisted.add(key)
-                continue
-            entry = (float(row["value"]), float(row["std"] or "nan"), int(row["n_traj"]))
-            m = as_m(row.get("M"))
-            old = data[key][row["metric"]].get(m)
-            if old is not None:
-                print(
-                    f"[{CASE}/{obs}] warning: {key} {row['metric']} M={m} has rows at "
-                    "several E; keeping the one with most seeds"
-                )
-                if old[2] >= entry[2]:
-                    continue
-            data[key][row["metric"]][m] = entry
-    for key in sorted(unlisted):
-        print(f"[{CASE}/{obs}] warning: {key} is not in lorenz96_lineup.ROWS; left out")
-    return data, sorted(unlisted)
+def load_by_m(path: Path) -> tuple[dict, list[tuple[str, str]]]:
+    """``{(method, variant): {metric: {M: (mean, std, n)}}}`` of the rows in
+    ``ROWS`` (``lorenz96_lineup.read_aggregated``), and the unlisted rows."""
+    data = read_aggregated(path)
+    unlisted = sorted(key for key in data if key not in ROW_OF)
+    for key in unlisted:
+        print(f"[{CASE}] warning: {key} is not in lorenz96_lineup.ROWS; left out")
+    return {key: value for key, value in data.items() if key in ROW_OF}, unlisted
 
 
 def at_m(by_m: dict, m: int = HEADLINE_M) -> dict:
@@ -143,9 +117,9 @@ def at_m(by_m: dict, m: int = HEADLINE_M) -> dict:
     return data
 
 
-def load_table(path: Path, obs: str, m: int = HEADLINE_M) -> tuple[dict, list[tuple[str, str]]]:
+def load_table(path: Path, m: int = HEADLINE_M) -> tuple[dict, list[tuple[str, str]]]:
     """``{(method, variant): {metric: (mean, std, n)}}`` at ``m``, and the unlisted rows."""
-    by_m, unlisted = load_by_m(path, obs)
+    by_m, unlisted = load_by_m(path)
     return at_m(by_m, m), unlisted
 
 
@@ -360,7 +334,7 @@ def make_sweep(obs: str) -> list[Path]:
     if not source.exists():
         print(f"[{CASE}/{obs}] no {source}; run aggregate_lorenz96.py first. Skipped.")
         return []
-    by_m, unlisted = load_by_m(source, obs)
+    by_m, unlisted = load_by_m(source)
     data = at_m(by_m)
     if not data:
         print(f"[{CASE}/{obs}] no row of {source} is in lorenz96_lineup.ROWS at M={HEADLINE_M}. Skipped.")

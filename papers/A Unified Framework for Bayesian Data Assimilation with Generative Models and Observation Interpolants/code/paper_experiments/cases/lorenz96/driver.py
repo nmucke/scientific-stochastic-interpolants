@@ -7,15 +7,16 @@ that prior and the method's own randomness.
     python cases/lorenz96/driver.py reference --split validation
     python cases/lorenz96/driver.py tune --method enkf --grid '{"inflation": [1.0, 1.1]}'
     python cases/lorenz96/driver.py reference --split test
-    python cases/lorenz96/driver.py cell --method si_sde --seed 0
-    python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 --tag fs5_g0.8 \
-        --set correction.forecast_num_steps=5 --set correction.gain_scale=0.8
+    python cases/lorenz96/driver.py cell --method si_sde --seed 0 --num-steps 50
+    python cases/lorenz96/driver.py cell --method si_sde_fc --seed 0 --tag g0.8 \
+        --set correction.gain_scale=0.8
 
-Cells ending in ``_fc`` are the generative samplers (and the exact-kernel oracle)
-with the forecast-residual correction of ``FORECAST_CORRECTION.md``; ``prior_enkf``
-and ``prior_enkf_fm`` forecast with the unguided trained prior and update with the
-localised EnKF. ``run_lorenz96_grid.sh`` runs all of it. Test sequences are never
-used to choose a setting: ``tune`` reads the validation split only.
+The cells and their tidy labels are ``lorenz96_lineup.ROWS``. Cells ending in
+``_fc`` are the generative samplers (and the exact-kernel oracle) with the
+forecast-residual correction of ``FORECAST_CORRECTION.md``; ``prior_enkf`` and
+``prior_enkf_fm`` forecast with the unguided trained prior and update with the
+localised EnKF. ``run_lorenz96.sh`` runs all of it. Test sequences are never used to
+choose a setting: ``tune`` reads the validation split only, at M = ``HEADLINE_M``.
 
 ``cell --set`` changes a cell's settings and so needs ``--tag``: the tag goes into
 every output path (``<cell>-<tag>``) and into the tidy ``variant``
@@ -54,22 +55,38 @@ _here = Path(__file__).resolve().parent
 sys.path.insert(0, str(_here.parents[1]))
 
 from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
-from cases.lorenz96._l96_smc import SMC_KEYS, SURGE_CELLS, pf_smc_record  # noqa: E402
+from cases.lorenz96._l96_smc import SURGE_CELLS, pf_smc_record  # noqa: E402
 from cases.lorenz96._l96_divergence import energy_distance, knn_kl  # noqa: E402
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
     OBS_OPERATORS,
     Problem,
     Sequence,
+    case_config,
+    configure,
     draw_prior_ensemble,
     make_sequence,
     open_csv_for_append,
+    problem_of,
     resolve_device,
 )
 from common.paths import REPO_ROOT, RESULTS_ROOT  # noqa: E402
 from common.per_step_io import append_per_step, per_step_rows  # noqa: E402
 from common.runner import ExperimentRunner, RunContext  # noqa: E402
 from common.seeding import derive_seed  # noqa: E402
+from lorenz96_lineup import (  # noqa: E402
+    ENERGY_DISTANCE,
+    HEADLINE_M,
+    INHERITS,
+    KL_KNN,
+    M_VALUES,
+    ROWS,
+    SCENARIO_OF,
+    SMC_METRICS,
+    parse_assignments,
+    set_dotted,
+    settings_of,
+)
 from results_schema import (  # noqa: E402
     Case,
     Method,
@@ -95,63 +112,28 @@ SEED_LABEL = "lorenz96-evaluation"
 DATA_PATH = REPO_ROOT / "data/lorenz96/data.npz"
 DIVERGED_ABS = 100.0  # about 25 climatological standard deviations
 
+# name -> (tidy method label, variant), from lorenz96_lineup.ROWS.
+CELLS = {row.cell: (Method(row.method), row.variant or None) for row in ROWS}
 # Corrected cell -> the plain cell whose sampler settings and seed stream it reuses.
-CORRECTED = {"si_sde_fc": "si_sde", "fm_ode_fc": "fm_ode", "dm_sde_fc": "dm_sde"}
+CORRECTED = {name: INHERITS[name] for name in ("si_sde_fc", "fm_ode_fc", "dm_sde_fc")}
 # Trained-prior forecast + EnKF update -> the sampler whose prior forecasts.
 PRIOR_ENKF = {"prior_enkf": "si_sde", "prior_enkf_fm": "fm_ode"}
 FC_VARIANT = "forecast_correction"
-# name -> (tidy method label, variant)
-CELLS = {
-    "si_sde": (Method.OURS_SI_SDE, None),
-    "fm_ode": (Method.OURS_FM_ODE, None),
-    "dm_sde": (Method.OURS_DM_SDE, None),
-    "si_sde_fc": (Method.OURS_SI_SDE, FC_VARIANT),
-    "fm_ode_fc": (Method.OURS_FM_ODE, FC_VARIANT),
-    "dm_sde_fc": (Method.OURS_DM_SDE, FC_VARIANT),
-    "enkf": (Method.ENKF, "matched"),
-    "enkf_large": (Method.ENKF, "large"),
-    "prior_enkf": (Method.ENKF, "trained_prior_si"),
-    "prior_enkf_fm": (Method.ENKF, "trained_prior_fm"),
-    "oracle": (Method.ONE_STEP_ORACLE, None),
-    "oracle_fc": (Method.ONE_STEP_ORACLE, FC_VARIANT),
-    "pf_matched": (Method.PARTICLE_FILTER, "matched"),
-    "pf_subsample": (Method.PARTICLE_FILTER, "reference_subsample"),
-    "pf_reference": (Method.PARTICLE_FILTER, "reference"),
-    # Generative baselines, built by the NS build_posterior (_l96_baselines.py).
-    "flowdas": (Method.FLOWDAS, None),
-    "sda": (Method.SDA, None),
-    "dflow": (Method.D_FLOW_SGLD, None),
-    "fig": (Method.GUIDED_FM_FIG, None),
-    # SURGE SMC cells (_l96_smc.py): Ours inside SURGE, its unguided controls,
-    # SURGE + FlowDAS and SURGE + SDA. One sequence per sampler call.
-    **SURGE_CELLS,
-}
-BASELINE_CELLS = ("flowdas", "sda", "dflow", "fig")
 # The plain samplers; their corrected cells are in CORRECTED.
-GENERATIVE = {
-    name: method
-    for name, (method, _) in CELLS.items()
-    if method.name.startswith("OURS_") and name not in CORRECTED and name not in SURGE_CELLS
-}
+GENERATIVE = {"si_sde": Method.OURS_SI_SDE, "fm_ode": Method.OURS_FM_ODE, "dm_sde": Method.OURS_DM_SDE}
 # Cells that take no settings: an override or a tuning grid would be ignored.
 NO_SETTINGS = ("oracle", "pf_matched", "pf_subsample", "pf_reference")
 # Cells whose step-0 members are not ``initial_ensemble``: their first innovation is
 # left out (``pf_subsample`` draws from the reference posterior at steps 1..T only).
 NO_INITIAL_ENSEMBLE = ("pf_subsample",)
 TUNABLE = tuple(name for name in CELLS if name not in NO_SETTINGS)
-# (sequence, step) entries with a non-finite score; in practice fewer than two members left.
+# (sequence, step) entries with a non-finite core score; in practice fewer than two
+# members left.
 DIVERGED_STEPS = "diverged_steps"
-# Per-step distances of the ensemble to the PF draws (_l96_divergence).
-KL_KNN = "kl_knn"
-ENERGY_DISTANCE = "energy_distance"
-# Every generative method runs exactly this many SDE/ODE steps per assimilation step
-# (D-Flow: SGLD steps) in tuning, fixed by design and not tuned: `tune` refuses any
-# other value unless --allow-other-m is passed (check_m).
-FIXED_NUM_STEPS = 50
-# The final grids additionally run every generative cell at these M (convergence in
-# the number of SDE/ODE steps), with the knobs tuned at FIXED_NUM_STEPS. Only
-# `cell --num-steps` reaches them; `tune` stays at FIXED_NUM_STEPS.
-M_VALUES = SWEEP_NUM_STEPS = (25, 50, 100, 250)
+# Every generative method runs exactly M = HEADLINE_M SDE/ODE steps per assimilation
+# step (D-Flow: SGLD steps) in tuning, fixed by design and not tuned; the final grid
+# runs them at every M of M_VALUES with those picks. Both are checked by check_m.
+FIXED_NUM_STEPS = HEADLINE_M
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
@@ -160,92 +142,32 @@ INNOVATION_MSQ = "innovation_msq"
 ORACLE_ESS_MEAN = "oracle_ess_mean"
 ORACLE_ESS_MIN = "oracle_ess_min"
 # Tidy scenario label of each observation operator.
-SCENARIOS = {"linear": Scenario.LORENZ96, "arctan": Scenario.LORENZ96_ARCTAN}
-# Settings block of each observation operator in configs/case/lorenz96.yaml.
-METHODS_KEY = {"linear": "methods", "arctan": "methods_arctan"}
-
-
-def case_config(obs: str = "linear"):
-    """The case config for observation operator ``obs`` (:func:`configure`)."""
-    return configure(OmegaConf.load(CASE_CONFIG), obs)
-
-
-def configure(cfg, obs: str = "linear"):
-    """Select observation operator ``obs`` in a loaded case config, in place.
-
-    ``linear`` leaves ``problem`` and ``methods`` as they are. Otherwise
-    ``problem.observation`` is set from ``observations.<obs>`` and ``methods`` is
-    replaced by ``methods_<obs>``, so :func:`method_settings` and every cell read
-    the settings of that problem. ``cfg.obs`` records the choice; configuring an
-    already configured config for another operator is refused.
-    """
-    if obs not in OBS_OPERATORS:
-        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
-    current = cfg.get("obs")
-    if current is not None:
-        if current != obs:
-            raise ValueError(f"config is already set up for obs={current!r}, not {obs!r}")
-        return cfg
-    if obs != "linear":
-        cfg.problem.observation = OmegaConf.to_container(cfg.observations[obs])
-        cfg.methods = cfg[METHODS_KEY[obs]]
-    cfg.obs = obs
-    return cfg
+SCENARIOS = {obs: Scenario(value) for obs, value in SCENARIO_OF.items()}
 
 
 def config_of(args):
-    """The case config of a command's ``--obs``. The linear config is fetched by a
-    plain ``case_config()`` call (as before the option existed)."""
-    obs = getattr(args, "obs", "linear")
-    return case_config() if obs == "linear" else case_config(obs)
-
-
-def obs_of(cfg) -> str:
-    """Observation operator of a (possibly unconfigured, i.e. linear) config."""
-    return problem_of(cfg).obs_label
+    """The case config of a command's ``--obs``."""
+    return case_config(getattr(args, "obs", "linear"))
 
 
 def results_dir(obs: str) -> Path:
     """Root of every output of the ``obs`` problem: ``results/lorenz96/<obs>``."""
-    if obs not in OBS_OPERATORS:
-        raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
     return RESULTS / obs
 
 
-def problem_of(cfg) -> Problem:
-    return Problem(**OmegaConf.to_container(cfg.problem))
-
-
 def method_settings(cfg, name: str) -> dict:
-    """Settings of a cell; a corrected cell starts from its plain cell's settings."""
-    node = cfg.methods.get(name)
-    own = {} if node is None else OmegaConf.to_container(node)
-    if name in CORRECTED:
-        return {**method_settings(cfg, CORRECTED[name]), **own}
-    return own
+    """Settings of a cell; a cell of ``lorenz96_lineup.INHERITS`` starts from its
+    parent's (``lorenz96_lineup.settings_of``)."""
+    return settings_of(OmegaConf.to_container(cfg.methods), name)
 
 
 def apply_overrides(settings: dict, assignments) -> dict:
     """Apply ``key=value`` (dotted keys, JSON values) to a copy of ``settings``.
 
-    ``correction.forecast_num_steps=5`` sets ``settings["correction"]["forecast_num_steps"]``.
+    ``correction.localisation=4`` sets ``settings["correction"]["localisation"]``.
     Values that are not JSON (``dps_jacobian_free``) are kept as strings.
     """
-    out = json.loads(json.dumps(settings))
-    for assignment in assignments or ():
-        key, sep, raw = assignment.partition("=")
-        if not sep:
-            raise ValueError(f"Expected key=value, got {assignment!r}")
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError:
-            value = raw
-        node = out
-        *parents, leaf = key.split(".")
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = value
-    return out
+    return set_dotted(settings, parse_assignments(assignments))
 
 
 def load_sequences(problem: Problem, split: str, count: int) -> list[Sequence]:
@@ -589,7 +511,8 @@ def innovation_output(
 
 
 # --------------------------------------------------------------------------- #
-# Methods
+# Methods. Every runner takes (cfg, name, problem, sequences, split, seed,
+# members, settings) and returns a CellOutput (RUNNERS, run_method).
 # --------------------------------------------------------------------------- #
 
 
@@ -602,8 +525,35 @@ class CellOutput:
     pseudo_steps: int | None
     # [S, T, E] per-member ESS of the importance-sampling oracle (arctan only).
     oracle_ess: torch.Tensor | None = None
-    # SMC cells only: per sequence, per-step lists of the _l96_smc.SMC_KEYS.
+    # SMC cells only: per sequence, per-step lists of the lorenz96_lineup.SMC_METRICS.
     smc: list[dict[str, list[float]]] | None = None
+
+
+def sampler_inputs(cfg, problem, sequences, split, seed, members):
+    """``(stats, device, initial [S, E, d], observations [S, T, d_y])`` of a cell
+    that runs a trained network: the data standardisation, the sampler device, the
+    shared initial members (:func:`initial_ensemble`) and the observations, all in
+    physical units."""
+    import cases.lorenz96._l96_generative as generative
+
+    stats = generative.Standardisation.from_data(DATA_PATH, problem)
+    device = resolve_device(cfg.evaluation.device)
+    initial = torch.stack(
+        [
+            initial_ensemble(problem, seq, members, split, index, seed)
+            for index, seq in enumerate(sequences)
+        ]
+    )
+    observations = torch.stack([seq.observations for seq in sequences])
+    return stats, device, initial, observations
+
+
+def diverged_ensembles(problem, observations, members) -> torch.Tensor:
+    """All-NaN ensembles ``[S, T, E, d]`` for ``observations`` ``[S, T, d_y]``: the
+    output of a sampler that reported its own divergence (every step then counts
+    in ``diverged_steps``)."""
+    shape = (*observations.shape[:2], members, problem.dim_state)
+    return torch.full(shape, float("nan"), dtype=torch.float64)
 
 
 @dataclass(frozen=True)
@@ -629,7 +579,7 @@ def build_enkf(problem, settings: EnKFSettings) -> EnsembleKalmanFilter:
     )
 
 
-def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
+def run_enkf(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     enkf = build_enkf(problem, EnKFSettings(**settings))
     start = time.time()
     out = []
@@ -642,60 +592,50 @@ def run_enkf(problem, sequences, split, seed, members, settings) -> CellOutput:
     return CellOutput(torch.stack(out), time.time() - start, None, members, None)
 
 
-#: Candidates per member and step of the arctan oracle when the config has no
-#: ``oracle_arctan.proposals``.
-ORACLE_PROPOSALS = 4096
-
-
-def importance_oracle(problem, proposals: int = ORACLE_PROPOSALS) -> ImportanceOneStepOracle:
-    """The per-member one-step oracle for a nonlinear ``h`` (no closed form)."""
+def importance_oracle(problem, cfg) -> ImportanceOneStepOracle:
+    """The per-member one-step oracle for a nonlinear ``h`` (no closed form), with
+    ``oracle_arctan.proposals`` candidates per member and step."""
     return ImportanceOneStepOracle(
         problem.obs_matrix,
         problem.obs_variance,
         obs_nonlinearity=problem.obs_nonlinearity,
-        proposals=proposals,
+        proposals=int(cfg.oracle_arctan.proposals),
     )
 
 
-def oracle_proposals(cfg) -> int:
-    node = cfg.get("oracle_arctan")
-    return int(node.proposals) if node is not None else ORACLE_PROPOSALS
-
-
-def run_oracle(problem, sequences, split, seed, members, proposals=ORACLE_PROPOSALS) -> CellOutput:
+def run_oracle(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """Exact one-step posterior per member: closed form when linear; for a
     nonlinear ``h`` importance sampling from the exact transition
     (:class:`ImportanceOneStepOracle`), whose per-member ESS is returned."""
-    if not problem.linear_obs:
-        oracle = importance_oracle(problem, proposals)
-        start = time.time()
-        out, ess = [], []
-        for index, seq in enumerate(sequences):
-            gen = torch.Generator().manual_seed(
-                derive_seed(SEED_LABEL, "oracle", split, index, seed)
-            )
-            x0 = initial_ensemble(problem, seq, members, split, index, seed)
-            result = oracle.run(problem.model, x0, seq.observations, gen)
-            out.append(result.analysis)
-            ess.append(result.ess)
-        return CellOutput(
-            torch.stack(out), time.time() - start, None, members, None, torch.stack(ess)
-        )
-    oracle = OneStepPosteriorOracle(problem.obs_matrix, problem.obs_variance)
+    linear = problem.linear_obs
+    if linear:
+        oracle = OneStepPosteriorOracle(problem.obs_matrix, problem.obs_variance)
+    else:
+        oracle = importance_oracle(problem, cfg)
     start = time.time()
-    out = []
+    out, ess = [], []
     for index, seq in enumerate(sequences):
         gen = torch.Generator().manual_seed(
             derive_seed(SEED_LABEL, "oracle", split, index, seed)
         )
         x0 = initial_ensemble(problem, seq, members, split, index, seed)
-        out.append(oracle.run(problem.model, x0, seq.observations, gen))
-    return CellOutput(torch.stack(out), time.time() - start, None, members, None)
+        result = oracle.run(problem.model, x0, seq.observations, gen)
+        if linear:
+            out.append(result)
+        else:
+            out.append(result.analysis)
+            ess.append(result.ess)
+    return CellOutput(
+        torch.stack(out),
+        time.time() - start,
+        None,
+        members,
+        None,
+        None if linear else torch.stack(ess),
+    )
 
 
-def run_oracle_fc(
-    problem, sequences, split, seed, members, settings, proposals=ORACLE_PROPOSALS
-) -> CellOutput:
+def run_oracle_fc(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """The exact one-step kernel per member, then the forecast-residual correction.
 
     The guided draw is ``OneStepPosteriorOracle``'s exact kick update (here
@@ -730,7 +670,7 @@ def run_oracle_fc(
     online = corr.config.q_source == "online"
     linear = problem.linear_obs
     operator = build_obs_operator(problem) if linear else physical_obs_operator(problem)
-    sampler = None if linear else importance_oracle(problem, proposals)
+    sampler = None if linear else importance_oracle(problem, cfg)
     start = time.time()
     out, ess = [], []
     for index, seq in enumerate(sequences):
@@ -774,7 +714,7 @@ def run_oracle_fc(
     )
 
 
-def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings):
+def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """Unguided trained-prior forecast + EnKF update (the alternative of section 2).
 
     Same E, observations and initial ensembles as every other cell; the EnKF update
@@ -782,13 +722,7 @@ def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings
     prior's forecast solver (:class:`SamplerSettings`; only ``num_steps`` and, for
     a DM-SDE prior, ``diffusion_scale`` matter, as no likelihood is used).
     """
-    from cases.lorenz96._l96_generative import (
-        SamplerSettings,
-        Standardisation,
-        assimilate_prior_enkf,
-        build_posterior,
-        load_prior,
-    )
+    import cases.lorenz96._l96_generative as generative
     from cases.navier_stokes._ns_pipeline import attach_nfe_counter
 
     settings = dict(settings)
@@ -798,19 +732,16 @@ def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings
     update = EnKFSettings(
         **{key: settings.pop(key) for key in ("inflation", "localisation") if key in settings}
     )
-    sampler = SamplerSettings(**settings)
-    run = cfg.checkpoints.si_run if prior == "si_sde" else cfg.checkpoints.fm_run
-    stats = Standardisation.from_data(DATA_PATH, problem)
-    model = load_prior(run, resolve_device(cfg.evaluation.device))
-    posterior, stepper = build_posterior(GENERATIVE[prior], model, problem, stats, sampler)
-    enkf = build_enkf(problem, update)
-    initial = torch.stack(
-        [
-            initial_ensemble(problem, seq, members, split, index, seed)
-            for index, seq in enumerate(sequences)
-        ]
+    sampler = generative.SamplerSettings(**settings)
+    stats, device, initial, observations = sampler_inputs(
+        cfg, problem, sequences, split, seed, members
     )
-    observations = torch.stack([seq.observations for seq in sequences])
+    run = cfg.checkpoints.si_run if prior == "si_sde" else cfg.checkpoints.fm_run
+    model = generative.load_prior(run, device)
+    posterior, stepper = generative.build_posterior(
+        GENERATIVE[prior], model, problem, stats, sampler
+    )
+    enkf = build_enkf(problem, update)
     generators = [
         torch.Generator().manual_seed(
             derive_seed(SEED_LABEL, "prior-enkf", split, index, seed)
@@ -819,7 +750,7 @@ def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings
     ]
     counter = attach_nfe_counter(model)
     start = time.time()
-    ensembles = assimilate_prior_enkf(
+    ensembles = generative.assimilate_prior_enkf(
         posterior,
         stepper,
         stats,
@@ -835,7 +766,7 @@ def run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings
     return CellOutput(ensembles, seconds, nfe, members, sampler.num_steps)
 
 
-def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
+def run_pf_matched(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """The same filter as the reference with only ``members`` particles."""
     pf = BootstrapParticleFilter(
         problem.obs_matrix,
@@ -857,8 +788,11 @@ def run_pf_matched(problem, sequences, split, seed, members) -> CellOutput:
     return CellOutput(torch.stack(out), time.time() - start, None, members, None, smc=smc)
 
 
-def run_subsample(problem, sequences, split, seed, members) -> CellOutput:
+def run_subsample(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """``members`` reference draws: the floor any size-``members`` ensemble can reach."""
+    # The permutation seed has no split (as before the split existed in it): the
+    # validation and test subsamples share one stream. Left as it is, so that the
+    # cell's numbers do not move.
     gen = torch.Generator().manual_seed(derive_seed(SEED_LABEL, "subsample", seed))
     out = []
     for index in range(len(sequences)):
@@ -868,46 +802,33 @@ def run_subsample(problem, sequences, split, seed, members) -> CellOutput:
     return CellOutput(torch.stack(out), 0.0, None, members, None)
 
 
-def run_generative(cfg, name, problem, sequences, split, seed, members, settings):
+def run_generative(cfg, name, problem, sequences, split, seed, members, settings) -> CellOutput:
     """A plain sampler, or (``*_fc``) the same sampler with the correction."""
-    from cases.lorenz96._l96_generative import (
-        SamplerSettings,
-        Standardisation,
-        assimilate,
-        build_correction,
-        build_posterior,
-        load_prior,
-        observation_model,
-    )
+    import cases.lorenz96._l96_generative as generative
+    from cases.navier_stokes._ns_pipeline import attach_nfe_counter
 
     settings = dict(settings)
     # Only a corrected cell reads a correction block; elsewhere SamplerSettings refuses it.
     block = settings.pop("correction", {}) if name in CORRECTED else None
     # A corrected cell runs its plain cell's sampler and seed stream.
     base_name = CORRECTED.get(name, name)
-    method = GENERATIVE[base_name]
+    settings = generative.SamplerSettings(**settings)
+    stats, device, initial, observations = sampler_inputs(
+        cfg, problem, sequences, split, seed, members
+    )
     run = cfg.checkpoints.si_run if base_name == "si_sde" else cfg.checkpoints.fm_run
-    settings = SamplerSettings(**settings)
-    stats = Standardisation.from_data(DATA_PATH, problem)
-    model = load_prior(run, resolve_device(cfg.evaluation.device))
-    posterior, stepper = build_posterior(method, model, problem, stats, settings)
+    model = generative.load_prior(run, device)
+    posterior, stepper = generative.build_posterior(
+        GENERATIVE[base_name], model, problem, stats, settings
+    )
     correction = None
     if name in CORRECTED:
-        correction = build_correction(problem, stats, members, block)
-    initial = torch.stack(
-        [
-            initial_ensemble(problem, seq, members, split, index, seed)
-            for index, seq in enumerate(sequences)
-        ]
-    )
-    observations = torch.stack([seq.observations for seq in sequences])
-    from cases.navier_stokes._ns_pipeline import attach_nfe_counter
-
+        correction = generative.build_correction(problem, stats, members, block)
     counter = attach_nfe_counter(model)
     start = time.time()
     nfe = None
     try:
-        ensembles = assimilate(
+        ensembles = generative.assimilate(
             posterior,
             stepper,
             stats,
@@ -916,7 +837,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
             settings.num_steps,
             derive_seed(SEED_LABEL, base_name, split, seed),
             forecast_correction=correction,
-            obs_to_model=observation_model(problem, stats).to_model,
+            obs_to_model=generative.observation_model(problem, stats).to_model,
         )
         nfe = counter.count / observations.shape[1]
     except AssertionError as error:
@@ -927,56 +848,46 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
         if base_name != "dm_sde" or "non-finite" not in str(error):
             raise
         print(f"{name} diverged: {error}", flush=True)
-        shape = (len(sequences), observations.shape[1], members, problem.dim_state)
-        ensembles = torch.full(shape, float("nan"), dtype=torch.float64)
+        ensembles = diverged_ensembles(problem, observations, members)
     seconds = time.time() - start
     return CellOutput(ensembles, seconds, nfe, members, settings.num_steps)
 
 
+def run_baseline(*args) -> CellOutput:
+    from cases.lorenz96._l96_baselines import run_baseline
+
+    return run_baseline(*args)
+
+
+def run_surge(*args) -> CellOutput:
+    from cases.lorenz96._l96_smc import run_surge
+
+    return run_surge(*args)
+
+
+#: cell -> runner; every runner has the signature of :func:`run_method`'s call.
+RUNNERS = {
+    "enkf": run_enkf,
+    "enkf_large": run_enkf,
+    "oracle": run_oracle,
+    "oracle_fc": run_oracle_fc,
+    **{name: run_prior_enkf for name in PRIOR_ENKF},
+    "pf_matched": run_pf_matched,
+    "pf_subsample": run_subsample,
+    **{name: run_generative for name in (*GENERATIVE, *CORRECTED)},
+    **{name: run_baseline for name in ("flowdas", "sda", "dflow", "fig")},
+    **{name: run_surge for name in SURGE_CELLS},
+}
+
+
 def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> CellOutput:
-    members = int(cfg.evaluation.ensemble_size)
+    """Run cell ``name`` on ``sequences`` (``pf_reference`` is scored by
+    :func:`evaluate_cell` from the stored references)."""
+    size = "enkf_large_size" if name == "enkf_large" else "ensemble_size"
+    members = int(cfg.evaluation[size])
     if settings is None:
         settings = method_settings(cfg, name)
-    if name == "enkf":
-        return run_enkf(problem, sequences, split, seed, members, settings)
-    if name == "enkf_large":
-        size = int(cfg.evaluation.enkf_large_size)
-        return run_enkf(problem, sequences, split, seed, size, settings)
-    if name == "oracle":
-        return run_oracle(problem, sequences, split, seed, members, oracle_proposals(cfg))
-    if name == "oracle_fc":
-        return run_oracle_fc(
-            problem, sequences, split, seed, members, settings, oracle_proposals(cfg)
-        )
-    if name in PRIOR_ENKF:
-        return run_prior_enkf(cfg, name, problem, sequences, split, seed, members, settings)
-    if name == "pf_matched":
-        return run_pf_matched(problem, sequences, split, seed, members)
-    if name == "pf_subsample":
-        return run_subsample(problem, sequences, split, seed, members)
-    if name in BASELINE_CELLS:
-        from cases.lorenz96._l96_baselines import run_baseline
-
-        return run_baseline(cfg, name, problem, sequences, split, seed, members, settings)
-    if name in SURGE_CELLS:
-        from cases.lorenz96._l96_smc import run_surge
-
-        run = run_surge(
-            cfg,
-            name,
-            problem,
-            sequences,
-            members,
-            settings,
-            initial=lambda index, seq: initial_ensemble(
-                problem, seq, members, split, index, seed
-            ),
-            seeds=[derive_seed(SEED_LABEL, name, split, i, seed) for i in range(len(sequences))],
-            data_path=DATA_PATH,
-            config_dir=CASE_CONFIG.parents[1] / "method",
-        )
-        return CellOutput(run.ensembles, run.seconds, run.nfe, members, run.pseudo_steps, smc=run.smc)
-    return run_generative(cfg, name, problem, sequences, split, seed, members, settings)
+    return RUNNERS[name](cfg, name, problem, sequences, split, seed, members, settings)
 
 
 # --------------------------------------------------------------------------- #
@@ -1095,7 +1006,7 @@ def evaluate_cell(
     if smc is not None:
         # ESS / resampling of the SMC cells (_l96_smc): curves averaged over
         # sequences, per-sequence means over steps.
-        for key in SMC_KEYS:
+        for key in SMC_METRICS:
             curves[key] = [finite_mean(at_step) for at_step in zip(*(e[key] for e in smc))]
             per_sequence[key] = [finite_mean(entry[key]) for entry in smc]
     if oracle_ess is not None:
@@ -1294,7 +1205,7 @@ def cmd_tune(args) -> None:
     path = results_dir(problem.obs_label) / "tuning" / f"{args.method}__{'_'.join(grid)}{tag}.csv"
     # The base settings (after --set) go into every row, and a file with other
     # columns is refused, so rows of differently configured runs cannot mix
-    # unnoticed. A run with other columns (--innovations) needs another --tag.
+    # unnoticed.
     columns = [
         *grid,
         "base",
@@ -1303,8 +1214,7 @@ def cmd_tune(args) -> None:
         *(m.value for m in TUNING_METRICS),
     ]
     # Corrected and trained-prior cells add the innovation statistics and cost.
-    extended = args.method in CORRECTED or args.method in PRIOR_ENKF or args.method == "oracle_fc"
-    innovations = extended or getattr(args, "innovations", False)
+    innovations = args.method in CORRECTED or args.method in PRIOR_ENKF or args.method == "oracle_fc"
     if innovations:
         columns += [INNOVATION_LAG1, INNOVATION_MSQ, Metric.NFE.value]
     handle, writer = open_csv_for_append(path, columns)
@@ -1312,11 +1222,9 @@ def cmd_tune(args) -> None:
         for values in itertools.product(*grid.values()):
             override = dict(zip(grid, values))
             # Dotted keys (correction.gain_scale) reach the nested block.
-            settings = apply_overrides(
-                base, [f"{key}={json.dumps(value)}" for key, value in override.items()]
-            )
+            settings = set_dotted(base, override)
             if not getattr(args, "allow_other_m", False):
-                check_m(args.method, settings, (FIXED_NUM_STEPS,))
+                check_m(args.method, settings, (HEADLINE_M,))
             output = run_method(
                 cfg,
                 args.method,
@@ -1500,16 +1408,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tune.add_argument("--set", action="append", help="key=value base override (repeatable)")
     tune.add_argument("--tag", default="", help="suffix of the tuning file name")
-    tune.add_argument(
-        "--innovations",
-        action="store_true",
-        help="also log lag-1 innovations and NFE (always on for the new cells)",
-    )
     tune.add_argument("--threads", type=int, default=2)
     tune.add_argument(
         "--allow-other-m",
         action="store_true",
-        help=f"allow num_steps other than the fixed M={FIXED_NUM_STEPS}",
+        help=f"allow num_steps other than the tuning M={HEADLINE_M}",
     )
     tune.set_defaults(func=cmd_tune)
     cell = sub.add_parser("cell")
@@ -1519,8 +1422,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--set",
         action="append",
         help="key=value override of the cell's settings, e.g. "
-        "correction.forecast_num_steps=5, correction.localisation=4, "
-        "correction.gain_scale=0.8 (repeatable; JSON values); needs --tag",
+        "correction.localisation=4, correction.gain_scale=0.8 "
+        "(repeatable; JSON values); needs --tag",
     )
     cell.add_argument(
         "--tag",
@@ -1533,13 +1436,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--num-steps",
         type=int,
         default=None,
-        help=f"M of a generative cell, one of {SWEEP_NUM_STEPS} (default: the config's, "
-        f"{FIXED_NUM_STEPS}); refused for cells without SDE/ODE steps",
+        help=f"M of a generative cell, one of {M_VALUES} (default: the config's, "
+        f"{HEADLINE_M}); refused for cells without SDE/ODE steps",
     )
     cell.add_argument(
         "--allow-other-m",
         action="store_true",
-        help=f"allow num_steps outside {SWEEP_NUM_STEPS}",
+        help=f"allow num_steps outside {M_VALUES}",
     )
     cell.set_defaults(func=cmd_cell)
     quality = sub.add_parser("prior-quality")
