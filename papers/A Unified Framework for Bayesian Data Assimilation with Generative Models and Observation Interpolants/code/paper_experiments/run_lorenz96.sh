@@ -72,7 +72,7 @@ GRIDS=(
   '2|surge_dm_sde|dm_sde|{"ess_threshold":[0.25,0.5,1.0]}'
   '2|surge_unguided_si||{"ess_threshold":[0.25,0.5,1.0]}'
   '2|surge_unguided_dm||{"ess_threshold":[0.25,0.5,1.0]}'
-  '2|surge_flowdas|flowdas|{"guidance_scale":{"times":[0.25,1,4]},"ess_threshold":[0.5,1.0]}'
+  '2|surge_flowdas|flowdas|{"guidance_scale":{"times":[0.004,0.016,0.064,0.25,1,4]},"ess_threshold":[0.5,1.0]}'
   '2|surge_sda|sda|{"gamma_sda":{"times":[0.1,1,10]},"ess_threshold":[0.5,1.0]}'
 )
 # --------------------------------------------------------------------------- #

@@ -53,11 +53,11 @@ evaluation:
 # then `run_lorenz96.sh apply <obs>` write the validation picks into this block
 # (`methods_arctan:` for arctan) before the final grid.
 methods:
-  enkf: {inflation: 1.0, localisation: null}
-  enkf_large: {inflation: 1.0, localisation: null}
-  si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
+  enkf: {inflation: 1.0, localisation: 4}
+  enkf_large: {inflation: 1.0, localisation: 8}
+  si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
 
   # Forecast-residual correction (FORECAST_CORRECTION.md, variant A). A `<cell>_fc`
   # cell runs the plain cell's sampler settings above (and its seed stream) with
@@ -81,9 +81,9 @@ methods:
   # untuned `inflated` M=50 defaults, NOT the dps_jacobian_free M=25 these gains were
   # chosen at. The final grid as configured does not reproduce the validation table;
   # set the plain sampler blocks first, then re-tune the correction.
-  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
-  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
-  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
+  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
   # Exact per-member kernel + correction, with the exact transition variance for K_q.
   # Radius 4 of {none, 2, 4, 8} on validation.
   oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
@@ -106,15 +106,15 @@ methods:
   # YAMLs (the other vector-state case), not chosen on Lorenz 96. Where they
   # differ from the tables' `default:` that is noted. Tune on validation only.
   # FlowDAS: zeta (table default: 1.0), J, per-member score cap, MC chunking (memory only)
-  flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
+  flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
   # SDA: gamma in Gamma = R + gamma (sigma/mu)^2 H H^T (= table default)
-  sda: {num_steps: 50, gamma_sda: 0.01}
+  sda: {num_steps: 50, gamma_sda: 0.0001}
   # D-Flow SGLD: eta, s, lambda, omega, delta, ode_steps (= table defaults / fixed
   # scalars). The method YAML's burn reaches build_posterior unchanged; DFlowPosterior
   # never reads it (it returns the chain endpoint).
-  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
+  dflow: {num_steps: 50, step_size: 0.02, noise_scale: 0.001, lambda_reg: 0.001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
   # FIG: k (= table default), c (table default: 10.0), w (fixed 0)
-  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
+  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1, interpolant_noise: 0.0}
   # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
   # One sequence per sampler call (SURGE normalises its weights over every member
   # it is given); N = E = 64 particles, one per member (no particles-per-member knob
@@ -123,17 +123,17 @@ methods:
   # Ours inside SURGE, built as the multistep case (SDE only): like a `_fc` cell it
   # runs the plain si_sde / dm_sde block above (inherited, so tuning the plain cell
   # moves it too); its own block adds ess_threshold.
-  surge_si_sde: {ess_threshold: 0.5}
-  surge_dm_sde: {ess_threshold: 0.5}
+  surge_si_sde: {ess_threshold: 1.0}
+  surge_dm_sde: {ess_threshold: 0.25}
   # The same SMC proposing from the unguided prior, one per wrapped prior.
   surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
-  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.25}
   # NS constructions (_ns_pipeline.build_posterior); every knob of
   # configs/method/surge_{flowdas,sda}.yaml is set here as a scalar (no NS tables;
   # NS env overrides are refused). Values are those files' `default:` entries.
   # guidance_scale = FlowDAS zeta; num_mc_samples = J; max_grad_norm null = no cap.
-  surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
-  surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
+  surge_flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 1.0e-05, ess_threshold: 0.5}
 
 # Settings of the arctan problem (`--obs arctan`), read instead of `methods:` by
 # case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
