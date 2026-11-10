@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -109,3 +110,16 @@ def test_paths_carry_m_only_for_generative_cells():
     )
     assert driver.cell_path("metrics", "enkf", 0).name == "lorenz96__enkf__traj0__.csv"
     assert driver.cell_label("si_sde_fc", "g0.5", 100) == "si_sde_fc-g0.5__M100"
+
+
+def test_tuning_steps_truncate_the_same_sequences():
+    cfg = driver.case_config()
+    full = driver.load_sequences(driver.problem_of(cfg), "validation", 1)[0]
+    cut = driver.truncate(full, 5)
+    assert cut.observations.shape[0] == 5 and cut.truth.shape[0] == 6
+    assert torch.equal(cut.truth, full.truth[:6])
+    assert torch.equal(cut.observations, full.observations[:5])
+    args = argparse.Namespace(steps=None)
+    assert driver.tuning_steps(cfg, args) == min(cfg.evaluation.tuning_steps, full.observations.shape[0])
+    with pytest.raises(ValueError):
+        driver.tuning_steps(cfg, argparse.Namespace(steps=10_000))

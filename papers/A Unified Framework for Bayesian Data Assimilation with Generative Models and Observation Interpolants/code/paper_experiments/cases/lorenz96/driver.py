@@ -56,7 +56,12 @@ sys.path.insert(0, str(_here.parents[1]))
 
 from cases.lorenz96.pf_gate import reference_proposal, run_pf  # noqa: E402
 from cases.lorenz96._l96_smc import SURGE_CELLS, pf_smc_record  # noqa: E402
-from cases.lorenz96._l96_divergence import energy_distance, knn_kl  # noqa: E402
+from cases.lorenz96._l96_divergence import (  # noqa: E402
+    energy_distance_torch,
+    knn_kl_torch,
+    scoring_device,
+    sliced_w2_torch,
+)
 from cases.lorenz96._l96_system import (  # noqa: E402
     CASE_CONFIG,
     OBS_OPERATORS,
@@ -96,7 +101,6 @@ from results_schema import (  # noqa: E402
     Scenario,
 )
 from scisi.metrics.calibration import crps  # noqa: E402
-from scisi.metrics.distributional import sliced_wasserstein_w2  # noqa: E402
 from scisi.particle_filter.bootstrap import (  # noqa: E402
     BootstrapParticleFilter,
     ImportanceOneStepOracle,
@@ -280,10 +284,16 @@ def score(mean, variance, samples, reference, truth) -> dict[str, list[float]]:
         reference: Dictionary of the particle-filter reference.
         truth: ``[T, d]`` true states.
     """
-    ref_mean = reference["mean"].double()
-    ref_var = reference["variance"].double()
+    # A run over the first T steps (tuning horizon) is scored on the reference's first T.
+    steps = len(samples)
+    device = scoring_device()
+    ref_mean = reference["mean"][:steps].double()
+    ref_var = reference["variance"][:steps].double()
+    ref_samples = [reference["samples"][t].to(device, torch.float64) for t in range(steps)]
     mean, variance = mean.double(), variance.double()
-    usable = [draws.double() if draws.shape[0] > 1 else None for draws in samples]
+    usable = [
+        draws.to(device, torch.float64) if draws.shape[0] > 1 else None for draws in samples
+    ]
     nan = float("nan")
     return {
         Metric.MEAN_ERROR_VS_PF.value: ((mean - ref_mean) ** 2 / ref_var)
@@ -296,26 +306,25 @@ def score(mean, variance, samples, reference, truth) -> dict[str, list[float]]:
         .mean(-1)
         .sqrt()
         .tolist(),
+        # Torch (GPU) versions of the library sliced W2 and of the 1-NN KL / energy
+        # distance (_l96_divergence); equal to the numpy/scipy ones to rounding.
         Metric.SLICED_W2.value: [
-            nan
-            if draws is None
-            else sliced_wasserstein_w2(draws, reference["samples"][t].double())
+            nan if draws is None else sliced_w2_torch(draws, ref_samples[t])
             for t, draws in enumerate(usable)
         ],
-        # Nonparametric distances to the PF draws (_l96_divergence): KL(PF || ensemble)
-        # by 1-NN (biased at E = 64; pf_subsample gives the floor) and energy distance.
+        # KL(PF || ensemble) by 1-NN (biased at E = 64; pf_subsample gives the floor).
         KL_KNN: [
-            nan if draws is None else knn_kl(reference["samples"][t].double(), draws)
+            nan if draws is None else knn_kl_torch(ref_samples[t], draws)
             for t, draws in enumerate(usable)
         ],
         ENERGY_DISTANCE: [
-            nan if draws is None else energy_distance(draws, reference["samples"][t].double())
+            nan if draws is None else energy_distance_torch(draws, ref_samples[t])
             for t, draws in enumerate(usable)
         ],
         Metric.RMSE.value: (mean - truth).pow(2).mean(-1).sqrt().tolist(),
         Metric.SPREAD.value: variance.sqrt().mean(-1).tolist(),
         Metric.CRPS.value: [
-            nan if draws is None else float(crps(draws, truth[t]))
+            nan if draws is None else float(crps(draws.cpu(), truth[t]))
             for t, draws in enumerate(usable)
         ],
     }
@@ -1198,12 +1207,38 @@ def cmd_cell(args) -> None:
         print(f"{record.metric:20s} {record.value:.4f}", flush=True)
 
 
+def tuning_steps(cfg, args) -> int:
+    """Physical steps per validation sequence used for tuning: the first steps of the
+    same sequences. ``tune --steps`` (at most the horizon), else
+    ``evaluation.tuning_steps`` capped at the horizon, else the full horizon."""
+    horizon = problem_of(cfg).num_steps
+    explicit = getattr(args, "steps", None)
+    if explicit is not None:
+        if not 1 <= explicit <= horizon:
+            raise ValueError(f"--steps {explicit} outside 1..{horizon}")
+        return int(explicit)
+    return min(int(cfg.evaluation.get("tuning_steps") or horizon), horizon)
+
+
+def truncate(sequence: Sequence, steps: int) -> Sequence:
+    """The first ``steps`` assimilation steps of ``sequence`` (same truth and data)."""
+    return Sequence(
+        prior_mean=sequence.prior_mean,
+        truth=sequence.truth[: steps + 1],
+        observations=sequence.observations[:steps],
+    )
+
+
 def cmd_tune(args) -> None:
     """Grid over one method's settings on the validation split only."""
     torch.set_num_threads(args.threads)
     cfg = config_of(args)
     problem = problem_of(cfg)
-    sequences = load_sequences(problem, "validation", split_size(cfg, "validation"))
+    steps = tuning_steps(cfg, args)
+    sequences = [
+        truncate(seq, steps)
+        for seq in load_sequences(problem, "validation", split_size(cfg, "validation"))
+    ]
     if args.method in NO_SETTINGS:
         raise ValueError(f"{args.method} takes no settings; there is nothing to tune.")
     base = apply_overrides(method_settings(cfg, args.method), getattr(args, "set", None))
@@ -1216,6 +1251,7 @@ def cmd_tune(args) -> None:
     columns = [
         *grid,
         "base",
+        "tuning_steps",
         "seconds",
         DIVERGED_STEPS,
         *(m.value for m in TUNING_METRICS),
@@ -1259,6 +1295,7 @@ def cmd_tune(args) -> None:
             row.update(
                 override,
                 base=json.dumps(base, sort_keys=True),
+                tuning_steps=steps,
                 seconds=output.seconds,
                 **{DIVERGED_STEPS: diverged},
             )
@@ -1415,6 +1452,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     tune.add_argument("--set", action="append", help="key=value base override (repeatable)")
     tune.add_argument("--tag", default="", help="suffix of the tuning file name")
+    tune.add_argument(
+        "--steps", type=int, default=None,
+        help="physical steps per validation sequence (default evaluation.tuning_steps)",
+    )
     tune.add_argument("--threads", type=int, default=2)
     tune.add_argument(
         "--allow-other-m",

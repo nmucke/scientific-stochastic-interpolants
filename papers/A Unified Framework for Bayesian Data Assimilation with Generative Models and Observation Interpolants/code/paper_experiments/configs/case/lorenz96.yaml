@@ -41,6 +41,7 @@ evaluation:
   ensemble_size: 64        # E, matched across generative methods and EnKF
   enkf_large_size: 2000
   seeds: [0, 1, 2]        # also read by run.py through Lorenz96Runner
+  tuning_steps: 20         # tune on the first 20 of the 50 steps (user, 2026-11-10: cost)
   device: auto             # samplers only: cuda, then mps, then cpu
   reference_particles: 4000000
   reference_replicates: 2  # the second one measures the reference's own error
