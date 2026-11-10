@@ -111,8 +111,10 @@ class StandardisedArctanOperator(PointwiseObservationOperator):
     standardised states ``z = (x - mean) / std``.
 
     A :class:`PointwiseObservationOperator` ``g(L z)`` whose elementwise ``g`` folds
-    in the de-standardisation, ``g(w) = arctan(c (std w + mean)) / c`` and
-    ``g'(w) = std / (1 + (c (std w + mean))^2)``. Only ``g`` / ``dg`` are
+    in the de-standardisation, ``g(w) = arctan(c (std w + mean)) / c`` (the
+    library's arctan of the physical state) and
+    ``g'(w) = std / (1 + (c (std w + mean))^2)`` (written out: ``std`` times the
+    library's ``g'`` would round differently). Only ``g`` / ``dg`` are
     overridden, so everything the likelihoods and the correction call (``forward``,
     ``jvp``, ``vjp``, ``gram``, ``jacobian``, ``linearize``, and ``g`` / ``dg`` /
     ``inner`` for ``inflated_shared`` and the statistical linearisation) is
@@ -126,7 +128,7 @@ class StandardisedArctanOperator(PointwiseObservationOperator):
         self.mean = float(mean)
 
     def g(self, z: torch.Tensor) -> torch.Tensor:
-        return torch.atan(self.strength * (self.std * z + self.mean)) / self.strength
+        return super().g(self.std * z + self.mean)
 
     def dg(self, z: torch.Tensor) -> torch.Tensor:
         cw = self.strength * (self.std * z + self.mean)
@@ -151,8 +153,6 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
             variance=problem.obs_variance / stats.std**2,
             to_model=stats.forward,
         )
-    if problem.obs_label != "arctan":
-        raise ValueError(f"No sampler observation model for {problem.obs_label!r}")
     return ObservationModel(
         operator=StandardisedArctanOperator(
             build_obs_operator(problem),

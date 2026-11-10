@@ -4,6 +4,7 @@ import math
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,14 +30,19 @@ def test_knn_kl_near_zero_for_equal_laws_and_large_samples():
     assert abs(knn_kl(x, y)) < 0.05
 
 
-def test_knn_kl_duplicates_in_the_ensemble_stay_finite_but_not_in_x():
+def test_knn_kl_duplicates_stay_finite_and_x_is_deduplicated():
     gen = torch.Generator().manual_seed(2)
     x = torch.randn(500, 4, generator=gen, dtype=torch.float64)
     y = torch.randn(64, 4, generator=gen, dtype=torch.float64)
     y[1] = y[0]  # SMC resampling duplicates members of the ensemble (y side)
     assert math.isfinite(knn_kl(x, y))
-    x[1] = x[0]
-    assert math.isnan(knn_kl(x, y))
+    # PF draws resampled after the kick hold duplicate rows: KL of the unique rows.
+    duplicated = torch.cat([x, x[:100], x[:7]])
+    assert knn_kl(duplicated, y) == knn_kl(x, y)
+    shuffled = duplicated[torch.randperm(607, generator=gen)]
+    assert knn_kl(shuffled, y) == pytest.approx(knn_kl(x, y), rel=1e-12)
+    assert math.isfinite(knn_kl(duplicated, y))
+    assert math.isnan(knn_kl(x[:1].repeat(5, 1), y))  # one distinct draw
 
 
 def test_energy_distance_zero_for_equal_laws_positive_otherwise():

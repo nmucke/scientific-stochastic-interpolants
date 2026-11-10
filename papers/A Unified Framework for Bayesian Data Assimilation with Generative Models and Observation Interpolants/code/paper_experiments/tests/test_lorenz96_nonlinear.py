@@ -2,7 +2,10 @@
 
 Checks the operator and its derivatives, the c -> 0 limit against the linear
 problem, the separation of the two problems (config, references, paths, labels),
-the importance-sampling oracle and that every cell runs on a tiny arctan case.
+the importance-sampling oracle and the arctan wiring on a tiny case (that every
+cell runs on it is test_lorenz96_case.test_every_cell_runs_...). The filters' own
+statistics (linearised proposal, importance oracle) are tested in the library's
+tests/test_filters_nonlinear_obs.py.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ import torch
 from omegaconf import OmegaConf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cases.lorenz96._l96_generative as generative  # noqa: E402
 from cases.lorenz96 import driver, pf_gate  # noqa: E402
@@ -42,7 +46,7 @@ from cases.lorenz96._l96_system import (  # noqa: E402
     make_sequence,
 )
 from common.paths import REPO_ROOT  # noqa: E402
-from results_schema import SCENARIOS, Metric, Scenario  # noqa: E402
+from results_schema import SCENARIOS, Scenario  # noqa: E402
 from scisi.likelihood_models.observation_operators import (  # noqa: E402
     NONLINEARITIES,
     ObservationOperator,
@@ -342,8 +346,9 @@ def tiny_pair():
 def test_enkf_with_tiny_strength_equals_the_linear_enkf(tiny_pair, radius):
     linear, arctan = tiny_pair
     settings = {"inflation": 1.05, "localisation": radius}
-    a = driver.run_enkf(linear, _sequences(linear), "validation", 0, 12, settings).ensembles
-    b = driver.run_enkf(arctan, _sequences(arctan), "validation", 0, 12, settings).ensembles
+    a = driver.run_enkf(None, "enkf", linear, _sequences(linear), "validation", 0, 12, settings)
+    b = driver.run_enkf(None, "enkf", arctan, _sequences(arctan), "validation", 0, 12, settings)
+    a, b = a.ensembles, b.ensembles
     torch.testing.assert_close(a, b, rtol=0, atol=1e-6)
 
 
@@ -359,56 +364,20 @@ def test_pf_with_tiny_strength_equals_the_linear_problem_filter(tiny_pair):
     torch.testing.assert_close(a.ess, b.ess, rtol=1e-6, atol=0)
 
 
-def test_linearised_reference_agrees_with_the_optimal_one_on_the_linear_problem():
-    """Two exact filters, different random streams: moments agree to MC error."""
-    linear = Problem(num_steps=4)
-    seq = _sequences(linear, 1)[0]
-    runs = {
-        p: [pf_gate.run_pf(linear, seq, 20_000, 10 + r, proposal=p) for r in range(4)]
-        for p in ("optimal", "linearised")
-    }
-    mean = {p: torch.stack([r.mean for r in rs]) for p, rs in runs.items()}
-    se = ((mean["optimal"].var(0) + mean["linearised"].var(0)) / 4).sqrt()
-    t = (mean["optimal"].mean(0) - mean["linearised"].mean(0)) / se
-    assert float(t.pow(2).mean().sqrt()) < 2.0
-
-
 def test_oracle_with_tiny_strength_equals_the_linear_importance_oracle(tiny_pair):
     linear, arctan = tiny_pair
     seq_l, seq_a = _sequences(linear, 1)[0], _sequences(arctan, 1)[0]
     x0 = driver.initial_ensemble(linear, seq_l, 8, "validation", 0, 0)
-    a = driver.importance_oracle(linear, 256).run(
+    cfg = OmegaConf.create({"oracle_arctan": {"proposals": 256}})
+    a = driver.importance_oracle(linear, cfg).run(
         linear.model, x0, seq_l.observations, torch.Generator().manual_seed(1)
     )
-    b = driver.run_oracle(arctan, [seq_a], "validation", 0, 8, 256)
+    b = driver.run_oracle(cfg, "oracle", arctan, [seq_a], "validation", 0, 8, {})
     gen = torch.Generator().manual_seed(driver.derive_seed(driver.SEED_LABEL, "oracle", "validation", 0, 0))
-    c = driver.importance_oracle(linear, 256).run(linear.model, x0, seq_l.observations, gen)
+    c = driver.importance_oracle(linear, cfg).run(linear.model, x0, seq_l.observations, gen)
     torch.testing.assert_close(b.ensembles[0], c.analysis, rtol=0, atol=1e-6)
     torch.testing.assert_close(b.oracle_ess[0], c.ess, rtol=1e-6, atol=0)
     assert not torch.equal(a.analysis, c.analysis)  # other seed, other draws
-
-
-def test_importance_oracle_converges_to_the_closed_form_oracle_as_c_vanishes():
-    """One step from one state: the IS oracle's draws have the closed-form
-    one-step posterior moments of the linear problem, and report their ESS."""
-    torch.set_num_threads(2)
-    arctan = arctan_problem(TINY_C)
-    linear = Problem()
-    seq = _sequences(linear, 1)[0]
-    x = seq.prior_mean[None].repeat(3000, 1)
-    y = seq.observations[0]
-    draws, ess = driver.importance_oracle(arctan, 2048).draw(
-        arctan.model, x, y, torch.Generator().manual_seed(3)
-    )
-    q, r, H = 1.0, linear.obs_variance, linear.obs_matrix
-    z = linear.model.forecast_to_last_kick(x[:1])[0]
-    S = q * H @ H.T + r * torch.eye(4, dtype=torch.float64)
-    K = q * H.T @ torch.linalg.inv(S)
-    mean = z + K @ (y - H @ z)
-    var = torch.diagonal(q * (torch.eye(16, dtype=torch.float64) - K @ H))
-    assert ((draws.mean(0) - mean).abs() < 4.5 * (var / 3000).sqrt()).all()
-    torch.testing.assert_close(draws.var(0), var, rtol=0.1, atol=0)
-    assert ess.shape == (3000,) and float(ess.median()) > 100
 
 
 def test_innovations_with_tiny_strength_equal_the_linear_ones(tiny_pair):
@@ -446,64 +415,9 @@ def test_arctan_innovations_use_the_exact_predictive_moments():
 
 @pytest.fixture
 def tiny_arctan(tmp_path, monkeypatch):
-    cfg = driver.case_config("arctan")
-    cfg.problem.num_steps = 3
-    cfg.evaluation.test_sequences = 2
-    cfg.evaluation.ensemble_size = 6
-    cfg.evaluation.device = "cpu"
-    cfg.evaluation.enkf_large_size = 12
-    cfg.evaluation.reference_particles = 256
-    cfg.oracle_arctan.proposals = 64
-    for name in driver.GENERATIVE:
-        cfg.methods[name].num_steps = 3
-        cfg.methods[name].likelihood_mode = "dps_jacobian_free"
-    for name in driver.PRIOR_ENKF:
-        cfg.methods[name].num_steps = 3
-    monkeypatch.setattr(driver, "RESULTS", tmp_path)
-    problem = driver.problem_of(cfg)
-    for index, seq in enumerate(driver.load_sequences(problem, "test", 2)):
-        for replicate in range(2):
-            driver._reference_task((problem, seq, "test", index, replicate, 256))
+    from test_lorenz96_case import make_tiny
 
-    def untrained(run, device="cpu"):
-        name = "stochastic_interpolant" if run == cfg.checkpoints.si_run else "flow_matching"
-        model_cfg = OmegaConf.load(REPO_ROOT / "config" / f"lorenz96_{name}.yaml").model
-        with torch.random.fork_rng():
-            torch.manual_seed(0)
-            return hydra.utils.instantiate(model_cfg).eval()
-
-    monkeypatch.setattr(generative, "load_prior", untrained)
-    monkeypatch.setattr(
-        generative.Standardisation,
-        "from_data",
-        classmethod(lambda cls, path, problem: cls(2.2, 4.0)),
-    )
-    return cfg
-
-
-@pytest.mark.parametrize("name", sorted(driver.CELLS))
-def test_every_cell_runs_on_the_arctan_case_and_is_deterministic(tiny_arctan, name, tmp_path):
-    torch.set_num_threads(2)
-    records = driver.evaluate_cell(name, 0, tiny_arctan)
-    metrics = {record.metric for record in records}
-    assert {Metric.MEAN_ERROR_VS_PF.value, Metric.RMSE.value} <= metrics
-    assert {record.scenario for record in records} == {"lorenz96_arctan"}
-    assert all(math.isfinite(r.value) for r in records if r.metric == Metric.RMSE.value)
-    if name != "pf_reference":
-        assert {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ} <= metrics
-    if name in ("oracle", "oracle_fc"):
-        ess = {r.metric: r.value for r in records}
-        assert 1.0 <= ess[driver.ORACLE_ESS_MIN] <= ess[driver.ORACLE_ESS_MEAN] <= 64
-    assert driver.cell_path("per_step", name, 0, obs="arctan").exists()
-    assert not (tmp_path / "linear").exists()
-    if name == "pf_reference":
-        return
-    problem = driver.problem_of(tiny_arctan)
-    sequences = driver.load_sequences(problem, "test", 2)
-    settings = driver.method_settings(tiny_arctan, name)
-    a = driver.run_method(tiny_arctan, name, problem, sequences, "test", 0, settings)
-    b = driver.run_method(tiny_arctan, name, problem, sequences, "test", 0, settings)
-    assert torch.equal(a.ensembles, b.ensembles)
+    return make_tiny("arctan", tmp_path, monkeypatch)
 
 
 def test_arctan_samplers_take_the_arctan_observation_model(tiny_arctan, monkeypatch):
@@ -516,7 +430,7 @@ def test_arctan_samplers_take_the_arctan_observation_model(tiny_arctan, monkeypa
         return out
 
     monkeypatch.setattr(generative, "observation_model", spy)
-    driver.evaluate_cell("si_sde_fc", 0, tiny_arctan)
+    driver.evaluate_cell("si_sde_fc", 0, tiny_arctan, allow_other_m=True)
     assert seen and all(isinstance(o.operator, StandardisedArctanOperator) for o in seen)
     assert all(o.variance == 4.0 for o in seen)
 

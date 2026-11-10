@@ -1,6 +1,6 @@
 """Aggregate the Lorenz 96 per-cell metric files into one tidy file.
 
-``cases/lorenz96/driver.py --obs <obs> cell`` writes one file per (method, seed),
+``cases/lorenz96/driver.py --obs <obs> cell`` writes one file per (cell, M, seed),
 already averaged over the held-out sequences. This reduces them to mean +/- std over
 seeds, in ``results/lorenz96/<obs>/aggregated/{all,per_step}.csv``, separately for
 each observation sweep (``--obs linear|arctan``, repeatable; default every sweep,

@@ -48,6 +48,7 @@ from lorenz96_lineup import (  # noqa: E402
     M_REFERENCE_LINES,
     M_VALUES,
     OBS_CHOICES,
+    ROW_BY_CELL,
     ROW_OF,
     ROWS,
     SMC_ESS_FRACTION,
@@ -56,42 +57,13 @@ from lorenz96_lineup import (  # noqa: E402
     as_m,
     norm_variant,
     pick_m,
+    read_aggregated,
     sweep_root,
 )
 
-ROW_BY_CELL = {row.cell: row for row in ROWS}
-
-
-# Legend labels of the cells that were in the figures before the full lineup.
-LEGEND = {
-    "si_sde": "Ours SI-SDE",
-    "dm_sde": "Ours DM-SDE",
-    "fm_ode": "Ours FM-ODE",
-    "si_sde_fc": "Ours SI-SDE + correction",
-    "dm_sde_fc": "Ours DM-SDE + correction",
-    "fm_ode_fc": "Ours FM-ODE + correction",
-    "oracle": "One-step oracle",
-    "oracle_fc": "Oracle + correction",
-    "prior_enkf": "SI prior + EnKF",
-    "prior_enkf_fm": "FM prior + EnKF",
-    "enkf": "EnKF (matched E)",
-    "enkf_large": "EnKF (large E)",
-    "pf_matched": "PF (matched E)",
-    "pf_subsample": "PF reference, E draws",
-    "pf_reference": "PF reference",
-    "surge_si_sde": "Ours SI-SDE + SURGE",
-    "surge_dm_sde": "Ours DM-SDE + SURGE",
-    "surge_unguided": "SURGE, unguided",
-}
-
-
-def _series_label(row) -> str:
-    return LEGEND.get(row.cell, row.method)
-
-
-# (method, variant, label, colour, linestyle), from lorenz96_lineup.ROWS.
+# (method, variant, legend label, colour, linestyle), from lorenz96_lineup.ROWS.
 SERIES = tuple(
-    (row.method, row.variant, _series_label(row), row.colour, row.style) for row in ROWS
+    (row.method, row.variant, row.legend_label, row.colour, row.style) for row in ROWS
 )
 METRICS = {
     "mean_error_vs_pf": "mean error vs PF (post. std)",
@@ -133,17 +105,9 @@ def load_curves(metric: str, obs: str = "linear") -> dict[tuple[str, str], dict[
 
 
 def load_vs_m(metric: str, obs: str = "linear") -> dict[tuple[str, str], dict]:
-    """``{(method, variant): {M: (mean, std)}}`` of the cycle-averaged scalar."""
-    out: dict[tuple[str, str], dict] = defaultdict(dict)
-    path = sweep_root(RESULTS, obs) / "aggregated" / "all.csv"
-    if not path.exists():
-        return out
-    with open(path, encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            if row["metric"] == metric:
-                key = (row["method"], norm_variant(row.get("variant")))
-                out[key][as_m(row.get("M"))] = (float(row["value"]), float(row["std"] or "nan"))
-    return out
+    """``{(method, variant): {M: (mean, std, n)}}`` of the cycle-averaged scalar."""
+    data = read_aggregated(sweep_root(RESULTS, obs) / "aggregated" / "all.csv")
+    return {key: metrics[metric] for key, metrics in data.items() if metric in metrics}
 
 
 def plot_vs_m(metric: str, label: str, out: Path, obs: str = "linear") -> None:
@@ -160,12 +124,12 @@ def plot_vs_m(metric: str, label: str, out: Path, obs: str = "linear") -> None:
         means = [entries[m][0] for m in ms]
         stds = [entries[m][1] if math.isfinite(entries[m][1]) else 0.0 for m in ms]
         ax.errorbar(ms, means, yerr=stds, color=row.colour, ls=row.style, marker="o",
-                    ms=3, capsize=2, label=_series_label(row))
+                    ms=3, capsize=2, label=row.legend_label)
     for cell in M_REFERENCE_LINES:
         row = ROW_BY_CELL[cell]
         entry = pick_m(data.get((row.method, row.variant), {}), row)
         if entry is not None and math.isfinite(entry[0]):
-            ax.axhline(entry[0], color=row.colour, ls=row.style, lw=0.8, label=_series_label(row))
+            ax.axhline(entry[0], color=row.colour, ls=row.style, lw=0.8, label=row.legend_label)
     ax.set_xscale("log")
     ax.set_xticks(list(M_VALUES))
     ax.set_xticklabels([str(m) for m in M_VALUES])

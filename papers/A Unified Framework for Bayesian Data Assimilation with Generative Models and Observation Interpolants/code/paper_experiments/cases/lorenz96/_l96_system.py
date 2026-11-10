@@ -3,6 +3,8 @@
 One :class:`Problem` fixes the model, the observation operator and the prior of
 the initial state. :func:`make_sequence` draws a truth, its observations and the
 prior mean from seeds alone, so every method sees identical inputs.
+:func:`case_config` is the one path from ``configs/case/lorenz96.yaml`` to a
+configured case (and :func:`problem_of` to its :class:`Problem`).
 """
 
 from __future__ import annotations
@@ -15,19 +17,20 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
+from lorenz96_lineup import CONFIG_BLOCK, OBS_CHOICES
 from scisi.dynamics.lorenz96 import StochasticLorenz96
+from scisi.likelihood_models.observation_operators import NONLINEARITIES
 
 CASE_CONFIG = Path(__file__).resolve().parents[2] / "configs/case/lorenz96.yaml"
 
 #: Observation operators of this case: ``driver.py --obs <name>``.
-OBS_OPERATORS = ("linear", "arctan")
+OBS_OPERATORS = OBS_CHOICES
 
 
 def arctan_nonlinearity(w: torch.Tensor, strength: float) -> tuple[torch.Tensor, torch.Tensor]:
-    """``(arctan(c w) / c, 1 / (1 + (c w)^2))``: the library's ``arctan`` nonlinearity
+    """``(arctan(c w) / c, 1 / (1 + (c w)^2))``: the library's ``arctan``
     (``observation_operators.NONLINEARITIES``), as a picklable function."""
-    cw = strength * w
-    return torch.atan(cw) / strength, 1.0 / (1.0 + cw**2)
+    return NONLINEARITIES["arctan"](w, strength, None)
 
 
 @dataclass(frozen=True)
@@ -142,18 +145,42 @@ def resolve_device(name: str) -> str:
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def load_problem(path: str | Path = CASE_CONFIG, obs: str = "linear") -> Problem:
-    """The configured problem with observation operator ``obs``
-    (``observations.<obs>`` of the case config; ``linear`` adds nothing)."""
-    cfg = OmegaConf.load(path)
-    problem = Problem(**OmegaConf.to_container(cfg.problem))
-    if obs == "linear":
-        return problem
+def case_config(obs: str = "linear"):
+    """The case config for observation operator ``obs`` (:func:`configure`)."""
+    return configure(OmegaConf.load(CASE_CONFIG), obs)
+
+
+def configure(cfg, obs: str = "linear"):
+    """Select observation operator ``obs`` in a loaded case config, in place.
+
+    ``linear`` leaves ``problem`` and ``methods`` as they are. Otherwise
+    ``problem.observation`` is set from ``observations.<obs>`` and ``methods`` is
+    replaced by ``methods_<obs>`` (:data:`CONFIG_BLOCK`), so every cell reads the
+    settings of that problem. ``cfg.obs`` records the choice; configuring an
+    already configured config for another operator is refused.
+    """
     if obs not in OBS_OPERATORS:
         raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
-    return replace(
-        problem, observation=Observation(**OmegaConf.to_container(cfg.observations[obs]))
-    )
+    current = cfg.get("obs")
+    if current is not None:
+        if current != obs:
+            raise ValueError(f"config is already set up for obs={current!r}, not {obs!r}")
+        return cfg
+    if obs != "linear":
+        cfg.problem.observation = OmegaConf.to_container(cfg.observations[obs])
+        cfg.methods = cfg[CONFIG_BLOCK[obs]]
+    cfg.obs = obs
+    return cfg
+
+
+def problem_of(cfg) -> Problem:
+    return Problem(**OmegaConf.to_container(cfg.problem))
+
+
+def load_problem(obs: str = "linear") -> Problem:
+    """The configured problem with observation operator ``obs``
+    (``observations.<obs>`` of the case config; ``linear`` adds nothing)."""
+    return problem_of(case_config(obs))
 
 
 @dataclass(frozen=True)
@@ -189,8 +216,6 @@ def make_sequence(problem: Problem, seed: int, spinup_intervals: int = 200) -> S
         generator=gen,
         dtype=torch.float64,
     )
-    if problem.linear_obs:
-        return Sequence(prior_mean, truth, truth[1:, problem.obs_indices] + noise)
     return Sequence(prior_mean, truth, problem.observe(truth[1:]) + noise)
 
 

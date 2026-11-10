@@ -1,20 +1,19 @@
-"""SURGE / SMC cells of the Lorenz 96 case and their ESS records (``_l96_smc.py``)."""
+"""SURGE / SMC cells of the Lorenz 96 case and their ESS records (``_l96_smc.py``).
+
+That every SMC cell runs and writes its ESS records (and is deterministic) is
+test_lorenz96_case.test_every_cell_runs_..."""
 
 from __future__ import annotations
 
-import csv
-import json
-import math
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import hydra
 import pytest
 import torch
-from omegaconf import OmegaConf
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import cases.lorenz96._l96_generative as generative  # noqa: E402
 import cases.lorenz96._l96_smc as smc_mod  # noqa: E402
@@ -28,55 +27,14 @@ from cases.lorenz96._l96_smc import (  # noqa: E402
     SMCRecorder,
 )
 from cases.lorenz96.driver import initial_ensemble, load_sequences  # noqa: E402
-from common.paths import REPO_ROOT  # noqa: E402
-from results_schema import Method, Metric  # noqa: E402
+from results_schema import Method  # noqa: E402
 from scisi.particle_filter.bootstrap import BootstrapParticleFilter  # noqa: E402
 from scisi.posterior_models.surge_posterior import SurgePosteriorBase  # noqa: E402
-
-SMC_CELLS = sorted(SURGE_CELLS) + ["pf_matched", "pf_reference"]
-CONFIG_DIR = driver.CASE_CONFIG.parents[1] / "method"
-
-
-@pytest.fixture
-def tiny_case(tmp_path, monkeypatch):
-    """Two short test sequences, E=6, untrained networks, M=3 (as test_lorenz96_case)."""
-    cfg = driver.case_config()
-    cfg.problem.num_steps = 2
-    cfg.evaluation.test_sequences = 2
-    cfg.evaluation.ensemble_size = 6
-    cfg.evaluation.device = "cpu"
-    cfg.evaluation.reference_particles = 256
-    for name in SURGE_CELLS:
-        cfg.methods[name].num_steps = 3
-    cfg.methods.surge_flowdas.num_mc_samples = 4
-    for name in driver.GENERATIVE:
-        cfg.methods[name].num_steps = 3
-    monkeypatch.setattr(driver, "RESULTS", tmp_path)
-    problem = driver.problem_of(cfg)
-    for index, seq in enumerate(load_sequences(problem, "test", 2)):
-        for replicate in range(2):
-            driver._reference_task((problem, seq, "test", index, replicate, 256))
-
-    config_dir = REPO_ROOT / "config"
-
-    def untrained(run, device="cpu"):
-        name = "stochastic_interpolant" if run == cfg.checkpoints.si_run else "flow_matching"
-        model_cfg = OmegaConf.load(config_dir / f"lorenz96_{name}.yaml").model
-        with torch.random.fork_rng():
-            torch.manual_seed(0)
-            return hydra.utils.instantiate(model_cfg).eval()
-
-    monkeypatch.setattr(generative, "load_prior", untrained)
-    monkeypatch.setattr(
-        generative.Standardisation,
-        "from_data",
-        classmethod(lambda cls, path, problem: cls(2.2, 4.0)),
-    )
-    return cfg
+from test_lorenz96_case import tiny_case  # noqa: E402,F401  (fixture)
 
 
 def test_cells_and_labels():
-    assert SURGE_CELLS == {
+    assert {name: driver.CELLS[name] for name in SURGE_CELLS} == {
         "surge_si_sde": (Method.OURS_SI_SDE, "surge"),
         "surge_dm_sde": (Method.OURS_DM_SDE, "surge"),
         "surge_unguided_si": (Method.OURS_SI_SDE, "surge_unguided"),
@@ -84,63 +42,25 @@ def test_cells_and_labels():
         "surge_flowdas": (Method.SURGE_FLOWDAS, None),
         "surge_sda": (Method.SURGE_SDA, None),
     }
-    for name, label in SURGE_CELLS.items():
-        assert driver.CELLS[name] == label
+    for name in SURGE_CELLS:
         assert name not in driver.GENERATIVE
         assert name in driver.TUNABLE
-    assert len(set(driver.CELLS.values())) == len(driver.CELLS)
 
 
 def test_config_blocks_are_complete_at_fixed_m():
-    cfg = driver.case_config()
-    for name in SURGE_CELLS:
-        settings = driver.method_settings(cfg, name)
-        assert settings["num_steps"] == driver.FIXED_NUM_STEPS
-        assert "ess_threshold" in settings
-    for name in smc_mod.SURGE_BASELINES:
-        method_cfg = smc_mod.baseline_method_config(
-            name, driver.method_settings(cfg, name), CONFIG_DIR
-        )
-        for block in ("likelihood_model", "posterior_model"):
-            for key, value in method_cfg[block].items():
-                assert key == "_target_" or not isinstance(value, (dict, list)) and not (
-                    OmegaConf.is_config(value)
-                ), (name, key)
-
-
-@pytest.mark.parametrize("name", SMC_CELLS)
-def test_smc_cell_runs_and_writes_ess_records(tiny_case, name):
-    records = driver.evaluate_cell(name, 0, tiny_case)
-    metrics = {record.metric for record in records}
-    assert {
-        Metric.MEAN_ERROR_VS_PF.value,
-        Metric.SLICED_W2.value,
-        Metric.RMSE.value,
-        Metric.CRPS.value,
-        driver.DIVERGED_STEPS,
-    } <= metrics
-    assert set(SMC_KEYS) <= metrics
-    if name != "pf_reference":
-        assert {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ} <= metrics
-    if name in SURGE_CELLS:
-        nfe = next(r.value for r in records if r.metric == Metric.NFE.value)
-        # At least the prior at x_k and the reward at x_{k+1} per pseudo-step.
-        assert nfe >= 2 * (tiny_case.methods[name].num_steps - 1)
-    for record in records:
-        if record.metric in SMC_KEYS:
-            assert math.isfinite(record.value)
-            if record.metric != SMC_RESAMPLES:
-                assert 0.0 < record.value <= 1.0 + 1e-9
-    per_sequence = json.loads(
-        driver.cell_path("per_sequence", name, 0).with_suffix(".json").read_text()
-    )
-    for key in SMC_KEYS:
-        assert len(per_sequence[key]) == 2
-    with open(driver.cell_path("per_step", name, 0), encoding="utf-8") as handle:
-        rows = [r for r in csv.DictReader(handle) if r["metric"] in SMC_KEYS]
-    assert {(r["metric"], r["step"]) for r in rows} == {
-        (key, str(step)) for key in SMC_KEYS for step in range(2)
-    }
+    for obs in ("linear", "arctan"):
+        cfg = driver.case_config(obs)
+        for name in SURGE_CELLS:
+            settings = driver.method_settings(cfg, name)
+            assert settings["num_steps"] == driver.FIXED_NUM_STEPS
+            assert "ess_threshold" in settings
+        # Ours inside SURGE runs the plain cell's sampler block (inherited).
+        for name, plain in smc_mod.SURGE_OURS.items():
+            own = dict(cfg.methods[name])
+            assert set(own) == {"ess_threshold"}
+            assert driver.method_settings(cfg, name) == {
+                **driver.method_settings(cfg, plain), **own
+            }
 
 
 def test_a_cell_without_smc_writes_no_smc_keys(tiny_case):
@@ -154,23 +74,17 @@ def test_a_cell_without_smc_writes_no_smc_keys(tiny_case):
 
 
 @pytest.mark.parametrize("name", sorted(SURGE_CELLS))
-def test_surge_cells_are_deterministic(tiny_case, name):
+def test_surge_cells_record_smc_and_depend_on_the_seed(tiny_case, name):
     problem = driver.problem_of(tiny_case)
     sequences = load_sequences(problem, "test", 2)
     a = driver.run_method(tiny_case, name, problem, sequences, "test", 0)
-    b = driver.run_method(tiny_case, name, problem, sequences, "test", 0)
-    assert torch.equal(a.ensembles, b.ensembles)
-    assert a.smc == b.smc and a.nfe == b.nfe
     assert a.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert len(a.smc) == 2 and all(len(e[SMC_ESS]) == problem.num_steps for e in a.smc)
     c = driver.run_method(tiny_case, name, problem, sequences, "test", 1)
     assert not torch.equal(a.ensembles, c.ensembles)
 
 
-def test_one_sequence_per_surge_call_is_enforced(tiny_case):
-    with pytest.raises(ValueError, match="one sequence"):
-        smc_mod.assimilate_one(
-            None, None, None, torch.zeros(2, 6, 16), torch.zeros(2, 3, 4), 3, 0, None
-        )
+def test_one_sequence_per_surge_call_is_enforced():
     # The recorder refuses a call holding more members than one ensemble.
     posterior = SimpleNamespace(_maybe_resample=lambda b, h, force=False: (b, h))
     SMCRecorder(posterior, 6)
@@ -229,7 +143,7 @@ def test_ess_recorder_matches_a_hand_computation():
 def test_pf_matched_ensembles_are_unchanged_and_gain_ess(tiny_case):
     problem = driver.problem_of(tiny_case)
     sequences = load_sequences(problem, "test", 2)
-    out = driver.run_pf_matched(problem, sequences, "test", 0, 6)
+    out = driver.run_pf_matched(tiny_case, "pf_matched", problem, sequences, "test", 0, 6, {})
     pf = BootstrapParticleFilter(
         problem.obs_matrix, problem.obs_variance, "optimal", num_saved_samples=6
     )
@@ -263,7 +177,7 @@ def test_surge_with_weights_ignored_moves_members_as_the_plain_sampler(
     stats = generative.Standardisation(2.2, 4.0)
     run = tiny_case.checkpoints.si_run if prior == "si_sde" else tiny_case.checkpoints.fm_run
     model = generative.load_prior(run)
-    settings = smc_mod.SurgeOursSettings(num_steps=10, likelihood_mode=mode)
+    settings = smc_mod.SurgeSettings(num_steps=10, likelihood_mode=mode)
     sampler = generative.SamplerSettings(num_steps=10, likelihood_mode=mode)
     method = Method.OURS_SI_SDE if prior == "si_sde" else Method.OURS_DM_SDE
     plain, plain_stepper = generative.build_posterior(method, model, problem, stats, sampler)
@@ -272,7 +186,7 @@ def test_surge_with_weights_ignored_moves_members_as_the_plain_sampler(
     to_model = generative.observation_model(problem, stats).to_model
     args = (stats, x0, seq.observations[None], 10, 7)
     a = generative.assimilate(plain, plain_stepper, *args, obs_to_model=to_model)
-    b = smc_mod.assimilate_one(surge, surge_stepper, *args, to_model)
+    b = generative.assimilate(surge, surge_stepper, *args, obs_to_model=to_model)
     assert torch.isfinite(a).all()
     torch.testing.assert_close(a, b, atol=1e-4, rtol=1e-4)
 
@@ -286,33 +200,35 @@ def test_unknown_settings_and_ns_overrides_are_refused(tiny_case, monkeypatch):
     bad = {**driver.method_settings(tiny_case, "surge_unguided_dm"), "likelihood_mode": "x"}
     with pytest.raises(ValueError, match="unknown"):
         driver.run_method(tiny_case, "surge_unguided_dm", problem, sequences, "test", 0, bad)
-    flowdas = driver.method_settings(tiny_case, "surge_flowdas")
-    with pytest.raises(ValueError, match="missing"):
-        smc_mod.baseline_method_config(
-            "surge_flowdas", {k: v for k, v in flowdas.items() if k != "max_grad_norm"},
-            CONFIG_DIR,
-        )
-    with pytest.raises(ValueError, match="unknown"):
-        smc_mod.baseline_method_config("surge_sda", {**flowdas}, CONFIG_DIR)
-    with pytest.raises(ValueError, match="scalar"):
-        smc_mod.baseline_method_config(
-            "surge_flowdas", {**flowdas, "guidance_scale": {"default": 1.0}}, CONFIG_DIR
-        )
     monkeypatch.setenv("FLOWDAS_ZETA", "0.1")
     with pytest.raises(RuntimeError, match="FLOWDAS_ZETA"):
         driver.run_method(tiny_case, "surge_sda", problem, sequences, "test", 0)
 
 
+@pytest.mark.parametrize("guided", [True, False])
+def test_surge_around_the_si_prior_uses_the_follmer_denoiser(tiny_case, guided):
+    problem = driver.problem_of(tiny_case)
+    model = generative.load_prior(tiny_case.checkpoints.si_run)
+    stats = generative.Standardisation(2.2, 4.0)
+    posterior, _ = smc_mod.build_surge_ours(
+        "si_sde", model, problem, stats, smc_mod.SurgeSettings(num_steps=3), guided=guided
+    )
+    assert posterior.si_denoiser == "follmer"
+
+
 def test_surge_baselines_use_the_configured_scalars(tiny_case, monkeypatch):
+    import cases.lorenz96._l96_baselines as baselines
+    from omegaconf import OmegaConf
+
     seen = {}
-    real = smc_mod.build_surge_baseline
+    real = baselines.ns_posterior
 
-    def spy(name, settings, *args):
-        model, posterior, stepper = real(name, settings, *args)
-        seen[name] = posterior
-        return model, posterior, stepper
+    def spy(cfg, name, *args):
+        out = real(cfg, name, *args)
+        seen[name] = out[1]
+        return out
 
-    monkeypatch.setattr(smc_mod, "build_surge_baseline", spy)
+    monkeypatch.setattr(baselines, "ns_posterior", spy)
     problem = driver.problem_of(tiny_case)
     sequences = load_sequences(problem, "test", 1)
     flowdas = {**driver.method_settings(tiny_case, "surge_flowdas"),
@@ -323,6 +239,10 @@ def test_surge_baselines_use_the_configured_scalars(tiny_case, monkeypatch):
     driver.run_method(tiny_case, "surge_sda", problem, sequences, "test", 0, sda)
     lik = seen["surge_flowdas"].likelihood_model
     assert seen["surge_flowdas"].ess_threshold == 0.3
+    # The SI-prior SURGE cell's reward inverts the Follmer drift exactly; the NS
+    # method YAML does not set it (NS keeps the library default).
+    assert seen["surge_flowdas"].si_denoiser == "follmer"
+    assert "si_denoiser" not in OmegaConf.load(baselines.METHOD_CONFIGS / "surge_flowdas.yaml").posterior_model
     assert lik.guidance_scale == pytest.approx(0.37) and lik.num_mc_samples == 4
     assert lik.max_grad_norm == 5.0
     assert seen["surge_sda"].ess_threshold == 0.7

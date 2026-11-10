@@ -612,11 +612,15 @@ class MultistepRunner(AnalyticalRunner):
                 model_class="si", likelihood_mode=likelihood_mode, **stabilisation,
             )
             posterior = (
+                # SURGE around Ours: the reward inverts the Follmer drift exactly
+                # (si_denoiser="follmer"). The base-lineup SURGE (FlowDAS) row keeps
+                # the library default, for parity with the single-step driver.
                 SurgeStochasticInterpolantPosterior(
                     model=model, obs_operator=operator, variance=variance,
                     likelihood_model=likelihood,
                     ess_threshold=self._surge_ess_threshold(Method.SURGE_FLOWDAS, num_steps),
                     diffusion_term=None,
+                    si_denoiser="follmer",
                 )
                 if surge
                 else StochasticInterpolantPosterior(

@@ -1,6 +1,6 @@
 """SMC cells of the Lorenz 96 case: SURGE around Ours, SURGE + FlowDAS / SDA, and ESS logs.
 
-Cells (``driver.CELLS`` takes :data:`SURGE_CELLS` as they are):
+Cells (:data:`SURGE_CELLS`; labels in ``lorenz96_lineup.ROWS``):
 
 * ``surge_si_sde`` / ``surge_dm_sde``: Ours (SI-SDE / DM-SDE) inside the SURGE SMC
   layer, built as the multistep analytical case builds them
@@ -8,17 +8,19 @@ Cells (``driver.CELLS`` takes :data:`SURGE_CELLS` as they are):
   ``surge=True``): the plain cell's likelihood is the guidance of
   ``SurgeStochasticInterpolantPosterior`` (SI) or of ``OursSurgeDiffusionPosterior``
   on the ``FullFirstStepDiffusionModel`` lift of the FM prior (DM). SDE only: an
-  ODE has no path measure for SURGE's Girsanov weight.
+  ODE has no path measure for SURGE's Girsanov weight. On the SI prior (here and in
+  ``surge_unguided_si``, ``surge_flowdas``) the reward uses the exact Follmer-drift
+  denoiser (``si_denoiser="follmer"``). Their sampler keys are the
+  plain cell's (``driver.INHERITS``); their own block holds ``ess_threshold``.
 * ``surge_unguided_si`` / ``surge_unguided_dm``: the same SMC proposing from the
   unguided prior (``NullGuidance``), one control per wrapped prior, as in the
   multistep case (its variant ``surge_unguided`` of each Ours row).
-* ``surge_flowdas`` / ``surge_sda``: the Navier--Stokes constructions, called
-  through ``cases.navier_stokes._ns_pipeline.build_posterior`` with a method config
-  whose every knob is an explicit scalar from this case's ``methods.<cell>`` block.
+* ``surge_flowdas`` / ``surge_sda``: the Navier--Stokes constructions
+  (``_l96_baselines.ns_posterior``).
 
 SURGE normalises its weights over every member it is given
 (``SurgePosteriorBase._maybe_resample``), so each sampler call holds ONE sequence
-(``E`` members); :func:`assimilate_one` and the recorder refuse anything else.
+(``E`` members); the recorder refuses anything else.
 
 ESS logging (:class:`SMCRecorder`) wraps the posterior's ``_maybe_resample`` on
 the instance and recomputes the ESS from the same weights with the library's own
@@ -39,53 +41,27 @@ is the step's unconditional (forced) one, which is not counted, as for SURGE.
 
 from __future__ import annotations
 
-import math
-import os
 import time
-from dataclasses import dataclass, fields
-from pathlib import Path
-from typing import Callable
+from dataclasses import dataclass
 
 import torch
 
+from lorenz96_lineup import (
+    SMC_ESS_FRACTION as SMC_ESS,
+    SMC_ESS_MIN_FRACTION as SMC_ESS_MIN,
+    SMC_METRICS as SMC_KEYS,
+    SMC_RESAMPLES,
+)
 from results_schema import Method
 
-SMC_ESS = "smc_ess_fraction"
-SMC_ESS_MIN = "smc_ess_min_fraction"
-SMC_RESAMPLES = "smc_resamples"
-SMC_KEYS = (SMC_ESS, SMC_ESS_MIN, SMC_RESAMPLES)
-
-SURGE_VARIANT = "surge"
-SURGE_UNGUIDED_VARIANT = "surge_unguided"  # the multistep case's label
 # Ours inside SURGE: cell -> the plain cell whose likelihood is the guidance.
 SURGE_OURS = {"surge_si_sde": "si_sde", "surge_dm_sde": "dm_sde"}
 # The same SMC on the unguided prior, one per wrapped prior.
 SURGE_UNGUIDED = {"surge_unguided_si": "si_sde", "surge_unguided_dm": "dm_sde"}
-# The NS baselines: cell -> Method (its value is build_posterior's method_name).
-SURGE_BASELINES = {"surge_flowdas": Method.SURGE_FLOWDAS, "surge_sda": Method.SURGE_SDA}
+# The Navier--Stokes constructions (_l96_baselines.NS_CELLS).
+SURGE_NS = ("surge_flowdas", "surge_sda")
+SURGE_CELLS = (*SURGE_OURS, *SURGE_UNGUIDED, *SURGE_NS)
 _PRIOR_METHOD = {"si_sde": Method.OURS_SI_SDE, "dm_sde": Method.OURS_DM_SDE}
-# name -> (tidy method label, variant)
-SURGE_CELLS = {
-    **{c: (_PRIOR_METHOD[p], SURGE_VARIANT) for c, p in SURGE_OURS.items()},
-    **{c: (_PRIOR_METHOD[p], SURGE_UNGUIDED_VARIANT) for c, p in SURGE_UNGUIDED.items()},
-    **{c: (m, None) for c, m in SURGE_BASELINES.items()},
-}
-# Overrides of the NS method configs; the L96 block must set every knob explicitly.
-NS_ENV_OVERRIDES = ("FLOWDAS_ZETA", "SDA_GAMMA", "FLOWDAS_MAX_GRAD_NORM", "FLOWDAS_MC_CHUNK")
-# configs/method/<file> and which L96 key replaces which config knob.
-BASELINE_KNOBS = {
-    "surge_flowdas": (
-        "surge_flowdas.yaml",
-        {
-            "likelihood_model": ("guidance_scale", "num_mc_samples", "max_grad_norm"),
-            "posterior_model": ("ess_threshold",),
-        },
-    ),
-    "surge_sda": (
-        "surge_sda.yaml",
-        {"likelihood_model": ("gamma_sda",), "posterior_model": ("ess_threshold",)},
-    ),
-}
 
 
 # --------------------------------------------------------------------------- #
@@ -93,18 +69,13 @@ BASELINE_KNOBS = {
 # --------------------------------------------------------------------------- #
 
 
-def ess_fraction(normalised_weights: torch.Tensor) -> float:
-    """``(1 / sum w_i^2) / N``, the formula of ``SurgePosteriorBase._maybe_resample``."""
-    w = normalised_weights
-    return float(1.0 / torch.clamp((w**2).sum(), min=1e-30)) / w.shape[0]
-
-
 class SMCRecorder:
     """Records ESS and resampling of a SURGE posterior, one entry per ``sample`` call.
 
     Wraps ``posterior._maybe_resample`` on the instance. The ESS is recomputed from
     ``posterior._normalized_weights()`` exactly as the library does, before the
-    library's call; the wrapped call itself is unchanged.
+    library's call; the wrapped call itself is unchanged. A call holding more than
+    one sequence's members is refused.
     """
 
     def __init__(self, posterior, members: int) -> None:
@@ -172,78 +143,37 @@ def pf_smc_record(ess: torch.Tensor, num_particles: int) -> dict[str, list[float
 
 
 @dataclass(frozen=True)
-class SurgeOursSettings:
-    """``methods.surge_{si,dm}_sde``: the plain sampler's knobs plus SURGE's threshold.
+class SurgeSettings:
+    """Settings of the four SURGE cells around Ours (allowed keys: :data:`SURGE_KEYS`).
 
-    There is no particles-per-member knob: SURGE's SMC runs one particle per
-    member (N = E), and neither the multistep classes nor the library expose one.
+    The plain sampler's knobs plus SURGE's threshold. There is no
+    particles-per-member knob: SURGE's SMC runs one particle per member (N = E),
+    and neither the multistep classes nor the library expose one.
     """
 
     num_steps: int = 50
     likelihood_mode: str = "inflated"
     jacobian_damping: float = 1.0
-    diffusion_scale: float = 1.0  # DM-SDE only
-    ess_threshold: float = 0.5
-
-
-@dataclass(frozen=True)
-class SurgeUnguidedSettings:
-    num_steps: int = 50
     diffusion_scale: float = 1.0  # DM prior only
     ess_threshold: float = 0.5
 
 
-def _settings(cls, name: str, settings: dict, prior: str | None = None):
-    known = {f.name for f in fields(cls)}
-    unknown = set(settings) - known
-    if prior == "si_sde" and "diffusion_scale" in settings:
-        unknown.add("diffusion_scale")  # the SI-SDE has no diffusion knob here
+#: Keys each cell accepts; missing keys take the :class:`SurgeSettings` defaults.
+SURGE_KEYS = {
+    "surge_si_sde": ("num_steps", "likelihood_mode", "jacobian_damping", "ess_threshold"),
+    "surge_dm_sde": (
+        "num_steps", "likelihood_mode", "jacobian_damping", "diffusion_scale", "ess_threshold",
+    ),
+    "surge_unguided_si": ("num_steps", "ess_threshold"),
+    "surge_unguided_dm": ("num_steps", "diffusion_scale", "ess_threshold"),
+}
+
+
+def surge_settings(name: str, settings: dict) -> SurgeSettings:
+    unknown = set(settings) - set(SURGE_KEYS[name])
     if unknown:
         raise ValueError(f"{name}: unknown settings {sorted(unknown)}")
-    return cls(**settings)
-
-
-def baseline_method_config(name: str, settings: dict, config_dir: Path):
-    """``configs/method/<x>.yaml`` with every knob replaced by the L96 scalar.
-
-    Every knob of :data:`BASELINE_KNOBS` must be in ``settings`` (plus
-    ``num_steps``); other keys are refused, as is any schedule table left in the
-    likelihood or posterior block, so nothing falls back to an NS value.
-    """
-    from omegaconf import OmegaConf
-
-    from cases.navier_stokes._ns_pipeline import _is_schedule_table
-
-    filename, knobs = BASELINE_KNOBS[name]
-    wanted = {"num_steps", *(k for keys in knobs.values() for k in keys)}
-    unknown, missing = set(settings) - wanted, wanted - set(settings)
-    if unknown or missing:
-        raise ValueError(
-            f"{name}: settings must be exactly {sorted(wanted)}; unknown {sorted(unknown)}, "
-            f"missing {sorted(missing)}"
-        )
-    cfg = OmegaConf.load(config_dir / filename)
-    for block, keys in knobs.items():
-        for key in keys:
-            value = settings[key]
-            if isinstance(value, (dict, list)):
-                raise ValueError(f"{name}.{key} must be a scalar, got {value!r}")
-            cfg[block][key] = value
-        leftover = set(cfg[block]) - set(keys) - {"_target_"}
-        if leftover:
-            raise ValueError(f"{filename} {block} has knobs this case does not set: {sorted(leftover)}")
-        for key, value in cfg[block].items():
-            if _is_schedule_table(value):
-                raise ValueError(f"{name}.{block}.{key} is still a schedule table")
-    return cfg
-
-
-def refuse_ns_env() -> None:
-    present = [key for key in NS_ENV_OVERRIDES if os.environ.get(key) not in (None, "")]
-    if present:
-        raise RuntimeError(
-            f"{present} set: the NS build_posterior would override this case's settings."
-        )
+    return SurgeSettings(**settings)
 
 
 # --------------------------------------------------------------------------- #
@@ -251,7 +181,7 @@ def refuse_ns_env() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def build_surge_ours(prior: str, model, problem, stats, settings, guided: bool = True):
+def build_surge_ours(prior: str, model, problem, stats, settings: SurgeSettings, guided: bool = True):
     """``(posterior, stepper)``: Ours ``prior`` inside SURGE, as in the multistep case.
 
     The guidance is the plain cell's own likelihood (built by
@@ -291,6 +221,8 @@ def build_surge_ours(prior: str, model, problem, stats, settings, guided: bool =
         likelihood, stepper = NullGuidance(), euler_maruyama_step
     ess = float(settings.ess_threshold)
     if prior == "si_sde":
+        # The reward's denoiser inverts the Follmer drift exactly (the library's
+        # default `velocity` treats it as the path velocity).
         posterior = SurgeStochasticInterpolantPosterior(
             model=model,
             obs_operator=observed.operator,
@@ -298,6 +230,7 @@ def build_surge_ours(prior: str, model, problem, stats, settings, guided: bool =
             likelihood_model=likelihood,
             ess_threshold=ess,
             diffusion_term=None,
+            si_denoiser="follmer",
         )
         return posterior, stepper
     # DM-SDE: SURGE's prior is the reverse SDE, so the model is the diffusion lift
@@ -315,151 +248,54 @@ def build_surge_ours(prior: str, model, problem, stats, settings, guided: bool =
     return posterior, stepper
 
 
-def build_surge_baseline(name, settings, si_model, fm_model, problem, stats, members, config_dir):
-    """``(network model, posterior, stepper)`` from the NS ``build_posterior``."""
-    from omegaconf import OmegaConf
-
-    from cases.lorenz96._l96_generative import observation_model
-    from cases.navier_stokes._ns_pipeline import LoadedPrior, build_posterior
-    from scisi.models.diffusion_model import DenoiseDiffusionModel
-
-    refuse_ns_env()
-    method_cfg = baseline_method_config(name, settings, config_dir)
-    diffusion = DenoiseDiffusionModel.from_flow_matching(fm_model)
-    diffusion.eval().to(next(fm_model.parameters()).device)
-    prior = LoadedPrior(
-        si_model=si_model,
-        fm_model=fm_model,
-        preprocesser=None,
-        test_dataset=None,
-        len_field_history=1,
-        train_cfg=OmegaConf.create({}),
-        checkpoint_name="lorenz96",
-        has_trained_weights=True,
-        diffusion_model=diffusion,
-    )
-    observed = observation_model(problem, stats)
-    return build_posterior(
-        method_name=SURGE_BASELINES[name].value,
-        method_cfg=method_cfg,
-        prior=prior,
-        obs_operator=observed.operator,
-        variance=observed.variance,
-        likelihood_ensemble_size=members,
-        case_key="lorenz96",
-        scenario_key="lorenz96",
-        num_steps=int(settings["num_steps"]),
-    )
-
-
 # --------------------------------------------------------------------------- #
 # Running
 # --------------------------------------------------------------------------- #
 
 
-def assimilate_one(posterior, stepper, stats, initial, observations, num_steps, seed, obs_to_model):
-    """``_l96_generative.assimilate`` for ONE sequence (``initial`` ``[1, E, d]``)."""
-    from cases.lorenz96._l96_generative import assimilate
-
-    if initial.shape[0] != 1 or observations.shape[0] != 1:
-        raise ValueError(
-            "SURGE resamples across every member of a call: run one sequence per "
-            f"call, got {initial.shape[0]}."
-        )
-    return assimilate(
-        posterior,
-        stepper,
-        stats,
-        initial,
-        observations,
-        num_steps,
-        seed,
-        obs_to_model=obs_to_model,
-    )
-
-
-@dataclass
-class SMCRun:
-    ensembles: torch.Tensor  # [S, T, E, d]
-    seconds: float
-    nfe: float | None  # network forward calls per assimilation step and sequence
-    pseudo_steps: int
-    smc: list[dict[str, list[float]]]
-
-
-def run_surge(
-    cfg,
-    name: str,
-    problem,
-    sequences,
-    members: int,
-    settings: dict,
-    initial: Callable[[int, object], torch.Tensor],
-    seeds: list[int],
-    data_path: Path,
-    config_dir: Path,
-) -> SMCRun:
-    """Run a SURGE cell sequence by sequence.
-
-    Args:
-        initial: ``(index, sequence) -> [E, d]`` initial members (the shared
-            ``driver.initial_ensemble``).
-        seeds: One sampler seed per sequence.
-    """
-    from cases.lorenz96._l96_generative import (
-        Standardisation,
-        load_prior,
-        observation_model,
-    )
-    from cases.lorenz96._l96_system import resolve_device
+def run_surge(cfg, name, problem, sequences, split, seed, members, settings):
+    """Run a SURGE cell one sequence per sampler call; returns the driver's
+    ``CellOutput`` with the per-sequence SMC records. Sequence ``i`` is sampled with
+    the seed ``derive_seed(SEED_LABEL, name, split, i, seed)``."""
+    import cases.lorenz96._l96_generative as generative
+    from cases.lorenz96 import driver
+    from cases.lorenz96._l96_baselines import ns_posterior
     from cases.navier_stokes._ns_pipeline import attach_nfe_counter
+    from common.seeding import derive_seed
 
-    device = resolve_device(cfg.evaluation.device)
-    stats = Standardisation.from_data(data_path, problem)
-    observed = observation_model(problem, stats)
-    if name in SURGE_BASELINES:
-        si_model = load_prior(cfg.checkpoints.si_run, device)
-        fm_model = load_prior(cfg.checkpoints.fm_run, device)
-        model, posterior, stepper = build_surge_baseline(
-            name, settings, si_model, fm_model, problem, stats, members, config_dir
+    stats, device, initial, observations = driver.sampler_inputs(
+        cfg, problem, sequences, split, seed, members
+    )
+    if name in SURGE_NS:
+        model, posterior, stepper, observed, num_steps = ns_posterior(
+            cfg, name, problem, stats, members, settings, device
         )
-        num_steps = int(settings["num_steps"])
     else:
         guided = name in SURGE_OURS
         prior = SURGE_OURS[name] if guided else SURGE_UNGUIDED[name]
-        cls = SurgeOursSettings if guided else SurgeUnguidedSettings
-        parsed = _settings(cls, name, settings, prior)
-        if not guided:
-            parsed = SurgeOursSettings(
-                num_steps=parsed.num_steps,
-                diffusion_scale=parsed.diffusion_scale,
-                ess_threshold=parsed.ess_threshold,
-            )
+        parsed = surge_settings(name, settings)
         run = cfg.checkpoints.si_run if prior == "si_sde" else cfg.checkpoints.fm_run
-        model = load_prior(run, device)
-        posterior, stepper = build_surge_ours(
-            prior, model, problem, stats, parsed, guided=guided
-        )
+        model = generative.load_prior(run, device)
+        posterior, stepper = build_surge_ours(prior, model, problem, stats, parsed, guided)
+        observed = generative.observation_model(problem, stats)
         num_steps = parsed.num_steps
     recorder = SMCRecorder(posterior, members)
     counter = attach_nfe_counter(model)
     out, smc = [], []
     start = time.time()
     for index, seq in enumerate(sequences):
-        x0 = initial(index, seq)[None]
-        ensembles = assimilate_one(
+        ensembles = generative.assimilate(
             posterior,
             stepper,
             stats,
-            x0,
-            seq.observations[None],
+            initial[index : index + 1],
+            observations[index : index + 1],
             num_steps,
-            seeds[index],
-            observed.to_model,
+            derive_seed(driver.SEED_LABEL, name, split, index, seed),
+            obs_to_model=observed.to_model,
         )
         out.append(ensembles[0])
         smc.append(recorder.take(seq.observations.shape[0]))
     seconds = time.time() - start
-    steps = sum(seq.observations.shape[0] for seq in sequences)
-    nfe = counter.count / steps if steps else math.nan
-    return SMCRun(torch.stack(out), seconds, nfe, num_steps, smc)
+    nfe = counter.count / sum(seq.observations.shape[0] for seq in sequences)
+    return driver.CellOutput(torch.stack(out), seconds, nfe, members, num_steps, smc=smc)
