@@ -37,8 +37,12 @@ one batch, as ``run_generative`` does, with the seed
 ``derive_seed(SEED_LABEL, name, split, seed)``. FIG differentiates the GLOBAL
 residual norm ``||y_t - H x||`` over the whole batch (faithful to the official
 sampler; NS runs one trajectory, i.e. the ``E`` members, per batch), so batching
-sequences would couple them: FIG runs one sequence per batch, each with its own seed
-``derive_seed(SEED_LABEL, name, split, seed, index)``.
+sequences would couple them; SDA reports a divergence (Gamma not PD / not finite,
+nonlinear h) for its whole batch, so in one batch a single diverged member would
+NaN every sequence. Both run one sequence per batch, each with its own seed
+``derive_seed(SEED_LABEL, name, split, seed, index)``, so a divergence NaNs only
+its own sequence. (The DM-SDE cells keep their behaviour: their non-finite-drift
+assertion records the whole cell as diverged, see ``driver.run_generative``.)
 
 NFE is forward calls of the method's network per assimilation step, for one
 evaluation of all members (a sequential batch over sequences is divided back out);
@@ -137,7 +141,12 @@ NS_CELLS: dict[str, tuple[str, Method, str, dict[str, dict[str, str]]]] = {
 #: Cells run by :func:`run_baseline` (the two SURGE cells run in ``_l96_smc``).
 BASELINE_CELLS = ("flowdas", "sda", "dflow", "fig")
 #: Cells run one sequence per batch (see the module docstring).
-PER_SEQUENCE = ("fig",)
+PER_SEQUENCE = ("fig", "sda")
+#: Fixed, untuned settings of the method YAML (not knobs of the L96 block): the
+#: SI-prior SURGE cell uses the exact Follmer-drift denoiser for its reward
+#: (``SurgeStochasticInterpolantPosterior(si_denoiser="follmer")``; NS keeps the
+#: library default ``velocity``).
+FIXED = {"surge_flowdas": {"posterior_model": {"si_denoiser": "follmer"}}}
 #: ``build_posterior`` reads environment overrides with these prefixes.
 ENV_PREFIXES = ("FLOWDAS_", "SDA_", "FIG_", "DFLOW_")
 
@@ -205,7 +214,7 @@ def ns_method_config(name: str, knobs: dict[str, dict]):
     case's table.
     """
     cfg = OmegaConf.to_container(OmegaConf.load(METHOD_CONFIGS / NS_CELLS[name][0]))
-    for block, values in knobs.items():
+    for block, values in (*knobs.items(), *FIXED.get(name, {}).items()):
         cfg[block] = {**(cfg.get(block) or {}), **values}
     leftover = []
     for section, node in cfg.items():
@@ -312,8 +321,8 @@ def run_baseline(cfg, name, problem, sequences, split, seed, members, settings):
             )
         except FloatingPointError as error:
             # SDA reports its own divergence (Gamma not PD / not finite, nonlinear
-            # h only). As for DM-SDE in run_generative: the batch is recorded as
-            # diverged, any other error crashes, and nfe stays None.
+            # h only): that sequence is recorded as diverged, any other error
+            # crashes, and nfe stays None.
             if name != "sda" or "has diverged" not in str(error):
                 raise
             print(f"{name} diverged: {error}", flush=True)

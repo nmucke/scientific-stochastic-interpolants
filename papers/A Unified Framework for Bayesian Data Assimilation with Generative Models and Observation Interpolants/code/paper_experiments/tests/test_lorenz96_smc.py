@@ -205,8 +205,20 @@ def test_unknown_settings_and_ns_overrides_are_refused(tiny_case, monkeypatch):
         driver.run_method(tiny_case, "surge_sda", problem, sequences, "test", 0)
 
 
+@pytest.mark.parametrize("guided", [True, False])
+def test_surge_around_the_si_prior_uses_the_follmer_denoiser(tiny_case, guided):
+    problem = driver.problem_of(tiny_case)
+    model = generative.load_prior(tiny_case.checkpoints.si_run)
+    stats = generative.Standardisation(2.2, 4.0)
+    posterior, _ = smc_mod.build_surge_ours(
+        "si_sde", model, problem, stats, smc_mod.SurgeSettings(num_steps=3), guided=guided
+    )
+    assert posterior.si_denoiser == "follmer"
+
+
 def test_surge_baselines_use_the_configured_scalars(tiny_case, monkeypatch):
     import cases.lorenz96._l96_baselines as baselines
+    from omegaconf import OmegaConf
 
     seen = {}
     real = baselines.ns_posterior
@@ -227,6 +239,10 @@ def test_surge_baselines_use_the_configured_scalars(tiny_case, monkeypatch):
     driver.run_method(tiny_case, "surge_sda", problem, sequences, "test", 0, sda)
     lik = seen["surge_flowdas"].likelihood_model
     assert seen["surge_flowdas"].ess_threshold == 0.3
+    # The SI-prior SURGE cell's reward inverts the Follmer drift exactly; the NS
+    # method YAML does not set it (NS keeps the library default).
+    assert seen["surge_flowdas"].si_denoiser == "follmer"
+    assert "si_denoiser" not in OmegaConf.load(baselines.METHOD_CONFIGS / "surge_flowdas.yaml").posterior_model
     assert lik.guidance_scale == pytest.approx(0.37) and lik.num_mc_samples == 4
     assert lik.max_grad_norm == 5.0
     assert seen["surge_sda"].ess_threshold == 0.7

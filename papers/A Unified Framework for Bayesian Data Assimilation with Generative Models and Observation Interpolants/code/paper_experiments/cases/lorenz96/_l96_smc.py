@@ -8,7 +8,9 @@ Cells (:data:`SURGE_CELLS`; labels in ``lorenz96_lineup.ROWS``):
   ``surge=True``): the plain cell's likelihood is the guidance of
   ``SurgeStochasticInterpolantPosterior`` (SI) or of ``OursSurgeDiffusionPosterior``
   on the ``FullFirstStepDiffusionModel`` lift of the FM prior (DM). SDE only: an
-  ODE has no path measure for SURGE's Girsanov weight. Their sampler keys are the
+  ODE has no path measure for SURGE's Girsanov weight. On the SI prior (here and in
+  ``surge_unguided_si``, ``surge_flowdas``) the reward uses the exact Follmer-drift
+  denoiser (``si_denoiser="follmer"``). Their sampler keys are the
   plain cell's (``driver.INHERITS``); their own block holds ``ess_threshold``.
 * ``surge_unguided_si`` / ``surge_unguided_dm``: the same SMC proposing from the
   unguided prior (``NullGuidance``), one control per wrapped prior, as in the
@@ -219,6 +221,8 @@ def build_surge_ours(prior: str, model, problem, stats, settings: SurgeSettings,
         likelihood, stepper = NullGuidance(), euler_maruyama_step
     ess = float(settings.ess_threshold)
     if prior == "si_sde":
+        # The reward's denoiser inverts the Follmer drift exactly (the library's
+        # default `velocity` treats it as the path velocity).
         posterior = SurgeStochasticInterpolantPosterior(
             model=model,
             obs_operator=observed.operator,
@@ -226,6 +230,7 @@ def build_surge_ours(prior: str, model, problem, stats, settings: SurgeSettings,
             likelihood_model=likelihood,
             ess_threshold=ess,
             diffusion_term=None,
+            si_denoiser="follmer",
         )
         return posterior, stepper
     # DM-SDE: SURGE's prior is the reverse SDE, so the model is the diffusion lift

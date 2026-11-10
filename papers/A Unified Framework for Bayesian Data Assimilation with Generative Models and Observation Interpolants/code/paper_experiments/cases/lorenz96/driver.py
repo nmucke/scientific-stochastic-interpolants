@@ -352,15 +352,22 @@ def summarise(scores) -> dict[str, list[float]]:
     }
 
 
+#: Diagnostic distances: a NaN of theirs (e.g. too few distinct PF draws) is not a
+#: divergence of the method, so it does not count in ``diverged_steps``.
+DIAGNOSTIC_SCORES = (KL_KNN, ENERGY_DISTANCE)
+
+
 def count_diverged_steps(scores) -> int:
-    """(sequence, step) entries at which any score is non-finite.
+    """(sequence, step) entries at which any core score is non-finite.
 
     ``finite_mean`` leaves such entries out, so a method that blows up early would
-    otherwise be judged on its good steps only. This count keeps it visible.
+    otherwise be judged on its good steps only. This count keeps it visible. The
+    :data:`DIAGNOSTIC_SCORES` are not core scores.
     """
     total = 0
     for entry in scores:
-        for values in zip(*entry.values()):
+        core = [values for key, values in entry.items() if key not in DIAGNOSTIC_SCORES]
+        for values in zip(*core):
             total += not all(math.isfinite(v) for v in values)
     return total
 

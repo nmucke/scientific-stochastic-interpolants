@@ -18,8 +18,9 @@
 # only these cells' jobs of each stage).
 #
 # Everything is resumable. tune: a job whose CSV has every grid point is skipped, a
-# partial CSV (interrupted, other grid keys) is moved aside to <csv>.partial.<time>
-# and the job reruns in full. final: a (cell, M, seed) whose metrics file exists is
+# partial CSV (interrupted, other grid keys, or rows whose `base` is not the base the
+# job runs with now, e.g. after new stage-1 picks) is moved aside to
+# <csv>.partial.<time> and the job reruns in full. final: a (cell, M, seed) whose metrics file exists is
 # skipped (FORCE=1 reruns it); if any cell fails the others still run, and the script
 # stops before pf_reference and the aggregation. Cells run one at a time (JOBS=1):
 # concurrent cells would inflate each other's `seconds`. M is checked by the driver
@@ -76,14 +77,16 @@ GRIDS=(
 )
 # --------------------------------------------------------------------------- #
 
-# tune_stage <k>: every GRIDS job of stage k (and of ONLY, if set).
+# tune_stage <k>: every GRIDS job of stage k (and of ONLY, if set); counts the
+# jobs it selected in SELECTED.
+SELECTED=0
 tune_stage() {
-  local want=$1 selected=0 stage cell parent grid out state csv aside
+  local want=$1 stage cell parent grid out state csv aside
   for row in "${GRIDS[@]}"; do
     IFS='|' read -r stage cell parent grid <<<"$row"
     [[ "$stage" == "$want" ]] || continue
     if [[ -n "$ONLY" && " $ONLY " != *" $cell "* ]]; then continue; fi
-    selected=$((selected + 1))
+    SELECTED=$((SELECTED + 1))
     local sets=()
     if [[ -n "$parent" ]]; then
       # Line 1: the resolved grid; then one --set per line (the parent's picks).
@@ -112,10 +115,6 @@ tune_stage() {
     "$PY" "${DRIVER[@]}" tune --method "$cell" --grid "$grid" --tag "s$stage" \
       --threads "$THREADS" "${sets[@]}"
   done
-  if [[ "$selected" -eq 0 ]]; then
-    echo "no stage-$want job matched ONLY='$ONLY'" >&2
-    return 1
-  fi
 }
 
 # run_cell <cell> <seed> <M or ->: "-" for a cell without M. Returns 1 on failure.
@@ -136,6 +135,10 @@ stage_tune() {
   tune_stage 1
   "$PY" select_lorenz96_tuning.py --obs "$OBS" --stage 1
   tune_stage 2
+  if [[ "$SELECTED" -eq 0 ]]; then
+    echo "no tuning job matched ONLY='$ONLY'" >&2
+    return 1
+  fi
   "$PY" select_lorenz96_tuning.py --obs "$OBS" --stage 2
   echo
   echo "STOP: tuning of the $OBS sweep done. Review"

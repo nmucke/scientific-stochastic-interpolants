@@ -168,11 +168,29 @@ def test_observations_come_from_the_observation_model(small, monkeypatch, name):
     assert len(seen) == 1
 
 
-def test_fig_runs_each_sequence_on_its_own(small):
-    """FIG's global residual norm pools a batch: sequences must not share one."""
-    both = run(small, "fig", count=2)
-    first = run(small, "fig", count=1)
+@pytest.mark.parametrize("name", ["fig", "sda"])
+def test_fig_and_sda_run_each_sequence_on_its_own(small, name):
+    """FIG's global residual norm pools a batch, and SDA's divergence is a batch's:
+    sequences must not share one."""
+    both = run(small, name, count=2)
+    first = run(small, name, count=1)
     torch.testing.assert_close(both.ensembles[:1], first.ensembles, rtol=0, atol=0)
+
+
+def test_an_sda_divergence_nans_its_own_sequence_only(small, monkeypatch):
+    real = generative.assimilate
+    calls = []
+
+    def assimilate(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:  # the second sequence
+            raise FloatingPointError("SDA: Gamma ... the guided SDE has diverged -- ...")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(generative, "assimilate", assimilate)
+    out = run(small, "sda", count=2)
+    assert torch.isfinite(out.ensembles[0]).all() and torch.isnan(out.ensembles[1]).all()
+    assert out.nfe is None
 
 
 def test_only_the_sda_divergence_error_counts_as_diverged(small, monkeypatch):

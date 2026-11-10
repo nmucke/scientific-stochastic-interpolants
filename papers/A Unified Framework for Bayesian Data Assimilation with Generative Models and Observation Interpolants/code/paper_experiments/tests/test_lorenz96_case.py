@@ -466,11 +466,14 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
         driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
 
 
-def test_count_diverged_steps_counts_non_finite_entries():
+def test_count_diverged_steps_counts_non_finite_core_scores_only():
+    nan = float("nan")
     scores = [
-        {"a": [1.0, float("nan"), 2.0], "b": [0.0, 0.0, float("inf")]},
-        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0]},
+        {"a": [1.0, nan, 2.0], "b": [0.0, 0.0, float("inf")], driver.KL_KNN: [nan, 1.0, 1.0]},
+        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0], driver.KL_KNN: [nan, nan, 1.0],
+         driver.ENERGY_DISTANCE: [1.0, nan, 1.0]},
     ]
+    # Steps 1 and 2 of sequence 0; a NaN of a diagnostic distance does not count.
     assert driver.count_diverged_steps(scores) == 2
 
 

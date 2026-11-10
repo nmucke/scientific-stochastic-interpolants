@@ -206,7 +206,14 @@ TUNING_TAIL = ("base", "seconds", "diverged_steps", "mean_error_vs_pf", "var_err
 
 
 def write_tuning(path: Path, grid_rows: list[tuple[dict, float, int]], base=None) -> None:
-    """Rows as driver.py tune writes them: (override, sliced_w2, diverged_steps)."""
+    """Rows as driver.py tune writes them: (override, sliced_w2, diverged_steps).
+
+    ``base`` defaults to the cell's current base (its config block, no --set), so
+    the file counts as up to date.
+    """
+    if base is None:
+        obs, cell = path.parent.parent.name, path.name.split("__")[0]
+        base = select_lorenz96_tuning.current_base(obs, cell)
     keys = list(grid_rows[0][0])
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as handle:
@@ -215,7 +222,7 @@ def write_tuning(path: Path, grid_rows: list[tuple[dict, float, int]], base=None
         for override, sw2, diverged in grid_rows:
             score = math.inf if diverged else sw2
             writer.writerow(dict(
-                override, base=json.dumps(base or {"num_steps": 50}), seconds=1.0,
+                override, base=json.dumps(base, sort_keys=True), seconds=1.0,
                 diverged_steps=diverged, mean_error_vs_pf=score, var_error_vs_pf=score,
                 sliced_w2=score, rmse=score, spread=1.0, diverged_fraction=0.0,
             ))
@@ -254,7 +261,7 @@ def test_selection_picks_lowest_finite_sliced_w2_and_skips_diverged(sweeps):
     picks = yaml.safe_load(out.read_text())
     assert picks["enkf"]["tuned"] == {"inflation": 1.05, "localisation": 4}
     assert picks["enkf"]["set"] == ["inflation=1.05", "localisation=4"]
-    assert picks["enkf"]["full"] == {"num_steps": 50, "inflation": 1.05, "localisation": 4}
+    assert picks["enkf"]["full"] == {"inflation": 1.05, "localisation": 4}
     assert picks["enkf"]["runner_up_gap"] == pytest.approx(0.05)
     assert picks["flowdas"]["tuned"] == {"guidance_scale": 0.25}
     assert "sda" not in picks
@@ -301,6 +308,30 @@ def test_status_sees_complete_partial_and_missing_jobs(sweeps):
         ({"inflation": i, "localisation": r}, 0.1, 0) for i in (1.0, 1.05) for r in (None, 4)
     ])
     assert select_lorenz96_tuning.status("linear", "enkf", grid, 1)[0] == "complete"
+
+
+def test_status_treats_rows_of_another_base_as_partial(sweeps):
+    """Stage 2 reruns when the stage-1 picks it got by --set (or the config) moved."""
+    grid = {"correction.gain_scale": [0.5, 1.0]}
+    sets = ["likelihood_mode=\"dps_jacobian_free\"", "jacobian_damping=0.9"]
+    path = select_lorenz96_tuning.job_csv("linear", "si_sde_fc", grid, 2)
+    base = select_lorenz96_tuning.current_base("linear", "si_sde_fc", sets)
+    assert base["jacobian_damping"] == 0.9 and "correction" in base
+    rows = [({"correction.gain_scale": g}, 0.1, 0) for g in (0.5, 1.0)]
+    write_tuning(path, rows, base=base)
+    assert select_lorenz96_tuning.status("linear", "si_sde_fc", grid, 2, sets)[0] == "complete"
+    # Other stage-1 picks, or none: the rows are stale.
+    other = ["likelihood_mode=\"inflated\"", "jacobian_damping=0.9"]
+    assert select_lorenz96_tuning.status("linear", "si_sde_fc", grid, 2, other)[0] == "partial"
+    assert select_lorenz96_tuning.status("linear", "si_sde_fc", grid, 2)[0] == "partial"
+    # One stale row is enough.
+    table = read_csv(path)
+    table[1]["base"] = json.dumps(select_lorenz96_tuning.current_base("linear", "si_sde_fc", other))
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+    assert select_lorenz96_tuning.status("linear", "si_sde_fc", grid, 2, sets)[0] == "partial"
 
 
 # --------------------------------------------------------------------------- #
@@ -456,9 +487,8 @@ def test_tune_skips_complete_jobs_moves_partial_ones_and_never_tunes_m(dry):
     latest = sorted((dry.work / "results/lorenz96/linear/logs").glob("tune_*.log"))[-1]
     assert Path(f"{latest}.exit").read_text().strip() == "0"
 
-    proc, calls = dry("tune", "linear", ONLY="fig")
-    # fig's stage-1 job is complete and no stage-2 job is fig's: nothing matches stage 2.
-    assert proc.returncode != 0 and "no stage-2 job matched" in proc.stdout  # the log has stderr
+    proc, calls = dry("tune", "linear", ONLY="nosuchcell")
+    assert proc.returncode != 0 and "no tuning job matched" in proc.stdout  # the log has stderr
 
 
 def test_tune_stage2_uses_the_stage1_picks(dry):
@@ -489,6 +519,16 @@ def test_tune_stage2_uses_the_stage1_picks(dry):
     assert grid["guidance_scale"] == pytest.approx([0.016, 0.064, 0.256])
     grid = json.loads(tunes["surge_sda"].split("--grid ")[1].split()[0])
     assert grid["gamma_sda"] == pytest.approx([0.001, 0.01, 0.1])
+
+    # A complete stage-2 CSV made with other stage-1 picks is stale: moved aside, rerun.
+    fc_grid = json.loads(tunes["si_sde_fc"].split("--grid ")[1].split()[0])
+    path = tdir / f"si_sde_fc__{'_'.join(fc_grid)}__s2.csv"
+    points = [dict(zip(fc_grid, p)) for p in itertools.product(*fc_grid.values())]
+    stale = select_lorenz96_tuning.current_base("arctan", "si_sde_fc")  # no stage-1 --set
+    write_tuning(path, [(pt, 0.1, 0) for pt in points], base=stale)
+    proc, calls = dry("tune", "arctan", ONLY="si_sde_fc")
+    assert list(tdir.glob("si_sde_fc__*__s2.csv.partial.*"))
+    assert sum("--method si_sde_fc" in c for c in calls if " tune " in f" {c} ") == 1
 
 
 def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):

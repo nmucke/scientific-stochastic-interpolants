@@ -7,7 +7,10 @@ The posterior is not Gaussian, so the Gaussian KL of moments is not used here.
   neighbours (no ``eps``) and without the clamp at ``1e-4``. Lorenz 96 reports
   ``KL(PF || ensemble)``: the 4096 stored PF draws are ``x``, the ensemble is ``y``.
   That direction stays finite when an ensemble holds duplicate members (SMC
-  resampling), where ``KL(ensemble || PF)`` would divide by a zero distance. With 64
+  resampling), where ``KL(ensemble || PF)`` would divide by a zero distance. The PF
+  draws themselves can hold duplicate rows (a filter that resamples after the kick,
+  as the arctan reference and small references do): the estimator is computed on
+  their UNIQUE rows, since a duplicate has a zero nearest-neighbour distance. With 64
   members in 16 dimensions the estimator is strongly biased: a perfect ensemble
   (``pf_subsample``) scores about 1.9, not 0. That floor is the same for every
   method at the same ``E``, so compare against it.
@@ -28,9 +31,14 @@ from scipy.spatial import cKDTree
 def knn_kl(x: torch.Tensor, y: torch.Tensor) -> float:
     """``KL(P || Q)`` from ``x ~ P`` ``[n, d]`` and ``y ~ Q`` ``[m, d]`` (Perez-Cruz, 1-NN).
 
-    NaN if fewer than two points on either side, or if ``x`` holds duplicate rows.
+    Computed on the unique rows of ``x`` (first occurrences, in order, so draws
+    without duplicates are used exactly as given; ``n`` counts them); NaN if fewer
+    than two of them, or no point of ``y``.
     """
     x = np.asarray(x, dtype=np.float64)
+    first = np.unique(x, axis=0, return_index=True)[1]
+    if first.size < x.shape[0]:
+        x = x[np.sort(first)]
     y = np.asarray(y, dtype=np.float64)
     n, d = x.shape
     m = y.shape[0]

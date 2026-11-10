@@ -35,9 +35,10 @@ Actions (``--obs linear|arctan`` picks the sweep root ``results/lorenz96/<obs>/`
     string per line: the parent's stage-1 picks for the keys not in the grid.
     An empty parent prints the grid unchanged and no ``--set``.
 
-``status --cell C --grid G --stage k``
+``status --cell C --grid G --stage k [--set key=value ...]``
     Prints ``complete|missing|partial <csv path>`` for the tuning job: complete
-    when every grid point is in the job's CSV.
+    when every grid point is in the job's CSV and every row's ``base`` is the base
+    the job would run with now (the config block after the ``--set``).
 
     python select_lorenz96_tuning.py --obs linear --stage 1
     python select_lorenz96_tuning.py --obs linear resolve --parent flowdas \
@@ -61,7 +62,14 @@ _here = Path(__file__).resolve().parent
 if str(_here) not in sys.path:
     sys.path.insert(0, str(_here))
 
-from lorenz96_lineup import CONFIG_BLOCK, OBS_CHOICES, set_dotted, sweep_root  # noqa: E402
+from lorenz96_lineup import (  # noqa: E402
+    CONFIG_BLOCK,
+    OBS_CHOICES,
+    parse_assignments,
+    set_dotted,
+    settings_of,
+    sweep_root,
+)
 
 RESULTS = _here / "results"
 CASE_CONFIG = _here / "configs" / "case" / "lorenz96.yaml"
@@ -255,7 +263,22 @@ def resolve(obs: str, parent: str, grid: dict) -> tuple[dict, list[str]]:
     return resolved, sets
 
 
-def status(obs: str, cell: str, grid: dict, stage: int) -> tuple[str, Path]:
+def current_base(obs: str, cell: str, sets=None, config: Path | None = None) -> dict:
+    """The base settings ``driver.py tune --method cell --set ...`` would record now:
+    the cell's settings in the ``obs`` block of the config (with inheritance), then
+    ``sets``."""
+    from omegaconf import OmegaConf
+
+    cfg = OmegaConf.load(CASE_CONFIG if config is None else config)
+    methods = OmegaConf.to_container(cfg[CONFIG_BLOCK[obs]])
+    return set_dotted(settings_of(methods, cell), parse_assignments(sets))
+
+
+def status(obs: str, cell: str, grid: dict, stage: int, sets=None) -> tuple[str, Path]:
+    """``complete`` only when every grid point is in the job's CSV AND every row ran
+    with the base the job would run with now (the config block after ``sets``);
+    rows of another base (stale stage-1 picks, an edited config) make it
+    ``partial``, so the run script moves it aside and reruns the job."""
     path = job_csv(obs, cell, grid, stage)
     if not path.exists() or path.stat().st_size == 0:
         return "missing", path
@@ -263,6 +286,9 @@ def status(obs: str, cell: str, grid: dict, stage: int) -> tuple[str, Path]:
     if keys != list(grid):
         # The driver refuses to append to it anyway; report it as partial so the
         # tuning script moves it aside.
+        return "partial", path
+    base = current_base(obs, cell, sets)
+    if any(not row.get("base") or json.loads(row["base"]) != base for row in rows):
         return "partial", path
     found = {tuple(parse_value(row[k]) for k in keys) for row in rows}
     wanted = {
@@ -369,7 +395,7 @@ def main() -> None:
     else:
         if not args.cell:
             parser.error("status needs --cell")
-        state, path = status(args.obs, args.cell, grid, args.stage)
+        state, path = status(args.obs, args.cell, grid, args.stage, args.set)
         print(f"{state} {path}")
 
 

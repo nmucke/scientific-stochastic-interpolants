@@ -77,3 +77,9 @@ Environment: `PY`, `THREADS` (tune), `SEEDS="0 1 2"`, `M_VALUES` (default
   names: `lorenz96_lineup.py` (`ROWS`; `driver.CELLS` is derived from it). The main
   table is at M=50; `tab_lorenz96_<obs>_vs_M.tex` and the `lorenz96_<metric>_vs_M`
   figures show the generative cells against M.
+- Provenance (2026-11-10, `GPU_HANDOFF.md` section 15): the SURGE cells on the SI
+  prior (`surge_si_sde`, `surge_unguided_si`, `surge_flowdas`) use the exact
+  Follmer-drift reward denoiser (`si_denoiser="follmer"`) under unchanged variant
+  names; `sda` runs one sequence per batch; `kl_knn` uses the unique PF draws and
+  does not count toward `diverged_steps`. Results of these cells, and every arctan
+  `diverged_steps` / tuning eligibility, from before that date must be rerun.

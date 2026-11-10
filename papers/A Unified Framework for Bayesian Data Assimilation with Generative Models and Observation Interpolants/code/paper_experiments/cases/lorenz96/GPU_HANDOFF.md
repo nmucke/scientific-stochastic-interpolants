@@ -400,7 +400,7 @@ before tuning again. `enkf_large` was never tuned here.
 start until tuning is written into the config.
 
 ```bash
-cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96_grid.sh
+cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96.sh final linear   # section 15
 ```
 
 That script itself has never run at full size (a dry run with a stub interpreter
@@ -958,3 +958,52 @@ python cases/lorenz96/pf_gate.py --obs arctan cross-proposal --problem '{"dim_st
 python cases/lorenz96/driver.py --obs arctan reference --split validation --workers 8
 python cases/lorenz96/driver.py --obs arctan reference --split test --workers 8
 ```
+
+## 15. Review fixes (added 2026-11-10)
+
+Run interface: `run_lorenz96.sh {tune|apply|final} {linear|arctan}` replaces
+`tune_lorenz96.sh`, `run_lorenz96_grid.sh` and `run_lorenz96_sweep.sh` (the commands
+of sections 7, 13 and 14 that name them now read `./run_lorenz96.sh final <obs>`; see
+the README runbook). `apply` writes the selected picks into `methods:` /
+`methods_arctan:`; nothing has to be pasted by hand. The lineup, M values and shared
+names are `lorenz96_lineup.py`.
+
+Behaviour changes, each limited to the cells named (every other cell is bitwise as
+before on the snapshot of 2 validation sequences, linear and arctan):
+
+- **`kl_knn` on the unique PF draws.** A reference that resamples after the kick
+  (every arctan reference, and small references) holds duplicate draws; 1-NN KL was
+  NaN there, and a NaN score counted in `diverged_steps`, so every arctan step of
+  every cell counted as diverged and every arctan tuning row was ineligible.
+  `knn_kl` now uses the unique rows of the PF draws, and only the core scores
+  (not `kl_knn` / `energy_distance`) count toward `diverged_steps`.
+- **SURGE on the SI prior: exact denoiser.** The library's
+  `SurgeStochasticInterpolantPosterior._denoise` fed the Follmer drift b to
+  `score_from_velocity` as if it were the path velocity (dividing by
+  beta a_tau instead of beta (a_tau + 1/2 gamma^2)), so its reward denoiser
+  xhat_1 was biased. The constructor now takes `si_denoiser`: `"velocity"`
+  (default, bitwise the old values, used by Navier-Stokes, the analytical
+  single-step driver and the multistep base-lineup "SURGE (FlowDAS)" row) or
+  `"follmer"` (exact: xhat_1 = (x - alpha x0 - mu_s) / beta, mu_s =
+  -gamma^2 t A_tau (beta b - c_tau), as `InterpolantGaussianLikelihood`). Lorenz 96
+  `surge_si_sde`, `surge_unguided_si` and `surge_flowdas` and the multistep
+  "SURGE around Ours" SI rows (`surge` and `surge_unguided` variants of Ours
+  (SI-SDE)) use `follmer`; their variant names are unchanged, so results made
+  before this change must not be mixed with new ones. On an exact Gaussian SI
+  (d = 16) the unguided SMC keeps ESS/N > 0.95 over the first pseudo-steps with
+  `follmer`, against 0.35 after the first step with `velocity`
+  (`tests/test_surge_si_denoiser.py`). Not changed, same misuse for an SI
+  `model_class` (unused here): `likelihood_models/sda.py` (score from the SI drift,
+  around line 178) and `likelihood_models/guidance.py` (around line 707).
+- **SDA one sequence per batch.** `sda` reports a divergence for its whole batch,
+  so one diverged member NaN'd every sequence; it now runs one sequence per batch
+  like `fig` (seed `derive_seed(SEED_LABEL, "sda", split, seed, index)`), so its
+  numbers change and a divergence NaNs only its own sequence. The DM-SDE cells keep
+  their behaviour: their non-finite-drift assertion records the whole cell as
+  diverged.
+- **Stage-2 tuning reuse.** A tuning CSV counts as complete only if every row's
+  `base` equals the base the job would run with now (config block after `--set`);
+  otherwise it is moved aside and rerun, so new stage-1 picks rerun stage 2.
+
+Unchanged on purpose: `pf_subsample`'s permutation seed has no split (validation and
+test share one stream).
