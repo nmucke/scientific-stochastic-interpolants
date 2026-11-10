@@ -516,7 +516,7 @@ def test_tune_stage2_uses_the_stage1_picks(dry):
         assert "--set jacobian_damping=0.95 --set likelihood_mode=\"inflated\"" in tunes[cell]
     assert "--set" not in tunes["surge_unguided_si"] and "--set" not in tunes["surge_flowdas"]
     grid = json.loads(tunes["surge_flowdas"].split("--grid ")[1].split()[0])
-    assert grid["guidance_scale"] == pytest.approx([0.016, 0.064, 0.256])
+    assert grid["guidance_scale"] == pytest.approx([0.064 * k for k in (0.004, 0.016, 0.064, 0.25, 1, 4)])
     grid = json.loads(tunes["surge_sda"].split("--grid ")[1].split()[0])
     assert grid["gamma_sda"] == pytest.approx([0.001, 0.01, 0.1])
 
