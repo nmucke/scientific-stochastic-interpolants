@@ -1549,8 +1549,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def require_cuda() -> None:
+    """With ``SCISI_REQUIRE_CUDA=1`` (set by run_lorenz96.sh), refuse to run unless CUDA
+    works: after a GPU fault ``device: auto`` would otherwise fall back to the CPU
+    silently, changing the sample paths, the scorer and the timings."""
+    if os.environ.get("SCISI_REQUIRE_CUDA") != "1":
+        return
+    try:
+        ok = torch.cuda.is_available() and float(torch.ones(1, device="cuda").sum()) == 1.0
+    except RuntimeError:
+        ok = False
+    if not ok:
+        raise SystemExit("SCISI_REQUIRE_CUDA=1 but CUDA is not usable; refusing a CPU fallback.")
+
+
 def main() -> None:
     args = build_parser().parse_args()
+    require_cuda()
     args.func(args)
 
 

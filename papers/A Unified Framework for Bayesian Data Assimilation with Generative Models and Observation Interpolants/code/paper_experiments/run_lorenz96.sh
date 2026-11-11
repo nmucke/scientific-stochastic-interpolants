@@ -38,6 +38,8 @@ PY=${PY:-python}
 THREADS=${THREADS:-2}
 SEEDS=${SEEDS:-"0 1 2"}
 FORCE=${FORCE:-0}
+# A dead GPU fails the cell instead of falling back to the CPU (driver.require_cuda).
+export SCISI_REQUIRE_CUDA=${SCISI_REQUIRE_CUDA:-1}
 ONLY=${ONLY:-}
 ROOT=results/lorenz96/$OBS
 DRIVER=(cases/lorenz96/driver.py --obs "$OBS")
