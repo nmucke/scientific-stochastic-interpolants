@@ -188,6 +188,11 @@ LOG="$ROOT/logs/${STAGE}_$(date +%Y%m%d-%H%M%S).log"
 trap 'status=$?; echo "$status" > "$LOG.exit"; echo "exit $status (log: $LOG)"' EXIT
 exec > >(tee -a "$LOG") 2>&1
 echo "lorenz96 $STAGE OBS=$OBS start $(date -Is) commit $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+# One tune / final per sweep at a time: a second one would write the same files.
+if [[ "$STAGE" != apply ]]; then
+  exec 9>"$ROOT/logs/.$STAGE.lock"
+  flock -n 9 || { echo "another '$STAGE $OBS' holds $ROOT/logs/.$STAGE.lock; refusing to run alongside it" >&2; exit 3; }
+fi
 case "$STAGE" in
   tune) stage_tune ;;
   apply) "$PY" select_lorenz96_tuning.py --obs "$OBS" apply ;;
