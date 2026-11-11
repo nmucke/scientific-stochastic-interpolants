@@ -15,7 +15,12 @@ Figures (``figures/analytical_multistep/``):
     correction (S = M), inside SURGE (SDEs only) -- with the sampled Kalman floor and the
     particle filter as horizontal references (both independent of M).
   * ``msweep_fc_vs_nofc``: SI-SDE, DM-SDE, FM-ODE with the shared Jacobian, with
-    (solid) and without (dashed) the forecast correction, against the same references.
+    (solid) and without (dashed) the forecast correction, the generative baselines
+    (FlowDAS, SDA, their SURGE versions, D-Flow, FIG; single-step hyperparameters) and
+    EnKF, against the same references.
+
+KL here is the Gaussian (moment) KL of the Exp 1 tables (user 2026-11-11); sliced W2
+is the nonparametric metric.
 
 The plotted numbers go to ``results/analytical_multistep/aggregated/msweep.csv``.
 Grouped (``_g<E>``) and residual-bank (``_bank``) variants are left out; the correction
@@ -50,7 +55,17 @@ FILE = re.compile(rf"^paper[^_]*(?:_[a-z0-9]+)*__M(\d+)__K{K}__E{E}__traj(\d+)\.
 METRICS = (("kl_points", "KL to Kalman posterior"), ("sliced_w2", r"Sliced $W_2$ to Kalman posterior"))
 SAMPLERS = (("Ours (SI-SDE)", "SI-SDE"), ("Ours (DM-SDE)", "DM-SDE"), ("Ours (FM-ODE)", "FM-ODE"))
 SAMPLER_COLOURS = {"Ours (SI-SDE)": "#0072B2", "Ours (DM-SDE)": "#009E73", "Ours (FM-ODE)": "#CC79A7"}
-KALMAN, PF = "Kalman filter (sampled)", "Particle filter"
+KALMAN, PF, ENKF = "Kalman filter (sampled)", "Particle filter", "EnKF"
+
+# Baselines on the same prior (M-dependent), single-step hyperparameters (not re-tuned).
+BASELINES = (
+    ("FlowDAS", "FlowDAS", "#E69F00", "-.", "v"),
+    ("SURGE (FlowDAS)", "SURGE (FlowDAS)", "#E69F00", ":", "v"),
+    ("SDA", "SDA", "#D55E00", "-.", "P"),
+    ("SURGE (SDA)", "SURGE (SDA)", "#D55E00", ":", "P"),
+    ("D-Flow SGLD", "D-Flow (SGLD)", "#882255", "-.", "X"),
+    ("Guided FM (FIG)", "FIG", "#56B4E9", "-.", "*"),
+)
 
 # Variant key (with "{M}" for the correction's forecast steps) -> label, colour, style, marker.
 VARIANTS = (
@@ -110,17 +125,19 @@ def series(values, method, variant_template, metric, steps):
 
 def reference(values, method, metric):
     """An M-independent reference: pooled over every M (one value per seed and M)."""
-    vals = [v for (mt, var, me, _m), vs in values.items() if mt == method and me == metric for v in vs]
+    # Plain rows only: e.g. EnKF also has a grouped variant (g64) in the group cells.
+    vals = [v for (mt, var, me, _m), vs in values.items()
+            if mt == method and var == "" and me == metric for v in vs]
     vals = np.asarray(vals, dtype=float)
     vals = vals[np.isfinite(vals)]
     return (vals.mean(), vals.std()) if vals.size else None
 
 
-def draw_references(ax, values, metric):
-    for method, label, colour, style in (
-        (KALMAN, "Kalman (sampled floor)", "black", "--"),
-        (PF, "Particle filter", "0.45", ":"),
-    ):
+def draw_references(ax, values, metric, enkf=False):
+    refs = [(KALMAN, "Kalman (sampled floor)", "black", "--"), (PF, "Particle filter", "0.45", ":")]
+    if enkf:
+        refs.append((ENKF, "EnKF", "#999933", "-."))
+    for method, label, colour, style in refs:
         ref = reference(values, method, metric)
         if ref is not None:
             ax.axhline(ref[0], color=colour, ls=style, lw=1.3, label=label, zorder=1)
@@ -172,9 +189,10 @@ def fig_all_variants(values, steps, out: Path):
 
 
 def fig_fc_vs_nofc(values, steps, out: Path):
-    fig, axes = plt.subplots(1, len(METRICS), figsize=(11.0, 4.3))
+    """Shared-Jacobian SI/DM/FM with and without FC, the generative baselines, EnKF."""
+    fig, axes = plt.subplots(1, len(METRICS), figsize=(12.0, 4.8))
     for ax, (metric, ylabel) in zip(axes, METRICS):
-        draw_references(ax, values, metric)
+        draw_references(ax, values, metric, enkf=True)
         for method, title in SAMPLERS:
             colour = SAMPLER_COLOURS[method]
             for template, suffix, style, marker in (
@@ -184,12 +202,17 @@ def fig_fc_vs_nofc(values, steps, out: Path):
                 s = series(values, method, template, metric, steps)
                 if s is not None:
                     draw_curve(ax, s, title + suffix, colour, style, marker)
+        for method, label, colour, style, marker in BASELINES:
+            s = series(values, method, "", metric, steps)
+            if s is not None:
+                draw_curve(ax, s, label, colour, style, marker)
         style_axis(ax, steps, ylabel)
         ax.set_xlabel("SDE/ODE steps M")
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(r"Shared Jacobian with and without forecast correction (FC, $S=M$)", y=1.0)
-    fig.tight_layout(rect=(0, 0.17, 1, 0.97))
+    fig.legend(handles, labels, loc="lower center", ncol=5, frameon=False, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(r"Ours (shared Jacobian) with and without forecast correction (FC, $S=M$), "
+                 "and baselines", y=1.0)
+    fig.tight_layout(rect=(0, 0.2, 1, 0.97))
     return _save_fig(fig, out / "msweep_fc_vs_nofc")
 
 
@@ -205,7 +228,14 @@ def write_table(values, steps, path: Path):
                 for m, mean, std, n in zip(*s):
                     rows.append(dict(method=method, variant=template.format(M=m), metric=metric,
                                      M=int(m), mean=mean, std=std, n_seeds=int(n)))
-    for method in (KALMAN, PF):
+    for method, *_ in BASELINES:
+        for metric, _ in METRICS:
+            s = series(values, method, "", metric, steps)
+            if s is not None:
+                for m, mean, std, n in zip(*s):
+                    rows.append(dict(method=method, variant="", metric=metric, M=int(m),
+                                     mean=mean, std=std, n_seeds=int(n)))
+    for method in (KALMAN, PF, ENKF):
         for metric, _ in METRICS:
             ref = reference(values, method, metric)
             if ref is not None:
@@ -228,7 +258,7 @@ def main():
     values = load(args.root)
     steps = sorted({k[3] for k in values})
     print("M values found:", steps)
-    for method in (KALMAN, PF):
+    for method in (KALMAN, PF, ENKF):
         per_m = {m: np.mean(values[(method, "", "kl_points", m)]) for m in steps
                  if values.get((method, "", "kl_points", m))}
         print(f"{method} kl_points by M (should not depend on M):",
