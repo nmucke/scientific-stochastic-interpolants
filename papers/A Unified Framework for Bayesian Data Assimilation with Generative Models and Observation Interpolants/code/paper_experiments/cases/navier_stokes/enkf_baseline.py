@@ -279,7 +279,22 @@ class TorchHObservationOperator:
             chw = _torch_to_np(obs_operator.obs_indices_c_h_w)  # (num_obs, 3)
             self.obs_coords = jnp.asarray(chw[:, 1:3] * 2)  # (num_obs, 2) in 256 frame
         except Exception:  # pragma: no cover - defensive
-            self.obs_coords = None
+            # Operators without explicit point indices (the block-average
+            # super-resolution H): place each observation at the |H|-weighted
+            # centroid of the 128^2 cells it averages (the block centre), lifted
+            # to the 256^2 frame. Blocks do not wrap, so a plain mean is exact.
+            # (Added 2026-11-12 for the r=20 super-resolution EnKF cells.)
+            # A nonlinear wrapper has no obs_matrix: use its linear sensor map
+            # (the same matrix as self._H; identical for a linear operator).
+            sensor = getattr(obs_operator, "inner", obs_operator)
+            Hm = np.abs(_torch_to_np(sensor.obs_matrix)).reshape(
+                -1, self.C, self.H, self.W
+            ).sum(axis=1)  # (num_obs, H, W)
+            wsum = Hm.sum(axis=(1, 2))
+            hh, ww = np.meshgrid(np.arange(self.H), np.arange(self.W), indexing="ij")
+            ch = (Hm * hh).sum(axis=(1, 2)) / wsum
+            cw = (Hm * ww).sum(axis=(1, 2)) / wsum
+            self.obs_coords = jnp.asarray(np.stack([ch, cw], axis=1) * 2)
 
     def _apply_H_on_norm128(self, field_norm_128: jnp.ndarray) -> jnp.ndarray:
         """Apply the torch H (as a dense matrix) to a normalised 128^2 field."""
