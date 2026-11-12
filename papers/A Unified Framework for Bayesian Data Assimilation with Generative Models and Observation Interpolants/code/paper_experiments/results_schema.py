@@ -75,6 +75,7 @@ class Method(str, Enum):
 
     # Diffusion-model prior + SDE.
     SDA = "SDA"  # score-based DA (rozet_score-based_2023), single-window, on the DM prior
+    TMPD = "TMPD"  # Tweedie moment projection (boys_tweedie_2024), on the DM prior; non-paper baseline
     SURGE = "SURGE"  # SURGE particle filter (wei_surge_2026), standalone DPS guidance
     # SURGE combined with another method's guidance (paper: SURGE + SDA / FlowDAS).
     SURGE_SDA = "SURGE (SDA)"  # SURGE SMC on the FM/DM prior, SDA likelihood as guidance

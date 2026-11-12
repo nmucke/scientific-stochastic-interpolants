@@ -1,0 +1,35 @@
+# TMPD baseline (boys_tweedie_2024): Tweedie Moment Projected Diffusions. Projects
+# p(y | x_tau) onto N(H E[x_1|x_tau], H Cov[x_1|x_tau] H^T + R), with the Tweedie
+# covariance Cov = (sigma^2/beta) d E[x_1|x_tau]/dx_tau taken from reverse-mode VJPs
+# through the network (held constant, only the mean differentiated), and REPLACES
+# the score s -> s + f^y in the reverse SDE (score substitution, weight
+# a_tau + 1/2 g_tau^2; see scisi.posterior_models.tmpd_posterior). Runs on the
+# diffusion prior read from the FM model, like SDA. NON-PAPER baseline: not a
+# member of the unified observation-interpolant family.
+#
+# No tuned hyperparameters: TMPD has no guidance scale, no gamma, no damping. The
+# only knob is the covariance approximation below, a cost/accuracy choice.
+# Linear observation operators only (NotImplementedError otherwise).
+name: TMPD
+stepper: sde
+
+likelihood_model:
+  _target_: scisi.likelihood_models.tmpd.TMPDLikelihood
+  # NOTE: the analytical / Lorenz 96 drivers construct TMPDLikelihood directly and
+  # read the knobs below from this block (Lorenz 96: configs/case/lorenz96.yaml
+  # `methods.tmpd` instead).
+
+  # full     : TMPD proper -- d_y VJPs per step and member, dense d_y x d_y solve.
+  # diagonal : same d_y VJPs, keeps only diag(H C H^T).
+  # row_sum  : DTMPD -- the paper's variant for all its image experiments: two VJPs
+  #            per step whatever d_y, diag = row sums of H C H^T. The cheap choice
+  #            for high-dimensional observations (NS / urban scale).
+  covariance: full
+
+  # VJP cotangents batched per autograd call when building J^T H^T (full/diagonal).
+  vjp_chunk_size: 64
+
+posterior_model:
+  _target_: scisi.posterior_models.tmpd_posterior.TMPDPosterior
+  # score_substitution (faithful TMPD) | g_squared (SDA footing, ablation only).
+  guidance_weight: score_substitution

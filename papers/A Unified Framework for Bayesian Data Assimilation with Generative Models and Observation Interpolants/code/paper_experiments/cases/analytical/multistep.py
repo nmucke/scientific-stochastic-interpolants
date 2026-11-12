@@ -53,8 +53,10 @@ from scisi.likelihood_models.gaussian_likelihood import (
 )
 from scisi.likelihood_models.guidance import FIGGaussianLikelihood
 from scisi.likelihood_models.sda import SDALikelihood
+from scisi.likelihood_models.tmpd import TMPDLikelihood
 from scisi.posterior_models.dflow_posterior import DFlowPosterior
 from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
+from scisi.posterior_models.tmpd_posterior import TMPDPosterior
 from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.posterior_models.flow_matching_posterior import (
     FlowMatchingPosterior,
@@ -746,6 +748,19 @@ class MultistepRunner(AnalyticalRunner):
                     ess_threshold=float(hp(post, "ess_threshold", 0.5)),
                     diffusion_term=None,
                 )
+            )
+            base, nfe = None, M
+        elif method == Method.TMPD:
+            # Same diffusion prior as SDA (FullFirstStepDiffusionModel from cycle 2).
+            model = self._dm_model(system, cycle)
+            likelihood = TMPDLikelihood(
+                model=model, obs_operator=operator, variance=variance,
+                model_class="fm", covariance=str(hp(lik, "covariance", "full")),
+                vjp_chunk_size=int(hp(lik, "vjp_chunk_size", 64)),
+            )
+            posterior = TMPDPosterior(
+                model=model, likelihood_model=likelihood,
+                guidance_weight=str(hp(post, "guidance_weight", "score_substitution")),
             )
             base, nfe = None, M
         elif method == Method.GUIDED_FM_FIG:

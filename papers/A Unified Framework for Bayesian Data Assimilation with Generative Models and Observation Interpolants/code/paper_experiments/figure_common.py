@@ -88,6 +88,7 @@ SERIES: tuple[tuple, ...] = (
     ("SURGE (FlowDAS)", None, "FlowDAS + SURGE", "#E69F00", "-", "v", True),
     ("SDA", None, "SDA", "#8C510A", "-", "P", True),
     ("SURGE (SDA)", None, "SDA + SURGE", "#6A3D9A", "-", "X", True),
+    ("TMPD", None, "TMPD", "#A6761D", "-", "<", True),
     ("D-Flow SGLD", None, "D-Flow SGLD", "#808000", "-", "h", True),
     ("Guided FM (FIG)", None, "Guided FM (FIG)", "#F0027F", "-", "*", True),
     ("EnKF", None, "EnKF", "#000000", ":", "p", True),

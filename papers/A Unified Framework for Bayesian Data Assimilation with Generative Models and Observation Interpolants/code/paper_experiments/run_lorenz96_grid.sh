@@ -34,7 +34,7 @@ export PY FORCE METRICS
 for seed in $SEEDS; do
   # The plain cells first, then *_fc (the forecast-residual correction) and
   # prior_enkf* (trained prior + EnKF).
-  for method in si_sde fm_ode dm_sde enkf enkf_large oracle pf_matched pf_subsample \
+  for method in si_sde fm_ode dm_sde tmpd enkf enkf_large oracle pf_matched pf_subsample \
       si_sde_fc fm_ode_fc dm_sde_fc prior_enkf prior_enkf_fm oracle_fc; do
     echo "$method $seed"
   done

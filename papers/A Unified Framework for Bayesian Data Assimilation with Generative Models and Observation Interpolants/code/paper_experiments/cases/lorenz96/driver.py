@@ -93,6 +93,7 @@ CELLS = {
     "si_sde": (Method.OURS_SI_SDE, None),
     "fm_ode": (Method.OURS_FM_ODE, None),
     "dm_sde": (Method.OURS_DM_SDE, None),
+    "tmpd": (Method.TMPD, None),
     "si_sde_fc": (Method.OURS_SI_SDE, FC_VARIANT),
     "fm_ode_fc": (Method.OURS_FM_ODE, FC_VARIANT),
     "dm_sde_fc": (Method.OURS_DM_SDE, FC_VARIANT),
@@ -112,6 +113,10 @@ GENERATIVE = {
     for name, (method, _) in CELLS.items()
     if method.name.startswith("OURS_") and name not in CORRECTED
 }
+# Diffusion-model baselines on the FM prior: run like a plain sampler, but they
+# are not ours (no correction cell, not a prior for prior_enkf).
+DM_BASELINES = {"tmpd": Method.TMPD}
+SAMPLERS = {**GENERATIVE, **DM_BASELINES}
 # Cells that take no settings: an override or a tuning grid would be ignored.
 NO_SETTINGS = ("oracle", "pf_matched", "pf_subsample", "pf_reference")
 # Cells whose step-0 members are not ``initial_ensemble``: their first innovation is
@@ -682,7 +687,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
     block = settings.pop("correction", {}) if name in CORRECTED else None
     # A corrected cell runs its plain cell's sampler and seed stream.
     base_name = CORRECTED.get(name, name)
-    method = GENERATIVE[base_name]
+    method = SAMPLERS[base_name]
     run = cfg.checkpoints.si_run if base_name == "si_sde" else cfg.checkpoints.fm_run
     settings = SamplerSettings(**settings)
     stats = Standardisation.from_data(DATA_PATH, problem)
@@ -1114,6 +1119,7 @@ class Lorenz96Runner(ExperimentRunner):
         Method.OURS_SI_SDE: "si_sde",
         Method.OURS_FM_ODE: "fm_ode",
         Method.OURS_DM_SDE: "dm_sde",
+        Method.TMPD: "tmpd",
         Method.ENKF: "enkf",
         Method.PARTICLE_FILTER: "pf_matched",
     }

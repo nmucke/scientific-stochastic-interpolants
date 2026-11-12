@@ -41,6 +41,7 @@ SERIES = (
     ("Ours (SI-SDE)", "", "Ours SI-SDE", "#0072B2", "-"),
     ("Ours (DM-SDE)", "", "Ours DM-SDE", "#009E73", "-"),
     ("Ours (FM-ODE)", "", "Ours FM-ODE", "#CC79A7", "-"),
+    ("TMPD", "", "TMPD", "#A6761D", "-"),
     ("Ours (SI-SDE)", "forecast_correction", "Ours SI-SDE + correction", "#0072B2", "--"),
     ("Ours (DM-SDE)", "forecast_correction", "Ours DM-SDE + correction", "#009E73", "--"),
     ("Ours (FM-ODE)", "forecast_correction", "Ours FM-ODE + correction", "#CC79A7", "--"),

@@ -108,6 +108,9 @@ METHOD_LATEX_LABEL: dict[Method, str] = {
     Method.GUIDED_FM_OTODE: r"Guided FM (OT-ODE) \cite{pokle_training-free_2024}",
     Method.D_FLOW_SGLD: r"D-Flow SGLD \cite{ben-hamu_d-flow_2024}",
     Method.SDA: r"SDA \cite{rozet_score-based_2023}",
+    # TMPD is wired (analytical, Lorenz 96) but on no table lineup yet; the label
+    # is here so adding it to a lineup needs no other edit.
+    Method.TMPD: r"TMPD \cite{boys_tweedie_2024}",
     Method.SURGE: r"SURGE",
     Method.SURGE_SDA: r"SDA + SURGE",
     Method.SURGE_FLOWDAS: r"FlowDAS + SURGE",

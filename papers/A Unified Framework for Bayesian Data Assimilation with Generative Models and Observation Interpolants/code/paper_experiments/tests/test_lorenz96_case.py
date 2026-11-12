@@ -193,7 +193,7 @@ def tiny_case(tmp_path, monkeypatch):
     cfg.evaluation.device = "cpu"
     cfg.evaluation.enkf_large_size = 12
     cfg.evaluation.reference_particles = 256
-    for name in driver.GENERATIVE:
+    for name in driver.SAMPLERS:  # the plain samplers and the DM baselines (TMPD)
         cfg.methods[name].num_steps = 3
         cfg.methods[name].likelihood_mode = "dps_jacobian_free"
     for name in driver.PRIOR_ENKF:

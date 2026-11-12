@@ -62,7 +62,8 @@ class SamplerSettings:
     num_steps: int = 50
     likelihood_mode: str = "inflated"
     jacobian_damping: float = 1.0
-    diffusion_scale: float = 1.0  # DM-SDE only
+    diffusion_scale: float = 1.0  # DM-SDE and TMPD
+    covariance: str = "full"  # TMPD only: full | diagonal | row_sum (DTMPD)
 
 
 def build_obs_operator(problem: Problem) -> LinearObservationOperator:
@@ -97,7 +98,9 @@ def build_posterior(
     stats: Standardisation,
     settings: SamplerSettings,
 ):
-    """Return ``(posterior, stepper)`` for one of the three samplers."""
+    """Return ``(posterior, stepper)`` for one of the three samplers or TMPD."""
+    if method is Method.TMPD:
+        return build_tmpd_posterior(model, problem, stats, settings), euler_maruyama_step
     is_si = method is Method.OURS_SI_SDE
     likelihood = InterpolantGaussianLikelihood(
         model=model,
@@ -128,6 +131,33 @@ def build_posterior(
     raise ValueError(f"Not a generative method: {method}")
 
 
+def build_tmpd_posterior(model, problem: Problem, stats: Standardisation, settings: SamplerSettings):
+    """TMPD (boys_tweedie_2024) on the FM prior read as a diffusion model.
+
+    The score comes from the trained velocity (score--velocity duality, anchor 0),
+    as for the SDA baseline elsewhere. The reverse SDE uses the same
+    endpoint-vanishing ``g = diffusion_scale * sqrt(alpha beta)`` as the DM-SDE cell.
+    The FM model is passed as is, with that ``g`` given explicitly, so the
+    ``tau = 0`` step keeps the velocity (drift ``v + 1/2 g^2 s = v`` there): the
+    same full first step as ``FullFirstStepDiffusionModel`` in the multistep
+    analytical case, which matters in a sequential case (the stock
+    ``DenoiseDiffusionModel`` first step drops ``v dt``). Only the network forward
+    is counted by the NFE counter; the per-step VJPs are not.
+    """
+    from scisi.likelihood_models.tmpd import TMPDLikelihood
+    from scisi.posterior_models.tmpd_posterior import TMPDPosterior
+
+    likelihood = TMPDLikelihood(
+        model=model,
+        obs_operator=build_obs_operator(problem),
+        variance=problem.obs_variance / stats.std**2,
+        model_class="fm",
+        covariance=settings.covariance,
+    )
+    diffusion = endpoint_vanishing_diffusion(model.interpolation, settings.diffusion_scale)
+    return TMPDPosterior(model=model, likelihood_model=likelihood, diffusion_term=diffusion)
+
+
 def assimilate(
     posterior,
     stepper,
@@ -151,7 +181,7 @@ def assimilate(
     """
     num_sequences, members, d = initial.shape
     steps = observations.shape[1]
-    mode = posterior.likelihood_model.likelihood_mode
+    mode = getattr(posterior.likelihood_model, "likelihood_mode", None)  # TMPD has none
     if num_sequences > 1 and mode == "inflated_shared":
         raise ValueError("inflated_shared averages over the batch, mixing sequences.")
     torch.manual_seed(int(seed))
