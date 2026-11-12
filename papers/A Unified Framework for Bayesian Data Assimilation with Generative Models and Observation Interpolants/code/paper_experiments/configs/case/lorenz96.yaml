@@ -146,7 +146,7 @@ methods_arctan:
   si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
   fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
   dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
-  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: exact}}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
   fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
   dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
   # q_source exact linearises h at each group's forecast mean for K_q (library).
