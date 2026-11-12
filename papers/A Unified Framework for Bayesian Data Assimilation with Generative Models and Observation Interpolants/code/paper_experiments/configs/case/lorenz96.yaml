@@ -141,30 +141,30 @@ methods:
 # Keep one plain block per cell, as above, so a new cell is added by copying its
 # `methods:` line here.
 methods_arctan:
-  enkf: {inflation: 1.0, localisation: null}
-  enkf_large: {inflation: 1.0, localisation: null}
-  si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
-  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  enkf: {inflation: 1.0, localisation: 4}
+  enkf_large: {inflation: 1.0, localisation: 8}
+  si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: exact}}
   fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
-  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
   # q_source exact linearises h at each group's forecast mean for K_q (library).
   oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
   prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
   prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
   # Generative baselines: see the comments in `methods:`.
-  flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
-  sda: {num_steps: 50, gamma_sda: 0.01}
-  dflow: {num_steps: 50, step_size: 0.005, noise_scale: 0.001, lambda_reg: 0.0001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
-  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1.0, interpolant_noise: 0.0}
+  flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
+  sda: {num_steps: 50, gamma_sda: 0.001}
+  dflow: {num_steps: 50, step_size: 0.02, noise_scale: 0.001, lambda_reg: 0.001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
+  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1, interpolant_noise: 0.0}
   # SURGE SMC cells: see the comments in `methods:`.
   surge_si_sde: {ess_threshold: 0.5}
-  surge_dm_sde: {ess_threshold: 0.5}
+  surge_dm_sde: {ess_threshold: 0.25}
   surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
   surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
-  surge_flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
-  surge_sda: {num_steps: 50, gamma_sda: 0.01, ess_threshold: 0.5}
+  surge_flowdas: {num_steps: 50, guidance_scale: 0.016, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 0.001, ess_threshold: 0.5}
 
 # The arctan one-step oracle (`oracle`, `oracle_fc` with --obs arctan) has no closed
 # form: per member, `proposals` draws from the exact transition, weighted by
