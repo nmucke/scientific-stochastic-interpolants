@@ -87,8 +87,9 @@ one row per (method, seed) before aggregation.
 - `convergence_study.py` — the covariance-mode ablation (per-member exact ≡
   shared in the linear case; isotropic Jacobian-free plateaus).
 
-KL / sliced-`W2` estimators are reused from
-`paper/scripts/analytical_utils/kl_divergence.py`.
+KL / sliced-`W2` estimators are in `_metrics.py`, moved verbatim from the untracked
+`archive/paper/scripts/analytical_utils/kl_divergence.py`; `tests/test_analytical_metrics.py`
+pins them to that module's outputs. The case no longer needs `archive/`.
 
 ## How to run
 

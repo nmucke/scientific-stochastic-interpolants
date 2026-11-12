@@ -15,6 +15,21 @@ problem:
   prior_std: 1.0
   num_steps: 50       # assimilation steps per sequence
 
+# Observation operators, selected with `driver.py --obs <name>` / `pf_gate.py --obs
+# <name>` / `driver.case_config(obs=<name>)`, which put the entry into
+# `problem.observation` (linear adds nothing, so the linear problem, its data and its
+# references are exactly those above). Both act on the same sites L x (every
+# obs_stride-th) in PHYSICAL units, with the same noise N(0, obs_variance I), the same
+# truths and the same noise draws; only h differs. Results: results/lorenz96/<name>/.
+observations:
+  linear: {operator: linear}
+  # h(x) = arctan(c L x) / c with c = 1 / sigma_clim. sigma_clim = per-site
+  # climatological std of the training split of data/lorenz96/data.npz (trajectories
+  # 0-3799, all 1000 steps, 3.8M states): per site 3.9838 - 3.9900, pooled
+  # sqrt(mean_i var_i) = 3.986648 (the stored all-entries std is 3.986649). So
+  # c = 1 / 3.986648 = 0.2508373. Not tuned; no strength sweep.
+  arctan: {operator: arctan, strength: 0.2508373}
+
 # Trained priors, under checkpoints/lorenz96/.
 checkpoints:
   si_run: si
@@ -26,18 +41,23 @@ evaluation:
   ensemble_size: 64        # E, matched across generative methods and EnKF
   enkf_large_size: 2000
   seeds: [0, 1, 2]        # also read by run.py through Lorenz96Runner
+  tuning_steps: 20         # tune on the first 20 of the 50 steps (user, 2026-11-10: cost)
   device: auto             # samplers only: cuda, then mps, then cpu
   reference_particles: 4000000
   reference_replicates: 2  # the second one measures the reference's own error
 
-# NOT TUNED YET: these are defaults, not chosen values. Set them from `driver.py tune`
-# on the validation split only (see GPU_HANDOFF.md) before the final grid.
+# Every generative method is tuned at M = num_steps = 50 (lorenz96_lineup.HEADLINE_M;
+# `tune` refuses another M without --allow-other-m) and the final grid runs it at
+# every M of lorenz96_lineup.M_VALUES with these picks (`cell --num-steps M`).
+# NOT TUNED YET: these are defaults, not chosen values. `run_lorenz96.sh tune <obs>`
+# then `run_lorenz96.sh apply <obs>` write the validation picks into this block
+# (`methods_arctan:` for arctan) before the final grid.
 methods:
-  enkf: {inflation: 1.0, localisation: null}
-  enkf_large: {inflation: 1.0, localisation: null}
-  si_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  fm_ode: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0}
-  dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
+  enkf: {inflation: 1.0, localisation: 4}
+  enkf_large: {inflation: 1.0, localisation: 8}
+  si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
 
   # Forecast-residual correction (FORECAST_CORRECTION.md, variant A). A `<cell>_fc`
   # cell runs the plain cell's sampler settings above (and its seed stream) with
@@ -61,9 +81,9 @@ methods:
   # untuned `inflated` M=50 defaults, NOT the dps_jacobian_free M=25 these gains were
   # chosen at. The final grid as configured does not reproduce the validation table;
   # set the plain sampler blocks first, then re-tune the correction.
-  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
-  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
-  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
+  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
   # Exact per-member kernel + correction, with the exact transition variance for K_q.
   # Radius 4 of {none, 2, 4, 8} on validation.
   oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
@@ -71,5 +91,83 @@ methods:
   # inflation / localisation are the `enkf` cell's keys; num_steps (and diffusion_scale
   # for a DM-SDE prior) set the prior's forecast solver. inflation 1.0 and radius 4
   # are the EnKF's validation optimum, not re-tuned for this cell.
-  prior_enkf: {prior: si_sde, num_steps: 25, inflation: 1.0, localisation: 4}
-  prior_enkf_fm: {prior: fm_ode, num_steps: 25, inflation: 1.0, localisation: 4}
+  prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
+  prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+
+  # Generative baselines (cases/lorenz96/_l96_baselines.py): each posterior is built
+  # by the Navier--Stokes build_posterior from configs/method/<file>.yaml with the
+  # knobs below substituted as scalars. Every knob must be set here (no fallback to
+  # a table's `default:`); unknown keys are refused, and so is any FLOWDAS_* /
+  # SDA_* / FIG_* / DFLOW_* environment override. Networks as on NS: FlowDAS on the
+  # SI prior, SDA on the FM-derived diffusion prior, D-Flow and FIG on the FM prior.
+  # num_steps is M (50 when tuning); for D-Flow it is the SGLD chain length, and the
+  # differentiable rollout keeps ode_steps midpoint steps.
+  # NOT TUNED: the values are the `analytical` case's M=50 entries of the method
+  # YAMLs (the other vector-state case), not chosen on Lorenz 96. Where they
+  # differ from the tables' `default:` that is noted. Tune on validation only.
+  # FlowDAS: zeta (table default: 1.0), J, per-member score cap, MC chunking (memory only)
+  flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
+  # SDA: gamma in Gamma = R + gamma (sigma/mu)^2 H H^T (= table default)
+  sda: {num_steps: 50, gamma_sda: 0.0001}
+  # D-Flow SGLD: eta, s, lambda, omega, delta, ode_steps (= table defaults / fixed
+  # scalars). The method YAML's burn reaches build_posterior unchanged; DFlowPosterior
+  # never reads it (it returns the chain endpoint).
+  dflow: {num_steps: 50, step_size: 0.02, noise_scale: 0.001, lambda_reg: 0.001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
+  # FIG: k (= table default), c (table default: 10.0), w (fixed 0)
+  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1, interpolant_noise: 0.0}
+  # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
+  # One sequence per sampler call (SURGE normalises its weights over every member
+  # it is given); N = E = 64 particles, one per member (no particles-per-member knob
+  # exists). ess_threshold: resample when ESS/N falls below it (0.5 = multistep and
+  # configs/method/surge_*.yaml). Unknown keys are refused.
+  # Ours inside SURGE, built as the multistep case (SDE only): like a `_fc` cell it
+  # runs the plain si_sde / dm_sde block above (inherited, so tuning the plain cell
+  # moves it too); its own block adds ess_threshold.
+  surge_si_sde: {ess_threshold: 1.0}
+  surge_dm_sde: {ess_threshold: 0.25}
+  # The same SMC proposing from the unguided prior, one per wrapped prior.
+  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.25}
+  # NS constructions (_ns_pipeline.build_posterior); every knob of
+  # configs/method/surge_{flowdas,sda}.yaml is set here as a scalar (no NS tables;
+  # NS env overrides are refused). Values are those files' `default:` entries.
+  # guidance_scale = FlowDAS zeta; num_mc_samples = J; max_grad_norm null = no cap.
+  surge_flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 1.0e-05, ess_threshold: 0.5}
+
+# Settings of the arctan problem (`--obs arctan`), read instead of `methods:` by
+# case_config("arctan"). NOT TUNED: a verbatim copy of the linear `methods:`
+# block above (themselves untuned defaults); tune on the arctan validation split.
+# Keep one plain block per cell, as above, so a new cell is added by copying its
+# `methods:` line here.
+methods_arctan:
+  enkf: {inflation: 1.0, localisation: 4}
+  enkf_large: {inflation: 1.0, localisation: 8}
+  si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
+  dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
+  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.5, q_source: online}}
+  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
+  # q_source exact linearises h at each group's forecast mean for K_q (library).
+  oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
+  prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
+  prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
+  # Generative baselines: see the comments in `methods:`.
+  flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
+  sda: {num_steps: 50, gamma_sda: 0.001}
+  dflow: {num_steps: 50, step_size: 0.02, noise_scale: 0.001, lambda_reg: 0.001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
+  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1, interpolant_noise: 0.0}
+  # SURGE SMC cells: see the comments in `methods:`.
+  surge_si_sde: {ess_threshold: 0.5}
+  surge_dm_sde: {ess_threshold: 0.25}
+  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
+  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+  surge_flowdas: {num_steps: 50, guidance_scale: 0.016, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+  surge_sda: {num_steps: 50, gamma_sda: 0.001, ess_threshold: 0.5}
+
+# The arctan one-step oracle (`oracle`, `oracle_fc` with --obs arctan) has no closed
+# form: per member, `proposals` draws from the exact transition, weighted by
+# p(y | h(x)), one picked (ImportanceOneStepOracle). Its per-member ESS is recorded.
+oracle_arctan:
+  proposals: 4096

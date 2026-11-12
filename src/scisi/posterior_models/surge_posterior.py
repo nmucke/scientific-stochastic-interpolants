@@ -643,13 +643,31 @@ class SurgeLiftedFlowMatchingPosterior(SurgeFlowMatchingPosterior):
         )
 
 
+#: Denoisers of :class:`SurgeStochasticInterpolantPosterior` (``si_denoiser``).
+SI_DENOISERS = ("velocity", "follmer")
+
+
 class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
     """SURGE on a stochastic-interpolant prior (source ``delta_{x0}``, ``a0 = x0``).
 
-    Reward denoiser: SI Tweedie ``xhat_1 = (x + sigma^2 s - alpha x0) / beta`` with
-    the score ``s`` recovered from the trained SI velocity ``b_theta`` via
-    ``interpolation.score_from_velocity`` (anchor ``a0 = x0``). Plug any SI
-    observation-score approximation (``FlowdasGaussianLikelihood``,
+    Reward denoiser ``xhat_1 = E[x_1 | x_t]`` from the trained SI drift ``b_theta``
+    (anchor ``a0 = x0``), chosen by ``si_denoiser``:
+
+    * ``"velocity"`` (default, the historical behaviour, bitwise unchanged): SI
+      Tweedie ``xhat_1 = (x + sigma^2 s - alpha x0) / beta`` with the score from
+      ``interpolation.score_from_velocity(v=b_theta)``. That identity is for the
+      path VELOCITY; ``b_theta`` is the Follmer drift, which differs from it by the
+      score term, so this divides by ``beta a_tau`` where ``beta (a_tau + 1/2
+      gamma^2)`` is right and ``xhat_1`` is biased.
+    * ``"follmer"``: the exact inversion of the Follmer drift, as
+      ``InterpolantGaussianLikelihood._source_mean_si`` and
+      ``FollmerStochasticInterpolant._prior_score``: ``xhat_1 = (x - alpha x0 -
+      mu_s) / beta`` with ``mu_s = -gamma^2 t A_tau (beta b - c_tau)``,
+      ``A_tau = 1 / (t gamma (beta' gamma - beta gamma'))``,
+      ``c_tau = beta' x + (beta alpha' - beta' alpha) x0`` and ``gamma`` the
+      interpolation's own (native) gamma. Exact for an exact drift.
+
+    Plug any SI observation-score approximation (``FlowdasGaussianLikelihood``,
     ``SDALikelihood(model_class='si')``, ...) as ``likelihood_model``.
     """
 
@@ -664,7 +682,10 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
         ess_threshold: float = 0.5,
         likelihood_model: Optional[nn.Module] = None,
         diffusion_term: Optional[Callable] = None,
+        si_denoiser: str = "velocity",
     ) -> None:
+        if si_denoiser not in SI_DENOISERS:
+            raise ValueError(f"si_denoiser must be one of {SI_DENOISERS}, got {si_denoiser!r}")
         super().__init__(
             model=model,
             obs_operator=obs_operator,
@@ -675,6 +696,7 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
             diffusion_term=diffusion_term,
             gaussian_base=False,  # SI: point-mass delta_{x0} init.
         )
+        self.si_denoiser = si_denoiser
 
     def _denoise(
         self,
@@ -685,19 +707,27 @@ class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
         pars_cond: Optional[torch.Tensor],
         velocity: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """SI Tweedie denoiser xhat_1 = (x + sigma^2 s - alpha x0) / beta."""
+        """``E[x_1 | x_t]`` from the SI drift (``si_denoiser``, class docstring)."""
         t = torch.clamp(t, min=MIN_TIME, max=1.0 - MIN_TIME)
         t_grid = t.reshape(t.shape[0], *([1] * (x.dim() - 1))) if t.dim() < x.dim() else t
-        alpha = self.interpolation.alpha(t_grid)
-        beta = self.interpolation.beta(t_grid)
-        sigma = self.interpolation.sigma(t_grid)
+        interp = self.interpolation
+        alpha = interp.alpha(t_grid)
+        beta = interp.beta(t_grid)
         a0 = field_history[..., -1]  # SI anchor x0
         v = (
             velocity
             if velocity is not None
             else self.model.drift(x, t, field_history, field_cond, pars_cond)
         )
-        score = self.interpolation.score_from_velocity(x=x, v=v, t=t_grid, a0=a0)
+        if self.si_denoiser == "follmer":
+            gamma = interp.gamma(t_grid)
+            beta_diff = interp.beta_diff(t_grid)
+            A = 1.0 / (t_grid * gamma * (beta_diff * gamma - beta * interp.gamma_diff(t_grid)))
+            c = beta_diff * x + (beta * interp.alpha_diff(t_grid) - beta_diff * alpha) * a0
+            mu_s = -(gamma**2) * t_grid * A * (beta * v - c)
+            return (x - alpha * a0 - mu_s) / beta
+        sigma = interp.sigma(t_grid)
+        score = interp.score_from_velocity(x=x, v=v, t=t_grid, a0=a0)
         return (x + sigma**2 * score - alpha * a0) / beta
 
     def _lik_kwargs(self, x, t, field_history, field_cond, pars_cond, prior_drift) -> dict:
@@ -751,6 +781,7 @@ class SurgePosterior(SurgeFlowMatchingPosterior):
 
 
 __all__ = [
+    "SI_DENOISERS",
     "SurgePosteriorBase",
     "SurgeFlowMatchingPosterior",
     "SurgeLiftedFlowMatchingPosterior",

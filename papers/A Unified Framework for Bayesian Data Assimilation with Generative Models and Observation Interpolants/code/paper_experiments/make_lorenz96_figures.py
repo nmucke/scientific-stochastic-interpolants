@@ -1,21 +1,28 @@
-"""Produce the figures of the Lorenz 96 case.
+"""Produce the figures of the Lorenz 96 case, per observation sweep.
 
 * ``lorenz96_<metric>_vs_step`` -- each metric against the assimilation step, from
-  ``results/lorenz96/aggregated/per_step.csv``.
+  ``results/lorenz96/<obs>/aggregated/per_step.csv``; the ``smc_*`` figures hold the
+  SMC cells only (the others do not write those metrics). Generative cells are drawn
+  at M=50 (``lorenz96_lineup.HEADLINE_M``).
+* ``lorenz96_<metric>_vs_M``    -- the cycle-averaged metric (``all.csv``, mean +/- std
+  over seeds) against M on a log axis, one line per generative cell, with the
+  PF E-draw floor, EnKF and the oracle as horizontal lines (``VS_M_METRICS``).
 * ``lorenz96_ess``              -- effective sample size of the reference over time.
 
-Only the default variants in ``SERIES`` are drawn; tagged sweep cells
+Figures go to ``figures/lorenz96/<obs>/`` (``--out`` replaces that directory for a
+single sweep). Only the default variants in ``SERIES`` are drawn; tagged sweep cells
 (``driver.py cell --tag``, variant ``<variant>_<tag>``) are in the aggregated CSVs
 but not in these figures.
 
-    python paper_experiments/make_lorenz96_figures.py
-    python paper_experiments/make_lorenz96_figures.py --out <dir>
+    python paper_experiments/make_lorenz96_figures.py [--obs linear|arctan]
+    python paper_experiments/make_lorenz96_figures.py --obs linear --out <dir>
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -34,54 +41,110 @@ from figure_common import (  # noqa: E402
     _save_fig,
     apply_style,
 )
+from lorenz96_lineup import (  # noqa: E402
+    CASE,
+    ENERGY_DISTANCE,
+    KL_KNN,
+    M_REFERENCE_LINES,
+    M_VALUES,
+    OBS_CHOICES,
+    ROW_BY_CELL,
+    ROW_OF,
+    ROWS,
+    SMC_ESS_FRACTION,
+    SMC_ESS_MIN_FRACTION,
+    SMC_RESAMPLES,
+    as_m,
+    norm_variant,
+    pick_m,
+    read_aggregated,
+    sweep_root,
+)
 
-CASE = "lorenz96"
-# (method, variant, label, colour, linestyle); colours follow figure_common.
-SERIES = (
-    ("Ours (SI-SDE)", "", "Ours SI-SDE", "#0072B2", "-"),
-    ("Ours (DM-SDE)", "", "Ours DM-SDE", "#009E73", "-"),
-    ("Ours (FM-ODE)", "", "Ours FM-ODE", "#CC79A7", "-"),
-    ("Ours (SI-SDE)", "forecast_correction", "Ours SI-SDE + correction", "#0072B2", "--"),
-    ("Ours (DM-SDE)", "forecast_correction", "Ours DM-SDE + correction", "#009E73", "--"),
-    ("Ours (FM-ODE)", "forecast_correction", "Ours FM-ODE + correction", "#CC79A7", "--"),
-    ("One-step oracle", "", "One-step oracle", "#D55E00", "--"),
-    ("One-step oracle", "forecast_correction", "Oracle + correction", "#D55E00", "-"),
-    ("EnKF", "trained_prior_si", "SI prior + EnKF", "#56B4E9", ":"),
-    ("EnKF", "trained_prior_fm", "FM prior + EnKF", "#56B4E9", "-."),
-    ("EnKF", "matched", "EnKF (matched E)", "#000000", ":"),
-    ("EnKF", "large", "EnKF (large E)", "#000000", "-."),
-    ("Particle filter", "matched", "PF (matched E)", "#E69F00", ":"),
-    ("Particle filter", "reference_subsample", "PF reference, E draws", "#666666", "--"),
-    ("Particle filter", "reference", "PF reference", "#666666", "-"),
+# (method, variant, legend label, colour, linestyle), from lorenz96_lineup.ROWS.
+SERIES = tuple(
+    (row.method, row.variant, row.legend_label, row.colour, row.style) for row in ROWS
 )
 METRICS = {
     "mean_error_vs_pf": "mean error vs PF (post. std)",
     "var_error_vs_pf": "log-variance error vs PF",
     "sliced_w2": "sliced $W_2$ to PF",
+    KL_KNN: "k-NN KL to PF",
+    ENERGY_DISTANCE: "energy distance to PF",
     "rmse": "RMSE vs truth",
     "spread": "spread",
     "crps": "CRPS",
     "diverged_fraction": "diverged members",
+    SMC_ESS_FRACTION: "ESS / particles (SMC)",
+    SMC_ESS_MIN_FRACTION: "min ESS / particles (SMC)",
+    SMC_RESAMPLES: "resampling events (SMC)",
 }
+# Metrics of the metric-vs-M figures (the cycle-averaged values of all.csv).
+VS_M_METRICS = (KL_KNN, ENERGY_DISTANCE, "sliced_w2", "mean_error_vs_pf")
 
 
-def load_curves(metric: str) -> dict[tuple[str, str], dict[int, float]]:
-    curves: dict[tuple[str, str], dict[int, float]] = defaultdict(dict)
-    path = RESULTS / CASE / "aggregated" / "per_step.csv"
+def load_curves(metric: str, obs: str = "linear") -> dict[tuple[str, str], dict[int, float]]:
+    """Per-step curves at the headline M (generative rows) or the one M recorded."""
+    by_m: dict[tuple[str, str], dict] = defaultdict(lambda: defaultdict(dict))
+    path = sweep_root(RESULTS, obs) / "aggregated" / "per_step.csv"
     if not path.exists():
-        return curves
+        return {}
     with open(path, encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
             if row["metric"] == metric:
-                key = (row["method"], row.get("variant") or "")
-                curves[key][int(float(row["step"]))] = float(row["value"])
+                key = (row["method"], norm_variant(row.get("variant")))
+                by_m[key][as_m(row.get("M"))][int(float(row["step"]))] = float(row["value"])
+    curves = {}
+    for key, entries in by_m.items():
+        row = ROW_OF.get(key)
+        if row is None:  # not drawn; kept for the renamed-method check
+            curves[key] = next(iter(entries.values()))
+        elif (curve := pick_m(entries, row)) is not None:
+            curves[key] = curve
     return curves
 
 
-def plot_metric(metric: str, label: str, out: Path) -> None:
-    curves = load_curves(metric)
+def load_vs_m(metric: str, obs: str = "linear") -> dict[tuple[str, str], dict]:
+    """``{(method, variant): {M: (mean, std, n)}}`` of the cycle-averaged scalar."""
+    data = read_aggregated(sweep_root(RESULTS, obs) / "aggregated" / "all.csv")
+    return {key: metrics[metric] for key, metrics in data.items() if metric in metrics}
+
+
+def plot_vs_m(metric: str, label: str, out: Path, obs: str = "linear") -> None:
+    """Metric against M, one line per generative cell, M-independent rows as lines."""
+    data = load_vs_m(metric, obs)
+    lines = [r for r in ROWS if r.generative and any(m in M_VALUES for m in data.get((r.method, r.variant), {}))]
+    if not lines:
+        print(f"[{obs}] no {metric} values at several M, skipped")
+        return
+    fig, ax = plt.subplots(figsize=(2 * SINGLE_FIGSIZE[0], 2 * SINGLE_FIGSIZE[1]))
+    for row in lines:
+        entries = data[(row.method, row.variant)]
+        ms = [m for m in M_VALUES if m in entries]
+        means = [entries[m][0] for m in ms]
+        stds = [entries[m][1] if math.isfinite(entries[m][1]) else 0.0 for m in ms]
+        ax.errorbar(ms, means, yerr=stds, color=row.colour, ls=row.style, marker="o",
+                    ms=3, capsize=2, label=row.legend_label)
+    for cell in M_REFERENCE_LINES:
+        row = ROW_BY_CELL[cell]
+        entry = pick_m(data.get((row.method, row.variant), {}), row)
+        if entry is not None and math.isfinite(entry[0]):
+            ax.axhline(entry[0], color=row.colour, ls=row.style, lw=0.8, label=row.legend_label)
+    ax.set_xscale("log")
+    ax.set_xticks(list(M_VALUES))
+    ax.set_xticklabels([str(m) for m in M_VALUES])
+    ax.minorticks_off()
+    ax.set_xlabel("steps per assimilation step $M$")
+    ax.set_ylabel(label)
+    ax.legend(fontsize=6, ncol=2, frameon=False)
+    _save_fig(fig, out / f"{CASE}_{metric}_vs_M")
+    plt.close(fig)
+
+
+def plot_metric(metric: str, label: str, out: Path, obs: str = "linear") -> None:
+    curves = load_curves(metric, obs)
     if not curves:
-        print(f"no {metric} curves, skipped")
+        print(f"[{obs}] no {metric} curves, skipped")
         return
     known = {(method, variant) for method, variant, *_ in SERIES}
     if not known & set(curves):
@@ -103,8 +166,8 @@ def plot_metric(metric: str, label: str, out: Path) -> None:
     plt.close(fig)
 
 
-def plot_ess(out: Path) -> None:
-    runs = sorted((RESULTS / CASE / "reference" / "test").glob("*_replicate0.pt"))
+def plot_ess(out: Path, obs: str = "linear") -> None:
+    runs = sorted((sweep_root(RESULTS, obs) / "reference" / "test").glob("*_replicate0.pt"))
     if not runs:
         return
     fig, ax = plt.subplots(figsize=(2 * SINGLE_FIGSIZE[0], 2 * SINGLE_FIGSIZE[1]))
@@ -118,16 +181,32 @@ def plot_ess(out: Path) -> None:
     plt.close(fig)
 
 
+def make_sweep(obs: str, out: Path) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    for metric, label in METRICS.items():
+        plot_metric(metric, label, out, obs)
+    for metric in VS_M_METRICS:
+        plot_vs_m(metric, METRICS[metric], out, obs)
+    plot_ess(out, obs)
+    print(f"[{obs}] wrote figures to {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", type=Path, default=FIGURES_DIR / CASE)
+    parser.add_argument(
+        "--obs",
+        choices=OBS_CHOICES,
+        action="append",
+        help="observation sweep (repeatable); default: every sweep",
+    )
+    parser.add_argument("--out", type=Path, help="output directory (one sweep only)")
     args = parser.parse_args()
-    args.out.mkdir(parents=True, exist_ok=True)
+    sweeps = args.obs or list(OBS_CHOICES)
+    if args.out is not None and len(sweeps) != 1:
+        parser.error("--out needs exactly one --obs, or the sweeps would overwrite each other")
     apply_style()
-    for metric, label in METRICS.items():
-        plot_metric(metric, label, args.out)
-    plot_ess(args.out)
-    print(f"wrote figures to {args.out}")
+    for obs in sweeps:
+        make_sweep(obs, args.out or FIGURES_DIR / CASE / obs)
 
 
 if __name__ == "__main__":

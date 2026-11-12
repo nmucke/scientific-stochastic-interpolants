@@ -32,7 +32,8 @@ from cases.lorenz96.driver import (  # noqa: E402
     score_ensemble,
 )
 from common.paths import REPO_ROOT  # noqa: E402
-from results_schema import Metric, ResultsWriter  # noqa: E402
+from lorenz96_lineup import ROW_BY_CELL, ROWS, SMC_METRICS  # noqa: E402
+from results_schema import Method, Metric, ResultsWriter  # noqa: E402
 
 
 @pytest.fixture
@@ -183,21 +184,28 @@ def test_assimilate_refuses_a_mode_that_mixes_sequences():
         )
 
 
-@pytest.fixture
-def tiny_case(tmp_path, monkeypatch):
-    """A complete small case on disk, with untrained priors."""
-    cfg = driver.case_config()
+TINY_STEPS = 3  # pseudo-steps of every block with a num_steps (baselines, SURGE too)
+
+
+def make_tiny(obs: str, tmp_path, monkeypatch):
+    """A complete small ``obs`` case on disk, with untrained priors: 2 test sequences
+    of 3 steps, E = 6, every sampler at a few pseudo-steps."""
+    cfg = driver.case_config(obs)
     cfg.problem.num_steps = 3
     cfg.evaluation.test_sequences = 2
     cfg.evaluation.ensemble_size = 6
     cfg.evaluation.device = "cpu"
     cfg.evaluation.enkf_large_size = 12
     cfg.evaluation.reference_particles = 256
-    for name in driver.GENERATIVE:
-        cfg.methods[name].num_steps = 3
-        cfg.methods[name].likelihood_mode = "dps_jacobian_free"
-    for name in driver.PRIOR_ENKF:
-        cfg.methods[name].num_steps = 3
+    cfg.oracle_arctan.proposals = 64
+    for name, block in cfg.methods.items():
+        if "num_steps" in block:
+            block.num_steps = TINY_STEPS
+        if "likelihood_mode" in block:
+            block.likelihood_mode = "dps_jacobian_free"
+        if "num_mc_samples" in block:
+            block.num_mc_samples = 4
+    cfg.methods.dflow.ode_steps = 2
     monkeypatch.setattr(driver, "RESULTS", tmp_path)
     problem = driver.problem_of(cfg)
     for index, seq in enumerate(load_sequences(problem, "test", 2)):
@@ -223,19 +231,99 @@ def tiny_case(tmp_path, monkeypatch):
     return cfg
 
 
+@pytest.fixture
+def tiny_case(tmp_path, monkeypatch):
+    return make_tiny("linear", tmp_path, monkeypatch)
+
+
+BASE_METRICS = {
+    Metric.MEAN_ERROR_VS_PF.value,
+    Metric.VAR_ERROR_VS_PF.value,
+    Metric.SLICED_W2.value,
+    driver.KL_KNN,
+    driver.ENERGY_DISTANCE,
+    Metric.RMSE.value,
+    Metric.SPREAD.value,
+    Metric.CRPS.value,
+    Metric.DIVERGED_FRACTION.value,
+    driver.DIVERGED_STEPS,
+}
+
+
+def expected_metrics(name: str, obs: str) -> set[str]:
+    row = ROW_BY_CELL[name]
+    out = set(BASE_METRICS)
+    if name == "pf_reference":  # scored from its stored moments: no members to drop
+        out.discard(Metric.DIVERGED_FRACTION.value)
+    else:
+        out |= {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ}
+    if name != "pf_subsample":
+        out.add(Metric.SECONDS.value)
+    if row.generative:
+        out.add(Metric.NFE.value)
+    if row.smc:
+        out |= set(SMC_METRICS)
+    if obs == "arctan" and name in ("oracle", "oracle_fc"):
+        out |= {driver.ORACLE_ESS_MEAN, driver.ORACLE_ESS_MIN}
+    return out
+
+
+@pytest.mark.parametrize("obs", ["linear", "arctan"])
 @pytest.mark.parametrize("name", sorted(driver.CELLS))
-def test_every_cell_runs_and_writes_tidy_records(tiny_case, name):
-    records = driver.evaluate_cell(name, 0, tiny_case)
-    metrics = {record.metric for record in records}
-    assert {Metric.MEAN_ERROR_VS_PF.value, Metric.RMSE.value} <= metrics
-    assert all(record.seed == 0 for record in records)
-    if name in driver.GENERATIVE:
-        nfe = next(r.value for r in records if r.metric == Metric.NFE.value)
-        assert nfe >= tiny_case.methods[name].num_steps
-    if name != "pf_reference":
-        assert {driver.INNOVATION_LAG1, driver.INNOVATION_MSQ} <= metrics
-    assert driver.cell_path("metrics", name, 0).name.endswith("__traj0__.csv")
-    assert driver.cell_path("per_step", name, 0).exists()
+def test_every_cell_runs_writes_its_metrics_and_is_deterministic(name, obs, tmp_path, monkeypatch):
+    torch.set_num_threads(2)
+    cfg = make_tiny(obs, tmp_path, monkeypatch)
+    records = driver.evaluate_cell(name, 0, cfg, allow_other_m=True, write_metrics=True)
+    assert {r.metric for r in records} == expected_metrics(name, obs)
+    method, variant = driver.CELLS[name]
+    assert all(r.method == method.value and r.variant == variant for r in records)
+    assert {r.scenario for r in records} == {driver.SCENARIOS[obs].value}
+    assert all(r.seed == 0 and r.E for r in records)
+    assert all(r.M == (TINY_STEPS if ROW_BY_CELL[name].generative else None) for r in records)
+    assert all(math.isfinite(r.value) for r in records if r.metric == Metric.RMSE.value)
+    values = {r.metric: r.value for r in records}
+    if Metric.NFE.value in values:
+        assert values[Metric.NFE.value] >= TINY_STEPS - 1
+    for key in SMC_METRICS:
+        if key in values:
+            assert math.isfinite(values[key])
+            if key != SMC_METRICS[-1]:
+                assert 0.0 < values[key] <= 1.0 + 1e-9
+    if driver.ORACLE_ESS_MIN in values:
+        assert 1.0 <= values[driver.ORACLE_ESS_MIN] <= values[driver.ORACLE_ESS_MEAN] <= 64
+    for kind in ("metrics", "per_step"):
+        path = driver.cell_file(kind, name, 0, cfg)
+        assert path.exists() and path.parent == tmp_path / obs / kind
+    per_sequence = json.loads(driver.cell_file("per_sequence", name, 0, cfg).with_suffix(".json").read_text())
+    assert all(len(v) == 2 for v in per_sequence.values())
+    if ROW_BY_CELL[name].smc:
+        with open(driver.cell_file("per_step", name, 0, cfg), encoding="utf-8") as handle:
+            rows = [r for r in csv.DictReader(handle) if r["metric"] in SMC_METRICS]
+        assert {(r["metric"], r["step"]) for r in rows} == {
+            (key, str(step)) for key in SMC_METRICS for step in range(3)
+        }
+    if name == "pf_reference":
+        return
+    # Deterministic: a second run gives the stored ensembles bit for bit.
+    stored = torch.load(
+        tmp_path / obs / "ensembles" / f"{driver.cell_label(name, '', records[0].M)}__seed0.pt"
+    )
+    problem = driver.problem_of(cfg)
+    again = driver.run_method(cfg, name, problem, load_sequences(problem, "test", 2), "test", 0)
+    assert torch.equal(again.ensembles.float(), stored)
+
+
+def test_cells_and_lineup_agree():
+    """driver.CELLS is lorenz96_lineup.ROWS; M-independent cells have no num_steps."""
+    assert list(driver.CELLS) == [row.cell for row in ROWS]
+    assert len(set(driver.CELLS.values())) == len(driver.CELLS)
+    assert set(driver.RUNNERS) == set(driver.CELLS) - {"pf_reference"}
+    for obs in ("linear", "arctan"):
+        cfg = driver.case_config(obs)
+        for row in ROWS:
+            assert driver.CELLS[row.cell] == (Method(row.method), row.variant or None)
+            settings = driver.method_settings(cfg, row.cell)
+            assert ("num_steps" in settings) == row.generative, row.cell
 
 
 def test_reference_for_another_system_is_refused(tiny_case):
@@ -267,7 +355,7 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
 
     root = tmp_path / "root"
     root.mkdir()
-    (root / "lorenz96").symlink_to(tmp_path)
+    (root / "lorenz96").symlink_to(tmp_path)  # driver.RESULTS: holds the linear sweep root
     monkeypatch.setattr(aggregate_lorenz96, "RESULTS", root)
     monkeypatch.setattr(make_lorenz96_figures, "RESULTS", root)
     for name, seed in (("enkf", 0), ("enkf", 1), ("pf_reference", 0)):
@@ -286,7 +374,7 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
 
     monkeypatch.setattr(sys, "argv", ["aggregate_lorenz96.py"])
     aggregate_lorenz96.main()
-    aggregated = tmp_path / "aggregated"
+    aggregated = tmp_path / "linear" / "aggregated"
     with open(aggregated / "all.csv", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     rmse = next(
@@ -331,7 +419,7 @@ def test_cells_flow_through_aggregation_and_figures(tiny_case, tmp_path, monkeyp
 def test_enkf_rejects_unknown_settings(problem):
     sequences = load_sequences(problem, "test", 1)
     with pytest.raises(TypeError, match="inflaton"):
-        driver.run_enkf(problem, sequences, "test", 0, 8, {"inflaton": 1.1})
+        driver.run_enkf(None, "enkf", problem, sequences, "test", 0, 8, {"inflaton": 1.1})
 
 
 @pytest.mark.parametrize("name", sorted(driver.GENERATIVE))
@@ -367,7 +455,7 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
     monkeypatch.setattr(generative, "assimilate", failing(drift))
     out = driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
     assert torch.isnan(out.ensembles).all() and out.nfe is None
-    records = driver.evaluate_cell("dm_sde", 0, tiny_case)
+    records = driver.evaluate_cell("dm_sde", 0, tiny_case, allow_other_m=True)
     diverged = next(r.value for r in records if r.metric == driver.DIVERGED_STEPS)
     assert diverged == 2 * problem.num_steps
     assert Metric.NFE.value not in {r.metric for r in records}
@@ -378,11 +466,49 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
         driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
 
 
-def test_count_diverged_steps_counts_non_finite_entries():
+@pytest.mark.parametrize("name", ["si_sde", "dm_sde_fc"])
+def test_inflated_shared_runs_one_sequence_per_call(name, tiny_case, monkeypatch):
+    """inflated_shared cannot batch sequences (assimilate refuses it): the cell runs
+    each sequence alone, with its own seed and a fresh posterior / correction; the
+    default mode still makes one batched call with the cell seed."""
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    real = generative.assimilate
+    calls = []
+
+    def spy(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs):
+        calls.append((initial.shape[0], seed, posterior, kwargs.get("forecast_correction")))
+        return real(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs)
+
+    monkeypatch.setattr(generative, "assimilate", spy)
+    settings = driver.with_num_steps(name, driver.method_settings(tiny_case, name), 4)
+    shared = driver.apply_overrides(settings, ["likelihood_mode=inflated_shared"])
+    out = driver.run_method(tiny_case, name, problem, sequences, "test", 0, shared)
+    assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert torch.isfinite(out.ensembles).all() and out.nfe is not None
+    assert [c[0] for c in calls] == [1, 1]
+    assert calls[0][1] != calls[1][1]  # one seed per sequence
+    assert calls[0][2] is not calls[1][2]  # a fresh posterior per sequence
+    if name in driver.CORRECTED:
+        assert calls[0][3] is not None and calls[0][3] is not calls[1][3]
+    # nfe is per step for one batch of members, not summed over the sequences.
+    assert settings["num_steps"] <= out.nfe < 2 * problem.num_steps * settings["num_steps"]
+    calls.clear()
+    plain = driver.apply_overrides(settings, ["likelihood_mode=inflated"])
+    driver.run_method(tiny_case, name, problem, sequences, "test", 0, plain)
+    base = driver.CORRECTED.get(name, name)
+    assert [c[0] for c in calls] == [2]
+    assert calls[0][1] == driver.derive_seed(driver.SEED_LABEL, base, "test", 0)
+
+
+def test_count_diverged_steps_counts_non_finite_core_scores_only():
+    nan = float("nan")
     scores = [
-        {"a": [1.0, float("nan"), 2.0], "b": [0.0, 0.0, float("inf")]},
-        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0]},
+        {"a": [1.0, nan, 2.0], "b": [0.0, 0.0, float("inf")], driver.KL_KNN: [nan, 1.0, 1.0]},
+        {"a": [1.0, 1.0, 1.0], "b": [0.0, 0.0, 0.0], driver.KL_KNN: [nan, nan, 1.0],
+         driver.ENERGY_DISTANCE: [1.0, nan, 1.0]},
     ]
+    # Steps 1 and 2 of sequence 0; a NaN of a diagnostic distance does not count.
     assert driver.count_diverged_steps(scores) == 2
 
 
@@ -392,7 +518,7 @@ def tuning_case(tiny_case, monkeypatch):
     problem = driver.problem_of(tiny_case)
     for index, seq in enumerate(load_sequences(problem, "validation", 2)):
         driver._reference_task((problem, seq, "validation", index, 0, 256))
-    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    monkeypatch.setattr(driver, "case_config", lambda obs="linear": tiny_case)
     return tiny_case
 
 
@@ -427,7 +553,7 @@ def test_tune_reads_validation_only_and_a_diverged_setting_is_ineligible(
     driver.cmd_tune(args)
     assert splits and set(splits) == {"validation"}
 
-    path = tmp_path / "tuning" / "enkf__inflation.csv"
+    path = tmp_path / "linear" / "tuning" / "enkf__inflation.csv"
     with open(path, encoding="utf-8") as handle:
         good, bad = list(csv.DictReader(handle))
     assert json.loads(good["base"]) == driver.method_settings(tuning_case, "enkf")
@@ -450,7 +576,7 @@ def test_tune_reads_validation_only_and_a_diverged_setting_is_ineligible(
 
 def test_reference_refuses_other_replicate_counts(tiny_case, monkeypatch):
     tiny_case.evaluation.reference_replicates = 3
-    monkeypatch.setattr(driver, "case_config", lambda: tiny_case)
+    monkeypatch.setattr(driver, "case_config", lambda obs="linear": tiny_case)
     with pytest.raises(ValueError, match="reference_replicates must be 2"):
         driver.cmd_reference(SimpleNamespace(split="test", workers=1))
 
@@ -539,10 +665,10 @@ def test_tagged_cells_are_kept_apart_from_the_default_cell(tiny_case, tmp_path):
     tagged = driver.cell_path("per_step", "enkf", 0, "infl1.05")
     assert tagged.name == "lorenz96__enkf-infl1.05__traj0__.csv" and tagged.exists()
     assert driver.cell_path("per_sequence", "enkf", 0, "infl1.05").with_suffix(".json").exists()
-    assert (tmp_path / "ensembles" / "enkf-infl1.05__seed0.pt").exists()
+    assert (tmp_path / "linear" / "ensembles" / "enkf-infl1.05__seed0.pt").exists()
     # The default cell's outputs are untouched.
     assert not driver.cell_path("per_step", "enkf", 0).exists()
-    assert not (tmp_path / "ensembles" / "enkf__seed0.pt").exists()
+    assert not (tmp_path / "linear" / "ensembles" / "enkf__seed0.pt").exists()
 
 
 def test_normalised_innovations_use_the_true_forecast_mean(problem):
@@ -600,8 +726,8 @@ def test_oracle_fc_without_gain_is_the_exact_kernel_spread(tiny_case):
     sequences = load_sequences(problem, "test", 1)
     big = 4000
     zero = {"correction": {"gain_scale": 0.0, "localisation": None}}
-    a = driver.run_oracle_fc(problem, sequences, "test", 0, big, zero).ensembles
-    b = driver.run_oracle(problem, sequences, "test", 0, big).ensembles
+    a = driver.run_oracle_fc(tiny_case, "oracle_fc", problem, sequences, "test", 0, big, zero).ensembles
+    b = driver.run_oracle(tiny_case, "oracle", problem, sequences, "test", 0, big, {}).ensembles
     # Same initial members, independent noise: first-step moments agree.
     torch.testing.assert_close(a[0, 0].mean(0), b[0, 0].mean(0), atol=0.15, rtol=0)
     torch.testing.assert_close(a[0, 0].var(0), b[0, 0].var(0), atol=0.15, rtol=0.1)
@@ -710,14 +836,14 @@ def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypat
         grid=json.dumps({"correction.gain_scale": [0.0, 0.5]}),
         set=["correction.forecast_num_steps=2"],
         tag="t",
-        innovations=False,
         threads=1,
+        allow_other_m=True,  # the tiny case runs a few pseudo-steps, not M = 50
     )
     driver.cmd_tune(args)
     assert [s["correction"]["gain_scale"] for s in seen] == [0.0, 0.5]
     assert all(s["correction"]["forecast_num_steps"] == 2 for s in seen)
     assert all(s["num_steps"] == tuning_case.methods.fm_ode.num_steps for s in seen)
-    path = tmp_path / "tuning" / "fm_ode_fc__correction.gain_scale__t.csv"
+    path = tmp_path / "linear" / "tuning" / "fm_ode_fc__correction.gain_scale__t.csv"
     with open(path, encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     assert len(rows) == 2
@@ -727,14 +853,13 @@ def test_tune_a_corrected_cell_over_dotted_keys(tuning_case, tmp_path, monkeypat
         # The sampler's M plus two forecasts of 2 steps, except at gain 0, which
         # still draws the forecasts.
         assert float(row[Metric.NFE.value]) == tuning_case.methods.fm_ode.num_steps + 4
-    # The plain cell writes no innovation columns, so its own file is unaffected,
-    # and asking for them into an existing file without them is refused.
+    # The plain cell writes no innovation columns.
     plain = SimpleNamespace(
         method="enkf", grid=json.dumps({"inflation": [1.0]}), threads=1
     )
     driver.cmd_tune(plain)
-    with pytest.raises(ValueError, match="has columns"):
-        driver.cmd_tune(SimpleNamespace(**vars(plain), innovations=True))
+    with open(tmp_path / "linear" / "tuning" / "enkf__inflation.csv", encoding="utf-8") as handle:
+        assert driver.INNOVATION_LAG1 not in next(csv.reader(handle))
     with pytest.raises(ValueError, match="nothing to tune"):
         driver.cmd_tune(SimpleNamespace(method="oracle", grid="{}", threads=1))
 
@@ -784,7 +909,7 @@ def test_a_tag_cannot_reuse_an_untagged_cell_label():
 def test_a_disabled_correction_cell_needs_a_tag(tiny_case):
     tiny_case.methods.si_sde_fc.correction.enabled = False
     with pytest.raises(ValueError, match="enabled=false"):
-        driver.evaluate_cell("si_sde_fc", 0, tiny_case)
+        driver.evaluate_cell("si_sde_fc", 0, tiny_case, allow_other_m=True)
     off = {"correction": {"enabled": False}}
     driver.check_correction_label("si_sde_fc", off, "off")
     driver.check_correction_label("si_sde", off, "")

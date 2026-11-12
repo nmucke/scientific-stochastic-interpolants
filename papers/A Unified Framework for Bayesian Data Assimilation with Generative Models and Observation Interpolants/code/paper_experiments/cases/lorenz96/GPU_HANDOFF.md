@@ -400,7 +400,7 @@ before tuning again. `enkf_large` was never tuned here.
 start until tuning is written into the config.
 
 ```bash
-cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96_grid.sh
+cd "$PE" && PY=python SEEDS="0 1 2" ./run_lorenz96.sh final linear   # section 15
 ```
 
 That script itself has never run at full size (a dry run with a stub interpreter
@@ -857,3 +857,153 @@ against 4096 PF draws) took about 4 min per run here and dominates validation ti
    a non-Gaussian kernel (`noise_stages > 1`, which needs a new gate, and new
    innovation statistics: the current ones are NaN there) or E small for d.
    State plainly if none is found.
+
+## 14. Arctan observations (added 2026-11-09)
+
+A second problem on the same system: h(x) = arctan(c L x) / c on the same sites
+(L = every 4th site), in PHYSICAL units, same R = 4, 50 steps, same truths, same
+observation-noise draws e (`make_sequence` draws everything before h is applied:
+y_arctan = h(truth) + e), same seeds, E and initial ensembles. Selected with
+`--obs arctan` (before the subcommand) on `driver.py` and `pf_gate.py`, with
+`driver.case_config("arctan")`, or `scenario=lorenz96_arctan` in `run.py`.
+
+- **Strength.** c = 1 / sigma_clim = 0.2508373. sigma_clim from the training split
+  of `data.npz` (3.8M states): per site 3.9838-3.9900, pooled sqrt(mean_i var_i) =
+  3.986648. Not swept. The arctan slope is 0.76 at the attractor mean (2.23) and
+  0.14 at x = 10, so observations of large |x| carry little.
+- **Config.** `observations: {linear, arctan}`, `methods_arctan:` (a verbatim, NOT
+  TUNED copy of `methods:`; copy new cells' lines across) and
+  `oracle_arctan.proposals`. Linear leaves `Problem.to_dict()` exactly as before, so
+  data and linear references keep loading. `Standardisation.from_data` compares the
+  data with the problem's linear version (dynamics only). An arctan reference stores
+  `observation` in its problem dict; the two operators' references refuse each other.
+- **Paths.** Every output moved to `results/lorenz96/<obs>/` (linear too):
+  `reference/`, `gate/`, `tuning/`, `metrics/`, `per_step/`, `per_sequence/`,
+  `ensembles/`, `prior_quality.json`. **Existing linear results under
+  `results/lorenz96/{reference,gate,tuning,...}` must be moved into
+  `results/lorenz96/linear/`.** Tidy scenario `lorenz96_arctan`
+  (`Scenario.LORENZ96_ARCTAN`, listed in `NONLINEAR_STUDY_SCENARIOS`, so `SCENARIOS`
+  is unchanged). `aggregate_lorenz96.py` and `make_lorenz96_figures.py` take
+  `--obs`; `run_lorenz96_grid.sh` takes `OBS=arctan`.
+- **Samplers.** `observation_model` gives `StandardisedArctanOperator`, a
+  `PointwiseObservationOperator` whose g folds in the de-standardisation,
+  g(w) = arctan(c (std w + mean)) / c: h acts on standardised states and returns
+  physical observations; `to_model` is the identity and the variance is R = 4.
+  Overriding only g / g' keeps `forward/jvp/vjp/gram/jacobian/linearize` and the
+  direct g / dg / inner calls of `inflated_shared` consistent; `inner` (the linear
+  selection) places observations for localisation.
+- **h, not L, per method.** `InterpolantGaussianLikelihood` with a nonlinear
+  operator takes `_score_nonlinear`: residual beta (y - h(xhat1)) and J_h at xhat1
+  (`dps_jacobian_free`: `gram`; `inflated`: `jvp`/`vjp`; `inflated_shared`: per-member
+  pointwise route via g, g', inner). Checked numerically: the samplers give the same
+  output with the analytic operator and with a forward-only h whose derivatives come
+  from autograd, and differ from the linear run. Correction (`*_fc`): takes the
+  likelihood's operator (EnKF-style gains with h(f_i), online K_q); `oracle_fc`
+  passes the physical arctan operator and its `q_source: exact` linearises h at each
+  group's forecast mean (library). EnKF, `enkf_large`, `prior_enkf*`: stochastic EnKF
+  with predicted observations g(H x_i), gain C_xy (C_yy + R)^-1, localisation
+  C_xy * (rho H'), C_yy * (H rho H'); equal to the linear update for g = identity,
+  same random draws.
+- **PF and references.** The optimal proposal needs linear-Gaussian observations.
+  The arctan reference uses `linearised`: per particle the optimal proposal of h
+  linearised at z (the forecast before the kick) is an importance proposal, with the
+  exact weight N(y; h(x), R) N(x; z, qI) / q(x | z, y), resampling after the kick.
+  Exact for any h (SIR with a valid proposal, same target); for g = identity the
+  weight is the optimal proposal's N(y; Hz, (q+r)I). The weights have finite
+  variance when the proposal variance P > q/2 on each observed site, i.e.
+  r > q g'^2, which holds here (P/q >= 0.8). `pf_matched` uses the same filter.
+- **Oracle.** No closed form: `ImportanceOneStepOracle` draws, per member,
+  P = `oracle_arctan.proposals` = 4096 candidates from N(Phi(x_i), q I), weights
+  N(y; h(x), R), picks one. Per-member ESS is recorded (`oracle_ess_mean`,
+  `oracle_ess_min`, per step and per sequence). Measured on 4 validation sequences,
+  E = 64, seed 0: ESS median 1637 (0.40 P), mean 1750, 1% quantile 92, minimum 8.8,
+  1.2% of member-steps below 100 (P = 1024: median 410, 8% below 100).
+- **Innovations.** y - E[h(x^f)] over the true-model forecast mixture, divided by
+  sqrt(Var[h(x^f)] + r), per site. With one noise stage the kick is independent per
+  site and g is elementwise, so the per-member moments are 1D Gaussian integrals,
+  computed by 40-node Gauss-Hermite (checked against Monte Carlo); the variance is
+  var_i(m_i) + mean_i v_i + r, the linear formula for g = identity. These are the
+  exact predictive moments, so for an exact filter the normalised innovations are
+  still uncorrelated (martingale differences) with unit mean square. What changes:
+  they are not Gaussian, so the PF-subsample lag-1 floor must be re-measured for
+  arctan, not taken from the linear problem.
+- **Gate.** Same commands, thresholds and procedure with `--obs arctan`; outputs in
+  `results/lorenz96/arctan/gate/` (a bare `--out` name goes there). `converge` runs
+  the `linearised` filter. `cross-proposal` compares `linearised` with `bootstrap`
+  (the report's `*_optimal` keys hold the linearised numbers; `proposals` names
+  them). `calibrate` adds the negative control `wrong_obs_operator_linear` (a filter
+  assuming h = L x). `screen` is linear only. Only tiny smoke runs were done; **the
+  arctan gate has not run.**
+
+Single-sequence probe (validation 0, N = 1e5, one thread), ESS fraction mean / abs
+min: linear optimal 0.131 / 11; arctan linearised 0.209 / 2061; arctan bootstrap
+0.175 / 1262. At N = 1e6 the arctan abs min was 14212. Arctan is easier for the PF
+than the linear problem, mainly because its observations are weaker. Cross-proposal
+system (d = 8, stride 2, T = 20, N = 1e6): ESS fraction 0.34 linearised, 0.28
+bootstrap.
+
+Cost estimate (this 16-core machine, one thread per run, measured while other jobs
+ran; cost is linear in N: 8.2 s at 1e5, 86 s at 1e6, so about 345 s per 50-step run
+at 4e6): references, 16 sequences x 2 replicates = 32 runs, about 3.1 CPU-hours;
+`converge --ladder 1e5,4e6 --replicates 8 --sequences 10`, 80 runs at each rung,
+about 7.9 CPU-hours; `calibrate` (1e5, 32 sequences, 5 filters) about 0.4 CPU-hours;
+`cross-proposal` (1e6, 2 sequences, 8 replicates, 2 proposals, about 24 s each)
+about 0.2 CPU-hours. Total about 11.5 CPU-hours; with 8 workers about 1.5-2 h wall
+clock if memory bandwidth does not limit (about 1 GB per worker at 4e6).
+
+```bash
+python cases/lorenz96/pf_gate.py --obs arctan converge --ladder 1e5,4e6 --replicates 8 --sequences 10 --workers 8 --threads 1 --out convergence_4e6.json
+python cases/lorenz96/pf_gate.py --obs arctan calibrate --n 100000 --sequences 32 --workers 8 --threads 1
+python cases/lorenz96/pf_gate.py --obs arctan cross-proposal --problem '{"dim_state":8,"obs_stride":2,"num_steps":20}' --n 1000000 --replicates 8 --sequences 2 --workers 8 --threads 1
+python cases/lorenz96/driver.py --obs arctan reference --split validation --workers 8
+python cases/lorenz96/driver.py --obs arctan reference --split test --workers 8
+```
+
+## 15. Review fixes (added 2026-11-10)
+
+Run interface: `run_lorenz96.sh {tune|apply|final} {linear|arctan}` replaces
+`tune_lorenz96.sh`, `run_lorenz96_grid.sh` and `run_lorenz96_sweep.sh` (the commands
+of sections 7, 13 and 14 that name them now read `./run_lorenz96.sh final <obs>`; see
+the README runbook). `apply` writes the selected picks into `methods:` /
+`methods_arctan:`; nothing has to be pasted by hand. The lineup, M values and shared
+names are `lorenz96_lineup.py`.
+
+Behaviour changes, each limited to the cells named (every other cell is bitwise as
+before on the snapshot of 2 validation sequences, linear and arctan):
+
+- **`kl_knn` on the unique PF draws.** A reference that resamples after the kick
+  (every arctan reference, and small references) holds duplicate draws; 1-NN KL was
+  NaN there, and a NaN score counted in `diverged_steps`, so every arctan step of
+  every cell counted as diverged and every arctan tuning row was ineligible.
+  `knn_kl` now uses the unique rows of the PF draws, and only the core scores
+  (not `kl_knn` / `energy_distance`) count toward `diverged_steps`.
+- **SURGE on the SI prior: exact denoiser.** The library's
+  `SurgeStochasticInterpolantPosterior._denoise` fed the Follmer drift b to
+  `score_from_velocity` as if it were the path velocity (dividing by
+  beta a_tau instead of beta (a_tau + 1/2 gamma^2)), so its reward denoiser
+  xhat_1 was biased. The constructor now takes `si_denoiser`: `"velocity"`
+  (default, bitwise the old values, used by Navier-Stokes, the analytical
+  single-step driver and the multistep base-lineup "SURGE (FlowDAS)" row) or
+  `"follmer"` (exact: xhat_1 = (x - alpha x0 - mu_s) / beta, mu_s =
+  -gamma^2 t A_tau (beta b - c_tau), as `InterpolantGaussianLikelihood`). Lorenz 96
+  `surge_si_sde`, `surge_unguided_si` and `surge_flowdas` and the multistep
+  "SURGE around Ours" SI rows (`surge` and `surge_unguided` variants of Ours
+  (SI-SDE)) use `follmer`; their variant names are unchanged, so results made
+  before this change must not be mixed with new ones. On an exact Gaussian SI
+  (d = 16) the unguided SMC keeps ESS/N > 0.95 over the first pseudo-steps with
+  `follmer`, against 0.35 after the first step with `velocity`
+  (`tests/test_surge_si_denoiser.py`). Not changed, same misuse for an SI
+  `model_class` (unused here): `likelihood_models/sda.py` (score from the SI drift,
+  around line 178) and `likelihood_models/guidance.py` (around line 707).
+- **SDA one sequence per batch.** `sda` reports a divergence for its whole batch,
+  so one diverged member NaN'd every sequence; it now runs one sequence per batch
+  like `fig` (seed `derive_seed(SEED_LABEL, "sda", split, seed, index)`), so its
+  numbers change and a divergence NaNs only its own sequence. The DM-SDE cells keep
+  their behaviour: their non-finite-drift assertion records the whole cell as
+  diverged.
+- **Stage-2 tuning reuse.** A tuning CSV counts as complete only if every row's
+  `base` equals the base the job would run with now (config block after `--set`);
+  otherwise it is moved aside and rerun, so new stage-1 picks rerun stage 2.
+
+Unchanged on purpose: `pf_subsample`'s permutation seed has no split (validation and
+test share one stream).
