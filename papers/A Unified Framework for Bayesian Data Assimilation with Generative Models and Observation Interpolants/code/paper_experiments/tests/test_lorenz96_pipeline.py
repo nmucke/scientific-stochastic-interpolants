@@ -540,7 +540,9 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     picks1 = {"si_sde": {"tuned": {"likelihood_mode": "dps_jacobian_free",
                                    "jacobian_damping": 0.9}},
               "flowdas": {"tuned": {"guidance_scale": 0.016}}}
-    picks2 = {"si_sde_fc": {"tuned": {"correction": {"gain_scale": 0.75, "q_source": "exact"}}},
+    # Values that differ from every block of the committed config (the tuned picks
+    # included), so each of the 4 cells changes exactly one line.
+    picks2 = {"si_sde_fc": {"tuned": {"correction": {"gain_scale": 0.3, "q_source": "online"}}},
               "surge_si_sde": {"tuned": {"ess_threshold": 0.25}}}
     tdir.mkdir(parents=True)
     (tdir / "selected_stage1.yaml").write_text(yaml.safe_dump(picks1))
@@ -554,7 +556,7 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     assert block["flowdas"]["guidance_scale"] == 0.016
     # Nested: the correction block keeps its other keys (localisation, forecast steps).
     assert block["si_sde_fc"] == {"correction": {
-        **old["methods_arctan"]["si_sde_fc"]["correction"], "gain_scale": 0.75, "q_source": "exact"}}
+        **old["methods_arctan"]["si_sde_fc"]["correction"], **picks2["si_sde_fc"]["tuned"]["correction"]}}
     assert block["surge_si_sde"] == {"ess_threshold": 0.25}
     # Nothing else moved: the linear block, every other cell, every comment line.
     assert new["methods"] == old["methods"]
