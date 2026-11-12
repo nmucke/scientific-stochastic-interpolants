@@ -1151,6 +1151,9 @@ def build_posterior(
             likelihood_model=likelihood,
             ess_threshold=float(surge_hp.get("ess_threshold", 0.5)),
             diffusion_term=None,
+            # Reward denoiser; NS configs do not set it (library default
+            # `velocity`), Lorenz 96 sets `follmer`.
+            si_denoiser=str(surge_hp.get("si_denoiser", "velocity")),
         )
         return model, posterior, stepper
 

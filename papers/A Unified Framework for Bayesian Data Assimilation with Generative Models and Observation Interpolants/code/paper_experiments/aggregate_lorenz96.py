@@ -1,13 +1,19 @@
 """Aggregate the Lorenz 96 per-cell metric files into one tidy file.
 
-``cases/lorenz96/driver.py cell`` writes one file per (method, seed), already averaged
-over the held-out sequences. This reduces them to mean +/- std over seeds, in
-``results/lorenz96/aggregated/{all,per_step}.csv``. Seeds share the sequences, so that
+``cases/lorenz96/driver.py --obs <obs> cell`` writes one file per (cell, M, seed),
+already averaged over the held-out sequences. This reduces them to mean +/- std over
+seeds, in ``results/lorenz96/<obs>/aggregated/{all,per_step}.csv``, separately for
+each observation sweep (``--obs linear|arctan``, repeatable; default every sweep,
+and a sweep without files is skipped). A file whose tidy scenario belongs to the
+other sweep is refused (``lorenz96_lineup.check_scenario``). Rows are grouped by the
+tidy ``M`` column too, so the M sweep of a generative cell
+(``lorenz96__<cell>__M<M>__traj<seed>__.csv``) gives one row per M; in
+``sequence_spread.csv`` such a cell is ``<cell>__M<M>``. Seeds share the sequences, so that
 std is sampler noise only; ``sequence_spread.csv`` holds the spread over sequences.
 A tagged cell (``driver.py cell --tag``) is its own row: its variant is
 ``<variant>_<tag>`` and its files ``lorenz96__<method>-<tag>__traj<seed>__.csv``.
 
-    .venv/bin/python paper_experiments/aggregate_lorenz96.py
+    .venv/bin/python paper_experiments/aggregate_lorenz96.py [--obs linear|arctan]
 """
 
 from __future__ import annotations
@@ -33,13 +39,23 @@ from common.aggregate_lib import (  # noqa: E402
     write_per_step_csv,
     write_scalar_csv,
 )
+from lorenz96_lineup import (  # noqa: E402
+    CASE,
+    OBS_CHOICES,
+    ENERGY_DISTANCE,
+    KL_KNN,
+    SMC_METRICS,
+    check_scenario,
+    sweep_root,
+)
 
 RESULTS = _here / "results"
-CASE = "lorenz96"
 KEY_METRICS = (
     "mean_error_vs_pf",
     "var_error_vs_pf",
     "sliced_w2",
+    KL_KNN,
+    ENERGY_DISTANCE,
     "rmse",
     "spread",
     "crps",
@@ -48,6 +64,7 @@ KEY_METRICS = (
     "innovation_lag1",
     "nfe",
     "seconds",
+    *SMC_METRICS,
 )
 
 
@@ -55,7 +72,10 @@ def sequence_spread(directory: Path) -> list[dict[str, object]]:
     """Std over sequences of the seed-averaged value, ignoring diverged entries."""
     cells: dict[str, list[dict]] = defaultdict(list)
     for path in sorted(directory.glob("*.json")):
-        cells[path.name.split("__")[1]].append(json.loads(path.read_text()))
+        # ``lorenz96__<cell>[__M<M>]__traj<seed>__.json``: the cell is ``<cell>`` or
+        # ``<cell>__M<M>``, so the step counts of one cell stay apart.
+        cell = path.name.removeprefix(f"{CASE}__").split("__traj")[0]
+        cells[cell].append(json.loads(path.read_text()))
     rows: list[dict[str, object]] = []
     for name, seeds in cells.items():
         # A resumable grid can mix files written before and after a metric was
@@ -93,27 +113,48 @@ def undefined_std_for_one_value(rows: list[dict[str, object]]) -> list[dict[str,
     return rows
 
 
-def main() -> None:
-    argparse.ArgumentParser(description=__doc__).parse_args()
-    root = RESULTS / CASE
+def aggregate_sweep(obs: str) -> bool:
+    """Aggregate one sweep's root; False if it holds no metric files."""
+    root = sweep_root(RESULTS, obs)
     by_seed = discover_by_traj(root / "metrics")
     if not by_seed:
-        print(f"[{CASE}] no per-cell metric files in {root / 'metrics'}")
-        return
+        print(f"[{CASE}/{obs}] no per-cell metric files in {root / 'metrics'}")
+        return False
+    per_step = discover_by_traj(root / "per_step")
+    for paths in (*by_seed.values(), *per_step.values()):
+        check_scenario(paths, obs)
     rows = undefined_std_for_one_value(aggregate_scalar(by_seed))
     write_scalar_csv(root / "aggregated" / "all.csv", rows)
     write_per_step_csv(
         root / "aggregated" / "per_step.csv",
-        undefined_std_for_one_value(
-            aggregate_per_step(discover_by_traj(root / "per_step"))
-        ),
+        undefined_std_for_one_value(aggregate_per_step(per_step)),
     )
-    print_scalar_table(rows, KEY_METRICS)
+    print(f"\n##### {CASE} sweep: {obs} #####")
+    # One printed column per M (the reduction itself already groups by E and M).
+    printed = [
+        dict(row, scenario=f"{row['scenario']} M={row['M']}" if row.get("M") not in (None, "") else row["scenario"])
+        for row in rows
+    ]
+    print_scalar_table(printed, KEY_METRICS)
     spread = sequence_spread(root / "per_sequence")
     with open(root / "aggregated" / "sequence_spread.csv", "w", newline="") as handle:
         writer = csv.DictWriter(handle, ["cell", "metric", "std", "n"])
         writer.writeheader()
         writer.writerows(spread)
+    return True
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--obs",
+        choices=OBS_CHOICES,
+        action="append",
+        help="observation sweep (repeatable); default: every sweep",
+    )
+    args = parser.parse_args()
+    for obs in args.obs or OBS_CHOICES:
+        aggregate_sweep(obs)
 
 
 if __name__ == "__main__":

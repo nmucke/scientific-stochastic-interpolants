@@ -173,6 +173,11 @@ FOCUS_SERIES = tuple(
     if series[:2] in FOCUS_KEYS or series in SURGE_SERIES or series in REFERENCE_SERIES
 )
 
+# Main-text figure: the plain lineup and the reference rows only (no resampling or
+# SURGE variants, which have their own figure), on the paper's system.
+MAIN_SERIES = (*SERIES, *REFERENCE_SERIES)
+MAIN_SYSTEM = "multistep:paper"
+
 Key = tuple[str, str, str | None, str]  # scenario, method, variant, metric
 Curve = dict[int, tuple[float, float, int]]  # cycle (1-based) -> mean, std, n_seeds
 
@@ -256,11 +261,16 @@ def make_figure(
             if row == len(systems) - 1:
                 ax.set_xlabel("Assimilation step $k$")
     labels = [s[2] for s in series if s[2] in handles]
+    ncol = 4
     fig.legend(
-        [handles[label] for label in labels], labels, loc="lower center", ncol=4,
+        [handles[label] for label in labels], labels, loc="lower center", ncol=ncol,
         frameon=False, fontsize=9, bbox_to_anchor=(0.5, 0.0),
     )
-    fig.tight_layout(rect=(0, 0.13 * 2 / max(len(systems), 2), 1, 1))
+    # Reserve the legend's height (about 0.22 in per row at fontsize 9, plus the
+    # x label) so it never overlaps the axes.
+    rows = -(-len(labels) // ncol)
+    bottom = (0.22 * rows + 0.15) / fig.get_figheight()
+    fig.tight_layout(rect=(0, bottom, 1, 1))
     return _save_fig(fig, out_stem)
 
 
@@ -617,6 +627,11 @@ def main() -> None:
     print(f"[multistep] M={M}, E={E}, systems={systems}")
     for written in make_figure(data, systems, out / "analytical_multistep_error_vs_step"):
         print(f"[fig] wrote {written}")
+    if MAIN_SYSTEM in systems:
+        for written in make_figure(
+            data, [MAIN_SYSTEM], out / "analytical_multistep_main", MAIN_SERIES
+        ):
+            print(f"[fig] wrote {written}")
     if any(key[2] in {s[1] for s in SURGE_SERIES} for key in data):
         for written in make_figure(
             data, systems, out / "analytical_multistep_surge_vs_step", FOCUS_SERIES

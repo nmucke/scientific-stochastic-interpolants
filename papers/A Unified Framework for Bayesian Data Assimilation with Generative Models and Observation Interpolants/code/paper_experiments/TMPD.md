@@ -28,8 +28,23 @@ schedule and full first step as Ours (DM-SDE), so that head-to-head is fair.
 - **Analytical** (single-step and multistep). Opt-in:
   `run.py case=analytical seeds=[0,1,2,3,4] num_steps=$M '+analytical_methods=["TMPD"]' results_file=...`
   For multistep, use `case=analytical_multistep`.
-- **Lorenz 96:** `python cases/lorenz96/driver.py cell --method tmpd --seed S`, or
-  `run_lorenz96_grid.sh`, which includes `tmpd`.
+- **Lorenz 96, linear sweep only.** The `tmpd` cell is a `baselines` row of
+  `lorenz96_lineup.ROWS` with `sweeps=("linear",)`. It runs through
+  `_l96_baselines.run_tmpd` (posterior: `_l96_generative.build_tmpd_posterior`), and its
+  settings are `methods.tmpd` in `configs/case/lorenz96.yaml`. It has no
+  `methods_arctan` entry.
+  - One cell at one M, for M in `lorenz96_lineup.M_VALUES` = 25, 50, 100, 250:
+    `python cases/lorenz96/driver.py cell --method tmpd --seed S --num-steps M`.
+    The default `--obs linear` applies.
+  - Every cell of the sweep: `SEEDS="0" ./run_lorenz96.sh final linear` runs `tmpd`
+    at every M. It skips cells that are already done.
+  - A non-default covariance needs a tag, for example
+    `... cell --method tmpd --seed 0 --num-steps 50 --tag rowsum --set covariance=row_sum`.
+  - Not tuned: there is no `GRIDS` row in `run_lorenz96.sh`, and `num_steps` and
+    `diffusion_scale` are fixed as for `dm_sde`.
+  - In the arctan sweep the cell is not listed (`lorenz96_lineup.py cells generative
+    arctan`), and `driver.py --obs arctan cell --method tmpd` is refused.
+  - It writes a `vjp` metric next to `nfe`.
 
 On linear-Gaussian problems TMPD and our method are both exact, so the analytical rows
 should agree by construction. Only learned priors (Lorenz 96, NS, urban) separate them.

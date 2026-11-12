@@ -1,0 +1,4 @@
+# Lorenz 96 with arctan observations h(x) = arctan(c L x) / c on the sites of
+# configs/case/lorenz96.yaml (observations.arctan); same truths and noise draws as
+# scenario=lorenz96. Selects the `methods_arctan:` block and results/lorenz96/arctan/.
+name: lorenz96_arctan

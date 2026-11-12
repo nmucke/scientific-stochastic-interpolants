@@ -1,5 +1,7 @@
 # Paper experiments
 
+> **ICLR 2027 rebuttal runs (NS wrong IC, SURGE on Ours, forecast correction, prior + EnKF, uDALES FC, Lorenz 96):** see [`REBUTTAL_EXPERIMENTS.md`](REBUTTAL_EXPERIMENTS.md) for every experiment, its settings, launcher, Slurm jobs, status and where the results are.
+
 The active experiment tree is
 `papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/`.
 Its results and generated figures live here. Run the commands below from the
@@ -252,7 +254,7 @@ These constrain the case drivers and are baked into the configs here:
 - `common/runner.py::ExperimentRunner.evaluate` — the stable contract; case
   drivers implement it.
 - `cases/analytical/driver.py` — GAP E4; analytic SI drift + three samplers; KL /
-  sliced-W2 via `analytical_utils`.
+  sliced-W2 via `cases/analytical/_metrics.py`.
 - `cases/navier_stokes/driver.py` — GAP E1 (block-average obs op), E4 (3
   samplers), E7/E9/E10/E11 (metrics), E12 (ablation knobs).
 - `cases/urban/driver.py` — GAP E2 (author data + solid-cell masking).

@@ -23,7 +23,7 @@ Two details a reader of the results needs:
   ``<variant>_fc<S>[_bank[<B>]][_g<E>]`` (:func:`fc_variant`). Off, every row is
   bit-for-bit what it was.
 * ``sliced_w1`` is the single-step ``sliced_w2`` column under its correct name:
-  ``analytical_utils.wasserstein_distance`` averages 1-D **W1** distances. In this
+  ``_metrics.wasserstein_distance`` averages 1-D **W1** distances. In this
   case's output ``sliced_w2`` is a true sliced W2 (:func:`sliced_distances`).
 """
 
@@ -234,7 +234,7 @@ def sliced_distances(
     The 1-D Wasserstein distance between two equal-size empirical measures pairs
     their order statistics, so one sort per slice serves both. ``W1`` is
     ``mean_theta W1(theta.x, theta.y)``, the same number as
-    ``analytical_utils.wasserstein_distance`` at a fraction of its cost at
+    ``_metrics.wasserstein_distance`` at a fraction of its cost at
     ``n = 10^5``; ``W2`` is ``sqrt(mean_theta W2^2)``.
     """
     rng = np.random.default_rng(seed)
@@ -614,11 +614,15 @@ class MultistepRunner(AnalyticalRunner):
                 model_class="si", likelihood_mode=likelihood_mode, **stabilisation,
             )
             posterior = (
+                # SURGE around Ours: the reward inverts the Follmer drift exactly
+                # (si_denoiser="follmer"). The base-lineup SURGE (FlowDAS) row keeps
+                # the library default, for parity with the single-step driver.
                 SurgeStochasticInterpolantPosterior(
                     model=model, obs_operator=operator, variance=variance,
                     likelihood_model=likelihood,
                     ess_threshold=self._surge_ess_threshold(Method.SURGE_FLOWDAS, num_steps),
                     diffusion_term=None,
+                    si_denoiser="follmer",
                 )
                 if surge
                 else StochasticInterpolantPosterior(

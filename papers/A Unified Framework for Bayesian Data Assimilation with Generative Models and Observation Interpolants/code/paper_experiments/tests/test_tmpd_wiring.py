@@ -101,10 +101,32 @@ def test_multistep_tmpd_cycle_runs_on_a_general_system():
 
 
 def test_lorenz96_tmpd_cell_is_registered():
+    from lorenz96_lineup import ROW_BY_CELL, run_cells
+
     assert l96.CELLS["tmpd"] == (Method.TMPD, None)
     assert "tmpd" not in l96.GENERATIVE  # not a prior for prior_enkf, no _fc cell
+    assert "tmpd" not in l96.CORRECTED.values()
+    assert l96.RUNNERS["tmpd"] is l96.run_tmpd
     assert l96.Lorenz96Runner._NAMES[Method.TMPD] == "tmpd"
     assert "tmpd" in l96.TUNABLE
+    # Linear h only: a baseline row of the linear sweep, absent from the arctan one.
+    row = ROW_BY_CELL["tmpd"]
+    assert row.group == "baselines" and row.generative and row.sweeps == ("linear",)
+    assert "tmpd" in run_cells("generative", "linear")
+    assert "tmpd" not in run_cells("generative", "arctan")
+    assert "tmpd" in l96.case_config("linear").methods
+    assert "tmpd" not in l96.case_config("arctan").methods
+
+
+def test_lorenz96_tmpd_is_refused_in_the_arctan_sweep(tmp_path, monkeypatch):
+    from test_lorenz96_case import make_tiny
+
+    cfg = make_tiny("arctan", tmp_path, monkeypatch)
+    problem = l96.problem_of(cfg)
+    sequences = l96.load_sequences(problem, "test", 1)
+    settings = l96.method_settings(l96.case_config("linear"), "tmpd")
+    with pytest.raises(ValueError, match="linear h only"):
+        l96.run_method(cfg, "tmpd", problem, sequences, "test", 0, settings)
 
 
 @pytest.mark.parametrize("covariance", ["full", "row_sum"])

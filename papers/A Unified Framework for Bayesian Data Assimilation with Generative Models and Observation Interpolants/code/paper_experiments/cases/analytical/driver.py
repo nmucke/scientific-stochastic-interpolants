@@ -13,13 +13,12 @@ Produces:
 * Figure ``fig:analytical_panels`` -- see ``figures.py``.
 
 The samplers (``samplers.py``) are compact closed-form vector SDE/ODE integrators
-on the analytic Gaussian prior; the KL / sliced-W2 estimators are reused from
-``paper/scripts/analytical_utils/kl_divergence.py``.
+on the analytic Gaussian prior; the KL / sliced-W2 estimators are in ``_metrics.py`` (moved from
+the untracked ``archive/paper/scripts/analytical_utils/kl_divergence.py``).
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Optional
@@ -28,7 +27,6 @@ import numpy as np
 import torch
 
 from common.runner import ExperimentRunner, RunContext
-from common.paths import REPO_ROOT
 from common.seeding import derive_seed
 from results_schema import Case, Method, Metric, ResultRecord, Scenario
 
@@ -69,25 +67,7 @@ from .classical_baselines import (
     particle_filter_posterior,
 )
 
-# Reuse the validated analytic KL / sliced-W2 estimators. `paper/` was untracked
-# and moved to `archive/paper/` locally (commit ada9131), so accept either layout
-# rather than hard-coding one and breaking the case for whoever has the other.
-_REPO = REPO_ROOT
-for _cand in (_REPO / "paper" / "scripts", _REPO / "archive" / "paper" / "scripts"):
-    if (_cand / "analytical_utils").is_dir():
-        _PAPER_SCRIPTS = _cand
-        break
-else:
-    raise ModuleNotFoundError(
-        "analytical_utils not found under paper/scripts or archive/paper/scripts "
-        f"(searched from {_REPO}); the analytical case needs its KL/W2 estimators."
-    )
-if str(_PAPER_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_PAPER_SCRIPTS))
-from analytical_utils.kl_divergence import (  # noqa: E402
-    gaussian_kl_divergence,
-    wasserstein_distance,
-)
+from ._metrics import gaussian_kl_divergence, wasserstein_distance
 
 # REDUCED paper lineup (2026-07-01), matched to the NS/urban lineup where it is
 # meaningful for the closed-form linear-Gaussian case. The three "Ours" samplers
