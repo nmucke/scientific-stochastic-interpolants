@@ -557,6 +557,92 @@ class SurgeFlowMatchingPosterior(SurgePosteriorBase):
         return {"drift": prior_drift}
 
 
+class SurgeLiftedFlowMatchingPosterior(SurgeFlowMatchingPosterior):
+    """SURGE on OUR DM-SDE sampler: FM velocity prior lifted to an SDE.
+
+    ``SURGE (DM-SDE)``. The prior is the trained ``FlowMatchingModel`` (its
+    ``drift`` is the raw velocity ``v``) run as the reverse SDE of
+    :class:`~scisi.posterior_models.flow_matching_posterior.FlowMatchingPosterior`
+    with the endpoint-vanishing ``g_tau = c sqrt(alpha beta)``:
+
+        b(x_k) = v + 1/2 g^2 s,   s = score_from_velocity(x, v, a0 = 0),
+
+    exactly the ``prior_drift`` of ``FlowMatchingPosterior._one_step``. (The
+    parent class assumes a ``DenoiseDiffusionModel`` whose drift already carries
+    the lift; a bare FM velocity would drop the ``1/2 g^2 s`` term and break the
+    marginal.) The guidance is our ``InterpolantGaussianLikelihood`` fed the raw
+    velocity and score, injected with ``w_tau = a_tau + 1/2 g^2`` (the base-class
+    fallback weight), so the SURGE proposal IS our DM-SDE guided SDE; SURGE adds
+    only the Girsanov reweighting and ESS resampling. As in our posterior, no
+    guidance is applied before ``tau = MIN_TIME`` (the first node, ``tau = 0``).
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        obs_operator: ObservationOperator,
+        diffusion_term: Callable,
+        variance: float = 0.05,
+        ess_threshold: float = 0.5,
+        likelihood_model: Optional[nn.Module] = None,
+    ) -> None:
+        if diffusion_term is None:
+            raise ValueError(
+                "SurgeLiftedFlowMatchingPosterior needs the DM-SDE diffusion "
+                "schedule g_tau (SURGE is undefined for the g = 0 FM-ODE)."
+            )
+        super().__init__(
+            model=model,
+            obs_operator=obs_operator,
+            variance=variance,
+            ess_threshold=ess_threshold,
+            likelihood_model=likelihood_model,
+            diffusion_term=diffusion_term,
+        )
+        # (lifted drift, raw velocity, score) at the current chunk's (x_k, t).
+        self._cache: Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
+
+    def _prior_drift(self, x, t, field_history, field_cond, pars_cond) -> torch.Tensor:
+        velocity = self.model.drift(x, t, field_history, field_cond, pars_cond).detach()
+        t_expanded = (
+            t.reshape(t.shape[0], *([1] * (x.dim() - 1))) if t.dim() < x.dim() else t
+        )
+        score = self.interpolation.score_from_velocity(
+            x=x, v=velocity, t=t_expanded, a0=torch.zeros_like(x)
+        )
+        g = self.diffusion_term(t)
+        lifted = velocity + 0.5 * g**2 * score
+        self._cache = (lifted, velocity, score)
+        return lifted
+
+    def _denoise(self, x, t, field_history, field_cond, pars_cond, velocity=None):
+        # ``velocity`` is only ever the caller's ``prior_drift`` at the same
+        # (x_k, t) (reuse path). That is the LIFTED drift here, so use the cached
+        # score instead of inverting it; otherwise recompute from the network.
+        if velocity is not None and self._cache is not None and velocity is self._cache[0]:
+            t_c = torch.clamp(t, min=MIN_TIME, max=1.0 - MIN_TIME)
+            t_grid = t_c.reshape(t_c.shape[0], *([1] * (x.dim() - 1))) if t_c.dim() < x.dim() else t_c
+            beta = self.interpolation.beta(t_grid)
+            sigma = self.interpolation.sigma(t_grid)
+            return (x + sigma**2 * self._cache[2]) / beta
+        return super()._denoise(x, t, field_history, field_cond, pars_cond, velocity=None)
+
+    def _lik_kwargs(self, x, t, field_history, field_cond, pars_cond, prior_drift) -> dict:
+        # Our FM-path likelihood takes the RAW velocity and the recovered score
+        # (exactly what FlowMatchingPosterior._one_step passes).
+        assert self._cache is not None and prior_drift is self._cache[0]
+        return {"drift": self._cache[1], "score": self._cache[2]}
+
+    def _compute_guidance(self, x, t, observations, field_history, field_cond,
+                          pars_cond, dt, prior_drift):
+        if float(t.reshape(-1)[0]) < MIN_TIME:
+            # Match FlowMatchingPosterior: unguided first node (tau = 0).
+            return torch.zeros_like(x), None
+        return super()._compute_guidance(
+            x, t, observations, field_history, field_cond, pars_cond, dt, prior_drift
+        )
+
+
 class SurgeStochasticInterpolantPosterior(SurgePosteriorBase):
     """SURGE on a stochastic-interpolant prior (source ``delta_{x0}``, ``a0 = x0``).
 
@@ -667,6 +753,7 @@ class SurgePosterior(SurgeFlowMatchingPosterior):
 __all__ = [
     "SurgePosteriorBase",
     "SurgeFlowMatchingPosterior",
+    "SurgeLiftedFlowMatchingPosterior",
     "SurgeStochasticInterpolantPosterior",
     "SurgePosterior",
 ]

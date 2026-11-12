@@ -84,12 +84,23 @@ WIRED_METHODS: tuple[Method, ...] = (
     Method.SDA,
     Method.SURGE_SDA,
     Method.SURGE_FLOWDAS,
+    # SURGE SMC on our samplers (opt-in via +ns_methods; NOT in NS_METHODS, so the
+    # default lineup is unchanged).
+    Method.SURGE_SI_SDE,
+    Method.SURGE_DM_SDE,
 )
 
 # The three "Ours" samplers -- the only methods that carry a ``variant`` tag
 # (their likelihood-covariance mode). Every other method runs in a single mode.
 OURS_METHODS: frozenset[Method] = frozenset(
     (Method.OURS_SI_SDE, Method.OURS_DM_SDE, Method.OURS_FM_ODE)
+)
+
+# Methods tagged with the Ours likelihood-covariance ``variant`` (jacfree /
+# shared...): the Ours samplers plus SURGE run on top of them, so a SURGE row is
+# directly comparable with the Ours row of the same variant.
+VARIANT_METHODS: frozenset[Method] = OURS_METHODS | frozenset(
+    (Method.SURGE_SI_SDE, Method.SURGE_DM_SDE)
 )
 
 # likelihood_mode -> the tidy ``variant`` tag written for the Ours rows.
@@ -124,6 +135,8 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.SDA: "sda",
     Method.SURGE_SDA: "surge_sda",
     Method.SURGE_FLOWDAS: "surge_flowdas",
+    Method.SURGE_SI_SDE: "surge_si_sde",
+    Method.SURGE_DM_SDE: "surge_dm_sde",
 }
 
 # Main-table scenarios; the other two go to the appendix table.
@@ -221,7 +234,14 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         cfgs: dict[Method, object] = {}
         root = Path(__file__).resolve().parents[2] / "configs" / "method"
         for m, name in METHOD_CONFIG_NAME.items():
-            cfgs[m] = OmegaConf.load(root / f"{name}.yaml")
+            cfg = OmegaConf.load(root / f"{name}.yaml")
+            # ``inherit: <other>`` merges this file over another method config, so
+            # e.g. SURGE (SI-SDE) reuses si_sde.yaml's likelihood tables verbatim.
+            base = cfg.get("inherit", None)
+            if base:
+                cfg = OmegaConf.merge(OmegaConf.load(root / f"{base}.yaml"), cfg)
+                cfg.pop("inherit")
+            cfgs[m] = cfg
         return cfgs
 
     def _ensure_prior(self):  # type: ignore[no-untyped-def]
@@ -385,6 +405,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         model, posterior, stepper = _ns_pipeline.build_posterior(
@@ -436,7 +459,10 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             # the SI-path methods (SI-SDE, FlowDAS, SURGE+FlowDAS) use the x0
             # point-mass init.
             gaussian_base=ctx.method
-            not in (Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS),
+            not in (
+                Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS,
+                Method.SURGE_SI_SDE,
+            ),
             # Early-abort divergence guard (opt-in; None = off, unchanged runs).
             divergence_rmse_threshold=self._cfg_get(
                 "divergence_rmse_threshold", None
@@ -532,6 +558,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         from cases.navier_stokes import enkf_baseline  # lazy: pulls in jax (CPU)
@@ -726,6 +755,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         smoke = bool(self._cfg_get("ablation_smoke", True))
@@ -870,7 +902,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         single mode and gets ``None`` (empty cell). Lets both Ours modes coexist
         as distinct rows under the same canonical method label.
         """
-        if method not in OURS_METHODS:
+        if method not in VARIANT_METHODS:
             return None
         # Explicit override (e.g. distinguish an ablation like the cached-Jacobian
         # shared mode from the every-step shared mode, which share a likelihood_mode).
@@ -1059,6 +1091,11 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             scenario=ctx.scenario.value,
             variant=variant if variant else "",
             test_index=int(ctx.extra.get("test_index", -1)),
+            # -1 = the truth's own initial condition.
+            ic_index=int(
+                -1 if self._cfg_get("ic_index", None) is None
+                else self._cfg_get("ic_index", None)
+            ),
             seed=int(ctx.seed),
             E=int(ctx.ensemble_size),
             M=int(ctx.num_steps),

@@ -54,6 +54,15 @@ MISSING_CELL = "--"
 # across-trajectory spread -- so methods that tie at two decimals are all bolded.
 BOLD_DECIMALS = 2
 
+# Divergence. A trajectory-cell whose run tripped the divergence guard is dropped
+# whole by the aggregation (aggregate_ns.py) and counted per cell as ``n_div``.
+# A cell where EVERY trajectory diverged prints DIV_ALL ("div 5/5"); a cell where
+# SOME did prints the mean over the survivors with a DIV_SOME superscript
+# ("0.873^{div 1/5}"). Partially diverged cells are EXCLUDED from the bolding --
+# their mean is over a survivor-biased subset, so it is not comparable.
+DIV_ALL = "div {k}/{n}"
+DIV_SOME = r"\textsuperscript{{div\,{k}/{n}}}"
+
 
 # --------------------------------------------------------------------------- #
 # Spec
@@ -97,6 +106,30 @@ class TableSpec:
     notes: str = ""
     # Whether to explain the ``--`` placeholder in the caption.
     include_missing_cell_note: bool = True
+    # Optional ``(variant, sub-block header)`` overrides of :func:`_variant_label`
+    # (the cadence ablation words its sub-blocks differently from the main table).
+    variant_labels: tuple[tuple[str, str], ...] = ()
+    # Nominal ensemble size of each reference row, used in its label when the
+    # reference has NO data (not run): the row is still printed, as "--" cells,
+    # so a missing reference stays visible instead of silently vanishing.
+    reference_nominal_E: tuple[tuple[str, int], ...] = ()
+    # Covariance modes that were NOT run but belong in the table's layout (e.g.
+    # the k=1 / k=5 cadences of the ablation): each is rendered as its sub-block
+    # header with every cell ``--``, so the table keeps the manuscript's shape.
+    placeholder_variants: tuple[str, ...] = ()
+    # Show baselines / classical / reference blocks (False -> ours only: ablation).
+    include_others: bool = True
+    # False -> no cost block (e.g. when no honest clean timing exists for a row).
+    include_cost: bool = True
+    # ``(base_variant, paired_variant, row-label suffix)``: our samplers are laid
+    # out in one sub-block per BASE variant, each row followed directly by the
+    # same sampler under the paired variant (e.g. plain vs + forecast correction).
+    paired_variants: tuple[tuple[str, str, str], ...] = ()
+
+
+def _n_groups(spec: "TableSpec") -> int:
+    """Column groups: the metric groups, plus cost unless ``include_cost`` is off."""
+    return len(spec.metric_groups) + (1 if spec.include_cost else 0)
 
 
 # Our samplers' likelihood-covariance modes (the tidy ``variant`` column) ->
@@ -122,13 +155,18 @@ def _variant_label(variant: str) -> str:
     return f"Ours -- {variant}"
 
 
-def _variant_rank(variant: str) -> tuple[int, str]:
-    """Sort key: the shared modes first (the paper's headline), jacfree after."""
+def _variant_rank(variant: str) -> tuple[int, int, str]:
+    """Sort key: the shared modes first (the paper's headline), jacfree after.
+
+    Shared cadences sort NUMERICALLY (k=1, 5, 10), not as strings, which would put
+    ``shared_jac10`` before ``shared_jac5``.
+    """
     if variant.startswith("shared"):
-        return (0, variant)
+        k = variant[len("shared_jac"):]
+        return (0, int(k) if k.isdigit() else 1, variant)
     if variant == "jacfree":
-        return (1, variant)
-    return (2, variant)
+        return (1, 0, variant)
+    return (2, 0, variant)
 
 
 # --------------------------------------------------------------------------- #
@@ -143,18 +181,34 @@ def _fmt_number(x: float, fmt: str) -> str:
     return fmt.format(x)
 
 
+# The across-trajectory std printed after a metric value, in a smaller font than
+# the (already \scriptsize) table body, at the value's scale and decimals.
+STD_FONT = r"\tiny"
+
+
+def std_suffix(std: float | None, fmt: str, *, n: int | None = None) -> str:
+    r"""``{\tiny\,$\pm$<std>}``, or "" without a usable std (absent, NaN, n<2)."""
+    if std is None or math.isnan(std) or (n is not None and n < 2):
+        return ""
+    # Same decimals as the value: a std below 10^-3 prints 0.000, not 4.3e-4.
+    txt = fmt.format(std) if abs(std) < 1e4 else _fmt_number(std, fmt)
+    return rf"{{{STD_FONT}\,$\pm${txt}}}"
+
+
 def _cell(
     value: float | None, std: float | None, *, fmt: str, with_std: bool,
-    bold: bool = False,
+    bold: bool = False, underline: bool = False, n: int | None = None,
 ) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return MISSING_CELL
     out = _fmt_number(value, fmt)
     if bold:
         out = rf"\textbf{{{out}}}"
-    # The std is context, not the compared quantity -- it stays unbolded.
-    if with_std and std is not None and not math.isnan(std):
-        out += rf" {{\tiny $\pm$ {_fmt_number(std, fmt)}}}"
+    elif underline:
+        out = rf"\underline{{{out}}}"
+    # The std is context, not the compared quantity -- it stays unmarked.
+    if with_std:
+        out += std_suffix(std, fmt, n=n)
     return out
 
 
@@ -195,6 +249,26 @@ class _Index:
     variants_by_M: dict[int, set[str]] = field(default_factory=dict)
     Ms_by_method: dict[str, set[int]] = field(default_factory=dict)
     E_by_method: dict[str, set[int]] = field(default_factory=dict)
+    # (method, variant, scenario, M) -> trajectories that SURVIVED (n_traj of the
+    # rmse row) and -> trajectories that diverged (from aggregate_ns n_div).
+    nok_by_cell: dict[tuple[str, str, str, int | None], int] = field(default_factory=dict)
+    ndiv_by_cell: dict[tuple[str, str, str, int | None], int] = field(default_factory=dict)
+
+    def div_counts(
+        self, method: str, variant: str, scenario: str, M: int | None,
+        m_independent: bool = False,
+    ) -> tuple[int, int]:
+        """(n_ok, n_div) for one cell; m_independent rows match any M label."""
+        def pick(d: dict) -> int:
+            if (method, variant, scenario, M) in d:
+                return d[(method, variant, scenario, M)]
+            if m_independent:
+                hits = [v for (mm, vv, ss, _), v in d.items()
+                        if (mm, vv, ss) == (method, variant, scenario)]
+                if len(hits) == 1:
+                    return hits[0]
+            return 0
+        return pick(self.nok_by_cell), pick(self.ndiv_by_cell)
 
     def get(
         self, method: str, variant: str, scenario: str, metric: str, M: int | None
@@ -222,8 +296,15 @@ class _Index:
         return self.get(method, variant, scenario, metric, next(iter(own)))
 
 
-def _build_index(rows: list[dict[str, object]], spec: TableSpec) -> _Index:
+def _build_index(
+    rows: list[dict[str, object]], spec: TableSpec,
+    n_div: dict[tuple, int] | None = None,
+) -> _Index:
     idx = _Index()
+    for (method, variant, scenario, M), k in (n_div or {}).items():
+        if k:
+            idx.ndiv_by_cell[(str(method), _norm_variant(variant), str(scenario),
+                              _as_opt_int(M))] = int(k)
     ours_keys = {m for m, _ in spec.ours}
     ref_keys = {m for m, _ in spec.reference}
     for r in rows:
@@ -234,6 +315,10 @@ def _build_index(rows: list[dict[str, object]], spec: TableSpec) -> _Index:
         variant = _norm_variant(r.get("variant"))
         key = (method, variant, str(r.get("scenario")), str(r.get("metric")), M)
         idx.by_key[key] = (_as_opt_float(r.get("value")), _as_opt_float(r.get("std")))
+        if str(r.get("metric")) == "rmse":
+            n_ok = _as_opt_int(r.get("n_traj"))
+            if n_ok is not None:
+                idx.nok_by_cell[(method, variant, str(r.get("scenario")), M)] = n_ok
         if M is None:
             continue
         E = _as_opt_int(r.get("E"))
@@ -267,7 +352,7 @@ def _column_format(spec: TableSpec) -> str:
     """``l|cccc|cccc|cccc|cccc`` -- one group of scenario columns per metric, then
     the SAME scenario columns again for cost (cost is per-scenario, not averaged)."""
     groups = "|".join("c" * len(spec.scenarios)
-                      for _ in range(len(spec.metric_groups) + 1))
+                      for _ in range(_n_groups(spec)))
     return f"l|{groups}"
 
 
@@ -323,7 +408,8 @@ def _header(spec: TableSpec, exps: list[int] | None = None) -> list[str]:
     """
     n_scen = len(spec.scenarios)
     group_labels = [lbl for _, lbl in spec.metric_groups]
-    group_labels.append(f"Cost ({spec.cost_header})")
+    if spec.include_cost:
+        group_labels.append(f"Cost ({spec.cost_header})")
     if exps is not None:
         group_labels = [
             lbl if e == 0 else rf"{lbl} ($\times 10^{{-{e}}}$)"
@@ -337,7 +423,7 @@ def _header(spec: TableSpec, exps: list[int] | None = None) -> list[str]:
     # LAST block, so it closes with `c` rather than `c|`.
     top.append(rf"& \multicolumn{{{n_scen}}}{{c}}{{\textbf{{{group_labels[-1]}}}}} \\")
     scen_cells = " & ".join(h for _, h in spec.scenarios)
-    sub = "        & " + " & ".join([scen_cells] * (len(spec.metric_groups) + 1))
+    sub = "        & " + " & ".join([scen_cells] * _n_groups(spec))
     sub += r" \\"
     return ["        " + "\n        ".join(top), sub]
 
@@ -363,8 +449,9 @@ def _row_values(
     # Jacobian costs one JVP per observation, so e.g. urban sparse 5% (N_y~2081)
     # is ~3.2x dearer than sparse 1.5625% (N_y~650) at identical M. Averaging hid a
     # spread that large behind a single number.
-    for scenario, _ in spec.scenarios:
-        out.append((get(method, variant, scenario, spec.cost_metric, M)[0], None))
+    if spec.include_cost:
+        for scenario, _ in spec.scenarios:
+            out.append((get(method, variant, scenario, spec.cost_metric, M)[0], None))
     return out
 
 
@@ -399,10 +486,49 @@ def _best_in_column(
     }
 
 
+def _second_in_column(
+    values: list[float | None], fmt: str, best: set[int], *, lower_is_better: bool
+) -> set[int]:
+    """Row indices holding the SECOND-best value of a column, ties included.
+
+    Same competing set (``values``, with ``None`` for masked cells) and the same
+    tie rule as :func:`_best_in_column`: the second best is the best of the values
+    left once every bolded (best-tied) entry is removed, and every remaining value
+    tying it is underlined. No bold -> no underline (fewer than two competitors).
+    """
+    if not best:
+        return set()
+    rest = [None if i in best else v for i, v in enumerate(values)]
+    present = [(i, v) for i, v in enumerate(rest) if v is not None and not math.isnan(v)]
+    if not present:
+        return set()
+    pick = max if lower_is_better is False else min
+    second = pick(v for _, v in present)
+    s_str, s_round = _fmt_number(second, fmt), round(second, BOLD_DECIMALS)
+    return {i for i, v in present
+            if round(v, BOLD_DECIMALS) == s_round or _fmt_number(v, fmt) == s_str}
+
+
+BOLD_UNDERLINE_SENTENCE = (
+    r"\textbf{Bold} marks the best value in each column and \underline{underline} "
+    f"the second best, each together with every value equal to it to {BOLD_DECIMALS} "
+    "decimal places in unscaled units."
+)
+STD_SENTENCE = r"$\pm$ gives the standard deviation over the (non-diverged) trajectories."
+
+
 def _caption(
     spec: TableSpec, idx: _Index, M: int, *, with_std: bool, scaled: bool = False
 ) -> str:
     ntraj = sorted(idx.ntraj_by_M.get(M, set()))
+    # With divergence bookkeeping the per-cell count is survivors + diverged; quote
+    # THAT (the number of trajectories run), and explain the div marks separately.
+    if idx.ndiv_by_cell:
+        cells = set(idx.nok_by_cell) | set(idx.ndiv_by_cell)
+        ntraj = sorted({
+            idx.nok_by_cell.get(k, 0) + idx.ndiv_by_cell.get(k, 0) for k in cells
+            if k[0] not in {m for m, _ in spec.reference}
+        })
     Es = sorted(idx.E_by_M.get(M, set()))
     if not ntraj:
         traj_txt = "held-out trajectories"
@@ -413,37 +539,50 @@ def _caption(
         traj_txt = f"{ntraj[0]}--{ntraj[-1]} held-out trajectories (cell-dependent)"
     E_txt = f"$E={Es[0]}$" if len(Es) == 1 else "$E \\in \\{" + ", ".join(map(str, Es)) + "\\}$"
 
-    stat = "Mean $\\pm$ std" if with_std else "Mean"
+    stat = "Mean"
     metrics_phrase = spec.metrics_phrase or "metrics"
     n_scen = {2: "two", 3: "three", 4: "four"}.get(len(spec.scenarios), str(len(spec.scenarios)))
     parts = [
         f"{spec.case_label}: {metrics_phrase} across the {n_scen} observation "
-        f"scenarios, with per-step cost (lower is better).",
+        f"scenarios"
+        + (", with per-step cost (lower is better)." if spec.include_cost
+           else " (lower is better)."),
         f"{stat} over {traj_txt} at {E_txt}, $M={M}$ sampler steps.",
     ]
     # The bold rule is applied to the UNSCALED values in both variants, so the two
     # notations always bold the same cells; the caption says so, because in the
     # scaled table two-decimal agreement is not what the printed digits show.
-    tie_units = " (on the unscaled values)" if scaled else ""
-    parts.append(
-        r"\textbf{Bold} marks the best value in each column, together with every "
-        f"value equal to it to {BOLD_DECIMALS} decimal places{tie_units}."
-    )
+    parts.append(BOLD_UNDERLINE_SENTENCE)
+    if with_std:
+        parts.append(STD_SENTENCE)
     if scaled:
         parts.append(
             "A metric carrying a factor in its header is reported in those units "
             "throughout its columns (e.g. $\\times 10^{-2}$ means the printed "
             "entry is a multiple of $10^{-2}$)."
         )
-    if spec.reference:
-        names = ", ".join(lbl for _, lbl in spec.reference)
-        Es = sorted({
-            e for m, _ in spec.reference for e in idx.E_by_method.get(m, set())
-        })
-        at_E = f" at $E={Es[0]}$" if len(Es) == 1 else ""
+    if spec.reference and spec.include_others:
+        ran = [(m, lbl) for m, lbl in spec.reference if idx.E_by_method.get(m)]
+        not_run = [lbl for m, lbl in spec.reference if not idx.E_by_method.get(m)]
+        if ran:
+            names = ", ".join(lbl for _, lbl in ran)
+            Es = sorted({e for m, _ in ran for e in idx.E_by_method.get(m, set())})
+            at_E = f" at $E={Es[0]}$" if len(Es) == 1 else ""
+            parts.append(
+                f"{names}{at_E} is a REFERENCE run out of competition -- shown for "
+                "context and excluded from the bolding."
+            )
+        if not_run:
+            parts.append(
+                f"{', '.join(not_run)}: not run for this setting (``{MISSING_CELL}'')."
+            )
+    if idx.ndiv_by_cell:
         parts.append(
-            f"{names}{at_E} is a REFERENCE run out of competition -- shown for "
-            "context and excluded from the bolding."
+            "``div $k/n$'' marks a cell in which $k$ of the $n$ trajectories "
+            "diverged (tripped the divergence guard); those trajectories are "
+            "excluded from every metric. A number carrying a div superscript is "
+            "the mean over the surviving $n-k$ trajectories and is neither bolded nor "
+            "underlined."
         )
     if spec.notes:
         parts.append(spec.notes)
@@ -455,41 +594,51 @@ def _caption(
     return " ".join(parts)
 
 
-def render_table(
-    spec: TableSpec, idx: _Index, M: int, *, with_std: bool = False,
-    scaled: bool = False,
-) -> str:
-    """One ``table*`` for a single sampler-step count ``M``.
+@dataclass
+class _Row:
+    method: str
+    label: str
+    variant: str
+    rule: bool = False        # emit \midrule before this row
+    head: str | None = None   # emit a \multicolumn sub-block header before it
+    m_independent: bool = False  # no sampler steps -> same row in every table
+    competes: bool = True     # False -> printed, but never bolded (reference)
 
-    Rendered in two passes: the whole table's values are collected first so the
-    best entry in each column (over EVERY row -- both covariance modes, the
-    baselines and the classical filters) can be bolded, then the rows are emitted.
 
-    ``scaled`` emits the power-of-ten variant: each metric group is expressed in
-    units of its own $10^{-n}$ (:func:`_group_exponent`), named once beside the
-    metric in the group header and covering that group's scenario columns. The
-    numbers, the bolding and the caption are otherwise IDENTICAL to the plain
-    variant -- in particular the bold set is decided on the true values, so the two
-    variants of a table always bold the same cells and differ only in notation.
+@dataclass
+class _Built:
+    """Everything an emitter needs: row plan, values, bold sets, units, div marks."""
+
+    plan: list[_Row]
+    grid: list[list[tuple[float | None, float | None]]]
+    best: list[set[int]]
+    second: list[set[int]]   # underlined (second best), same competing set
+    exps: list[int] | None
+    col_exps: list[int] | None
+    # Per row, per column: "" (normal), or the divergence decoration.
+    div: list[list[tuple[int, int]]]   # (n_div, n_total) per cell; (0, n) = clean
+    n_metric_cols: int
+    span: int
+
+
+def _build_table(
+    spec: TableSpec, idx: _Index, M: int, *, scaled: bool = False,
+) -> _Built:
+    """Pass 1 of rendering: the row plan, the value grid and the bolding.
+
+    The best entry in each column is chosen over EVERY competing row (both
+    covariance modes, the baselines and the classical filters); reference rows and
+    PARTIALLY DIVERGED cells are masked out of that comparison.
     """
-    # + method column + (metric groups + the cost group) x scenarios
-    span = 1 + (len(spec.metric_groups) + 1) * len(spec.scenarios)
-
-    # Pass 1: the row plan + its value grid. Each entry carries the decoration to
-    # emit before it (a \midrule, and for our samplers a covariance-mode header),
-    # so the emit loop below is a straight walk with no group bookkeeping.
-    @dataclass
-    class _Row:
-        method: str
-        label: str
-        variant: str
-        rule: bool = False        # emit \midrule before this row
-        head: str | None = None   # emit a \multicolumn sub-block header before it
-        m_independent: bool = False  # no sampler steps -> same row in every table
-        competes: bool = True     # False -> printed, but never bolded (reference)
-
+    span = 1 + _n_groups(spec) * len(spec.scenarios)
     plan: list[_Row] = []
-    variants = sorted(idx.variants_by_M.get(M, set()), key=_variant_rank)
+    variants = sorted(
+        set(idx.variants_by_M.get(M, set())) | set(spec.placeholder_variants),
+        key=_variant_rank,
+    )
+    pairs = {base: (paired, suffix) for base, paired, suffix in spec.paired_variants}
+    if pairs:
+        variants = sorted(pairs, key=_variant_rank)
     if not variants:
         variants = [""]  # no variant column in the data -> a single unlabelled block
     for b, variant in enumerate(variants):
@@ -497,59 +646,140 @@ def render_table(
             plan.append(_Row(
                 method, label, variant,
                 rule=(i == 0 and b > 0),
-                head=_variant_label(variant) if i == 0 else None,
+                head=(
+                    dict(spec.variant_labels).get(variant, _variant_label(variant))
+                    if i == 0 else None
+                ),
             ))
-    for group, m_indep in ((spec.baselines, False), (spec.classical, True)):
-        for i, (method, label) in enumerate(group):
-            plan.append(_Row(method, label, "", rule=(i == 0), m_independent=m_indep))
-    # The reference block closes the table: run once, at its own ensemble size
-    # (named in the label, taken from the data so it cannot drift), out of
-    # competition for the bolding.
-    for i, (method, label) in enumerate(spec.reference):
-        Es = sorted(idx.E_by_method.get(method, set()))
-        if len(Es) == 1:
-            label = rf"{label} ($E={Es[0]}$)"
-        plan.append(_Row(
-            method, label, "", rule=(i == 0), m_independent=True, competes=False,
-        ))
+            if variant in pairs:
+                paired, suffix = pairs[variant]
+                plan.append(_Row(method, f"{label}{suffix}", paired))
+    if spec.include_others:
+        for group, m_indep in ((spec.baselines, False), (spec.classical, True)):
+            for i, (method, label) in enumerate(group):
+                plan.append(_Row(method, label, "", rule=(i == 0), m_independent=m_indep))
+        # The reference block closes the table: run once, at its own ensemble size
+        # (named in the label, taken from the data so it cannot drift -- or from
+        # ``reference_nominal_E`` when it was not run), out of competition.
+        nominal = dict(spec.reference_nominal_E)
+        for i, (method, label) in enumerate(spec.reference):
+            Es = sorted(idx.E_by_method.get(method, set()))
+            if len(Es) == 1:
+                label = rf"{label} ($E={Es[0]}$)"
+            elif not Es and method in nominal:
+                label = rf"{label} ($E={nominal[method]}$)"
+            plan.append(_Row(
+                method, label, "", rule=(i == 0), m_independent=True, competes=False,
+            ))
 
     grid = [
         _row_values(spec, idx, r.method, r.variant, M, m_independent=r.m_independent)
         for r in plan
     ]
-    n_cols = (len(spec.metric_groups) + 1) * len(spec.scenarios)
+    n_cols = _n_groups(spec) * len(spec.scenarios)
     n_metric_cols = len(spec.metric_groups) * len(spec.scenarios)
-    # Every metric here (RMSE, CRPS, |1 - spread/skill|) and the cost are
-    # lower-is-better; ``higher_is_better`` names any exception.
+    n_scen = len(spec.scenarios)
+
+    # Divergence counts per cell (same for every metric column of one scenario).
+    div: list[list[tuple[int, int]]] = []
+    for r in plan:
+        row_div = []
+        for c in range(n_cols):
+            scenario = spec.scenarios[c % n_scen][0]
+            n_ok, n_dv = idx.div_counts(r.method, r.variant, scenario, M, r.m_independent)
+            row_div.append((n_dv, n_ok + n_dv))
+        div.append(row_div)
+
     col_metric = [m for m, _ in spec.metric_groups for _ in spec.scenarios]
-    col_metric.extend([spec.cost_metric] * len(spec.scenarios))
+    if spec.include_cost:
+        col_metric.extend([spec.cost_metric] * len(spec.scenarios))
     # Reference rows are masked out of the comparison (not merely left unbolded):
     # a 1000-member filter winning a column would otherwise silently redefine what
-    # the bold means for every other row.
-    best: list[set[int]] = [
-        _best_in_column(
-            [row[c][0] if plan[r].competes else None for r, row in enumerate(grid)],
-            spec.cost_fmt if c >= n_metric_cols else spec.fmt,
-            lower_is_better=col_metric[c] not in spec.higher_is_better,
-        )
+    # the bold means for every other row. Partially diverged cells likewise: their
+    # mean is over the survivors only. (Cost columns are not masked -- the cost of
+    # a step does not depend on whether a later step blew up.)
+    competing = [
+        [
+            row[c][0]
+            if plan[r].competes and (c >= n_metric_cols or div[r][c][0] == 0)
+            else None
+            for r, row in enumerate(grid)
+        ]
         for c in range(n_cols)
     ]
-    # Per-GROUP units (metric groups, then cost), chosen AFTER the bolding so the
-    # two variants agree. ``col_exps`` fans the group exponent back out over the
-    # scenario columns it spans, which is what the cells are scaled by.
-    n_scen = len(spec.scenarios)
+    col_fmt = [spec.cost_fmt if c >= n_metric_cols else spec.fmt for c in range(n_cols)]
+    lower = [col_metric[c] not in spec.higher_is_better for c in range(n_cols)]
+    best: list[set[int]] = [
+        _best_in_column(competing[c], col_fmt[c], lower_is_better=lower[c])
+        for c in range(n_cols)
+    ]
+    second: list[set[int]] = [
+        _second_in_column(competing[c], col_fmt[c], best[c], lower_is_better=lower[c])
+        for c in range(n_cols)
+    ]
     exps = (
         [
             _group_exponent([
                 row[g * n_scen + j][0] for row in grid for j in range(n_scen)
             ])
-            for g in range(len(spec.metric_groups) + 1)
+            for g in range(_n_groups(spec))
         ]
         if scaled else None
     )
     col_exps = [e for e in exps for _ in range(n_scen)] if exps else None
+    return _Built(plan, grid, best, second, exps, col_exps, div, n_metric_cols, span)
 
-    # Pass 2: emit.
+
+def _cells_of_row(
+    spec: TableSpec, t: _Built, r: int, *, with_std: bool, markdown: bool = False,
+) -> list[str]:
+    out = []
+    for c, (v, s) in enumerate(t.grid[r]):
+        is_metric = c < t.n_metric_cols
+        n_dv, n_tot = t.div[r][c]
+        if n_dv and n_dv == n_tot:
+            # Every trajectory diverged: the metric columns say so; cost has no
+            # finished run to report.
+            out.append(DIV_ALL.format(k=n_dv, n=n_tot) if is_metric else MISSING_CELL)
+            continue
+        fmt = spec.cost_fmt if not is_metric else spec.fmt
+        val, sd = _rescale(v, s, t.col_exps[c] if t.col_exps else 0)
+        if markdown:
+            if val is None or math.isnan(val):
+                cell = MISSING_CELL
+            else:
+                cell = _fmt_number(val, fmt)
+                if r in t.best[c]:
+                    cell = f"**{cell}**"
+                elif r in t.second[c]:
+                    cell = f"_{cell}_"
+                if (with_std and is_metric and sd is not None and not math.isnan(sd)
+                        and n_tot - n_dv >= 2):
+                    cell += f" ± {fmt.format(sd)}"
+        else:
+            cell = _cell(val, sd, fmt=fmt, with_std=with_std and is_metric,
+                         bold=r in t.best[c], underline=r in t.second[c],
+                         n=n_tot - n_dv if n_tot else None)
+        if is_metric and n_dv and cell != MISSING_CELL:
+            cell += (f" (div {n_dv}/{n_tot})" if markdown
+                     else DIV_SOME.format(k=n_dv, n=n_tot))
+        out.append(cell)
+    return out
+
+
+def render_table(
+    spec: TableSpec, idx: _Index, M: int, *, with_std: bool = False,
+    scaled: bool = False,
+) -> str:
+    """One ``table*`` for a single sampler-step count ``M``.
+
+    Rendered in two passes (:func:`_build_table`, then emit). ``scaled`` emits the
+    power-of-ten variant: each metric group is expressed in units of its own
+    $10^{-n}$ (:func:`_group_exponent`), named once beside the metric in the group
+    header. The bold set is decided on the true values, so the two variants of a
+    table always bold the same cells and differ only in notation.
+    """
+    t = _build_table(spec, idx, M, scaled=scaled)
     lines: list[str] = [
         r"\begin{table*}[ht]",
         r"    \centering",
@@ -557,43 +787,68 @@ def render_table(
         r"    \setlength{\tabcolsep}{3.5pt}",
         rf"    \caption{{{_caption(spec, idx, M, with_std=with_std, scaled=scaled)}}}",
         # A DISTINCT label for the scaled variant: both files may be \input by the
-        # same manuscript while one of the two is being chosen, and duplicate
-        # \label keys would silently cross-wire every \ref to these tables.
+        # same manuscript while one of the two is being chosen.
         rf"    \label{{{spec.label_stem}_M{M}{'_scaled' if scaled else ''}}}",
-        # Shrink-to-fit: metric groups x scenarios grows the table past
-        # \textwidth (the NS spec is four groups x four scenarios + cost = 17
-        # columns, ~15% too wide at \scriptsize), and an overfull table silently
-        # runs into the margin. The \ifdim guard scales ONLY when the natural
-        # width exceeds the text block, so a narrow table (urban) is left at its
-        # nominal font size rather than being blown up to fill the line.
+        # Shrink-to-fit, only when the natural width exceeds the text block.
         r"    \resizebox{\ifdim\width>\textwidth\textwidth\else\width\fi}{!}{%",
         rf"    \begin{{tabular}}{{{_column_format(spec)}}}",
         r"        \toprule",
-        *_header(spec, exps),
+        *_header(spec, t.exps),
         r"        \midrule",
     ]
-    for r, row in enumerate(plan):
+    for r, row in enumerate(t.plan):
         if row.rule:
             lines.append(r"        \midrule")
         if row.head is not None:
             lines.append(
-                rf"        \multicolumn{{{span}}}{{l}}{{\textit{{{row.head}}}}} \\"
+                rf"        \multicolumn{{{t.span}}}{{l}}{{\textit{{{row.head}}}}} \\"
             )
-        cells = [
-            _cell(
-                *_rescale(v, s, col_exps[c] if col_exps else 0),
-                fmt=spec.cost_fmt if c >= n_metric_cols else spec.fmt,
-                with_std=with_std and c < n_metric_cols,
-                bold=r in best[c],
-            )
-            for c, (v, s) in enumerate(grid[r])
-        ]
+        cells = _cells_of_row(spec, t, r, with_std=with_std)
         lines.append(f"        {row.label} & " + " & ".join(cells) + r" \\")
-
     lines += [
         r"        \bottomrule", r"    \end{tabular}}", r"\end{table*}",
     ]
     return "\n".join(lines)
+
+
+def _md_text(s: str) -> str:
+    """Rough LaTeX -> Markdown for labels and headers in the preview."""
+    for a, b in ((r"$\tfrac{1}{64}$", "1/64"), (r"$16^2$", "16²"), (r"$32^2$", "32²"),
+                 (r"$5\%$", "5%"), (r"\textit{", ""), (r"\textbf{", ""), ("--", "–"),
+                 ("$", ""), (r"\times 10^{-", "×10^-"), ("}", ""), ("{", "")):
+        s = s.replace(a, b)
+    return s
+
+
+def render_markdown(
+    spec: TableSpec, idx: _Index, M: int, *, with_std: bool = False,
+    scaled: bool = False, title: str = "",
+) -> str:
+    """The same table as :func:`render_table`, as a Markdown preview.
+
+    Bold uses ``**``, underline ``_x_``; a fully diverged cell prints ``div k/n``; a partially
+    diverged one prints its survivor mean followed by ``(div k/n)``.
+    """
+    t = _build_table(spec, idx, M, scaled=scaled)
+    n_scen = len(spec.scenarios)
+    groups = [lbl for _, lbl in spec.metric_groups]
+    if spec.include_cost:
+        groups.append(f"Cost ({spec.cost_header})")
+    if t.exps is not None:
+        groups = [g if e == 0 else rf"{g} (×10^-{e})" for g, e in zip(groups, t.exps)]
+    head = ["Method"] + [
+        f"{_md_text(g)} {_md_text(h)}" for g in groups for _, h in spec.scenarios
+    ]
+    out = [f"### {title}" if title else "", "",
+           "| " + " | ".join(head) + " |",
+           "|" + "---|" * len(head)]
+    for r, row in enumerate(t.plan):
+        if row.head is not None:
+            out.append(f"| *{_md_text(row.head)}* |" + " |" * (len(head) - 1))
+        cells = _cells_of_row(spec, t, r, with_std=with_std, markdown=True)
+        out.append(f"| {_md_text(row.label)} | " + " | ".join(cells) + " |")
+    del n_scen
+    return "\n".join(out)
 
 
 def write_latex_tables(
@@ -601,18 +856,33 @@ def write_latex_tables(
     rows: list[dict[str, object]],
     out: Path,
     *,
-    with_std: bool = False,
+    with_std: bool = True,
     scaled: bool = False,
+    only_M: int | None = None,
+    n_div: dict[tuple, int] | None = None,
+    markdown_out: Path | None = None,
+    markdown_title: str = "",
 ) -> list[int]:
     """Write one table per M in ``rows`` to ``out``; return the Ms rendered.
+
+    ``only_M`` renders that single M. It is needed for a one-rung grid: the
+    classical filters carry whatever M their cell was labelled with, which would
+    otherwise mint a second table holding nothing but those rows.
+
+    ``n_div`` maps ``(method, variant, scenario, M)`` to the number of diverged
+    trajectory-cells the aggregation dropped there (see ``DIV_ALL`` /
+    ``DIV_SOME``). ``markdown_out`` additionally writes a Markdown preview of the
+    same tables.
 
     ``rows`` are the aggregated scalar rows (:func:`aggregate_scalar` output).
     Returns ``[]`` (and writes nothing) when the case has no rows with an ``M``.
     ``scaled`` selects the power-of-ten variant (see :func:`render_table`); call
     twice, with two output paths, to keep both on disk.
     """
-    idx = _build_index(rows, spec)
+    idx = _build_index(rows, spec, n_div)
     Ms = sorted(idx.Ms)
+    if only_M is not None:
+        Ms = [M for M in Ms if M == only_M]
     if not Ms:
         return []
     body = "\n\n".join(
@@ -629,7 +899,19 @@ def write_latex_tables(
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(header + body + "\n", encoding="utf-8")
+    if markdown_out is not None:
+        md = "\n\n".join(
+            render_markdown(spec, idx, M, with_std=with_std, scaled=scaled,
+                            title=f"{markdown_title} (M={M})")
+            for M in Ms
+        )
+        markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        markdown_out.write_text(md + "\n", encoding="utf-8")
     return Ms
 
 
-__all__ = ["TableSpec", "write_latex_tables", "render_table", "MISSING_CELL"]
+__all__ = [
+    "TableSpec", "write_latex_tables", "render_table", "render_markdown",
+    "MISSING_CELL", "DIV_ALL", "DIV_SOME", "std_suffix", "BOLD_UNDERLINE_SENTENCE",
+    "STD_SENTENCE",
+]

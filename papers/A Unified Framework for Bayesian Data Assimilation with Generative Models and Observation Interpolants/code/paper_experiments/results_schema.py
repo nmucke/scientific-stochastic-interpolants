@@ -79,6 +79,10 @@ class Method(str, Enum):
     # SURGE combined with another method's guidance (paper: SURGE + SDA / FlowDAS).
     SURGE_SDA = "SURGE (SDA)"  # SURGE SMC on the FM/DM prior, SDA likelihood as guidance
     SURGE_FLOWDAS = "SURGE (FlowDAS)"  # SURGE SMC on the SI prior, FlowDAS likelihood as guidance
+    # SURGE SMC layer on OUR samplers (our interpolant likelihood as the guidance;
+    # variant-tagged jacfree / shared like the Ours rows). No FM-ODE: g = 0.
+    SURGE_SI_SDE = "SURGE (SI-SDE)"
+    SURGE_DM_SDE = "SURGE (DM-SDE)"
 
     # Classical data assimilation (ground-truth EnKF + conventional baselines).
     ENKF = "EnKF"

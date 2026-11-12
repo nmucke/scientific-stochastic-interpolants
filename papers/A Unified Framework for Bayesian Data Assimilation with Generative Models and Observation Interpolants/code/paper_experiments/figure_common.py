@@ -76,6 +76,14 @@ SERIES: tuple[tuple, ...] = (
     ("Ours (SI-SDE)", "jacfree", "Ours SI-SDE (Jac-free)", _SI, "--", "o", False),
     ("Ours (DM-SDE)", "jacfree", "Ours DM-SDE (Jac-free)", _DM, "--", "s", False),
     ("Ours (FM-ODE)", "jacfree", "Ours FM-ODE (Jac-free)", _FM, "--", "^", False),
+    # Forecast correction (FC) on Ours: same colour as the plain counterpart,
+    # dash-dot (shared) / dotted (Jac-free) and a diamond marker.
+    ("Ours (SI-SDE)", "shared_fc", "Ours SI-SDE (shared) + FC", _SI, "-.", "D", True),
+    ("Ours (DM-SDE)", "shared_fc", "Ours DM-SDE (shared) + FC", _DM, "-.", "D", True),
+    ("Ours (FM-ODE)", "shared_fc", "Ours FM-ODE (shared) + FC", _FM, "-.", "D", True),
+    ("Ours (SI-SDE)", "jacfree_fc", "Ours SI-SDE (Jac-free) + FC", _SI, ":", "D", False),
+    ("Ours (DM-SDE)", "jacfree_fc", "Ours DM-SDE (Jac-free) + FC", _DM, ":", "D", False),
+    ("Ours (FM-ODE)", "jacfree_fc", "Ours FM-ODE (Jac-free) + FC", _FM, ":", "D", False),
     ("FlowDAS", None, "FlowDAS", "#D55E00", "-", "D", True),
     ("SURGE (FlowDAS)", None, "FlowDAS + SURGE", "#E69F00", "-", "v", True),
     ("SDA", None, "SDA", "#8C510A", "-", "P", True),
@@ -93,6 +101,21 @@ SERIES: tuple[tuple, ...] = (
 # CSVs, and the qualitative state figures are not affected). To reintroduce a
 # method, simply remove it from this tuple.
 HIDDEN_METHODS: tuple[str, ...] = ("FlowDAS", "SDA")
+
+
+# Methods with no sampler-step count: their cells carry whatever M they were
+# labelled with, so an M filter drops them unless they are exempted from it.
+M_INDEPENDENT_METHODS: tuple[str, ...] = ("EnKF", "Particle filter")
+
+
+def set_results_root(path: str | Path) -> None:
+    """Point every loader in this module at another results tree.
+
+    The loaders read the module-level ``RESULTS`` at call time, so one assignment
+    redirects them all. ``path`` is the directory holding ``<case>/``.
+    """
+    global RESULTS
+    RESULTS = Path(path)
 
 
 def _visible(series: dict) -> dict:
@@ -143,6 +166,12 @@ def _canon_variant(variant: str | None) -> str | None:
     """
     if not variant:
         return None
+    # Forecast-correction cells (``<base>_fc<k>_<hash>``, e.g.
+    # ``shared_jac10_fc25_70a3134d``) are their own series: never fold them into
+    # the plain shared / Jacobian-free ones.
+    if "_fc" in variant:
+        base = variant.split("_fc", 1)[0]
+        return ("shared" if base.startswith("shared") else base) + "_fc"
     if variant.startswith("shared"):
         return "shared"
     return variant
@@ -192,10 +221,35 @@ def load_metric_vs_M(
     return out
 
 
+# Reserved series key of a per-step panel: maps each (method, variant) whose
+# trajectory mean is NOT over the full trajectory set from some step on (a
+# trajectory tripped the divergence guard and went NaN) to that first step.
+# See ``load_metric_vs_step(mark_partial=True)`` and ``_plot_step_panel``.
+PARTIAL_KEY: tuple[str, None] = ("__partial__", None)
+
+
 def load_metric_vs_step(
-    case: str, metric: str, scenario: str, *, M: int | None = None
+    case: str, metric: str, scenario: str, *, M: int | None = None,
+    include_m_independent: bool = False, mark_partial: bool = False,
+    path: str | Path | None = None,
 ) -> dict[tuple[str, str | None], dict[int, float]]:
     """Return {(method, variant) -> {step: value}} for one (case, metric, scenario).
+
+    ``include_m_independent`` keeps the ``M_INDEPENDENT_METHODS`` rows whatever M
+    they carry; otherwise the M filter below silently removes the classical filters.
+
+    ``mark_partial``: flag curves that are NOT a mean over the full trajectory
+    set ("full" = the largest ``n_traj`` of the scenario). The returned dict then
+    also carries ``PARTIAL_KEY`` -> ``{(method, variant): (p0, n_min, full,
+    first_step)}`` with ``p0`` the first step where ``n_traj < full``. Two cases,
+    both drawn by ``_plot_step_panel``:
+
+    * ``p0 == first_step`` -- the aggregation dropped the diverged trajectories
+      outright (``aggregate_ns.py`` does: same set as the tables), so the curve is
+      a consistent mean over ``n_min`` trajectories at every step. Drawn normally
+      and footnoted in the panel as ``n_min/full traj.``.
+    * ``p0 > first_step`` -- a nanmean whose trajectory set shrinks mid-rollout:
+      solid up to ``p0 - 1`` (ending in an "x"), the survivors' mean faded after.
 
     Reads the trajectory-aggregated per-step curves from
     ``results/<case>/aggregated/per_step.csv`` (produced by ``aggregate_<case>.py``);
@@ -206,7 +260,7 @@ def load_metric_vs_step(
     """
     import csv as _csv
 
-    path = RESULTS / case / "aggregated" / "per_step.csv"
+    path = Path(path) if path is not None else RESULTS / case / "aggregated" / "per_step.csv"
     if not path.exists():
         return {}
     rows: list[dict[str, str]] = []
@@ -221,8 +275,13 @@ def load_metric_vs_step(
         Ms = {int(float(r["M"])) for r in rows if r.get("M") not in (None, "")}
         M = max(Ms) if Ms else None
     out: dict[tuple[str, str | None], dict[int, float]] = {}
+    ntraj: dict[tuple[str, str | None], dict[int, int]] = {}
     for r in rows:
-        if M is not None and r.get("M") not in (None, "") and int(float(r["M"])) != M:
+        if (
+            M is not None and r.get("M") not in (None, "")
+            and int(float(r["M"])) != M
+            and not (include_m_independent and r["method"] in M_INDEPENDENT_METHODS)
+        ):
             continue
         val = r.get("value")
         if val in (None, "") or (isinstance(val, str) and val.strip().lower() == "nan"):
@@ -232,6 +291,20 @@ def load_metric_vs_step(
             continue
         variant = _canon_variant(r.get("variant"))
         out.setdefault((r["method"], variant), {})[int(float(r["step"]))] = v
+        if mark_partial and r.get("n_traj") not in (None, ""):
+            ntraj.setdefault((r["method"], variant), {})[int(float(r["step"]))] = int(
+                float(r["n_traj"])
+            )
+    if mark_partial and ntraj:
+        full = max(n for d in ntraj.values() for n in d.values())
+        partial = {
+            key: (min(st for st, n in d.items() if n < full),
+                  min(d.values()), full, min(d) if d else 0)
+            for key, d in ntraj.items()
+            if any(n < full for n in d.values())
+        }
+        if partial:
+            out[PARTIAL_KEY] = partial
     return out
 
 
@@ -373,6 +446,7 @@ def _save_panel_singles(
     ylabel: str,
     xlabel: str,
     out_stem: Path,
+    figsize: tuple[float, float] | None = None,
 ) -> list[Path]:
     """Save each panel as its own standalone file (no title, no legend).
 
@@ -391,7 +465,7 @@ def _save_panel_singles(
     sdir = out_stem.parent / "singles"
     for (_title, series), slug in zip(panels, slugs):
         with plt.rc_context(SINGLE_RC):
-            fig, ax = plt.subplots(figsize=SINGLE_FIGSIZE)
+            fig, ax = plt.subplots(figsize=figsize or SINGLE_FIGSIZE)
             draw_panel(ax, series)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
@@ -403,6 +477,7 @@ def _save_panel_singles(
 def save_series_legend(
     keys, out_stem: Path, *, ncol: int = 3,
     extra: tuple[tuple[str, dict], ...] = (),
+    extra_after: tuple[tuple[str, dict], ...] = (),
 ) -> list[Path]:
     """Save a standalone legend-only figure for the given ``(method, variant)`` keys.
 
@@ -443,6 +518,9 @@ def save_series_legend(
         for _m, _v, _label, colour, ls, marker, filled in entries
     ]
     labels = [label for label, _style in extra] + [e[2] for e in entries]
+    # ``extra_after`` appends entries after the methods (divergence markers).
+    handles += [Line2D([0], [0], **style) for _label, style in extra_after]
+    labels += [label for label, _style in extra_after]
     fig = plt.figure()
     fig.legend(
         handles, labels, loc="center", ncol=ncol,
@@ -553,27 +631,81 @@ def make_vs_M_figure(
 # --------------------------------------------------------------------------- #
 
 
+STEP_MARKER_MAX: int = 20
+
+# Legend entries explaining the divergence styling of ``_plot_step_panel``.
+DIVERGENCE_LEGEND: tuple[tuple[str, dict], ...] = (
+    ("last step before a trajectory diverged",
+     dict(color="0.3", linestyle="none", marker="x", markersize=5.5,
+          markeredgewidth=1.4)),
+    ("after: mean of the non-diverged trajectories",
+     dict(color="0.3", linestyle="-", linewidth=1.3, alpha=0.3)),
+)
+
+
 def _plot_step_panel(ax, series: dict, *, logy: bool, scale: float = 1.0) -> list:
     """Draw one metric-vs-assimilation-step panel; return (handle, label) pairs.
 
     ``scale`` -- see :func:`_plot_panel`.
     """
     series = _visible(series)  # SURGE-only lineup, as in _plot_panel
+    partial = series.get(PARTIAL_KEY) or {}
+    footnotes: list[str] = []
     handles: list = []
     for method, variant, label, colour, ls, marker, filled in SERIES:
         s = series.get((method, variant))
         if not s:
+            # A method expected here whose every trajectory diverged: say so.
+            info = partial.get((method, variant))
+            if info is not None and info[1] == 0:
+                footnotes.append(f"{label}: 0/{info[2]} traj. (all diverged)")
             continue
-        xs = sorted(s)
+        xs_all = sorted(s)
+        # Divergence: from step p0 on the trajectory mean covers only the
+        # surviving trajectories. Solid curve over the full-set steps; the
+        # survivors' mean is drawn faded, and an "x" marks the last full step.
+        info = partial.get((method, variant))
+        p0 = None
+        if info is not None:
+            p0, n_min, full, first = info
+            if p0 <= first:
+                # Diverged trajectories excluded throughout: a consistent mean
+                # over fewer trajectories -- draw normally, footnote the count.
+                footnotes.append(f"{label}: {n_min}/{full} traj.")
+                p0 = None
+        xs = [x for x in xs_all if p0 is None or x < p0]
+        lw = (2.1 if variant is not None else 1.7) * scale
+        if p0 is not None:
+            tail = [x for x in xs_all if x >= p0 - 1]
+            ax.plot(tail, [s[x] for x in tail], color=colour, linestyle=ls,
+                    linewidth=lw * 0.7, alpha=0.3, zorder=2)
+            if xs:
+                ax.plot([xs[-1]], [s[xs[-1]]], linestyle="none", marker="x",
+                        color=colour, markersize=9.0 * scale,
+                        markeredgewidth=2.0 * scale, zorder=4)
+        if not xs:
+            continue
         ys = [s[x] for x in xs]
+        # Long rollouts: a marker on every step of a dozen curves hides the lines.
+        # Up to STEP_MARKER_MAX steps every point keeps its marker, as before.
+        every = 1 if len(xs_all) <= STEP_MARKER_MAX else math.ceil(len(xs_all) / 10)
         (h,) = ax.plot(
-            xs, ys, color=colour, linestyle=ls, marker=marker,
+            xs, ys, color=colour, linestyle=ls, marker=marker, markevery=every,
             markersize=6.0 * scale, markeredgewidth=1.2 * scale,
             markeredgecolor=colour,
             markerfacecolor=(colour if filled else "white"),
-            linewidth=(2.1 if variant is not None else 1.7) * scale, zorder=3,
+            linewidth=lw, zorder=3,
         )
         handles.append((h, label))
+    if footnotes:
+        ax.text(
+            # Above the axes, right-aligned: inside, it lands on the curves. The
+            # combined figures carry a panel title there, so go above it.
+            1.0, (1.01 if scale < 1.0 else 1.08),
+            "\n".join(f"* {t}" for t in footnotes),
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=(8.0 if scale >= 1.0 else 6.0), color="0.25",
+        )
     if logy:
         ax.set_yscale("log")
     ax.margins(x=0.03)
@@ -597,8 +729,16 @@ def make_vs_step_figure(
     panel_slugs: list[str] | None = None,
     singles: bool = True,
     xlabel_all: bool = False,
+    extra_legend: tuple[tuple[str, dict], ...] = (),
+    single_figsize: tuple[float, float] | None = None,
 ) -> list[Path]:
     """Render a (multi-panel) metric-vs-assimilation-step figure, legend below.
+
+    ``single_figsize`` overrides ``SINGLE_FIGSIZE`` for the per-panel singles
+    (e.g. full-text-width panels stacked one per row).
+
+    ``extra_legend`` appends non-method legend entries as ``(label, Line2D
+    kwargs)`` pairs (e.g. the divergence markers, see ``DIVERGENCE_LEGEND``).
 
     ``xlabel_all`` -- see :func:`make_vs_M_figure`; every panel gets its own x tick
     labels rather than only the bottom row.
@@ -640,6 +780,11 @@ def make_vs_step_figure(
 
     labels = [s[2] for s in SERIES if s[2] in legend_pairs]
     handles = [legend_pairs[l] for l in labels]
+    if extra_legend:
+        from matplotlib.lines import Line2D
+
+        handles += [Line2D([0], [0], **kw) for _l, kw in extra_legend]
+        labels += [l for l, _kw in extra_legend]
     ncol_leg = 4 if len(labels) > 8 else max(2, len(labels))
     fig.legend(
         handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.02),
@@ -653,7 +798,7 @@ def make_vs_step_figure(
         written += _save_panel_singles(
             panels, slugs,
             lambda ax, s: _plot_step_panel(ax, s, logy=logy, scale=SINGLE_SCALE),
-            ylabel, "Assimilation step", out_stem,
+            ylabel, "Assimilation step", out_stem, figsize=single_figsize,
         )
     return written
 
@@ -933,9 +1078,13 @@ def _state_rows_and_scales(records: list[dict], field_fn, diverging: bool):
         records, key=lambda r: _state_series_key(str(r["method"]), str(r.get("variant", "")))
     )
     rows = []
+    in_scale: list[bool] = []  # rows that set the shared |error| / spread scales
     truth2d = None
     for r in records:
         label = _state_series_key(str(r["method"]), str(r.get("variant", "")))[1]
+        # HIDDEN_METHODS (bare FlowDAS / SDA) are not in the manuscript's field
+        # figures; a blown-up one must not set the scale of the panels that are.
+        in_scale.append(str(r["method"]) not in HIDDEN_METHODS)
         post = field_fn(np.asarray(r["posterior_trajectory"]))  # [E, H, W]
         truth = field_fn(np.asarray(r["true_trajectory"]))[0]    # [H, W]
         mean = post.mean(axis=0)
@@ -976,10 +1125,11 @@ def _state_rows_and_scales(records: list[dict], field_fn, diverging: bool):
         finite_truth = truth2d[np.isfinite(truth2d)]
         f_vmin = float(finite_truth.min()) if finite_truth.size else 0.0
         f_vmax = _finite_max(truth2d) or 1.0
+    scaled = [r for r, keep in zip(rows, in_scale) if keep] or rows
     scales = {
         "field": (f_vmin, f_vmax),
-        "err": (0.0, _robust_vmax([r[2] for r in rows])),
-        "spread": (0.0, _robust_vmax([r[3] for r in rows])),
+        "err": (0.0, _robust_vmax([r[2] for r in scaled])),
+        "spread": (0.0, _robust_vmax([r[3] for r in scaled])),
     }
     return rows, truth2d, scales
 
@@ -1123,6 +1273,14 @@ def save_field_panel(
     return _save_fig(fig, out_stem, png_dpi=200)
 
 
+def _mark_diverged(ax, field: np.ndarray, fontsize: float = 11.0) -> None:
+    """Label an all-NaN field (a diverged sampler) instead of leaving it blank."""
+    if not np.isfinite(field).any():
+        ax.set_facecolor("0.9")
+        ax.text(0.5, 0.5, "diverged\n(NaN)", transform=ax.transAxes,
+                ha="center", va="center", fontsize=fontsize, color="0.25")
+
+
 def make_state_field_figure(
     records: list[dict],
     field_fn,
@@ -1173,6 +1331,7 @@ def make_state_field_figure(
         for j, (field, kw) in enumerate(panels):
             ax = axes[i][j]
             ax.imshow(field, origin="lower", **kw)
+            _mark_diverged(ax, field)
             ax.set_xticks([])
             ax.set_yticks([])
             if i == 0:
@@ -1207,6 +1366,7 @@ def make_state_field_figure(
             for j, (field, kw) in enumerate(panels):
                 ax = axs1[0][j]
                 ax.imshow(field, origin="lower", **kw)
+                _mark_diverged(ax, field)
                 ax.set_xticks([])
                 ax.set_yticks([])
                 ax.set_title(col_titles[j])
@@ -1226,7 +1386,8 @@ __all__ = [
     "STEPS", "SERIES", "HIDDEN_METHODS", "SCENARIO_LABEL", "RESULTS",
     "FIGURES_DIR",
     "SINGLE_FIGSIZE", "SINGLE_RC", "SINGLE_SCALE", "CBAR_HEIGHT_IN",
-    "TRUTH_KEY", "TRUTH_LABEL", "TRUTH_STYLE",
+    "TRUTH_KEY", "TRUTH_LABEL", "TRUTH_STYLE", "PARTIAL_KEY",
+    "DIVERGENCE_LEGEND",
     "apply_style", "slugify", "series_key", "load_metric_vs_M", "make_vs_M_figure",
     "load_metric_vs_step", "make_vs_step_figure", "make_spectrum_figure",
     "save_series_legend",

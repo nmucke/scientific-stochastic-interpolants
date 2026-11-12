@@ -510,6 +510,8 @@ def prepare_truth_and_obs(
     The urban conditioning is trajectory-independent (``field_cond`` is the global
     solid-cell mask and there is no ``pars_cond``), so swapping the state history
     across trajectories leaves the geometry the model sees unchanged.
+    Navier--Stokes test samples carry only ``x`` (no ``field_cond`` / ``pars_cond``),
+    so there is no conditioning to keep consistent there.
     """
     pre = prior.preprocesser
     L = prior.len_field_history
@@ -1152,7 +1154,11 @@ def build_posterior(
         )
         return model, posterior, stepper
 
-    is_si = method_name == "Ours (SI-SDE)"
+    # SURGE on our samplers: the SAME interpolant likelihood (built below, with
+    # the same per-scenario tables) as the guidance G, wrapped by SURGE's SMC
+    # layer. FM-ODE has g = 0, for which the Girsanov weight is undefined.
+    is_surge = method_name in ("SURGE (SI-SDE)", "SURGE (DM-SDE)")
+    is_si = method_name in ("Ours (SI-SDE)", "SURGE (SI-SDE)")
     model = prior.si_model if is_si else prior.fm_model
     mode = likelihood_mode or method_cfg.likelihood_model.get(
         "likelihood_mode", "inflated"
@@ -1215,7 +1221,37 @@ def build_posterior(
         residual_step_cap=step_cap,
     )
 
-    if is_si:
+    if is_surge:
+        from scisi.posterior_models.surge_posterior import (
+            SurgeLiftedFlowMatchingPosterior,
+            SurgeStochasticInterpolantPosterior,
+        )
+
+        surge_cfg = method_cfg.get("posterior_model", {}) or {}
+        surge_hp = resolve_scheduled_hparams(surge_cfg, case_key, scenario_key, num_steps)
+        ess = float(surge_hp.get("ess_threshold", 0.5))
+        logger.info("%s: likelihood_mode=%s ess_threshold=%s", method_name, mode, ess)
+        if is_si:
+            # Same prior SDE as Ours (SI-SDE): b_theta, g = interpolation.gamma.
+            posterior = SurgeStochasticInterpolantPosterior(
+                model=model, obs_operator=obs_operator, variance=variance,
+                ess_threshold=ess, likelihood_model=likelihood, diffusion_term=None,
+            )
+        else:
+            if method_cfg.stepper != "sde":
+                raise ValueError(f"{method_name} needs stepper=sde (SURGE needs g > 0)")
+            if float(_resolve("drift_time_shift", drift_time_shift, 0.0)) != 0.0:
+                raise ValueError(f"{method_name} supports only drift_time_shift=0")
+            scale = g_multiplier if g_multiplier is not None else float(
+                method_cfg.diffusion_term.get("multiplier", 1.0)
+            )
+            # Same prior SDE as Ours (DM-SDE): v + 1/2 g^2 s, g = scale sqrt(alpha beta).
+            posterior = SurgeLiftedFlowMatchingPosterior(
+                model=model, obs_operator=obs_operator,
+                diffusion_term=endpoint_vanishing_diffusion(model.interpolation, scale),
+                variance=variance, ess_threshold=ess, likelihood_model=likelihood,
+            )
+    elif is_si:
         posterior = StochasticInterpolantPosterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
         )
