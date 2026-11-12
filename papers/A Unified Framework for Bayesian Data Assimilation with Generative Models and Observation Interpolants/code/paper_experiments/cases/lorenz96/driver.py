@@ -881,37 +881,72 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
     )
     run = cfg.checkpoints.si_run if base_name == "si_sde" else cfg.checkpoints.fm_run
     model = generative.load_prior(run, device)
-    posterior, stepper = generative.build_posterior(
-        GENERATIVE[base_name], model, problem, stats, settings
-    )
-    correction = None
-    if name in CORRECTED:
-        correction = generative.build_correction(problem, stats, members, block)
+
+    def build():
+        # Both keep state across a run (likelihood caches; the correction's call
+        # count seeds its forecasts), so every assimilate call gets fresh ones.
+        posterior, stepper = generative.build_posterior(
+            GENERATIVE[base_name], model, problem, stats, settings
+        )
+        correction = None
+        if name in CORRECTED:
+            correction = generative.build_correction(problem, stats, members, block)
+        return posterior, stepper, correction
+
+    def sample(built, initial, observations, sample_seed):
+        """``(ensembles, finished)``; ``finished`` is False for a DM-SDE divergence."""
+        posterior, stepper, correction = built
+        try:
+            ensembles = generative.assimilate(
+                posterior,
+                stepper,
+                stats,
+                initial,
+                observations,
+                settings.num_steps,
+                sample_seed,
+                forecast_correction=correction,
+                obs_to_model=generative.observation_model(problem, stats).to_model,
+            )
+            return ensembles, True
+        except AssertionError as error:
+            # The DM-SDE sampler asserts on a non-finite drift where the others carry
+            # the NaN on. Count the whole call as diverged rather than losing the
+            # run; any other assertion is a bug and must crash.
+            if base_name != "dm_sde" or "non-finite" not in str(error):
+                raise
+            print(f"{name} diverged: {error}", flush=True)
+            return diverged_ensembles(problem, observations, members), False
+
+    # inflated_shared shares Sigma_s over the whole batch, so a batch of several
+    # sequences would mix them (assimilate refuses it): run one sequence per call,
+    # each with its own seed and a fresh posterior / correction.
+    count = initial.shape[0]
+    per_sequence = settings.likelihood_mode == "inflated_shared" and count > 1
+    built = None if per_sequence else build()
     counter = attach_nfe_counter(model)
     start = time.time()
-    nfe = None
-    try:
-        ensembles = generative.assimilate(
-            posterior,
-            stepper,
-            stats,
-            initial,
-            observations,
-            settings.num_steps,
-            derive_seed(SEED_LABEL, base_name, split, seed),
-            forecast_correction=correction,
-            obs_to_model=generative.observation_model(problem, stats).to_model,
+    if per_sequence:
+        parts = [
+            sample(
+                build(),
+                initial[i : i + 1],
+                observations[i : i + 1],
+                derive_seed(SEED_LABEL, base_name, split, seed, "sequence", i),
+            )
+            for i in range(count)
+        ]
+        ensembles = torch.cat([part for part, _ in parts])
+        finished = all(ok for _, ok in parts)
+    else:
+        ensembles, finished = sample(
+            built, initial, observations, derive_seed(SEED_LABEL, base_name, split, seed)
         )
-        nfe = counter.count / observations.shape[1]
-    except AssertionError as error:
-        # The DM-SDE sampler asserts on a non-finite drift where the others carry
-        # the NaN on. Count the whole cell as diverged rather than losing the run;
-        # any other assertion is a bug and must crash. The partial count of network
-        # calls says nothing about the cost of a full run, so nfe stays None.
-        if base_name != "dm_sde" or "non-finite" not in str(error):
-            raise
-        print(f"{name} diverged: {error}", flush=True)
-        ensembles = diverged_ensembles(problem, observations, members)
+    # Network calls per physical step for one batch of all members (per sequence
+    # when run one at a time). The partial count of a diverged run says nothing
+    # about the cost of a full run, so nfe stays None.
+    calls = count if per_sequence else 1
+    nfe = counter.count / observations.shape[1] / calls if finished else None
     seconds = time.time() - start
     return CellOutput(ensembles, seconds, nfe, members, settings.num_steps)
 

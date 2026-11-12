@@ -466,6 +466,41 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
         driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
 
 
+@pytest.mark.parametrize("name", ["si_sde", "dm_sde_fc"])
+def test_inflated_shared_runs_one_sequence_per_call(name, tiny_case, monkeypatch):
+    """inflated_shared cannot batch sequences (assimilate refuses it): the cell runs
+    each sequence alone, with its own seed and a fresh posterior / correction; the
+    default mode still makes one batched call with the cell seed."""
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    real = generative.assimilate
+    calls = []
+
+    def spy(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs):
+        calls.append((initial.shape[0], seed, posterior, kwargs.get("forecast_correction")))
+        return real(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs)
+
+    monkeypatch.setattr(generative, "assimilate", spy)
+    settings = driver.with_num_steps(name, driver.method_settings(tiny_case, name), 4)
+    shared = driver.apply_overrides(settings, ["likelihood_mode=inflated_shared"])
+    out = driver.run_method(tiny_case, name, problem, sequences, "test", 0, shared)
+    assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert torch.isfinite(out.ensembles).all() and out.nfe is not None
+    assert [c[0] for c in calls] == [1, 1]
+    assert calls[0][1] != calls[1][1]  # one seed per sequence
+    assert calls[0][2] is not calls[1][2]  # a fresh posterior per sequence
+    if name in driver.CORRECTED:
+        assert calls[0][3] is not None and calls[0][3] is not calls[1][3]
+    # nfe is per step for one batch of members, not summed over the sequences.
+    assert settings["num_steps"] <= out.nfe < 2 * problem.num_steps * settings["num_steps"]
+    calls.clear()
+    plain = driver.apply_overrides(settings, ["likelihood_mode=inflated"])
+    driver.run_method(tiny_case, name, problem, sequences, "test", 0, plain)
+    base = driver.CORRECTED.get(name, name)
+    assert [c[0] for c in calls] == [2]
+    assert calls[0][1] == driver.derive_seed(driver.SEED_LABEL, base, "test", 0)
+
+
 def test_count_diverged_steps_counts_non_finite_core_scores_only():
     nan = float("nan")
     scores = [
