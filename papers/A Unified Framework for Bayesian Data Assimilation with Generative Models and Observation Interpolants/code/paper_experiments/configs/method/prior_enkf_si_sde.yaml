@@ -1,0 +1,18 @@
+# SI-SDE prior + EnKF (Navier--Stokes; FORECAST_CORRECTION.md section 2): every
+# member is forecast by the UNGUIDED Ours (SI-SDE) prior (draw_unguided_forecast:
+# the posterior's own SDE/ODE with no guidance, the stepper the forecast
+# correction uses) from its own 5-frame history, and the analysis is the EnKF
+# baseline's stochastic perturbed-observation update -- same filter class, R,
+# Gaspari-Cohn localisation (enkf_localization_radius), inflation (enkf_inflation),
+# initial ensemble and key schedule (enkf_baseline.run_prior_enkf_baseline). Only
+# the forecast model differs from the EnKF row.
+#
+# The sampler settings (stepper, diffusion schedule, drift_time_shift) are the Ours
+# (SI-SDE) ones, inherited below; the likelihood block is inherited too but never
+# used (no guidance). Driver switches (all optional):
+#   +prior_enkf_forecast_num_steps=N   sampler steps per forecast (default: num_steps = M)
+#   +prior_enkf_forecast_stepper=sde|ode (default: this config's stepper)
+#   +prior_enkf_batch_size=B           members per network batch (default: E)
+#   +prior_enkf_diagnostics_dir=DIR    per-step forecast/analysis spread + RMSE (JSON per cell)
+inherit: si_sde
+name: SI-SDE prior + EnKF
