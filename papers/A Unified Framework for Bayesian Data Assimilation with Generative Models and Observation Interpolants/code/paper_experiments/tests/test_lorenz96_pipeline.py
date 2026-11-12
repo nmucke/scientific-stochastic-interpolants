@@ -568,3 +568,15 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     assert len(original.splitlines()) == len(config.read_text().splitlines())
     assert len(changed) == 4 and all(a.startswith("  ") and not a.lstrip().startswith("#")
                                      for a, _ in changed)
+
+
+def test_corrected_trained_cells_may_only_pick_the_online_q():
+    """Decision: no trained-prior cell is told the true model-noise covariance."""
+    eligible = select_lorenz96_tuning.eligible
+    row = {"sliced_w2": "1.0", "diverged_steps": "0", "correction.q_source": "exact"}
+    for cell in ("si_sde_fc", "fm_ode_fc", "dm_sde_fc"):
+        assert not eligible(row, cell)
+        assert eligible({**row, "correction.q_source": "online"}, cell)
+    assert eligible(row, "oracle_fc")  # not tuned; keeps the exact Q by design
+    assert eligible(row)  # no cell: only divergence and finiteness count
+    assert not eligible({**row, "correction.q_source": "online", "diverged_steps": "2"}, "si_sde_fc")
