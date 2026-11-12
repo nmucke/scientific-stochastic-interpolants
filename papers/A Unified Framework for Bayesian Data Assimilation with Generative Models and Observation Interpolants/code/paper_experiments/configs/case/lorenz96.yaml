@@ -40,8 +40,10 @@ methods:
   dm_sde: {num_steps: 50, likelihood_mode: inflated, jacobian_damping: 1.0, diffusion_scale: 1.0}
   # TMPD baseline (configs/method/tmpd.yaml): FM prior read as a DM, same g as dm_sde.
   # Nothing to tune but num_steps / diffusion_scale; covariance full | diagonal |
-  # row_sum (DTMPD, two VJPs per step). likelihood_mode / jacobian_damping are inert.
-  tmpd: {num_steps: 50, diffusion_scale: 1.0, covariance: full}
+  # row_sum (DTMPD, two VJPs per step); guidance_weight / vjp_chunk_size as in
+  # configs/method/tmpd.yaml. likelihood_mode / jacobian_damping are inert.
+  tmpd: {num_steps: 50, diffusion_scale: 1.0, covariance: full,
+         guidance_weight: score_substitution, vjp_chunk_size: 64}
 
   # Forecast-residual correction (FORECAST_CORRECTION.md, variant A). A `<cell>_fc`
   # cell runs the plain cell's sampler settings above (and its seed stream) with

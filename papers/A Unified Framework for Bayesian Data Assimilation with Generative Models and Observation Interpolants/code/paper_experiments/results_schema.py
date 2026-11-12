@@ -188,6 +188,10 @@ class Metric(str, Enum):
 
     # (d) Cost.
     NFE = "nfe"  # network evals per assimilation step
+    # Reverse-mode VJPs (backward passes) per assimilation step, NOT counted in
+    # ``nfe``. Emitted only by methods that take them on top of their forwards
+    # (TMPD: d_y per guided step for full/diagonal, 2 for row_sum).
+    VJP = "vjp"
     SECONDS = "seconds"  # wall-clock s/step at matched E
 
 

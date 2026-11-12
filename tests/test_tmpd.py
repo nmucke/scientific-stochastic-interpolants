@@ -162,15 +162,26 @@ def test_moments_and_guidance_match_closed_form(tau):
     torch.testing.assert_close(out["log_likelihood"], ll, rtol=1e-5, atol=1e-6)
 
 
-def test_full_posterior_matches_exact_gaussian_posterior():
-    """TMPD Prop. 3: exact posterior sampling for Gaussian data."""
+@pytest.mark.parametrize("g0", [1.0, 3.0])
+def test_full_posterior_matches_exact_gaussian_posterior(g0):
+    """TMPD Prop. 3: exact posterior sampling for Gaussian data.
+
+    Pins the guidance weight ``a_tau + 1/2 g^2``. At g0 = 1 the ``1/2 g^2`` part
+    is small next to ``a_tau``; g0 = 3 makes it matter. Max-abs errors measured
+    over seeds 0-4 (n = 1e5, M = 400) -- cov / mean:
+      correct          g0=1: <= 0.012 / 0.004   g0=3: <= 0.007 / 0.005
+      a_tau only       g0=1: >= 0.060           g0=3: >= 0.459
+      g^2 (SDA)        g0=1: >= 0.899           g0=3: >= 0.080
+      0.9x / 1.1x      g0=1: >= 0.036 / 0.034   g0=3: >= 0.026 / 0.021
+    so ``atol = 0.017`` on the covariance fails every wrong weight.
+    """
     torch.manual_seed(0)
     A, Q, H, x0, y = _setup()
     R = 0.1 * torch.eye(2)
-    dm = _dm(A, Q)
+    dm = _dm(A, Q, g0)
     lik = TMPDLikelihood(dm, DenseObservationOperator(H), variance=0.1, covariance="full")
     post = TMPDPosterior(model=dm, likelihood_model=lik)
-    n = 4000
+    n = 100_000
     with torch.no_grad():
         out = post.sample(
             base=None, batch_size=n, num_steps=400,
@@ -181,8 +192,8 @@ def test_full_posterior_matches_exact_gaussian_posterior():
     m_post = mu + K @ (y - H @ mu)
     P_post = (torch.eye(3) - K @ H) @ Q
     assert torch.isfinite(out).all()
-    torch.testing.assert_close(out.mean(0), m_post, atol=0.06, rtol=0.0)
-    torch.testing.assert_close(torch.cov(out.T), P_post, atol=0.06, rtol=0.0)
+    torch.testing.assert_close(out.mean(0), m_post, atol=0.012, rtol=0.0)
+    torch.testing.assert_close(torch.cov(out.T), P_post, atol=0.017, rtol=0.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -259,6 +270,56 @@ def test_invalid_options():
         TMPDLikelihood(dm, op, 0.1, model_class="si")
     with pytest.raises(ValueError):
         TMPDPosterior(dm, TMPDLikelihood(dm, op, 0.1), guidance_weight="bogus")
+
+
+@pytest.mark.parametrize("cov, per_call", [("full", 3), ("diagonal", 3), ("row_sum", 2)])
+def test_vjp_count(cov, per_call):
+    """Backward passes actually taken: d_y (= 3 here) for full / diagonal, 2 for
+    row_sum, none below MIN_TIME."""
+    A, Q, H, x0, y = _setup(d=4, d_y=3)
+    lik = TMPDLikelihood(
+        _dm(A, Q), DenseObservationOperator(H), 0.1, covariance=cov, vjp_chunk_size=2
+    )
+    x = torch.randn(3, 1, 1, 4)
+    lik.score(y.expand(3, -1), x, torch.full((1, 1), 0.0), _fh(x0, 3))
+    assert lik.vjp_count == 0
+    lik.score(y.expand(3, -1), x, torch.full((1, 1), 0.5), _fh(x0, 3))
+    lik.score(y.expand(3, -1), x, torch.full((1, 1), 0.7), _fh(x0, 3))
+    assert lik.vjp_count == 2 * per_call
+
+
+def test_batched_vjp_fallback_and_oom(monkeypatch):
+    """A missing vmap rule falls back to the per-cotangent loop (same result,
+    remembered); an out-of-memory error is NOT swallowed."""
+    A, Q, H, x0, y = _setup()
+    lik = TMPDLikelihood(_dm(A, Q), DenseObservationOperator(H), 0.1, vjp_chunk_size=1)
+    x = torch.randn(3, 1, 1, 3)
+    args = (y.expand(3, -1), x, torch.full((1, 1), 0.5), _fh(x0, 3))
+    ref = lik.score(*args)
+    real = torch.autograd.grad
+
+    def no_vmap(*a, **k):
+        if k.get("is_grads_batched"):
+            raise RuntimeError("Batching rule not implemented for aten::foo")
+        return real(*a, **k)
+
+    monkeypatch.setattr(torch.autograd, "grad", no_vmap)
+    out = lik.score(*args)
+    assert lik._batched_vjp is False
+    torch.testing.assert_close(out[0], ref[0])
+    torch.testing.assert_close(out[1], ref[1])
+
+    for error in (torch.OutOfMemoryError("CUDA out of memory"), RuntimeError("boom")):
+        def failing(*a, _error=error, **k):
+            if k.get("is_grads_batched"):
+                raise _error
+            return real(*a, **k)
+
+        fresh = TMPDLikelihood(_dm(A, Q), DenseObservationOperator(H), 0.1)
+        monkeypatch.setattr(torch.autograd, "grad", failing)
+        with pytest.raises(type(error)):
+            fresh.score(*args)
+        assert fresh._batched_vjp is True
 
 
 def test_reduces_to_prior_sampler_without_observation_information():

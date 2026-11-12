@@ -51,14 +51,31 @@ def test_tmpd_is_opt_in_on_the_analytical_lineup():
 
 
 def test_analytical_tmpd_row_is_close_to_the_exact_posterior():
-    """Linear-Gaussian: TMPD is exact up to discretisation (TMPD Prop. 3)."""
-    runner = AnalyticalRunner(
-        _analytical_config(analytical_methods=["TMPD"]), seeds=(0,)
-    )
-    rows = runner.run(aggregate=False)
-    kl = [r.value for r in rows if r.metric == Metric.KL_POINTS.value]
-    assert {r.method for r in rows} == {"TMPD"}
-    assert len(kl) == 1 and kl[0] < 0.1
+    """WIRING smoke test of the analytical TMPD row (not a numerics test).
+
+    Linear-Gaussian: TMPD is exact up to discretisation (TMPD Prop. 3). At these
+    tiny settings (256 samples, M = 20) the Monte-Carlo noise of the KL is too
+    large to pin the guidance weight (a_tau alone scores about as well as the
+    correct a_tau + 1/2 g^2); the weight is pinned by the Gaussian exactness test
+    in tests/test_tmpd.py. What this test does catch: a missing / wrong-sign /
+    g^2-only guidance (no guidance scores ~0.44 and g^2 ~0.28 against ~0.05),
+    by requiring TMPD to beat SDA run in the SAME settings by a wide margin, and
+    the backward-pass bookkeeping of the ``vjp`` row.
+    """
+    config = _analytical_config(analytical_methods=["TMPD", "SDA"])
+    rows = AnalyticalRunner(config, seeds=(0,)).run(aggregate=False)
+    kl = {
+        r.method: r.value for r in rows if r.metric == Metric.KL_POINTS.value
+    }
+    assert set(kl) == {"TMPD", "SDA"}
+    assert kl["TMPD"] < 0.1
+    # Measured: TMPD 0.050, SDA 0.244 (seed 0).
+    assert kl["TMPD"] < 0.5 * kl["SDA"]
+    # Backward passes are reported beside the NFE: d_y = d = 2 VJPs on each of
+    # the M - 1 guided steps (the tau = 0 step is unguided); NFE stays M.
+    (vjp,) = [r for r in rows if r.metric == Metric.VJP.value]
+    assert vjp.method == "TMPD" and vjp.value == 2 * (20 - 1) and vjp.nfe == 20
+    assert all(r.metric != Metric.VJP.value for r in rows if r.method == "SDA")
 
 
 def test_multistep_tmpd_cycle_runs_on_a_general_system():
@@ -103,15 +120,31 @@ def test_lorenz96_tmpd_builds_and_runs(tiny_case, covariance, monkeypatch):  # n
     monkeypatch.setattr(generative, "build_tmpd_posterior", spy)
     problem = l96.problem_of(tiny_case)
     sequences = l96.load_sequences(problem, "test", 2)
-    settings = {**l96.method_settings(tiny_case, "tmpd"), "covariance": covariance}
+    settings = {
+        **l96.method_settings(tiny_case, "tmpd"),
+        "covariance": covariance,
+        # Non-default knobs: they must reach the likelihood / posterior.
+        "vjp_chunk_size": 3,
+        "guidance_weight": "g_squared",
+    }
     out = l96.run_method(tiny_case, "tmpd", problem, sequences, "test", 0, settings)
     (posterior,) = built
     assert isinstance(posterior, TMPDPosterior)
     assert isinstance(posterior.likelihood_model, TMPDLikelihood)
     assert posterior.likelihood_model.covariance == covariance
+    assert posterior.likelihood_model.vjp_chunk_size == 3
+    assert posterior.guidance_weight == "g_squared"
     # Same endpoint-vanishing g as the DM-SDE cell: zero at both ends.
     g = posterior.diffusion_term(torch.tensor([0.0, 0.5, 1.0]))
     assert g[0] == 0 and g[2] == 0 and g[1] > 0
     assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
     assert torch.isfinite(out.ensembles).all()
     assert out.nfe >= settings["num_steps"]
+    # Backward passes per assimilation step, beside the NFE: 2 per guided step
+    # for row_sum, d_y per guided step for full.
+    per_step = 2 if covariance == "row_sum" else problem_num_obs(problem)
+    assert out.vjp == per_step * (settings["num_steps"] - 1)
+
+
+def problem_num_obs(problem) -> int:
+    return generative.build_obs_operator(problem).num_obs

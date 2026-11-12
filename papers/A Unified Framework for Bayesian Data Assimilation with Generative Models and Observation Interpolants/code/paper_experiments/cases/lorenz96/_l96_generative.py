@@ -64,6 +64,9 @@ class SamplerSettings:
     jacobian_damping: float = 1.0
     diffusion_scale: float = 1.0  # DM-SDE and TMPD
     covariance: str = "full"  # TMPD only: full | diagonal | row_sum (DTMPD)
+    # TMPD only (defaults = configs/method/tmpd.yaml): score_substitution | g_squared
+    guidance_weight: str = "score_substitution"
+    vjp_chunk_size: int = 64  # TMPD only: VJP cotangents batched per autograd call
 
 
 def build_obs_operator(problem: Problem) -> LinearObservationOperator:
@@ -142,7 +145,9 @@ def build_tmpd_posterior(model, problem: Problem, stats: Standardisation, settin
     same full first step as ``FullFirstStepDiffusionModel`` in the multistep
     analytical case, which matters in a sequential case (the stock
     ``DenoiseDiffusionModel`` first step drops ``v dt``). Only the network forward
-    is counted by the NFE counter; the per-step VJPs are not.
+    is counted by the NFE counter; the per-step VJPs (``d_y`` per guided step for
+    full / diagonal, 2 for row_sum) are counted by ``likelihood.vjp_count`` and
+    reported by the driver as a separate ``vjp`` row.
     """
     from scisi.likelihood_models.tmpd import TMPDLikelihood
     from scisi.posterior_models.tmpd_posterior import TMPDPosterior
@@ -153,9 +158,15 @@ def build_tmpd_posterior(model, problem: Problem, stats: Standardisation, settin
         variance=problem.obs_variance / stats.std**2,
         model_class="fm",
         covariance=settings.covariance,
+        vjp_chunk_size=settings.vjp_chunk_size,
     )
     diffusion = endpoint_vanishing_diffusion(model.interpolation, settings.diffusion_scale)
-    return TMPDPosterior(model=model, likelihood_model=likelihood, diffusion_term=diffusion)
+    return TMPDPosterior(
+        model=model,
+        likelihood_model=likelihood,
+        diffusion_term=diffusion,
+        guidance_weight=settings.guidance_weight,
+    )
 
 
 def assimilate(

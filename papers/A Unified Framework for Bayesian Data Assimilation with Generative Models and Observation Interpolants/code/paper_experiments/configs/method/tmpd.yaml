@@ -15,9 +15,10 @@ stepper: sde
 
 likelihood_model:
   _target_: scisi.likelihood_models.tmpd.TMPDLikelihood
-  # NOTE: the analytical / Lorenz 96 drivers construct TMPDLikelihood directly and
-  # read the knobs below from this block (Lorenz 96: configs/case/lorenz96.yaml
-  # `methods.tmpd` instead).
+  # NOTE: the analytical drivers construct TMPDLikelihood directly and read the
+  # knobs below from this file. Lorenz 96 reads the same knobs (covariance,
+  # vjp_chunk_size, guidance_weight) from configs/case/lorenz96.yaml
+  # `methods.tmpd` instead; keep the two in step.
 
   # full     : TMPD proper -- d_y VJPs per step and member, dense d_y x d_y solve.
   # diagonal : same d_y VJPs, keeps only diag(H C H^T).

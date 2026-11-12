@@ -471,6 +471,8 @@ class CellOutput:
     nfe: float | None  # network evaluations per assimilation step
     members: int
     pseudo_steps: int | None
+    # Reverse-mode VJPs per assimilation step, NOT in nfe (TMPD only; else None).
+    vjp: float | None = None
 
 
 @dataclass(frozen=True)
@@ -707,7 +709,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
 
     counter = attach_nfe_counter(model)
     start = time.time()
-    nfe = None
+    nfe = vjp = None
     try:
         ensembles = assimilate(
             posterior,
@@ -720,6 +722,8 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
             forecast_correction=correction,
         )
         nfe = counter.count / observations.shape[1]
+        if hasattr(posterior.likelihood_model, "vjp_count"):
+            vjp = posterior.likelihood_model.vjp_count / observations.shape[1]
     except AssertionError as error:
         # The DM-SDE sampler asserts on a non-finite drift where the others carry
         # the NaN on. Count the whole cell as diverged rather than losing the run;
@@ -731,7 +735,7 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
         shape = (len(sequences), observations.shape[1], members, problem.dim_state)
         ensembles = torch.full(shape, float("nan"), dtype=torch.float64)
     seconds = time.time() - start
-    return CellOutput(ensembles, seconds, nfe, members, settings.num_steps)
+    return CellOutput(ensembles, seconds, nfe, members, settings.num_steps, vjp)
 
 
 def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> CellOutput:
@@ -782,7 +786,7 @@ def evaluate_cell(
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
     variant = tagged_variant(variant, tag)
-    nfe = None
+    nfe = vjp = None
     innovations = None
     settings = apply_overrides(method_settings(cfg, name), overrides)
     check_correction_label(name, settings, tag)
@@ -818,6 +822,7 @@ def evaluate_cell(
             own_initial=name not in NO_INITIAL_ENSEMBLE,
         )
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
+        vjp = output.vjp
         path = RESULTS / "ensembles" / f"{cell_label(name, tag)}__seed{seed}.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(output.ensembles.float(), path)
@@ -869,6 +874,9 @@ def evaluate_cell(
         )
     if nfe is not None:
         records.append(ResultRecord(metric=Metric.NFE.value, value=nfe, **common))
+    if vjp is not None:
+        # TMPD: backward passes per assimilation step, on top of (not in) the NFE.
+        records.append(ResultRecord(metric=Metric.VJP.value, value=vjp, **common))
     diverged = float(count_diverged_steps(scores))
     records.append(ResultRecord(metric=DIVERGED_STEPS, value=diverged, **common))
     return records

@@ -54,6 +54,9 @@ COVARIANCE VARIANTS (all from reverse-mode VJPs through the network; with
   ``H C H^T = ratio * H K_b`` (as in the reference code, NOT symmetrised: for a
   network Jacobian it is only approximately symmetric); per-member dense solve
   ``(ratio H K_b + sigma_y^2 I) u_b = y - H xhat_1``; guidance ``K_b u_b``.
+  The returned log-density uses the SYMMETRISED ``Cyy`` (a Gaussian density
+  needs a symmetric covariance); the guidance solve keeps the reference's
+  unsymmetrised one. Both coincide for an exact (symmetric) Jacobian.
 * ``"diagonal"`` (``get_diag_vjp_guidance``): same ``d_y`` VJPs, keep only the
   diagonal of ``H K_b``; elementwise division; guidance ``K_b u_b``.
 * ``"row_sum"`` (DTMPD, ``get_vjp_guidance_mask``; the variant used for all
@@ -75,6 +78,13 @@ Jacobian, as in TMPD.
 
 Returns ``(guidance, log_likelihood)`` like the other likelihoods; the guided
 reverse SDE is run by :class:`scisi.posterior_models.tmpd_posterior.TMPDPosterior`.
+
+COST: ``vjp_count`` counts the reverse-mode VJPs actually taken (one VJP = one
+backward pass through the network over the whole batch, as one NFE is one
+batched forward): ``d_y`` per guided step for ``"full"`` / ``"diagonal"`` (the
+guidance reuses ``K``), 2 for ``"row_sum"``, 0 below ``MIN_TIME``. These are
+NOT in the network-forward NFE the drivers report; the drivers report them
+separately.
 """
 
 from __future__ import annotations
@@ -97,6 +107,12 @@ def _t_grid(t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     if t.dim() < x.dim():
         return t.reshape(t.shape[0], *([1] * (x.dim() - 1)))
     return t
+
+
+def _is_vmap_error(error: RuntimeError) -> bool:
+    """True for the "no batching rule" failure of ``is_grads_batched``."""
+    message = str(error).lower()
+    return "vmap" in message or "batching rule" in message or "batched" in message
 
 
 def prior_velocity_and_score(
@@ -181,6 +197,13 @@ class TMPDLikelihood(nn.Module):
         self.covariance = covariance
         self.vjp_chunk_size = int(vjp_chunk_size)
         self.interpolant = self.model.interpolation
+        # Reverse-mode VJPs taken so far (see module docstring, COST).
+        self.vjp_count = 0
+        # Batched VJPs (``is_grads_batched``) until an op without a vmap rule
+        # forces the per-cotangent loop; remembered so it is tried only once.
+        self._batched_vjp = True
+        # Linearity is a property of the operator: checked once per operator.
+        self._linear_checked_id = id(obs_operator)
 
     @staticmethod
     def _check_linear(obs_operator: Any) -> None:
@@ -213,18 +236,29 @@ class TMPDLikelihood(nn.Module):
         for start in range(0, d_y, self.vjp_chunk_size):
             stop = min(start + self.vjp_chunk_size, d_y)
             cot = eye[start:stop].unsqueeze(1).expand(stop - start, b, d_y)
-            try:
-                g = torch.autograd.grad(
-                    hm, x, grad_outputs=cot, retain_graph=True, is_grads_batched=True
-                )[0]
-            except RuntimeError:
-                # Ops without a vmap rule: fall back to one VJP per cotangent.
+            g = None
+            if self._batched_vjp:
+                try:
+                    g = torch.autograd.grad(
+                        hm, x, grad_outputs=cot, retain_graph=True, is_grads_batched=True
+                    )[0]
+                except RuntimeError as error:
+                    # Only an op without a vmap (batching) rule falls back; OOM
+                    # and every other failure propagate.
+                    if isinstance(error, torch.OutOfMemoryError) or not _is_vmap_error(
+                        error
+                    ):
+                        raise
+                    self._batched_vjp = False
+            if g is None:
+                # One VJP per cotangent.
                 g = torch.stack(
                     [
                         torch.autograd.grad(hm, x, grad_outputs=c, retain_graph=True)[0]
                         for c in cot
                     ]
                 )
+            self.vjp_count += stop - start
             cols.append(g.reshape(stop - start, b, d))
         return torch.cat(cols, dim=0).permute(1, 2, 0)  # [B, d, d_y]
 
@@ -255,7 +289,9 @@ class TMPDLikelihood(nn.Module):
         ``xhat1``. Below ``MIN_TIME`` (``beta -> 0``) the guidance and
         log-likelihood are zero and only the prior terms are computed.
         """
-        self._check_linear(self.obs_operator)
+        if id(self.obs_operator) != self._linear_checked_id:
+            self._check_linear(self.obs_operator)  # operator swapped after init
+            self._linear_checked_id = id(self.obs_operator)
         if t.dim() == 1:
             t = t.reshape(-1, 1)
         b = x.shape[0]
@@ -298,6 +334,7 @@ class TMPDLikelihood(nn.Module):
                 diag = ratio * self.obs_operator(w) + r_var  # [B, d_y]
                 u = residual.detach() / diag
                 guidance = torch.autograd.grad(hm, x_g, grad_outputs=u)[0]
+                self.vjp_count += 2
                 log_lik = self._diag_log_lik(residual.detach(), diag)
             else:
                 K = self._vjp_columns(hm, x_g)  # [B, d, d_y]
@@ -316,11 +353,15 @@ class TMPDLikelihood(nn.Module):
                         Cyy.shape[-1], dtype=Cyy.dtype, device=Cyy.device
                     )
                     r64 = residual.detach().to(solve_dev).to(torch.float64)
+                    # Guidance: the reference's unsymmetrised Cyy.
                     u64 = torch.linalg.solve(Cyy, r64.unsqueeze(-1)).squeeze(-1)
                     u = u64.to(hm.dtype).to(hm.device)
-                    _, logdet = torch.linalg.slogdet(Cyy)
+                    # Log-density: the symmetrised Cyy (a Gaussian covariance).
+                    Cyy_sym = 0.5 * (Cyy + Cyy.transpose(-1, -2))
+                    w64 = torch.linalg.solve(Cyy_sym, r64.unsqueeze(-1)).squeeze(-1)
+                    _, logdet = torch.linalg.slogdet(Cyy_sym)
                     log_lik = (
-                        -0.5 * (r64 * u64).sum(-1)
+                        -0.5 * (r64 * w64).sum(-1)
                         - 0.5 * logdet
                         - 0.5 * Cyy.shape[-1] * math.log(2 * math.pi)
                     ).to(hm.dtype).to(hm.device)
