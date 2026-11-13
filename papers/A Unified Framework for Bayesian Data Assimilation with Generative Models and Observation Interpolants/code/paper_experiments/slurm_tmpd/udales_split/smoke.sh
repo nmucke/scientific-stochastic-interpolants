@@ -7,7 +7,7 @@
 #   bash smoke.sh cpu   # 2 parts x 2 members, M=5, here on the CPU (logic only)
 #   DRY_RUN=1 bash smoke.sh <mode>
 set -euo pipefail
-HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"; SPLIT_DIR=$HERE
 SLURM_DIR="$(cd -- "$HERE/.." && pwd -P)"
 source "$SLURM_DIR/../common/paths.sh"
 PE=$PE_SCRIPT_DIR; REPO=$PE_REPO_ROOT; MODE=${1:-mig}; DRY_RUN=${DRY_RUN:-0}
@@ -27,7 +27,7 @@ printf '=== %s udales_split/smoke.sh %s commit %s (%s) manifest %s\n' "$(date -I
   "$(git -C "$REPO" rev-parse HEAD)" "$(git -C "$REPO" rev-parse --abbrev-ref HEAD)" "$MD" >> "$ROOT/run_config.txt"
 git -C "$REPO" diff HEAD > "$ROOT/code_${STAMP}.diff"
 export REPO ROOT PE PY HERE="$SLURM_DIR"
-MERGE="ROOT='$ROOT' PARTS=2 bash '$HERE/merge.sh'"
+MERGE="ROOT='$ROOT' PARTS=2 bash '$SPLIT_DIR/merge.sh'"
 if [ "$MODE" = cpu ]; then
   DEVICE=cpu ALL=1 bash "$SLURM_DIR/run_task.sh" "$MD/cells.tsv" && eval "$MERGE"
 else
