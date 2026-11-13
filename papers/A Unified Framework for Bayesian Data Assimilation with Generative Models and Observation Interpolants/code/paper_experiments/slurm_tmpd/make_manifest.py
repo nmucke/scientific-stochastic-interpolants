@@ -86,6 +86,11 @@ def main():
                     help="TMPD members per forward/backward pass (+posterior_batch_size); "
                          "0 = all E in one batch. E=64 in one batch does not fit a 9.5 GiB "
                          "MIG slice (smoke 2026-11-13).")
+    ap.add_argument("--num-steps", type=int, help="M (smoke tests; default: the grid's)")
+    ap.add_argument("--ensemble", type=int, help="E of the cell (smoke tests; default: the grid's)")
+    ap.add_argument("--parts", type=int, default=1,
+                    help="split each TMPD cell into P independent ensemble parts of E/P "
+                         "members (udales only; merged by udales_split/merge.py)")
     ap.add_argument("--extra", default="", help="more run.py overrides, space-separated")
     a = ap.parse_args()
     g = dict(GRIDS[a.grid])
@@ -104,8 +109,11 @@ def main():
     if g["ic"] is not None and g["ic"] in trajs:
         # prepare_truth_and_obs uses the truth's own IC when ic_index == test_index.
         raise SystemExit(f"ic_index={g['ic']} is also a truth trajectory {trajs}")
-    M, E = g["M"], g["E"]
-    common = [f"case.num_physical_steps={np_}", f"ensemble_size={E}", f"num_steps={M}"]
+    M, E = a.num_steps or g["M"], a.ensemble or g["E"]
+    P = a.parts
+    if P > 1 and (a.grid != "udales" or methods != ["tmpd"] or E % P):
+        raise SystemExit("--parts > 1: udales grid, tmpd only, P must divide E")
+    common = [f"case.num_physical_steps={np_}", f"ensemble_size={E // P}", f"num_steps={M}"]
     if g["ic"] is not None:
         common.insert(0, f"+ic_index={g['ic']}")
     if a.grid == "udales":
@@ -139,11 +147,23 @@ def main():
                     # Chunks the ensemble only: TMPD treats every member on its own.
                     margs_ = [*margs_, f"+posterior_batch_size={tmpd_batch}"]
                 s = stem(a.grid, key, ss, M, N)
-                rows.append("\t".join([
-                    f"{key}/{ss}/traj{N}", g["case"],
-                    str(a.root / "metrics" / f"{s}.csv"),
-                    str(a.root / "per_step" / f"{s}.csv"),
-                    *sel, f"+test_index={N}", *common, *margs_, *kl, *st]))
+                if P == 1:
+                    rows.append("\t".join([
+                        f"{key}/{ss}/traj{N}", g["case"],
+                        str(a.root / "metrics" / f"{s}.csv"),
+                        str(a.root / "per_step" / f"{s}.csv"),
+                        *sel, f"+test_index={N}", *common, *margs_, *kl, *st]))
+                    continue
+                for p in range(P):
+                    # Part p of P: E/P members, own sampler seed (urban driver
+                    # _seed_ensemble_part), full states kept for the merge.
+                    d = a.root / "parts" / s / f"part{p}of{P}"
+                    rows.append("\t".join([
+                        f"{key}/{ss}/traj{N}/part{p}of{P}", g["case"],
+                        str(d / "metrics.csv"), str(d / "per_step.csv"),
+                        *sel, f"+test_index={N}", *common, *margs_,
+                        f"+ensemble_part={p}", f"+ensemble_parts={P}",
+                        "+save_states=true", f"+states_root={d / 'states'}"]))
     a.mdir.mkdir(parents=True, exist_ok=True)
     (a.mdir / "cells.tsv").write_text("\n".join(rows) + "\n")
     kl_desc = ("E=1000 EnKF reference " + TRUEIC_KL_ROOT
@@ -154,7 +174,7 @@ def main():
           f" | num_physical_steps={np_}{sched} | M={M} E={E} | traj={trajs}"
           f" | scenarios={scens} | save_states traj{save_traj} | KL: {kl_desc}"
           f" | divergence guard 10 (run_task.sh) | methods={methods}"
-          f" | tmpd batch={tmpd_batch or E} | extra={a.extra or '-'} | {len(rows)} cells")
+          f" | parts={P} x {E // P} members | tmpd batch={tmpd_batch or E // P} | extra={a.extra or '-'} | {len(rows)} cells")
 
 
 if __name__ == "__main__":

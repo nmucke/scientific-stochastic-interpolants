@@ -9,7 +9,9 @@
 # (peakmem_run.py; nvidia-smi reports N/A on MIG) go to $ROOT/logs/timing.tsv.
 set -u
 HERE=${HERE:?}; CELLS=$1; REPO=${REPO:?}; ROOT=${ROOT:?}; PE=${PE:?}; PY=${PY:?}
-PACK=${PACK:-1}; ALL=${ALL:-0}; DIV_GUARD=${DIV_GUARD:-10.0}
+PACK=${PACK:-1}; ALL=${ALL:-0}; DIV_GUARD=${DIV_GUARD:-10.0}; DEVICE=${DEVICE:-cuda}
+case "$REPO" in */wt_tmpd_ns_urban|*/wt_tmpd_ns_urban/*)
+  echo "[task] FATAL REPO=$REPO is the running NS wrong-IC worktree"; exit 2;; esac
 # The worktree's scisi, not the editable install of the main checkout.
 export PYTHONPATH="$REPO/src:$REPO/external_libs/jax_cfd_lib/src${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -26,7 +28,10 @@ run_line() {
   local tag=${F[0]} case=${F[1]} out=${F[2]} ps=${F[3]}; local args=("${F[@]:4}")
   [ -f "$out" ] && { echo "[task] SKIP (exists) $tag"; return 0; }
   mkdir -p "$(dirname "$out")" "$(dirname "$ps")"
-  local id; id=$(basename "${out%.csv}"); local log="$ROOT/logs/$id.log"
+  local id; id=$(basename "${out%.csv}")
+  # Ensemble parts: <root>/parts/<stem>/part<p>of<P>/metrics.csv -> <stem>__part<p>of<P>
+  [ "$id" = metrics ] && id="$(basename "$(dirname "$(dirname "$out")")")__$(basename "$(dirname "$out")")"
+  local log="$ROOT/logs/$id.log"
   # KL guard (true-IC grid): the reference of THIS scenario must exist.
   local a ref=""
   for a in "${args[@]}"; do case "$a" in +kl_reference_states=*) ref=${a#*=};; esac; done
@@ -44,7 +49,7 @@ run_line() {
   echo "[task] RUN $tag on $(hostname) ${gpu:-?} $(date +%T)"
   local t0=$SECONDS
   "$PY" -u "$PE/slurm_udales_fc/peakmem_run.py" "$PE/run.py" "case=$case" seeds=[0] \
-      case.require_weights=true case.device=cuda \
+      case.require_weights=true "case.device=$DEVICE" \
       "+divergence_rmse_threshold=$DIV_GUARD" +save_per_step=true "+per_step_file=$pstmp" \
       "results_file=$tmp" "hydra.run.dir=$ROOT/hydra/$id" "${args[@]}" >> "$log" 2>&1 < /dev/null
   local rc=$? dt=$((SECONDS - t0))
@@ -70,7 +75,7 @@ first=$(( IDX * PACK + 1 )); last=$(( first + PACK - 1 )); pids=()
 mapfile -t LINES < <(sed -n "${first},${last}p" "$CELLS")
 [ ${#LINES[@]} -gt 0 ] || { echo "[task] FATAL no line for task $IDX"; exit 2; }
 if [ "$PACK" -gt 1 ]; then
-  export -f run_line; export HERE ROOT REPO PE PY DIV_GUARD TIMING
+  export -f run_line; export HERE ROOT REPO PE PY DIV_GUARD TIMING DEVICE
   for line in "${LINES[@]}"; do
     srun --exact -n1 -c "${SLURM_CPUS_PER_TASK:-2}" --gres=gpu:1 --mem="${STEP_MEM:-15000M}" \
       bash -c 'run_line "$1"' _ "$line" &
