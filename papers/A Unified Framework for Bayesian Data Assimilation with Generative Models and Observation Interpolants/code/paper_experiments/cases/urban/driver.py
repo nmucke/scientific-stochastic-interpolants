@@ -395,6 +395,13 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         # (None, None) and the run below is unchanged).
         correction, fc_monitor = self._build_forecast_correction(ctx, data_size, fluid_mask)
 
+        # ENSEMBLE PART (opt-in, +ensemble_part=p +ensemble_parts=P; default off ->
+        # unchanged): this run is part p of P independent sub-ensembles of one cell
+        # (ensemble_size = E/P), merged afterwards by slurm_tmpd/udales_split/merge.py.
+        # The truth, observations and sensors stay keyed on ctx.seed; only the
+        # sampler's RNG is reseeded per part, so the parts draw distinct members.
+        self._part_seed = self._seed_ensemble_part(ctx)
+
         result = _urban_pipeline.run_assimilation(
             posterior=posterior,
             model=model,
@@ -462,6 +469,32 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             self._save_per_step(ctx, metrics)
 
         yield from self._metric_rows(ctx, metrics)
+
+    def _seed_ensemble_part(self, ctx):  # type: ignore[no-untyped-def]
+        """Reseed torch for ensemble part ``p`` of ``P``; ``None`` when not split.
+
+        Seed = ``derive_seed("urban_ensemble_part", scenario, test_index, seed, p, P)``
+        (a SHA-256 of the labels, see common.seeding), set right before the
+        rollout, so part p's initial members and every SDE noise draw come from
+        its own stream and differ across parts, trajectories and scenarios.
+        """
+        part = self._cfg_get("ensemble_part", None)
+        if part is None:
+            return None
+        import torch
+
+        from common.seeding import derive_seed
+
+        parts = int(self._cfg_get("ensemble_parts", 1))
+        part = int(part)
+        if not 0 <= part < parts:
+            raise ValueError(f"ensemble_part={part} not in [0, {parts})")
+        seed = derive_seed("urban_ensemble_part", ctx.scenario.value,
+                           int(ctx.extra["test_index"]), int(ctx.seed), part, parts)
+        torch.manual_seed(seed)
+        logger.info("[URBAN] ensemble part %d/%d: E=%d, sampler seed %d",
+                    part, parts, ctx.ensemble_size, seed)
+        return seed
 
     def _assimilation_schedule(self, num_physical_steps: int) -> dict:
         """Resolve the ``run_assimilation`` assimilation-schedule kwargs.
@@ -657,6 +690,22 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 else -1
             ),
             prior_only=int(bool(self._cfg_get("prior_only", False))),
+            # Everything a merge of ensemble parts needs to recompute every metric
+            # without reloading the data: the guard flag (a trip on the last step
+            # leaves no NaN padding), the fluid mask and sensor grid used by
+            # compute_metrics, the backward passes, and the part bookkeeping.
+            diverged=int(bool(getattr(result, "diverged", False))),
+            vjp_per_step=float("nan") if getattr(result, "vjp_per_step", None) is None
+            else float(result.vjp_per_step),
+            fluid_mask=_np(_urban_pipeline.fluid_keep_mask(
+                self._ensure_prior(), int(result.true_trajectory.shape[1]), "cpu"
+            )).astype(bool),
+            obs_indices_on_grid=_np(obs_operator.obs_indices_on_grid).astype(bool),
+            len_field_history=int(self._ensure_prior().len_field_history),
+            ensemble_part=int(self._cfg_get("ensemble_part", -1)
+                              if self._cfg_get("ensemble_part", None) is not None else -1),
+            ensemble_parts=int(self._cfg_get("ensemble_parts", 1) or 1),
+            part_seed=int(-1 if getattr(self, "_part_seed", None) is None else self._part_seed),
             ic_index=int(
                 self._cfg_get("ic_index", -1)
                 if self._cfg_get("ic_index", None) is not None

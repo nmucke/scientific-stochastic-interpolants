@@ -21,7 +21,7 @@ source "$SLURM_DIR/../common/paths.sh"
 PE=$PE_SCRIPT_DIR; REPO=$PE_REPO_ROOT
 PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv-cu126/bin/python}
 METHODS=${METHODS:-tmpd}; TRAJ=${TRAJ:-}; SCENARIOS=${SCENARIOS:-}; NP=${NP:-}; EXTRA=${EXTRA:-}
-NO_KL=${NO_KL:-0}; TMPD_BATCH=${TMPD_BATCH:-}
+NO_KL=${NO_KL:-0}; TMPD_BATCH=${TMPD_BATCH:-}; PARTS=${PARTS:-1}
 PARTITION=${PARTITION:-gpu-a100-small}; ACCOUNT=${ACCOUNT:-research-ceg-gse}
 TIME=${TIME:-04:00:00}; CPUS=${CPUS:-2}; MEM_PER_CPU=${MEM_PER_CPU:-7900M}
 if [ "$PARTITION" = gpu-a100-small ]; then PACK=${PACK:-2}; THROTTLE=${THROTTLE:-1}
@@ -32,7 +32,7 @@ case "$ROOT" in
   */paper_experiments/results|*/paper_experiments/results/*|*/results_wrong_ic_np40|*/results_wrong_ic_np40/*|\
   */results_wrong_ic_np40_ext*|*/results_wrong_ic_np40_prior_enkf*|*/results_udales_fc*|*/enkf_loc20_superres*)
     echo "FATAL: ROOT=$ROOT is an existing results tree; use a new one" >&2; exit 1;; esac
-case "$REPO" in */code_ns_wrong_ic*|*/code_rebuttal_*|*/code_ns_prior_enkf*)
+case "$REPO" in */code_ns_wrong_ic*|*/code_rebuttal_*|*/code_ns_prior_enkf*|*/wt_tmpd_ns_urban|*/wt_tmpd_ns_urban/*)
   echo "FATAL: frozen copy $REPO" >&2; exit 1;; esac
 [ -x "$PY" ] || { echo "FATAL: python $PY not found" >&2; exit 1; }
 SCISI=$(PYTHONPATH="$REPO/src:$REPO/external_libs/jax_cfd_lib/src" "$PY" -c 'import scisi; print(scisi.__file__)')
@@ -45,6 +45,7 @@ ARGS=("$GRID" "$ROOT")
 [ -n "$EXTRA" ] && ARGS+=(--extra "$EXTRA")
 [ "$NO_KL" = 1 ] && ARGS+=(--no-kl)
 [ -n "$TMPD_BATCH" ] && ARGS+=(--tmpd-batch "$TMPD_BATCH")
+[ "$PARTS" != 1 ] && ARGS+=(--parts "$PARTS")
 ARGS+=(--methods "$METHODS")
 STAMP=$(date +%Y%m%d_%H%M%S)
 if [ "$DRY_RUN" = 1 ]; then MDIR=$(mktemp -d); else MDIR="$ROOT/manifests/$STAMP"; fi
@@ -68,7 +69,7 @@ if [ "$DRY_RUN" = 1 ]; then
   while IFS=$'\t' read -r -a F; do
     [ ${#F[@]} -gt 0 ] || continue
     [ $((i % PACK)) = 0 ] && echo && echo "--- array task $((i / PACK))"
-    echo "  cell ${F[0]} -> metrics/$(basename "${F[2]}")"
+    echo "  cell ${F[0]} -> ${F[2]#"$ROOT"/}"
     printf '    run.py case=%s seeds=[0] case.require_weights=true case.device=cuda +divergence_rmse_threshold=10.0 +save_per_step=true' "${F[1]}"
     printf " '%s'" "${F[@]:4}"; echo
     i=$((i+1))
