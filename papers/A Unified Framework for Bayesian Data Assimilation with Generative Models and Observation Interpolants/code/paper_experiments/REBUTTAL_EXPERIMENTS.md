@@ -291,8 +291,10 @@ User scope: TMPD **plain only** (no SURGE, no forecast correction), no nonlinear
 
 | Case | Settings | Launcher | Slurm | Status |
 |---|---|---|---|---|
-| Lorenz 96, linear | M ∈ {25, 50, 100, 250}, seed 0, 12 test sequences, E=64, `covariance: full` (d_y=4), defaults of `methods.tmpd` (untuned), A100 MIG like the other linear cells | `PE/slurm_tmpd/l96/` on local branch `review/tmpd-runs-l96` @ 267095b (worktree `SSI/wt_tmpd_l96`) | 1309774 (4 tasks, one per M) | queued 2026-11-13 |
-| Navier–Stokes, wrong IC (§1 settings) and original true-IC setting; uDALES (§6 settings, no FC) | `row_sum` covariance (per TMPD.md); wiring in progress | branch `review/tmpd-ns-urban` (worktree `SSI/wt_tmpd_ns_urban`) | — | being prepared |
+| Lorenz 96, linear | M ∈ {25, 50, 100, 250}, seed 0, 12 test sequences, E=64, `covariance: full` (d_y=4), defaults of `methods.tmpd` (untuned), A100 MIG like the other linear cells | `PE/slurm_tmpd/l96/` on local branch `review/tmpd-runs-l96` @ 267095b (worktree `SSI/wt_tmpd_l96`) | 1309774 (4 tasks, one per M) | completed 2026-11-13 (not yet copied into `results/`) |
+| Navier–Stokes, wrong IC (§1 settings: IC 15, NP=40, M=100, E=64, traj 10–14, 4 scenarios, guard 10, KL skipped) | `row_sum` covariance, E split in chunks of 16 (`+posterior_batch_size=16`, members independent), `likelihood_mode=dps_jacobian_free` as the baselines | `PE/slurm_tmpd/ns_wrong_ic/submit.sh`, run from worktree `SSI/wt_tmpd_ns_urban` @ 8581e45 (branch `review/tmpd-ns-urban`, merged here) → `results_wrong_ic_np40_tmpd/navier_stokes` | 1311468 (10 tasks × 2 MIG slices) | submitted 2026-11-13; ~2.8 h/cell; smoke: sparse 5% NaN at step 1 (negative row-sum diagonal, faithful DTMPD) |
+| Navier–Stokes original true-IC setting | — | `PE/slurm_tmpd/ns_trueic/` (exists, not used) | — | dropped by the user 2026-11-13 |
+| uDALES (§6 settings, no FC) | `row_sum`; ~6 h/cell > MIG 4 h, so each cell's E=64 is split into independent ensemble parts, then merged | branch `review/tmpd-udales-split` (worktree `SSI/wt_tmpd_udales`), in preparation | — | being prepared; user: MIG only |
 
 Lorenz 96 smoke (job 1309731, M=50, 2 sequences): finite, 0.39 s/assimilation step (DM-SDE
 0.13, SDA 0.20), `vjp` = 4 × 49; sliced W2 2.32 vs 1.91 (DM-SDE) and 2.74 (SDA) on the same two
