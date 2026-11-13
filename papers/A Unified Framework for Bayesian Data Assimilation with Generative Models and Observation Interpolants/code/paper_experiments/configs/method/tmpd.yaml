@@ -13,6 +13,13 @@
 name: TMPD
 stepper: sde
 
+# Navier--Stokes / urban only (cases/navier_stokes/_ns_pipeline._build_tmpd): the
+# reverse SDE uses the same endpoint-vanishing g = multiplier * sqrt(alpha beta) as
+# Ours (DM-SDE) (dm_sde.yaml). The analytical and Lorenz 96 drivers set g themselves.
+diffusion_term:
+  schedule: sqrt_alpha_beta
+  multiplier: 1.0
+
 likelihood_model:
   _target_: scisi.likelihood_models.tmpd.TMPDLikelihood
   # NOTE: the analytical drivers construct TMPDLikelihood directly and read the
@@ -26,6 +33,11 @@ likelihood_model:
   #            per step whatever d_y, diag = row sums of H C H^T. The cheap choice
   #            for high-dimensional observations (NS / urban scale).
   covariance: full
+
+  # Navier--Stokes / urban only (read by _ns_pipeline._build_tmpd instead of
+  # `covariance` above): d_y = 256..16384 there, so full / diagonal (d_y VJPs per
+  # guided step) are infeasible; row_sum is what TMPD itself used at image scale.
+  covariance_ns_urban: row_sum
 
   # VJP cotangents batched per autograd call when building J^T H^T (full/diagonal).
   vjp_chunk_size: 64

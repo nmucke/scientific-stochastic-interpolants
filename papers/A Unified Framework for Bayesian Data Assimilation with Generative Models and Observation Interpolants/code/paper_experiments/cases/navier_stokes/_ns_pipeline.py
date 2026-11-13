@@ -680,6 +680,64 @@ def resolve_scheduled_hparams(
     }
 
 
+def _build_tmpd(
+    method_cfg: DictConfig,
+    prior: LoadedPrior,
+    obs_operator: ObservationOperator,
+    variance: float,
+    g_multiplier: Optional[float],
+) -> tuple[torch.nn.Module, torch.nn.Module, Callable]:
+    """TMPD (boys_tweedie_2024) on the FM prior, built as on Lorenz 96 (see TMPD.md).
+
+    Same prior SDE as Ours (DM-SDE): the FM model itself (not the diffusion
+    prior), the endpoint-vanishing ``g = multiplier * sqrt(alpha beta)``
+    (``tmpd.yaml`` ``diffusion_term.multiplier``, else 1.0 as in ``dm_sde.yaml``;
+    the ablation ``g_multiplier`` wins), and the ``tau = 0`` node taken unguided
+    with the velocity kept, as ``FlowMatchingPosterior`` does. The free-running
+    steps of a sparse schedule use the same ``g`` (``default_diffusion_term`` is
+    False, so ``sample_trajectory`` hands it to the prior sampler).
+
+    Covariance: ``likelihood_model.covariance_ns_urban`` (default ``row_sum``,
+    DTMPD), NOT ``covariance`` (``full``, which the analytical drivers read):
+    ``full`` / ``diagonal`` take ``d_y`` VJPs per guided step, 256--16384 here.
+    No damping, guidance scale or step cap: faithful TMPD has none. Linear
+    operators only (``TMPDLikelihood`` raises ``NotImplementedError`` otherwise).
+    The VJPs are counted by ``likelihood.vjp_count`` (``run_assimilation`` reports
+    them per step as ``vjp_per_step``); the NFE counter sees the network forwards.
+    """
+    from scisi.likelihood_models.tmpd import TMPDLikelihood
+    from scisi.posterior_models.tmpd_posterior import TMPDPosterior
+
+    stepper = _STEPPERS[method_cfg.stepper]
+    model = prior.fm_model
+    lik_cfg = method_cfg.get("likelihood_model", {}) or {}
+    post_cfg = method_cfg.get("posterior_model", {}) or {}
+    covariance = str(lik_cfg.get("covariance_ns_urban", "row_sum"))
+    diff_cfg = method_cfg.get("diffusion_term", {}) or {}
+    scale = float(
+        g_multiplier if g_multiplier is not None else diff_cfg.get("multiplier", 1.0)
+    )
+    likelihood = TMPDLikelihood(
+        model=model,
+        obs_operator=obs_operator,
+        variance=variance,
+        model_class="fm",
+        covariance=covariance,
+        vjp_chunk_size=int(lik_cfg.get("vjp_chunk_size", 64)),
+    )
+    posterior = TMPDPosterior(
+        model=model,
+        likelihood_model=likelihood,
+        diffusion_term=endpoint_vanishing_diffusion(model.interpolation, scale),
+        guidance_weight=str(post_cfg.get("guidance_weight", "score_substitution")),
+    )
+    logger.info(
+        "TMPD: covariance=%s g=%.3g*sqrt(alpha beta) guidance_weight=%s",
+        covariance, scale, posterior.guidance_weight,
+    )
+    return model, posterior, stepper
+
+
 def build_posterior(
     method_name: str,
     method_cfg: DictConfig,
@@ -919,6 +977,10 @@ def build_posterior(
             model=model, likelihood_model=likelihood, diffusion_term=None
         )
         return model, posterior, stepper
+
+    if method_name == "TMPD":
+        # Opt-in non-paper baseline (Method.TMPD); see _build_tmpd and TMPD.md.
+        return _build_tmpd(method_cfg, prior, obs_operator, variance, g_multiplier)
 
     if method_name == "D-Flow SGLD":
         # NEW baseline (flow matching + ODE): D-Flow (ben-hamu_d-flow_2024)
@@ -1295,6 +1357,10 @@ class AssimResult:
     nfe_per_step: float
     seconds_per_step: float
     diverged: bool = False  # set by the divergence guard (early-aborted cell)
+    # Reverse-mode VJPs per generated physical step (same normalisation as
+    # ``nfe_per_step``), for likelihoods that count them (``vjp_count``: TMPD).
+    # None for every other method, which then emits no ``vjp`` metric.
+    vjp_per_step: Optional[float] = None
 
 
 def run_assimilation(
@@ -1401,6 +1467,11 @@ def run_assimilation(
             return False
 
     nfe_counter.reset()
+    # Backward passes (TMPD only; None for likelihoods that do not count them).
+    likelihood = getattr(posterior, "likelihood_model", None)
+    counts_vjp = hasattr(likelihood, "vjp_count")
+    if counts_vjp:
+        likelihood.vjp_count = 0
     timer = StepTimer()
     sampling_input = {
         **common_input,
@@ -1425,6 +1496,9 @@ def run_assimilation(
     )
     nfe_per_step = nfe_counter.count / max(n_assim, 1) / nfe_batch_factor
     seconds_per_step = timer.elapsed / max(n_assim, 1)
+    vjp_per_step = (
+        likelihood.vjp_count / max(n_assim, 1) / nfe_batch_factor if counts_vjp else None
+    )
 
     return AssimResult(
         posterior_trajectory=posterior_trajectory,
@@ -1432,6 +1506,7 @@ def run_assimilation(
         nfe_per_step=nfe_per_step,
         seconds_per_step=seconds_per_step,
         diverged=diverged_flag["hit"],
+        vjp_per_step=vjp_per_step,
     )
 
 
@@ -1613,7 +1688,7 @@ def compute_metrics(
     def _mean(xs: list[float]) -> float:
         return float(sum(xs) / len(xs)) if xs else float("nan")
 
-    return {
+    out = {
         "rmse": _mean(rmse_steps),
         "energy_spec_rmse": _mean(espec_steps),
         "crps": _mean(crps_steps),
@@ -1637,6 +1712,10 @@ def compute_metrics(
             "kl_points": list(kl_steps),
         },
     }
+    # Only for methods that count backward passes (TMPD): the ``vjp`` metric row.
+    if getattr(result, "vjp_per_step", None) is not None:
+        out["vjp"] = result.vjp_per_step
+    return out
 
 
 __all__ = [

@@ -88,6 +88,9 @@ WIRED_METHODS: tuple[Method, ...] = (
     # default lineup is unchanged).
     Method.SURGE_SI_SDE,
     Method.SURGE_DM_SDE,
+    # TMPD (boys_tweedie_2024; TMPD.md), non-paper baseline on the FM prior, opt-in
+    # via +ns_methods=["TMPD"] (NOT in NS_METHODS). Linear operators only.
+    Method.TMPD,
 )
 
 # The three "Ours" samplers -- the only methods that carry a ``variant`` tag
@@ -150,6 +153,7 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.PRIOR_ENKF_SI_SDE: "prior_enkf_si_sde",
     Method.PRIOR_ENKF_DM_SDE: "prior_enkf_dm_sde",
     Method.PRIOR_ENKF_FM_ODE: "prior_enkf_fm_ode",
+    Method.TMPD: "tmpd",
 }
 
 # Main-table scenarios; the other two go to the appendix table.
@@ -480,6 +484,10 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             divergence_rmse_threshold=self._cfg_get(
                 "divergence_rmse_threshold", None
             ),
+            # Optional ensemble chunking inside the sampler (opt-in; None = one
+            # batch, unchanged). As urban's knob: bounds the members per
+            # forward/backward pass, e.g. for TMPD's VJPs on a small GPU.
+            batch_size=self._cfg_get("posterior_batch_size", None),
             forecast_correction=correction,
         )
         if correction is not None:
@@ -1071,6 +1079,21 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 scenario=ctx.scenario.value,
                 metric=metric.value,
                 value=metrics[key],
+                E=ctx.ensemble_size,
+                M=ctx.num_steps,
+                seed=ctx.seed,
+                nfe=metrics["nfe"],
+                seconds=metrics["seconds"],
+                variant=variant,
+            )
+        # Backward passes per step, only for methods that take them (TMPD).
+        if "vjp" in metrics:
+            yield ResultRecord(
+                case=self.case.value,
+                method=ctx.method.value,
+                scenario=ctx.scenario.value,
+                metric=Metric.VJP.value,
+                value=metrics["vjp"],
                 E=ctx.ensemble_size,
                 M=ctx.num_steps,
                 seed=ctx.seed,

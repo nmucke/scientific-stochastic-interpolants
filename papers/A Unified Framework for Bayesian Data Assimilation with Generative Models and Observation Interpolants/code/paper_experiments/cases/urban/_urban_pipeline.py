@@ -340,7 +340,7 @@ def compute_metrics(
     def _mean(xs: list[float]) -> float:
         return float(sum(xs) / len(xs)) if xs else float("nan")
 
-    return {
+    out = {
         "rmse": _mean(rmse_steps),
         "rmse_velocity": _mean(rmse_vel_steps),
         "rmse_temperature": _mean(rmse_temp_steps),
@@ -371,6 +371,10 @@ def compute_metrics(
             "spread_skill_temperature": list(ss_temp_steps),
         },
     }
+    # Only for methods that count backward passes (TMPD): the ``vjp`` metric row.
+    if getattr(result, "vjp_per_step", None) is not None:
+        out["vjp"] = result.vjp_per_step
+    return out
 
 
 __all__ = [

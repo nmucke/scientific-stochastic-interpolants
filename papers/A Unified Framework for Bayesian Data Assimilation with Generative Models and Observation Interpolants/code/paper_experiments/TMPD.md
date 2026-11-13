@@ -49,35 +49,29 @@ schedule and full first step as Ours (DM-SDE), so that head-to-head is fair.
 On linear-Gaussian problems TMPD and our method are both exact, so the analytical rows
 should agree by construction. Only learned priors (Lorenz 96, NS, urban) separate them.
 
-## Not wired: Navier–Stokes and urban (uDALES)
+## Navier–Stokes and urban (uDALES): wired, opt-in
 
-The library classes need no change; only the drivers do.
+- `build_posterior` → `_build_tmpd` (`cases/navier_stokes/_ns_pipeline.py`), reused by urban:
+  the FM model, `endpoint_vanishing_diffusion` (√(αβ), `tmpd.yaml` `diffusion_term.multiplier`
+  = 1.0 as `dm_sde.yaml`), the τ=0 node unguided (velocity kept), as Ours (DM-SDE).
+  Covariance `likelihood_model.covariance_ns_urban: row_sum`; `covariance: full` stays the
+  analytical default. Nonlinear scenarios raise `NotImplementedError` (n/a rows).
+- `Method.TMPD` is in both drivers' `METHOD_CONFIG_NAME`/`WIRED_METHODS`, not in
+  `NS_METHODS`/`URBAN_METHODS`: run with `+ns_methods=["TMPD"]` / `+urban_methods=["TMPD"]`.
+- `run_assimilation` reports `vjp_per_step` (likelihoods with `vjp_count` only) and the
+  drivers write a `vjp` row; other methods' rows are unchanged.
+- E=64 in one batch does not fit a 9.5 GiB MIG slice (the backward through the UNet):
+  use `+posterior_batch_size` (NS 16, urban 8; new opt-in knob on NS). Members are
+  independent in TMPD, so chunking changes nothing but the noise draw order.
+- Launchers: `slurm_tmpd/{ns_wrong_ic,ns_trueic,udales}/submit.sh` (`DRY_RUN=1`),
+  smoke `slurm_tmpd/smoke.sh`; tests `tests/test_tmpd_ns_urban.py`.
 
-1. Add a `"TMPD"` branch to `build_posterior` in `cases/navier_stokes/_ns_pipeline.py`
-   (about l.876, next to SDA). Urban reuses this dispatch through `_urban_pipeline.py`.
-2. Add `Method.TMPD: "tmpd"` to `METHOD_CONFIG_NAME` in `cases/navier_stokes/driver.py`
-   (about l.128) and `cases/urban/driver.py` (about l.147). Then add it to the method
-   lineups and grid scripts, and emit the `vjp` metric alongside NFE.
-
-Decisions to make when wiring:
-
-- **Covariance: use `row_sum`.** `full` and `diagonal` need one backward pass per
-  observation, about 800–1000 per step on NS and more on urban, which is infeasible. Full
-  also stores a d_x × d_y matrix per member. Row-sum is what the TMPD paper itself used for
-  high-dimensional data.
-- **Diffusion schedule.** The NS SDA branch uses `diffusion_term=None`, i.e. the diffusion
-  model's default g = α. The analytical case, Lorenz 96 and Ours (DM-SDE) use the
-  endpoint-vanishing √(αβ). For a fair comparison against Ours (DM-SDE), build TMPD as on
-  Lorenz 96: FM model plus `endpoint_vanishing_diffusion`.
-- **Nonlinear scenarios** (`sparse_5_arctan`, `sparse_5_speed`, `sparse_1p5_arctan_vel`):
-  TMPD raises `NotImplementedError`, because nonlinear h is a stated limitation of the
-  paper. Report these rows as n/a. Adding an EKF-style linearisation would no longer be
-  faithful TMPD.
-- **Stability risk.** At NS scale our method needs Jacobian damping (λ = 0.9–0.95),
-  because the learned UNet Jacobian is non-symmetric and λ = 1 diverges. Faithful TMPD has
-  no such setting and may be unstable there. On short Lorenz 96 smoke runs about 0.2% of
-  members already diverged with `full`/`row_sum`, as with Ours (DM-SDE, inflated). If TMPD
-  diverges on NS, report that; do not add a damping knob to the baseline.
+MIG smoke (2026-11-13, 1g.10gb, E=64, M=100 NS / 50 urban): NS 32² finite (RMSE 0.85 over 2
+steps vs 0.55 Ours DM-SDE jacfree), 276 s/step, 2.9 GiB; NS sparse 5% NaN in the first step
+(the row-sum diagonal is negative for up to ~10% of sensors at τ<0.35 with the
+non-symmetric learned Jacobian, guidance spikes to ~10³); urban 1.5625% finite but each
+update increases the error (RMSE 0.70 → 3.2 over 2 updates vs 0.62 Ours), 147 s/step,
+8.0 GiB at batch 8 (~6 h per 150-step cell: gpu-v100, not MIG).
 
 ## Smoke results (Mac, small settings; not paper numbers)
 

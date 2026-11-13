@@ -154,6 +154,9 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.SDA: "sda",
     Method.SURGE_SDA: "surge_sda",
     Method.GUIDED_FM_FIG: "guided_fm_fig",
+    # TMPD (boys_tweedie_2024; TMPD.md): non-paper baseline, NOT in URBAN_METHODS,
+    # run only when asked for by name (+urban_methods=["TMPD"]).
+    Method.TMPD: "tmpd",
 }
 
 # Maps a Scenario to its scenario-config name under configs/scenario/.
@@ -543,6 +546,21 @@ class UrbanRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 scenario=ctx.scenario.value,
                 metric=metric.value,
                 value=metrics[key],
+                E=ctx.ensemble_size,
+                M=ctx.num_steps,
+                seed=ctx.seed,
+                nfe=metrics["nfe"],
+                seconds=metrics["seconds"],
+                variant=variant,
+            )
+        # Backward passes per step, only for methods that take them (TMPD).
+        if "vjp" in metrics:
+            yield ResultRecord(
+                case=self.case.value,
+                method=ctx.method.value,
+                scenario=ctx.scenario.value,
+                metric=Metric.VJP.value,
+                value=metrics["vjp"],
                 E=ctx.ensemble_size,
                 M=ctx.num_steps,
                 seed=ctx.seed,
