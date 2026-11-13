@@ -1,9 +1,10 @@
 #!/bin/bash
 # Smoke + cost test of TMPD on NS and uDALES, on two gpu-a100-small MIG slices (one job).
-#   lane A (TMPD):          NS wrong-IC 32^2 and sparse 5% (traj 11, NP=7: 2 DA steps);
-#                           uDALES 1.5625% (traj 1, NP=11: DA at steps 5 and 8)
-#   lane B (Ours (DM-SDE)): the same NS cells (jacfree) and the uDALES cell
-#                           (shared_jac10, the manuscript row, then jacfree)
+#   lane A: NS wrong-IC 32^2 and sparse 5% (traj 11, NP=7: 2 DA steps), TMPD then
+#           Ours (DM-SDE) jacfree
+#   lane B: uDALES 1.5625% (traj 1, NP=11: DA at steps 5 and 8), TMPD then Ours
+#           (DM-SDE) shared_jac10 (the manuscript row) and jacfree
+# TMPD runs with the grid's ensemble chunk (make_manifest.py --tmpd-batch default).
 # Every other setting is the production grid's. Uses make_manifest.py + run_task.sh
 # unchanged, so it also tests the launcher. Peak memory: logs/timing.tsv.
 #   DRY_RUN=1 bash smoke.sh   |   bash smoke.sh
@@ -24,8 +25,9 @@ UD=(--np 11 --traj 1 --scenarios "sparse 1.5625%")
 mk "$MD/a_ns" ns_wrong_ic tmpd "${NS[@]}"; mk "$MD/a_ud" udales tmpd "${UD[@]}"
 mk "$MD/b_ns" ns_wrong_ic dm_sde_jacfree "${NS[@]}"
 mk "$MD/b_ud" udales dm_sde_shared_jac10,dm_sde_jacfree "${UD[@]}"
-cat "$MD/a_ns/cells.tsv" "$MD/a_ud/cells.tsv" > "$MD/lane_a.tsv"
-cat "$MD/b_ns/cells.tsv" "$MD/b_ud/cells.tsv" > "$MD/lane_b.tsv"
+# Lane A: NS (TMPD, then Ours); lane B: uDALES (TMPD, then Ours). Finished cells are skipped.
+cat "$MD/a_ns/cells.tsv" "$MD/b_ns/cells.tsv" > "$MD/lane_a.tsv"
+cat "$MD/a_ud/cells.tsv" "$MD/b_ud/cells.tsv" > "$MD/lane_b.tsv"
 if [ "$DRY_RUN" = 1 ]; then
   for l in a b; do echo "lane $l:"; cut -f1,3 "$MD/lane_$l.tsv"; done; rm -rf "$MD"; exit 0; fi
 mkdir -p "$ROOT"/{slurm,logs}
@@ -38,6 +40,6 @@ LANE="bash '$HERE/run_task.sh'"
 sbatch --parsable -J tmpd_nsud_smoke -p gpu-a100-small -A research-ceg-gse -n 2 -c 2 --gres=gpu:2 \
   --mem-per-cpu=7900M -t 04:00:00 -o "$ROOT/slurm/%x_%j.out" --export=ALL --wrap "
     nvidia-smi -L
-    srun --exact -n1 -c2 --gres=gpu:1 --mem=15000M bash -c \"$LANE '$MD/lane_a.tsv'\" > '$ROOT/slurm/laneA_\$SLURM_JOB_ID.out' 2>&1 &
-    srun --exact -n1 -c2 --gres=gpu:1 --mem=15000M bash -c \"$LANE '$MD/lane_b.tsv'\" > '$ROOT/slurm/laneB_\$SLURM_JOB_ID.out' 2>&1 &
+    srun --exact -n1 -c2 --gres=gpu:1 --mem=15000M bash -c \"$LANE '$MD/lane_a.tsv'\" > $ROOT/slurm/laneA_\$SLURM_JOB_ID.out 2>&1 &
+    srun --exact -n1 -c2 --gres=gpu:1 --mem=15000M bash -c \"$LANE '$MD/lane_b.tsv'\" > $ROOT/slurm/laneB_\$SLURM_JOB_ID.out 2>&1 &
     wait; echo SMOKEDONE"

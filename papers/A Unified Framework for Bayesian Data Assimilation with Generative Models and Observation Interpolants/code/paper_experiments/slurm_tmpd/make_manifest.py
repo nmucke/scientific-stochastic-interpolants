@@ -43,11 +43,11 @@ TRUEIC_KL_ROOT = ("/scratch/ntmucke/scientific-stochastic-interpolants/paper_exp
 
 GRIDS = {
     "ns_wrong_ic": dict(case="navier_stokes", ic=15, np=40, M=100, E=64,
-                        traj=[10, 11, 12, 13, 14], scenarios=NS_SCENARIOS, save=11),
+                        traj=[10, 11, 12, 13, 14], scenarios=NS_SCENARIOS, save=11, batch=16),
     "ns_trueic": dict(case="navier_stokes", ic=None, np=20, M=100, E=64,
-                      traj=[10, 11, 12, 13, 14], scenarios=NS_SCENARIOS, save=11),
+                      traj=[10, 11, 12, 13, 14], scenarios=NS_SCENARIOS, save=11, batch=16),
     "udales": dict(case="urban", ic=8, np=150, M=50, E=64, every=3, start=5,
-                   traj=[1, 2, 3, 4, 5], scenarios=URBAN_SCENARIOS, save=1),
+                   traj=[1, 2, 3, 4, 5], scenarios=URBAN_SCENARIOS, save=1, batch=8),
 }
 METHODS = {
     "tmpd": ("TMPD", []),
@@ -82,12 +82,17 @@ def main():
     ap.add_argument("--methods", default="tmpd")
     ap.add_argument("--save-traj", type=int)
     ap.add_argument("--no-kl", action="store_true", help="ns_trueic: skip the KL reference")
+    ap.add_argument("--tmpd-batch", type=int,
+                    help="TMPD members per forward/backward pass (+posterior_batch_size); "
+                         "0 = all E in one batch. E=64 in one batch does not fit a 9.5 GiB "
+                         "MIG slice (smoke 2026-11-13).")
     ap.add_argument("--extra", default="", help="more run.py overrides, space-separated")
     a = ap.parse_args()
     g = dict(GRIDS[a.grid])
     np_ = a.np or g["np"]
     trajs = a.traj or g["traj"]
     scens = [s for s in a.scenarios.split("|") if s] if a.scenarios else g["scenarios"]
+    tmpd_batch = g["batch"] if a.tmpd_batch is None else a.tmpd_batch
     save_traj = a.save_traj if a.save_traj is not None else g["save"]
     methods = [m for m in a.methods.split(",") if m]
     bad = set(methods) - set(METHODS)
@@ -130,6 +135,9 @@ def main():
                     sel = ["+urban_methods=" + json.dumps([method]),
                            "+urban_scenarios=" + json.dumps([scen])]
                     kl, margs_ = [], margs
+                if key == "tmpd" and tmpd_batch:
+                    # Chunks the ensemble only: TMPD treats every member on its own.
+                    margs_ = [*margs_, f"+posterior_batch_size={tmpd_batch}"]
                 s = stem(a.grid, key, ss, M, N)
                 rows.append("\t".join([
                     f"{key}/{ss}/traj{N}", g["case"],
@@ -146,7 +154,7 @@ def main():
           f" | num_physical_steps={np_}{sched} | M={M} E={E} | traj={trajs}"
           f" | scenarios={scens} | save_states traj{save_traj} | KL: {kl_desc}"
           f" | divergence guard 10 (run_task.sh) | methods={methods}"
-          f" | extra={a.extra or '-'} | {len(rows)} cells")
+          f" | tmpd batch={tmpd_batch or E} | extra={a.extra or '-'} | {len(rows)} cells")
 
 
 if __name__ == "__main__":
