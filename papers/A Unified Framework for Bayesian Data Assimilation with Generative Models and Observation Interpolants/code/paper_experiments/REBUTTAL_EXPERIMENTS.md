@@ -31,6 +31,7 @@ Related documents on this branch:
 9. Tables, figures and the manuscript
 10. Results: where they are, how to copy them, what is pending
 11. Caveats, known issues and open decisions
+12. TMPD baseline (PR #59): Lorenz 96, Navier–Stokes, uDALES
 
 ---
 
@@ -181,6 +182,11 @@ Run by the Lorenz 96 session; full details in `PE/LORENZ96_HANDOVER_2026-11-12.m
   tree `results/lorenz96/`), figures `.../figures/lorenz96`, tables in the L96 worktree
   `generated/tab_lorenz96*.tex`.
 - The L96 manuscript branch `lorenz96-appendix-results` (local only) is to be REMADE (user decision).
+- The shared-Jacobian L96 cells refresh the shared Jacobian at EVERY pseudo-step (k=1): the
+  L96 driver does not expose `jacobian_refresh_every`, so the library default 1 applies. The
+  field cases use k=10. The plain L96 cells of our samplers use the Jacobian-free likelihood.
+- Since PR #59, `run_lorenz96.sh final <obs>` skips TMPD unless `WITH_TMPD=1` (TMPD cells are
+  run separately, §12).
 
 ## 8. Which code ran which experiment
 
@@ -267,5 +273,30 @@ DelftBlue paths (provenance only).
 - **E=1000 EnKF reference** was not run for the wrong-IC setting (row shown as "--" or dropped).
 - **Test pin:** `PE/tests/test_analytical_metrics.py` compares to rel=1e-12 (archived values differ by
   1 ulp across BLAS builds).
+- **TMPD** (§12) is plain only (no SURGE, no FC), untuned, linear observations only.
 - **Manuscript text** above `tab:ns_accuracy` and some appendix sentences describe the true-IC
   results; to be rewritten once the final table choice is made.
+
+## 12. TMPD baseline (PR #59): Lorenz 96, Navier–Stokes, uDALES
+
+**Purpose:** all four reviewers pointed at the overlap with TMPD (Boys et al., Tweedie Moment
+Projected Diffusions); TMPD is added as a baseline. Method, options and open decisions:
+`PE/TMPD.md`. Code: `src/scisi/likelihood_models/tmpd.py` (TMPDLikelihood: covariance
+`full` / `diagonal` / `row_sum` = DTMPD), `src/scisi/posterior_models/tmpd_posterior.py`
+(guided reverse SDE, weight a_τ + ½g²), `Method.TMPD`, `Metric.VJP` (reverse-mode VJPs, not
+counted in NFE). Same FM-as-DM prior, √(αβ) diffusion and first step as Ours (DM-SDE). Merged
+into this branch by fast-forward (d9097be); tests on DelftBlue: root 380 passed, PE 476 passed,
+existing NS / Lorenz 96 post-processing outputs byte-identical before and after.
+User scope: TMPD **plain only** (no SURGE, no forecast correction), no nonlinear observations.
+
+| Case | Settings | Launcher | Slurm | Status |
+|---|---|---|---|---|
+| Lorenz 96, linear | M ∈ {25, 50, 100, 250}, seed 0, 12 test sequences, E=64, `covariance: full` (d_y=4), defaults of `methods.tmpd` (untuned), A100 MIG like the other linear cells | `PE/slurm_tmpd/l96/` on local branch `review/tmpd-runs-l96` @ 267095b (worktree `SSI/wt_tmpd_l96`) | 1309774 (4 tasks, one per M) | queued 2026-11-13 |
+| Navier–Stokes, wrong IC (§1 settings) and original true-IC setting; uDALES (§6 settings, no FC) | `row_sum` covariance (per TMPD.md); wiring in progress | branch `review/tmpd-ns-urban` (worktree `SSI/wt_tmpd_ns_urban`) | — | being prepared |
+
+Lorenz 96 smoke (job 1309731, M=50, 2 sequences): finite, 0.39 s/assimilation step (DM-SDE
+0.13, SDA 0.20), `vjp` = 4 × 49; sliced W2 2.32 vs 1.91 (DM-SDE) and 2.74 (SDA) on the same two
+sequences (sanity check only). Results go to `/scratch/ntmucke/lorenz96_tmpd/published/linear/`
+(`lorenz96__tmpd__M<M>__traj0__.*`); copy them into `results/lorenz96/linear/` with
+`rsync -a --ignore-existing` (never into `/scratch/ntmucke/lorenz96_delftblue`, whose older code
+has no `Method.TMPD`), then aggregate with this branch.

@@ -458,9 +458,17 @@ def test_final_runs_every_cell_once_per_m_skips_done_and_stops_on_failure(dry):
 
     proc, calls = dry("final", "linear", SEEDS="0", M_VALUES="50", FAIL="fm_ode")
     assert proc.returncode != 0
-    # The other cells still ran (the linear sweep also runs TMPD).
-    assert len(cell_calls(calls)) == len(run_cells("generative", "linear")) + len(fixed)
+    # The other cells still ran. TMPD is opt-in in `final` (WITH_TMPD=1), so by default
+    # the linear sweep runs every generative cell except tmpd.
+    assert len(cell_calls(calls)) == len(run_cells("generative", "linear")) - 1 + len(fixed)
+    assert not any("--method tmpd " in c for c in cell_calls(calls))
     assert not any("aggregate" in c or "pf_reference" in c for c in calls)
+
+    # Re-finalising with WITH_TMPD=1: the finished cells are skipped, so only the failed
+    # fm_ode is retried and tmpd is added.
+    proc, calls = dry("final", "linear", SEEDS="0", M_VALUES="50", FAIL="fm_ode", WITH_TMPD="1")
+    assert proc.returncode != 0
+    assert sorted(c.split("--method ")[1].split()[0] for c in cell_calls(calls)) == ["fm_ode", "tmpd"]
 
     assert dry("final", "quadratic")[0].returncode == 2
     assert dry("grid", "linear")[0].returncode == 2

@@ -153,6 +153,12 @@ stage_final() {
   local generative fixed m_values ordered=() failed=0
   # Only the cells of this sweep (TMPD is linear-only: lorenz96_lineup.Row.sweeps).
   read -ra generative <<<"$("$PY" lorenz96_lineup.py cells generative "$OBS")"
+  # TMPD (PR #59) is opt-in here so that re-finalising a sweep whose other cells
+  # are done does not launch (and wait on) new TMPD cells: WITH_TMPD=1 to include it.
+  if [[ "${WITH_TMPD:-0}" != 1 ]]; then
+    local _g=() _c; for _c in "${generative[@]}"; do [[ "$_c" == tmpd ]] || _g+=("$_c"); done
+    generative=("${_g[@]}")
+  fi
   read -ra fixed <<<"$("$PY" lorenz96_lineup.py cells fixed "$OBS")"
   m_values=${M_VALUES:-$("$PY" lorenz96_lineup.py m-values)}
   [[ " $m_values " == *" 50 "* ]] && ordered=(50)

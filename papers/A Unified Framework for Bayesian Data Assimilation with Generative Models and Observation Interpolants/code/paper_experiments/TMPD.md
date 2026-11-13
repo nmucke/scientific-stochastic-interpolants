@@ -18,7 +18,7 @@ added because the reviewers said our method overlaps with it.
   - The guidance weight is the score-substitution weight a_τ + ½g², i.e. s is replaced by s + f^y. On TMPD's VP SDE this equals their g².
   - `guidance_weight="g_squared"` (SDA's weight) is for ablation only. On our √(αβ) schedule it is biased: a Gaussian test gives covariance error ≈ 0.9 vs ≤ 0.012 for the correct weight.
 - `configs/method/tmpd.yaml`, `Method.TMPD`, and the new `Metric.VJP` (backward passes, which NFE does not count).
-- Tests: `tests/test_tmpd.py` and `tests/test_tmpd_wiring.py` in this directory.
+- Tests: `tests/test_tmpd.py` in the repository root and `tests/test_tmpd_wiring.py` in this directory.
 
 ## Wired cases
 

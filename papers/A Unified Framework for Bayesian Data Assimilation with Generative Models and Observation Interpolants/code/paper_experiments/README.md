@@ -1,6 +1,6 @@
 # Paper experiments
 
-> **ICLR 2027 rebuttal runs (NS wrong IC, SURGE on Ours, forecast correction, prior + EnKF, uDALES FC, Lorenz 96):** see [`REBUTTAL_EXPERIMENTS.md`](REBUTTAL_EXPERIMENTS.md) for every experiment, its settings, launcher, Slurm jobs, status and where the results are.
+> **ICLR 2027 rebuttal runs (NS wrong IC, SURGE on Ours, forecast correction, prior + EnKF, uDALES FC, Lorenz 96, TMPD):** see [`REBUTTAL_EXPERIMENTS.md`](REBUTTAL_EXPERIMENTS.md) for every experiment, its settings, launcher, Slurm jobs, status and where the results are.
 
 The active experiment tree is
 `papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/`.

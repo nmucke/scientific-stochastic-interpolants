@@ -121,8 +121,7 @@ methods:
   # NOT TUNED: nothing to tune but num_steps (= M) / diffusion_scale (kept at 1.0,
   # as dm_sde). covariance full | diagonal | row_sum (DTMPD, two VJPs per step);
   # guidance_weight / vjp_chunk_size as in configs/method/tmpd.yaml.
-  tmpd: {num_steps: 50, diffusion_scale: 1.0, covariance: full,
-         guidance_weight: score_substitution, vjp_chunk_size: 64}
+  tmpd: {num_steps: 50, diffusion_scale: 1.0, covariance: full, guidance_weight: score_substitution, vjp_chunk_size: 64}
   # --- SURGE SMC cells (cases/lorenz96/_l96_smc.py). NOT TUNED: defaults only. ---
   # One sequence per sampler call (SURGE normalises its weights over every member
   # it is given); N = E = 64 particles, one per member (no particles-per-member knob
