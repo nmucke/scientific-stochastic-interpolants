@@ -7,6 +7,8 @@
 # Env (defaults in brackets):
 #   ROOT (per grid)  PY [.venv-cu126]  METHODS [tmpd]  TRAJ  SCENARIOS ('|'-sep)  NP
 #   EXTRA (more run.py overrides, space-sep)  NO_KL=1 (ns_trueic: skip the KL reference)
+#   TMPD_BATCH (members per forward/backward pass; default per grid: NS 16, uDALES 8;
+#               0 = all 64, which OOMs a 9.5 GiB MIG slice)
 #   PARTITION [gpu-a100-small]  ACCOUNT [research-ceg-gse]  TIME [04:00:00]
 #   CPUS [2 per cell]  MEM_PER_CPU [7900M]  PACK [2 on gpu-a100-small, else 1]
 #   THROTTLE [1 on gpu-a100-small (QoS: 1 running job/user), else none]
@@ -19,7 +21,7 @@ source "$SLURM_DIR/../common/paths.sh"
 PE=$PE_SCRIPT_DIR; REPO=$PE_REPO_ROOT
 PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv-cu126/bin/python}
 METHODS=${METHODS:-tmpd}; TRAJ=${TRAJ:-}; SCENARIOS=${SCENARIOS:-}; NP=${NP:-}; EXTRA=${EXTRA:-}
-NO_KL=${NO_KL:-0}
+NO_KL=${NO_KL:-0}; TMPD_BATCH=${TMPD_BATCH:-}
 PARTITION=${PARTITION:-gpu-a100-small}; ACCOUNT=${ACCOUNT:-research-ceg-gse}
 TIME=${TIME:-04:00:00}; CPUS=${CPUS:-2}; MEM_PER_CPU=${MEM_PER_CPU:-7900M}
 if [ "$PARTITION" = gpu-a100-small ]; then PACK=${PACK:-2}; THROTTLE=${THROTTLE:-1}
@@ -42,6 +44,7 @@ ARGS=("$GRID" "$ROOT")
 [ -n "$NP" ] && ARGS+=(--np "$NP")
 [ -n "$EXTRA" ] && ARGS+=(--extra "$EXTRA")
 [ "$NO_KL" = 1 ] && ARGS+=(--no-kl)
+[ -n "$TMPD_BATCH" ] && ARGS+=(--tmpd-batch "$TMPD_BATCH")
 ARGS+=(--methods "$METHODS")
 STAMP=$(date +%Y%m%d_%H%M%S)
 if [ "$DRY_RUN" = 1 ]; then MDIR=$(mktemp -d); else MDIR="$ROOT/manifests/$STAMP"; fi
