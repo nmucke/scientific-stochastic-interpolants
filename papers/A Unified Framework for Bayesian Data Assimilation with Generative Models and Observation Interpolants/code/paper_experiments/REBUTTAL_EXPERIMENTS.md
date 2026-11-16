@@ -324,3 +324,24 @@ Copy elsewhere and check: `rsync -aH --partial results/ <host>:<dir>/results/`, 
 `urban_foreign_ic_1p5_every3/` that have been dead since Aug 2026 (they point to a path on another machine;
 original paper results).
 
+
+## 14. Forecast correction on the ORIGINAL NS case (true IC, `tab:ns_accuracy` setting)
+
+**Settings:** the manuscript NS case: true IC (no `ic_index`), num_physical_steps=20 (5 history + 15 DA),
+M=100, E=64, seed 0, traj 10–14, the 4 scenarios, divergence guard 10, states traj 11; Ours
+(SI-SDE / DM-SDE / FM-ODE) × shared Jacobian (`inflated_shared`, refresh every 10, λ from
+`configs/method/*.yaml` = `run_ns_grid.sh` group `ours_shared_k10`); **no KL** (user, 2026-11-16).
+FC: online Q̂, `forecast_num_steps=25`, gain 1, no cap, diagnostics on; two campaigns:
+
+| Campaign | FC tag | Slurm | Status |
+|---|---|---|---|
+| localisation radius 8 (defaults) | `fc25_70a3134d` | 1334067 (60 cells, V100, %16) | queued 2026-11-16 |
+| localisation radius 20 | `fc25_8797d2ae` | 1334068 (60 cells, V100, %16) | queued 2026-11-16 |
+
+Smokes (1 cell, NP=7, MIG): 1334053 (r=8), 1334054 (r=20) → `results_ns_trueic_fc_smoke/`.
+**Launcher:** `PE/slurm_trueic_fc/` (`RADIUS=8|20 bash submit.sh`), run from the frozen worktree
+`SSI/wt_trueic_fc_be6fa0a` (detached at `be6fa0a`; `run_task.sh` pins PYTHONPATH to it).
+**Results (new folder, copy as one unit):** `/scratch/ntmucke/scientific-stochastic-interpolants/paper_experiments/results_ns_trueic_fc/navier_stokes/`
+(metrics, per_step, states/traj11, forecast_correction diagnostics, logs, manifests, run_config.txt).
+File stems `<scen>__M100__traj<N>__ours_shared_jac10__<fc_tag>__<si_sde|dm_sde|fm_ode>.csv`; the plain
+counterparts are the manuscript files `results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_shared_jac10.csv`.
