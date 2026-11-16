@@ -410,9 +410,14 @@ def _grids() -> list[list[str]]:
 def test_final_runs_every_cell_once_per_m_skips_done_and_stops_on_failure(dry):
     from lorenz96_lineup import run_cells
 
-    gen, fixed = run_cells("generative"), run_cells("fixed")
-    assert set(gen) | set(fixed) | {"pf_reference"} == {row.cell for row in ROWS}
-    assert set(fixed) | {"pf_reference"} == set(M_INDEPENDENT)
+    assert set(run_cells("generative")) | set(run_cells("fixed")) | {"pf_reference"} == {
+        row.cell for row in ROWS
+    }
+    assert set(run_cells("fixed")) | {"pf_reference"} == set(M_INDEPENDENT)
+    # Each sweep runs its own cells: TMPD (linear h only) is not in the arctan sweep.
+    gen, fixed = run_cells("generative", "arctan"), run_cells("fixed", "arctan")
+    assert set(run_cells("generative", "linear")) - set(gen) == {"tmpd"}
+    assert run_cells("fixed", "linear") == fixed
 
     root = dry.work / "results/lorenz96/arctan"
     done = root / "metrics/lorenz96__si_sde__M50__traj0__.csv"
@@ -453,8 +458,17 @@ def test_final_runs_every_cell_once_per_m_skips_done_and_stops_on_failure(dry):
 
     proc, calls = dry("final", "linear", SEEDS="0", M_VALUES="50", FAIL="fm_ode")
     assert proc.returncode != 0
-    assert len(cell_calls(calls)) == len(gen) + len(fixed)  # the other cells still ran
+    # The other cells still ran. TMPD is opt-in in `final` (WITH_TMPD=1), so by default
+    # the linear sweep runs every generative cell except tmpd.
+    assert len(cell_calls(calls)) == len(run_cells("generative", "linear")) - 1 + len(fixed)
+    assert not any("--method tmpd " in c for c in cell_calls(calls))
     assert not any("aggregate" in c or "pf_reference" in c for c in calls)
+
+    # Re-finalising with WITH_TMPD=1: the finished cells are skipped, so only the failed
+    # fm_ode is retried and tmpd is added.
+    proc, calls = dry("final", "linear", SEEDS="0", M_VALUES="50", FAIL="fm_ode", WITH_TMPD="1")
+    assert proc.returncode != 0
+    assert sorted(c.split("--method ")[1].split()[0] for c in cell_calls(calls)) == ["fm_ode", "tmpd"]
 
     assert dry("final", "quadratic")[0].returncode == 2
     assert dry("grid", "linear")[0].returncode == 2
@@ -540,7 +554,9 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     picks1 = {"si_sde": {"tuned": {"likelihood_mode": "dps_jacobian_free",
                                    "jacobian_damping": 0.9}},
               "flowdas": {"tuned": {"guidance_scale": 0.016}}}
-    picks2 = {"si_sde_fc": {"tuned": {"correction": {"gain_scale": 0.75, "q_source": "exact"}}},
+    # Values that differ from every block of the committed config (the tuned picks
+    # included), so each of the 4 cells changes exactly one line.
+    picks2 = {"si_sde_fc": {"tuned": {"correction": {"gain_scale": 0.3, "q_source": "online"}}},
               "surge_si_sde": {"tuned": {"ess_threshold": 0.25}}}
     tdir.mkdir(parents=True)
     (tdir / "selected_stage1.yaml").write_text(yaml.safe_dump(picks1))
@@ -554,7 +570,7 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     assert block["flowdas"]["guidance_scale"] == 0.016
     # Nested: the correction block keeps its other keys (localisation, forecast steps).
     assert block["si_sde_fc"] == {"correction": {
-        **old["methods_arctan"]["si_sde_fc"]["correction"], "gain_scale": 0.75, "q_source": "exact"}}
+        **old["methods_arctan"]["si_sde_fc"]["correction"], **picks2["si_sde_fc"]["tuned"]["correction"]}}
     assert block["surge_si_sde"] == {"ess_threshold": 0.25}
     # Nothing else moved: the linear block, every other cell, every comment line.
     assert new["methods"] == old["methods"]
@@ -566,3 +582,15 @@ def test_apply_merges_the_picks_into_the_config_and_keeps_everything_else(dry):
     assert len(original.splitlines()) == len(config.read_text().splitlines())
     assert len(changed) == 4 and all(a.startswith("  ") and not a.lstrip().startswith("#")
                                      for a, _ in changed)
+
+
+def test_corrected_trained_cells_may_only_pick_the_online_q():
+    """Decision: no trained-prior cell is told the true model-noise covariance."""
+    eligible = select_lorenz96_tuning.eligible
+    row = {"sliced_w2": "1.0", "diverged_steps": "0", "correction.q_source": "exact"}
+    for cell in ("si_sde_fc", "fm_ode_fc", "dm_sde_fc"):
+        assert not eligible(row, cell)
+        assert eligible({**row, "correction.q_source": "online"}, cell)
+    assert eligible(row, "oracle_fc")  # not tuned; keeps the exact Q by design
+    assert eligible(row)  # no cell: only divergence and finiteness count
+    assert not eligible({**row, "correction.q_source": "online", "diverged_steps": "2"}, "si_sde_fc")

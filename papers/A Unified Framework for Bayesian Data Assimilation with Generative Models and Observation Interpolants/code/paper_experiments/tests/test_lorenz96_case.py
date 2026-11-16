@@ -261,6 +261,8 @@ def expected_metrics(name: str, obs: str) -> set[str]:
         out.add(Metric.SECONDS.value)
     if row.generative:
         out.add(Metric.NFE.value)
+    if name == "tmpd":  # backward passes, beside (not in) the NFE
+        out.add(Metric.VJP.value)
     if row.smc:
         out |= set(SMC_METRICS)
     if obs == "arctan" and name in ("oracle", "oracle_fc"):
@@ -273,6 +275,12 @@ def expected_metrics(name: str, obs: str) -> set[str]:
 def test_every_cell_runs_writes_its_metrics_and_is_deterministic(name, obs, tmp_path, monkeypatch):
     torch.set_num_threads(2)
     cfg = make_tiny(obs, tmp_path, monkeypatch)
+    if not ROW_BY_CELL[name].runs_on(obs):
+        # A linear-only cell (TMPD) is refused in the arctan sweep, before any run.
+        with pytest.raises(ValueError, match="sweep"):
+            driver.evaluate_cell(name, 0, cfg, allow_other_m=True, write_metrics=True)
+        assert not (tmp_path / obs / "metrics").exists()
+        return
     records = driver.evaluate_cell(name, 0, cfg, allow_other_m=True, write_metrics=True)
     assert {r.metric for r in records} == expected_metrics(name, obs)
     method, variant = driver.CELLS[name]
@@ -322,6 +330,10 @@ def test_cells_and_lineup_agree():
         cfg = driver.case_config(obs)
         for row in ROWS:
             assert driver.CELLS[row.cell] == (Method(row.method), row.variant or None)
+            if not row.runs_on(obs):
+                # A linear-only cell (TMPD) has no block in the other sweep.
+                assert row.cell not in cfg.methods, (obs, row.cell)
+                continue
             settings = driver.method_settings(cfg, row.cell)
             assert ("num_steps" in settings) == row.generative, row.cell
 
@@ -464,6 +476,41 @@ def test_only_the_dm_sde_drift_assertion_counts_as_diverged(tiny_case, monkeypat
     monkeypatch.setattr(generative, "assimilate", failing("shapes differ"))
     with pytest.raises(AssertionError, match="shapes differ"):
         driver.run_method(tiny_case, "dm_sde", problem, sequences, "test", 0)
+
+
+@pytest.mark.parametrize("name", ["si_sde", "dm_sde_fc"])
+def test_inflated_shared_runs_one_sequence_per_call(name, tiny_case, monkeypatch):
+    """inflated_shared cannot batch sequences (assimilate refuses it): the cell runs
+    each sequence alone, with its own seed and a fresh posterior / correction; the
+    default mode still makes one batched call with the cell seed."""
+    problem = driver.problem_of(tiny_case)
+    sequences = load_sequences(problem, "test", 2)
+    real = generative.assimilate
+    calls = []
+
+    def spy(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs):
+        calls.append((initial.shape[0], seed, posterior, kwargs.get("forecast_correction")))
+        return real(posterior, stepper, stats, initial, observations, num_steps, seed, **kwargs)
+
+    monkeypatch.setattr(generative, "assimilate", spy)
+    settings = driver.with_num_steps(name, driver.method_settings(tiny_case, name), 4)
+    shared = driver.apply_overrides(settings, ["likelihood_mode=inflated_shared"])
+    out = driver.run_method(tiny_case, name, problem, sequences, "test", 0, shared)
+    assert out.ensembles.shape == (2, problem.num_steps, 6, problem.dim_state)
+    assert torch.isfinite(out.ensembles).all() and out.nfe is not None
+    assert [c[0] for c in calls] == [1, 1]
+    assert calls[0][1] != calls[1][1]  # one seed per sequence
+    assert calls[0][2] is not calls[1][2]  # a fresh posterior per sequence
+    if name in driver.CORRECTED:
+        assert calls[0][3] is not None and calls[0][3] is not calls[1][3]
+    # nfe is per step for one batch of members, not summed over the sequences.
+    assert settings["num_steps"] <= out.nfe < 2 * problem.num_steps * settings["num_steps"]
+    calls.clear()
+    plain = driver.apply_overrides(settings, ["likelihood_mode=inflated"])
+    driver.run_method(tiny_case, name, problem, sequences, "test", 0, plain)
+    base = driver.CORRECTED.get(name, name)
+    assert [c[0] for c in calls] == [2]
+    assert calls[0][1] == driver.derive_seed(driver.SEED_LABEL, base, "test", 0)
 
 
 def test_count_diverged_steps_counts_non_finite_core_scores_only():

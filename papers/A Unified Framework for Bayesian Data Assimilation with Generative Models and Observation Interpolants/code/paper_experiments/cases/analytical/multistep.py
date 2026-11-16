@@ -53,8 +53,10 @@ from scisi.likelihood_models.gaussian_likelihood import (
 )
 from scisi.likelihood_models.guidance import FIGGaussianLikelihood
 from scisi.likelihood_models.sda import SDALikelihood
+from scisi.likelihood_models.tmpd import TMPDLikelihood
 from scisi.posterior_models.dflow_posterior import DFlowPosterior
 from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
+from scisi.posterior_models.tmpd_posterior import TMPDPosterior
 from scisi.models.diffusion_model import DenoiseDiffusionModel
 from scisi.posterior_models.flow_matching_posterior import (
     FlowMatchingPosterior,
@@ -751,6 +753,31 @@ class MultistepRunner(AnalyticalRunner):
                     diffusion_term=None,
                 )
             )
+            base, nfe = None, M
+        elif method == Method.TMPD:
+            # Built like Ours (DM-SDE): the FM model with the endpoint-vanishing g
+            # passed explicitly, so EVERY cycle (cycle 1 included) takes the full
+            # first step (keeps v dt at tau = 0). Unlike SDA, whose cycle 1 uses
+            # the stock DenoiseDiffusionModel first step (``_dm_model``) to stay
+            # the single-step case: TMPD is the head-to-head competitor of
+            # Ours (DM-SDE) and must not be handicapped by that convention.
+            model = self._fm_model(system)
+            likelihood = TMPDLikelihood(
+                model=model, obs_operator=operator, variance=variance,
+                model_class="fm", covariance=str(hp(lik, "covariance", "full")),
+                vjp_chunk_size=int(hp(lik, "vjp_chunk_size", 64)),
+            )
+            posterior = TMPDPosterior(
+                model=model, likelihood_model=likelihood,
+                diffusion_term=endpoint_vanishing_diffusion(
+                    model.interpolation, scale=_G0
+                ),
+                guidance_weight=str(hp(post, "guidance_weight", "score_substitution")),
+            )
+            # NFE counts network forwards only. TMPD's reverse-mode VJPs come on
+            # top and are NOT in it: d_y per guided step for full / diagonal
+            # (M - 1 guided steps; the tau = 0 step is unguided), 2 for row_sum.
+            # The single-step analytical case reports them as a ``vjp`` row.
             base, nfe = None, M
         elif method == Method.GUIDED_FM_FIG:
             fig_k = int(hp(lik, "guidance_steps", 1))

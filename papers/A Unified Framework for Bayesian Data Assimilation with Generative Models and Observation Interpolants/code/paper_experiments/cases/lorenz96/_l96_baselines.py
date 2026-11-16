@@ -1,5 +1,6 @@
 """The six Navier--Stokes-built cells on Lorenz 96: FlowDAS, SDA, D-Flow (SGLD), FIG,
-SURGE (FlowDAS) and SURGE (SDA).
+SURGE (FlowDAS) and SURGE (SDA); and TMPD (:func:`run_tmpd`, built in
+``_l96_generative``, not by NS, linear sweep only).
 
 Nothing here implements a method. Each posterior is built by the Navier--Stokes
 ``build_posterior`` (``cases/navier_stokes/_ns_pipeline.py``), so the construction
@@ -331,3 +332,50 @@ def run_baseline(cfg, name, problem, sequences, split, seed, members, settings):
     ensembles = torch.cat(parts)
     nfe = None if diverged else counter.count / observations.shape[1] / len(batches)
     return driver.CellOutput(ensembles, time.time() - start, nfe, members, steps)
+
+
+def run_tmpd(cfg, name, problem, sequences, split, seed, members, settings):
+    """TMPD (boys_tweedie_2024) on the FM prior; returns the driver's ``CellOutput``.
+
+    Not an NS construction: the posterior is ``_l96_generative.build_tmpd_posterior``
+    (the FM network read as a diffusion model with the DM-SDE cell's
+    endpoint-vanishing ``g``), with the cell's ``SamplerSettings``. Linear ``h`` only
+    (``driver.run_method`` refuses the arctan sweep). TMPD updates each member on its
+    own, so the sequences run as one batch with the seed
+    ``derive_seed(SEED_LABEL, "tmpd", split, seed)``, as ``run_generative`` does.
+    ``nfe`` counts the network forwards only; the reverse-mode VJPs per assimilation
+    step (``d_y`` per guided step for full / diagonal covariance, 2 for row_sum) are
+    returned as ``vjp`` and written as the ``vjp`` metric.
+    """
+    from cases.lorenz96 import driver
+    import cases.lorenz96._l96_generative as generative
+    from cases.navier_stokes._ns_pipeline import attach_nfe_counter
+    from common.seeding import derive_seed
+
+    settings = generative.SamplerSettings(**settings)
+    stats, device, initial, observations = driver.sampler_inputs(
+        cfg, problem, sequences, split, seed, members
+    )
+    model = generative.load_prior(cfg.checkpoints.fm_run, device)
+    posterior, stepper = generative.build_posterior(
+        Method.TMPD, model, problem, stats, settings
+    )
+    counter = attach_nfe_counter(model)
+    counter.reset()
+    start = time.time()
+    ensembles = generative.assimilate(
+        posterior,
+        stepper,
+        stats,
+        initial,
+        observations,
+        settings.num_steps,
+        derive_seed(driver.SEED_LABEL, name, split, seed),
+        obs_to_model=generative.observation_model(problem, stats).to_model,
+    )
+    steps = observations.shape[1]
+    nfe = counter.count / steps
+    vjp = posterior.likelihood_model.vjp_count / steps
+    return driver.CellOutput(
+        ensembles, time.time() - start, nfe, members, settings.num_steps, vjp=vjp
+    )

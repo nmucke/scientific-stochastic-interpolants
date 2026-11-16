@@ -52,6 +52,7 @@ from common.aggregate_lib import (  # noqa: E402
     discover_by_traj,
     write_scalar_csv,
 )
+from common.latex_tables import TableSpec, write_latex_tables  # noqa: E402
 from figure_common import (  # noqa: E402
     FIGURES_DIR,
     RESULTS,
@@ -66,8 +67,6 @@ from figure_common import (  # noqa: E402
 
 CASE = "navier_stokes"
 DEFAULT_OUT = FIGURES_DIR / CASE
-ABLATION_ROOT = RESULTS / CASE / "ablation"
-MAIN_AGG = RESULTS / CASE / "aggregated" / "all.csv"
 # The single sampler-step count of the cadence ablation. MUST match STEPS in
 # run_ns_ablation.sh (both moved 100 -> 50 on 2026-08-12) -- the ablation tree
 # holds only that one rung, and the k=10 / jacfree reference points are read
@@ -108,7 +107,7 @@ def _cadence(variant: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def load_cells(M: int):
+def load_cells(M: int, ablation_root: Path, main_agg: Path):
     """Merge ablation-tree + main-tree rows at sampler-step count ``M``.
 
     Returns ``(shared, ref, agg_rows)``:
@@ -121,14 +120,14 @@ def load_cells(M: int):
     * ``agg_rows`` -- the ablation tree's aggregated tidy rows (mean +/- std
       over trajectories), for ``aggregated.csv``.
     """
-    agg_rows = aggregate_scalar(discover_by_traj(ABLATION_ROOT / "metrics"))
+    agg_rows = aggregate_scalar(discover_by_traj(ablation_root / "metrics"))
 
     def _rows_from_main():
-        if not MAIN_AGG.exists():
-            print(f"[nsabl] {MAIN_AGG} missing -- run aggregate_ns.py for the "
+        if not main_agg.exists():
+            print(f"[nsabl] {main_agg} missing -- run aggregate_ns.py for the "
                   "k=10 point and the jacfree reference")
             return []
-        with open(MAIN_AGG, encoding="utf-8") as fh:
+        with open(main_agg, encoding="utf-8") as fh:
             return list(csv.DictReader(fh))
 
     shared: dict[tuple, dict[int, tuple[float, float]]] = defaultdict(dict)
@@ -161,6 +160,53 @@ def load_cells(M: int):
             if k is not None:
                 shared[key][k] = (value, std)
     return shared, ref, agg_rows
+
+
+# tab:ablation: the shared cadences then Jacobian-free, Ours rows only.
+ABLATION_TABLE_SPEC = TableSpec(
+    case=CASE,
+    case_label="Navier--Stokes",
+    label_stem="tab:ablation",
+    source="paper_experiments/make_ablation_figures.py",
+    scenarios=(
+        ("16^2->128^2", r"$16^2$"),
+        ("32^2->128^2", r"$32^2$"),
+        ("sparse 5%", r"$5\%$"),
+        ("sparse 1.5625%", r"$\tfrac{1}{64}$"),
+    ),
+    metric_groups=(
+        ("rmse", "Vorticity RMSE"),
+        ("crps", "CRPS"),
+        ("spread_skill", "Spread--skill"),
+    ),
+    ours=tuple((m, m) for m in METHODS),
+    baselines=(),
+    variant_labels=(
+        ("shared_jac1", "Ensemble-shared inflated covariance -- Jacobian refreshed "
+                        "every step ($k=1$)"),
+        ("shared_jac5", "Ensemble-shared inflated covariance -- Jacobian refreshed "
+                        "every $k=5$ steps"),
+        ("shared_jac10", "Ensemble-shared inflated covariance -- Jacobian refreshed "
+                         "every $k=10$ steps"),
+        ("jacfree", "Jacobian-free covariance"),
+    ),
+)
+
+
+def write_ablation_table(agg_rows, main_agg: Path, out: Path, M: int) -> None:
+    """Write ``tab:ablation`` from the cadence cells + the main grid's k=10/jacfree."""
+    main_rows = []
+    if main_agg.exists():
+        with open(main_agg, encoding="utf-8") as fh:
+            main_rows = [
+                r for r in csv.DictReader(fh)
+                if r.get("method") in METHODS
+                and str(r.get("variant")) in ("shared_jac10", "jacfree")
+            ]
+    Ms = write_latex_tables(
+        ABLATION_TABLE_SPEC, main_rows + list(agg_rows), out, scaled=True, only_M=M,
+    )
+    print(f"[nsabl] wrote tab:ablation (M={Ms}) -> {out}")
 
 
 def _panel(ax, shared, ref, scen: str, metric: str, *, scale: float = 1.0) -> list:
@@ -306,12 +352,16 @@ def print_table(shared, ref, M: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
+    ap.add_argument("--results-root", type=Path, default=RESULTS,
+                    help="directory holding navier_stokes/ (default: results/)")
     ap.add_argument("--M", type=int, default=ABLATION_M,
                     help=f"sampler-step count of the ablation (default {ABLATION_M})")
     args = ap.parse_args()
     out = Path(args.out)
+    case_root = args.results_root / CASE
+    main_agg = case_root / "aggregated" / "all.csv"
 
-    shared, ref, agg_rows = load_cells(args.M)
+    shared, ref, agg_rows = load_cells(args.M, case_root / "ablation", main_agg)
     if agg_rows:
         agg_path = out / "ns_ablation_aggregated.csv"
         agg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -324,6 +374,7 @@ def main() -> None:
 
     written = make_figures(shared, ref, out)
     print_table(shared, ref, args.M)
+    write_ablation_table(agg_rows, main_agg, out / "tab_ablation.tex", args.M)
     for p in written:
         print(f"[fig] wrote {p}")
 

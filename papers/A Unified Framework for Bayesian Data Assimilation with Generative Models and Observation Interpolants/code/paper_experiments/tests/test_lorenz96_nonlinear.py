@@ -122,14 +122,24 @@ def test_observation_spec_is_validated():
 
 def test_each_operator_reads_its_own_methods_block():
     linear, arctan = driver.case_config(), driver.case_config("arctan")
+    # Every cell of each sweep has its block; linear-only cells (TMPD) only in methods:.
+    linear_only = {r.cell for r in driver.ROWS if not r.runs_on("arctan")}
+    assert linear_only == {"tmpd"}
     assert set(OmegaConf.to_container(linear.methods)) == set(
         OmegaConf.to_container(arctan.methods_arctan)
-    )
+    ) | linear_only
     # Same keys, read from the right block: change one and only that cell moves.
     arctan.methods.enkf.inflation = 1.3
     assert driver.method_settings(arctan, "enkf")["inflation"] == 1.3
     assert driver.method_settings(linear, "enkf")["inflation"] == 1.0
-    assert driver.method_settings(arctan, "si_sde_fc")["likelihood_mode"] == "inflated"
+    # A corrected cell inherits its parent's sampler settings from its own block.
+    # (Set here, not read from the YAML: tuning may give both blocks the same mode.)
+    arctan.methods.si_sde.likelihood_mode = "inflated_shared"
+    assert driver.method_settings(arctan, "si_sde_fc")["likelihood_mode"] == "inflated_shared"
+    assert driver.method_settings(linear, "si_sde_fc")["likelihood_mode"] == (
+        linear.methods.si_sde.likelihood_mode
+    )
+    assert linear.methods.si_sde.likelihood_mode != "inflated_shared"
     with pytest.raises(ValueError, match="already set up"):
         driver.configure(linear, "arctan")
 

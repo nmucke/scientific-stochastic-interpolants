@@ -88,6 +88,7 @@ from lorenz96_lineup import (  # noqa: E402
     INHERITS,
     KL_KNN,
     M_VALUES,
+    ROW_BY_CELL,
     ROWS,
     SCENARIO_OF,
     SMC_METRICS,
@@ -590,6 +591,8 @@ class CellOutput:
     oracle_ess: torch.Tensor | None = None
     # SMC cells only: per sequence, per-step lists of the lorenz96_lineup.SMC_METRICS.
     smc: list[dict[str, list[float]]] | None = None
+    # Reverse-mode VJPs per assimilation step, NOT in nfe (TMPD only; else None).
+    vjp: float | None = None
 
 
 def sampler_inputs(cfg, problem, sequences, split, seed, members):
@@ -881,37 +884,72 @@ def run_generative(cfg, name, problem, sequences, split, seed, members, settings
     )
     run = cfg.checkpoints.si_run if base_name == "si_sde" else cfg.checkpoints.fm_run
     model = generative.load_prior(run, device)
-    posterior, stepper = generative.build_posterior(
-        GENERATIVE[base_name], model, problem, stats, settings
-    )
-    correction = None
-    if name in CORRECTED:
-        correction = generative.build_correction(problem, stats, members, block)
+
+    def build():
+        # Both keep state across a run (likelihood caches; the correction's call
+        # count seeds its forecasts), so every assimilate call gets fresh ones.
+        posterior, stepper = generative.build_posterior(
+            GENERATIVE[base_name], model, problem, stats, settings
+        )
+        correction = None
+        if name in CORRECTED:
+            correction = generative.build_correction(problem, stats, members, block)
+        return posterior, stepper, correction
+
+    def sample(built, initial, observations, sample_seed):
+        """``(ensembles, finished)``; ``finished`` is False for a DM-SDE divergence."""
+        posterior, stepper, correction = built
+        try:
+            ensembles = generative.assimilate(
+                posterior,
+                stepper,
+                stats,
+                initial,
+                observations,
+                settings.num_steps,
+                sample_seed,
+                forecast_correction=correction,
+                obs_to_model=generative.observation_model(problem, stats).to_model,
+            )
+            return ensembles, True
+        except AssertionError as error:
+            # The DM-SDE sampler asserts on a non-finite drift where the others carry
+            # the NaN on. Count the whole call as diverged rather than losing the
+            # run; any other assertion is a bug and must crash.
+            if base_name != "dm_sde" or "non-finite" not in str(error):
+                raise
+            print(f"{name} diverged: {error}", flush=True)
+            return diverged_ensembles(problem, observations, members), False
+
+    # inflated_shared shares Sigma_s over the whole batch, so a batch of several
+    # sequences would mix them (assimilate refuses it): run one sequence per call,
+    # each with its own seed and a fresh posterior / correction.
+    count = initial.shape[0]
+    per_sequence = settings.likelihood_mode == "inflated_shared" and count > 1
+    built = None if per_sequence else build()
     counter = attach_nfe_counter(model)
     start = time.time()
-    nfe = None
-    try:
-        ensembles = generative.assimilate(
-            posterior,
-            stepper,
-            stats,
-            initial,
-            observations,
-            settings.num_steps,
-            derive_seed(SEED_LABEL, base_name, split, seed),
-            forecast_correction=correction,
-            obs_to_model=generative.observation_model(problem, stats).to_model,
+    if per_sequence:
+        parts = [
+            sample(
+                build(),
+                initial[i : i + 1],
+                observations[i : i + 1],
+                derive_seed(SEED_LABEL, base_name, split, seed, "sequence", i),
+            )
+            for i in range(count)
+        ]
+        ensembles = torch.cat([part for part, _ in parts])
+        finished = all(ok for _, ok in parts)
+    else:
+        ensembles, finished = sample(
+            built, initial, observations, derive_seed(SEED_LABEL, base_name, split, seed)
         )
-        nfe = counter.count / observations.shape[1]
-    except AssertionError as error:
-        # The DM-SDE sampler asserts on a non-finite drift where the others carry
-        # the NaN on. Count the whole cell as diverged rather than losing the run;
-        # any other assertion is a bug and must crash. The partial count of network
-        # calls says nothing about the cost of a full run, so nfe stays None.
-        if base_name != "dm_sde" or "non-finite" not in str(error):
-            raise
-        print(f"{name} diverged: {error}", flush=True)
-        ensembles = diverged_ensembles(problem, observations, members)
+    # Network calls per physical step for one batch of all members (per sequence
+    # when run one at a time). The partial count of a diverged run says nothing
+    # about the cost of a full run, so nfe stays None.
+    calls = count if per_sequence else 1
+    nfe = counter.count / observations.shape[1] / calls if finished else None
     seconds = time.time() - start
     return CellOutput(ensembles, seconds, nfe, members, settings.num_steps)
 
@@ -928,6 +966,12 @@ def run_surge(*args) -> CellOutput:
     return run_surge(*args)
 
 
+def run_tmpd(*args) -> CellOutput:
+    from cases.lorenz96._l96_baselines import run_tmpd
+
+    return run_tmpd(*args)
+
+
 #: cell -> runner; every runner has the signature of :func:`run_method`'s call.
 RUNNERS = {
     "enkf": run_enkf,
@@ -940,12 +984,18 @@ RUNNERS = {
     **{name: run_generative for name in (*GENERATIVE, *CORRECTED)},
     **{name: run_baseline for name in ("flowdas", "sda", "dflow", "fig")},
     **{name: run_surge for name in SURGE_CELLS},
+    "tmpd": run_tmpd,
 }
 
 
 def run_method(cfg, name, problem, sequences, split, seed, settings=None) -> CellOutput:
     """Run cell ``name`` on ``sequences`` (``pf_reference`` is scored by
     :func:`evaluate_cell` from the stored references)."""
+    if not ROW_BY_CELL[name].runs_on(problem.obs_label):
+        raise ValueError(
+            f"{name} runs in the {list(ROW_BY_CELL[name].sweeps)} sweep(s) only, not "
+            f"{problem.obs_label!r} (TMPD supports a linear h only)."
+        )
     size = "enkf_large_size" if name == "enkf_large" else "ensemble_size"
     members = int(cfg.evaluation[size])
     if settings is None:
@@ -995,7 +1045,7 @@ def evaluate_cell(
     sequences = load_sequences(problem, split, split_size(cfg, split))
     method, variant = CELLS[name]
     variant = tagged_variant(variant, tag)
-    nfe = None
+    nfe = vjp = None
     innovations = None
     oracle_ess = None
     smc = None
@@ -1033,6 +1083,7 @@ def evaluate_cell(
             own_initial=name not in NO_INITIAL_ENSEMBLE,
         )
         members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
+        vjp = output.vjp
         oracle_ess = output.oracle_ess
         smc = output.smc
         path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag, m)}__seed{seed}.pt"
@@ -1102,6 +1153,9 @@ def evaluate_cell(
         )
     if nfe is not None:
         records.append(ResultRecord(metric=Metric.NFE.value, value=nfe, **common))
+    if vjp is not None:
+        # TMPD: backward passes per assimilation step, on top of (not in) the NFE.
+        records.append(ResultRecord(metric=Metric.VJP.value, value=vjp, **common))
     diverged = float(count_diverged_steps(scores))
     records.append(ResultRecord(metric=DIVERGED_STEPS, value=diverged, **common))
     if write_metrics:
@@ -1444,6 +1498,7 @@ class Lorenz96Runner(ExperimentRunner):
         Method.OURS_SI_SDE: "si_sde",
         Method.OURS_FM_ODE: "fm_ode",
         Method.OURS_DM_SDE: "dm_sde",
+        Method.TMPD: "tmpd",
         Method.ENKF: "enkf",
         Method.PARTICLE_FILTER: "pf_matched",
     }

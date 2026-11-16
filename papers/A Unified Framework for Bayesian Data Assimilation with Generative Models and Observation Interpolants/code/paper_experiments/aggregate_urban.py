@@ -117,8 +117,12 @@ def main() -> None:
         "--std", action="store_true",
         help="print each table cell as mean +/- across-trajectory std",
     )
+    ap.add_argument(
+        "--root", type=Path, default=RESULTS / CASE,
+        help="results root holding metrics/ and per_step/ (default results/urban)",
+    )
     args = ap.parse_args()
-    root = RESULTS / CASE
+    root = args.root
 
     # (1) SCALAR metrics, aggregated over trajectories (time already averaged).
     scalar_by_traj = discover_by_traj(root / "metrics")

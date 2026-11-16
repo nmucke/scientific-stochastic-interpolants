@@ -279,7 +279,22 @@ class TorchHObservationOperator:
             chw = _torch_to_np(obs_operator.obs_indices_c_h_w)  # (num_obs, 3)
             self.obs_coords = jnp.asarray(chw[:, 1:3] * 2)  # (num_obs, 2) in 256 frame
         except Exception:  # pragma: no cover - defensive
-            self.obs_coords = None
+            # Operators without explicit point indices (the block-average
+            # super-resolution H): place each observation at the |H|-weighted
+            # centroid of the 128^2 cells it averages (the block centre), lifted
+            # to the 256^2 frame. Blocks do not wrap, so a plain mean is exact.
+            # (Added 2026-11-12 for the r=20 super-resolution EnKF cells.)
+            # A nonlinear wrapper has no obs_matrix: use its linear sensor map
+            # (the same matrix as self._H; identical for a linear operator).
+            sensor = getattr(obs_operator, "inner", obs_operator)
+            Hm = np.abs(_torch_to_np(sensor.obs_matrix)).reshape(
+                -1, self.C, self.H, self.W
+            ).sum(axis=1)  # (num_obs, H, W)
+            wsum = Hm.sum(axis=(1, 2))
+            hh, ww = np.meshgrid(np.arange(self.H), np.arange(self.W), indexing="ij")
+            ch = (Hm * hh).sum(axis=(1, 2)) / wsum
+            cw = (Hm * ww).sum(axis=(1, 2)) / wsum
+            self.obs_coords = jnp.asarray(np.stack([ch, cw], axis=1) * 2)
 
     def _apply_H_on_norm128(self, field_norm_128: jnp.ndarray) -> jnp.ndarray:
         """Apply the torch H (as a dense matrix) to a normalised 128^2 field."""
@@ -820,11 +835,293 @@ def run_particle_filter_baseline(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Generative prior + EnKF (unguided learned-prior forecast, EnKF analysis).
+# --------------------------------------------------------------------------- #
+#
+# The question this baseline answers: does the true-solver EnKF do well on NS
+# because it forecasts with the TRUE PDE solver, or because of the Kalman update?
+# ``run_prior_enkf_baseline`` is :func:`run_enkf_baseline` with the forecast made
+# pluggable and NOTHING else changed:
+#
+# * same initial ensemble (``_init_ensemble_spectral``, same key, same 0.05 raw
+#   perturbation of the IC), same 256^2 spectral state, same observation operator
+#   (``TorchHObservationOperator``), same filter class + arguments
+#   (:func:`build_enkf_filter`, i.e. same R, Gaspari-Cohn radius / no localisation,
+#   inflation), same perturbed-observation draw, same per-step key schedule
+#   (``SpectralEnKF.assimilate`` splits ``subkey`` into forecast / analysis keys;
+#   this loop does the same split and calls ``analysis_step`` with the analysis key),
+#   same recorded posterior (``_spectral_ensemble_to_norm128_torch``).
+# * ``forecast="true_solver"`` forecasts with ``enkf.forecast_step(.., pde, key1)``
+#   -- exactly what ``assimilate`` does -- and reproduces ``run_enkf_baseline``
+#   bit for bit (tested).
+# * ``forecast=<sample_fn>`` forecasts with an UNGUIDED learned prior instead
+#   (:class:`PriorForecast`): each member carries its own L-frame normalised 128^2
+#   history; the analysed state of the previous step is the history's last frame
+#   (the same 256^2 -> 128^2 map that records the posterior), the forecast is lifted
+#   back to the 256^2 spectral state with the EnSF re-seed lift (bilinear fill,
+#   even points exact), and the analysis runs on it unchanged. Because H reads only
+#   the even (= 128^2) points and the localisation taper depends only on the
+#   state/obs coordinates, the analysis of the recorded 128^2 points does not
+#   depend on the odd-point fill.
+
+
+def build_enkf_filter(
+    obs_operator: ObservationOperator,
+    ensemble_size: int,
+    variance: float,
+    localization_radius: Optional[float] = None,
+    model_noise_std: float = 0.0,
+    localization_type: str = "distance",
+    corr_threshold: Optional[float] = None,
+    corr_inflation_max: float = 4.0,
+    corr_inflation_beta: float = 0.5,
+):  # type: ignore[no-untyped-def]
+    """The analysis object of :func:`run_enkf_baseline`: same class, same arguments.
+
+    A verbatim copy of that function's filter construction (kept separate so the
+    baseline itself is untouched); ``tests/test_ns_prior_enkf.py`` checks that the
+    two give identical analyses.
+    """
+    obs_noise_std = float(variance) ** 0.5
+    jax_H = TorchHObservationOperator(obs_operator)
+    use_localized = localization_radius is not None or localization_type == "correlation"
+    if use_localized:
+        return LocalizedSpectralEnKF(
+            grid_shape=(HIGH_RES, HIGH_RES),
+            ensemble_size=ensemble_size,
+            model_noise_std=model_noise_std,
+            obs_noise_std=obs_noise_std,
+            localization_radius=float(localization_radius)
+            if localization_radius is not None
+            else 0.0,
+            observation_operator=jax_H,
+            real_space=True,
+            adaptive_localization=False,
+            localization_type=localization_type,
+            corr_threshold=corr_threshold,
+            corr_inflation_max=corr_inflation_max,
+            corr_inflation_beta=corr_inflation_beta,
+        )
+    return SpectralEnKF(
+        grid_shape=(HIGH_RES, HIGH_RES),
+        ensemble_size=ensemble_size,
+        model_noise_std=model_noise_std,
+        obs_noise_std=obs_noise_std,
+        observation_operator=jax_H,
+        real_space=True,
+    )
+
+
+def norm128_to_spectral256(field_norm_128: torch.Tensor) -> jnp.ndarray:
+    """torch ``(E, 1, 128, 128)`` NORMALISED -> ``(E, 256, 129)`` raw spectrum.
+
+    The EnSF re-seed lift (denormalise, :func:`upsample_physical_128_to_256`,
+    ``rfft2``). Left inverse: ``_spectral_ensemble_to_norm128_torch`` returns the
+    input up to float32 FFT round-off.
+    """
+    raw_128 = np.asarray(field_norm_128[:, 0].detach().cpu().float().numpy()) * NORM_STD
+    raw_256 = jax.vmap(upsample_physical_128_to_256)(jnp.asarray(raw_128))
+    return jax.vmap(jnp.fft.rfft2)(raw_256)
+
+
+class PriorForecast:
+    """Unguided learned-prior forecast of a 256^2 spectral ensemble.
+
+    ``sample_fn(history) -> forecast`` maps per-member histories
+    ``[E, C, 128, 128, L]`` (normalised) to one forecast per member
+    ``[E, C, 128, 128]`` (in the driver: ``draw_unguided_forecast`` of the Ours
+    posterior). ``past`` holds the first ``L-1`` history frames ``[E, C, 128, 128,
+    L-1]``; at every call the incoming (analysed) ensemble, mapped to normalised
+    128^2 exactly as the recorded posterior is, becomes the last frame, and after
+    the forecast the window slides by one (``model.sample``'s
+    ``cat([fh[..., 1:], new])``). The jax key is not used: the prior draws from the
+    torch RNG.
+    """
+
+    def __init__(self, sample_fn, past: torch.Tensor):  # type: ignore[no-untyped-def]
+        self.sample_fn = sample_fn
+        self.past = past.detach().cpu().float()
+        self.last_history: Optional[torch.Tensor] = None
+        self.last_forecast: Optional[torch.Tensor] = None
+
+    def __call__(self, ensemble_spectral: jnp.ndarray, key) -> jnp.ndarray:  # type: ignore[no-untyped-def]
+        del key
+        current = _spectral_ensemble_to_norm128_torch(ensemble_spectral)  # (E,1,128,128)
+        history = torch.cat([self.past, current.unsqueeze(-1)], dim=-1)
+        forecast = self.sample_fn(history).detach().cpu().float()
+        if forecast.shape != current.shape:
+            raise ValueError(
+                f"prior forecast has shape {tuple(forecast.shape)}, "
+                f"expected {tuple(current.shape)}"
+            )
+        self.past = history[..., 1:]
+        self.last_history, self.last_forecast = history, forecast
+        return norm128_to_spectral256(forecast)
+
+
+class TrueSolverForecast:
+    """The baseline forecast: ``enkf.forecast_step(ensemble, pde, key)``."""
+
+    def __init__(self, enkf, pde):  # type: ignore[no-untyped-def]
+        self.enkf, self.pde = enkf, pde
+
+    def __call__(self, ensemble_spectral: jnp.ndarray, key) -> jnp.ndarray:  # type: ignore[no-untyped-def]
+        return self.enkf.forecast_step(ensemble_spectral, self.pde, key)
+
+
+def _spread(ens_norm_128: torch.Tensor) -> float:
+    """RMS over the grid of the per-point ensemble std (normalised units)."""
+    return float(ens_norm_128.double().var(dim=0, unbiased=True).mean().sqrt())
+
+
+def run_prior_enkf_baseline(
+    truth_obs: TruthAndObs,
+    obs_operator: ObservationOperator,
+    ensemble_size: int,
+    variance: float,
+    num_physical_steps: int,
+    len_field_history: int,
+    seed: int,
+    forecast="true_solver",  # type: ignore[no-untyped-def]
+    localization_radius: Optional[float] = None,
+    inflation: float = 1.0,
+    model_noise_std: float = 0.0,
+    init_perturb_std: float = 0.05,
+    localization_type: str = "distance",
+    corr_threshold: Optional[float] = None,
+    corr_inflation_max: float = 4.0,
+    corr_inflation_beta: float = 0.5,
+    divergence_rmse_threshold: Optional[float] = None,
+    nfe_counter=None,  # type: ignore[no-untyped-def]
+    label: str = "PriorEnKF",
+) -> AssimResult:
+    """:func:`run_enkf_baseline` with a pluggable forecast (see the section notes).
+
+    ``forecast``: ``"true_solver"`` (the jax-cfd stochastic solver; identical to
+    :func:`run_enkf_baseline`) or a ``sample_fn`` for :class:`PriorForecast`, with
+    the initial history frames ``0..L-2`` taken from ``truth_obs.field_history``
+    (the IC trajectory) and frame ``L-1`` the EnKF's perturbed initial ensemble.
+
+    ``divergence_rmse_threshold`` (default off): as in ``run_assimilation``, a step
+    whose analysis-mean RMSE is non-finite or above it stops the run and NaN-pads
+    the rest (``AssimResult.diverged``). ``nfe_counter`` (optional, an
+    ``NFECounter`` on the prior network) gives ``nfe_per_step``.
+
+    The returned result carries ``diagnostics`` (per-step forecast / analysis
+    spread and ensemble-mean RMSE, normalised 128^2 units) as an extra attribute.
+    """
+    key = jax.random.PRNGKey(int(seed))
+    key, init_key = jax.random.split(key)
+
+    enkf = build_enkf_filter(
+        obs_operator, ensemble_size, variance,
+        localization_radius=localization_radius,
+        model_noise_std=model_noise_std,
+        localization_type=localization_type,
+        corr_threshold=corr_threshold,
+        corr_inflation_max=corr_inflation_max,
+        corr_inflation_beta=corr_inflation_beta,
+    )
+    if isinstance(forecast, str):
+        if forecast != "true_solver":
+            raise ValueError(f"forecast must be 'true_solver' or a callable, got {forecast!r}")
+        forecaster = TrueSolverForecast(enkf, _build_dynamics())
+    else:
+        fh = truth_obs.field_history  # [1, C, H, W, L]
+        if fh.shape[-1] != len_field_history:
+            raise ValueError(
+                f"field_history has {fh.shape[-1]} frames, expected {len_field_history}"
+            )
+        past = fh[..., : len_field_history - 1].detach().cpu().float()
+        past = past.expand(ensemble_size, *past.shape[1:]).clone()
+        forecaster = PriorForecast(forecast, past)
+
+    ensemble_spectral = _init_ensemble_spectral(
+        truth_obs.init_base, ensemble_size, init_key, init_perturb_std
+    )
+
+    obs_np = _torch_to_np(truth_obs.observations)[0]  # (num_obs, T)
+    T = num_physical_steps
+    C, H, W = obs_operator.C, obs_operator.H, obs_operator.W
+
+    posterior = torch.zeros(ensemble_size, C, H, W, T)
+    init_norm = _spectral_ensemble_to_norm128_torch(ensemble_spectral)  # (E,1,128,128)
+    for t in range(len_field_history):
+        posterior[..., t] = init_norm
+
+    diagnostics: dict = {
+        "phys_idx": [], "forecast_spread": [], "analysis_spread": [],
+        "forecast_rmse": [], "analysis_rmse": [], "seconds": [],
+    }
+    diverged = False
+    if nfe_counter is not None:
+        nfe_counter.reset()
+    n_assim = T - len_field_history
+    start = time.time()
+    for t in range(len_field_history, T):
+        t0 = time.time()
+        key, subkey = jax.random.split(key)
+        # == SpectralEnKF.assimilate: key1 -> forecast, key2 -> perturbed obs.
+        key1, key2 = jax.random.split(subkey)
+        obs_t = jnp.asarray(obs_np[:, t])
+        forecast_spectral = forecaster(ensemble_spectral, key1)
+        ensemble_spectral = enkf.analysis_step(
+            forecast_spectral, obs_t, key2, inflation, None
+        )
+        analysis_norm = _spectral_ensemble_to_norm128_torch(ensemble_spectral)
+        posterior[..., t] = analysis_norm
+
+        forecast_norm = _spectral_ensemble_to_norm128_torch(forecast_spectral)
+        true_t = truth_obs.true_trajectory[0, ..., t].cpu()  # (1, 128, 128)
+        rmse = float(torch.sqrt(torch.mean((analysis_norm.mean(dim=0) - true_t) ** 2)))
+        f_rmse = float(torch.sqrt(torch.mean((forecast_norm.mean(dim=0) - true_t) ** 2)))
+        diagnostics["phys_idx"].append(t)
+        diagnostics["forecast_spread"].append(_spread(forecast_norm))
+        diagnostics["analysis_spread"].append(_spread(analysis_norm))
+        diagnostics["forecast_rmse"].append(f_rmse)
+        diagnostics["analysis_rmse"].append(rmse)
+        diagnostics["seconds"].append(time.time() - t0)
+        logger.info(
+            "[%s] step %d/%d  RMSE(norm)=%.4f  forecast RMSE=%.4f  spread f/a=%.4f/%.4f  %.1fs",
+            label, t, T - 1, rmse, f_rmse, diagnostics["forecast_spread"][-1],
+            diagnostics["analysis_spread"][-1], diagnostics["seconds"][-1],
+        )
+        if divergence_rmse_threshold is not None and (
+            not np.isfinite(rmse) or rmse > float(divergence_rmse_threshold)
+        ):
+            logger.warning(
+                "Divergence guard: ensemble RMSE %.3g exceeds %.3g at physical step "
+                "%d -- aborting cell.", rmse, float(divergence_rmse_threshold), t,
+            )
+            posterior[..., t + 1:] = float("nan")
+            diverged = True
+            break
+    elapsed = time.time() - start
+
+    nfe = (
+        nfe_counter.count / max(n_assim, 1) if nfe_counter is not None else float("nan")
+    )
+    result = AssimResult(
+        posterior_trajectory=posterior,
+        true_trajectory=truth_obs.true_trajectory,
+        nfe_per_step=float(nfe),
+        seconds_per_step=elapsed / max(n_assim, 1),
+        diverged=diverged,
+    )
+    result.diagnostics = diagnostics  # type: ignore[attr-defined]
+    return result
+
+
 __all__ = [
     "run_enkf_baseline",
     "run_letkf_baseline",
     "run_ensf_baseline",
     "run_particle_filter_baseline",
+    "run_prior_enkf_baseline",
+    "build_enkf_filter",
+    "PriorForecast",
+    "norm128_to_spectral256",
     "TorchHObservationOperator",
     "subsample2",
     "upsample_physical_128_to_256",

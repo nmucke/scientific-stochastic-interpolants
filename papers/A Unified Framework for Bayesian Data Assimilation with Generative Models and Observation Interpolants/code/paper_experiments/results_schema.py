@@ -56,7 +56,8 @@ class Method(str, Enum):
 
     These map 1:1 to the row labels in ``sections/results.tex`` (see
     ``make_tables.METHOD_ROW_ORDER`` and ``METHOD_LATEX_LABEL``), except
-    ``ONE_STEP_ORACLE``, which appears in no table of the paper yet.
+    ``ONE_STEP_ORACLE`` and the ``PRIOR_ENKF_*`` rows, which appear in no table of
+    the paper yet.
     """
 
     # ---- FINAL PAPER METHOD LINEUP -------------------------------------- #
@@ -75,10 +76,15 @@ class Method(str, Enum):
 
     # Diffusion-model prior + SDE.
     SDA = "SDA"  # score-based DA (rozet_score-based_2023), single-window, on the DM prior
+    TMPD = "TMPD"  # Tweedie moment projection (boys_tweedie_2024), on the DM prior; non-paper baseline
     SURGE = "SURGE"  # SURGE particle filter (wei_surge_2026), standalone DPS guidance
     # SURGE combined with another method's guidance (paper: SURGE + SDA / FlowDAS).
     SURGE_SDA = "SURGE (SDA)"  # SURGE SMC on the FM/DM prior, SDA likelihood as guidance
     SURGE_FLOWDAS = "SURGE (FlowDAS)"  # SURGE SMC on the SI prior, FlowDAS likelihood as guidance
+    # SURGE SMC layer on OUR samplers (our interpolant likelihood as the guidance;
+    # variant-tagged jacfree / shared like the Ours rows). No FM-ODE: g = 0.
+    SURGE_SI_SDE = "SURGE (SI-SDE)"
+    SURGE_DM_SDE = "SURGE (DM-SDE)"
 
     # Classical data assimilation (ground-truth EnKF + conventional baselines).
     ENKF = "EnKF"
@@ -88,6 +94,12 @@ class Method(str, Enum):
     # The exact one-step posterior drawn per member without reweighting, on the true
     # model: what the samplers would produce with perfect networks (Lorenz 96 only).
     ONE_STEP_ORACLE = "One-step oracle"
+    # Unguided trained-prior forecast + the EnKF baseline's stochastic, localised
+    # update (NS; FORECAST_CORRECTION.md section 2): the EnKF row with only the
+    # forecast model swapped. In no table of the paper yet.
+    PRIOR_ENKF_SI_SDE = "SI-SDE prior + EnKF"
+    PRIOR_ENKF_DM_SDE = "DM-SDE prior + EnKF"
+    PRIOR_ENKF_FM_ODE = "FM-ODE prior + EnKF"
 
     # ---- DEPRECATED (kept for back-compat with old result files; NOT in the
     # final paper lineup, removed from the run registry in driver.NS_METHODS). #
@@ -186,6 +198,10 @@ class Metric(str, Enum):
 
     # (d) Cost.
     NFE = "nfe"  # network evals per assimilation step
+    # Reverse-mode VJPs (backward passes) per assimilation step, NOT counted in
+    # ``nfe``. Emitted only by methods that take them on top of their forwards
+    # (TMPD: d_y per guided step for full/diagonal, 2 for row_sum).
+    VJP = "vjp"
     SECONDS = "seconds"  # wall-clock s/step at matched E
 
 

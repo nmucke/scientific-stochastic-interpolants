@@ -84,12 +84,26 @@ WIRED_METHODS: tuple[Method, ...] = (
     Method.SDA,
     Method.SURGE_SDA,
     Method.SURGE_FLOWDAS,
+    # SURGE SMC on our samplers (opt-in via +ns_methods; NOT in NS_METHODS, so the
+    # default lineup is unchanged).
+    Method.SURGE_SI_SDE,
+    Method.SURGE_DM_SDE,
+    # TMPD (boys_tweedie_2024; TMPD.md), non-paper baseline on the FM prior, opt-in
+    # via +ns_methods=["TMPD"] (NOT in NS_METHODS). Linear operators only.
+    Method.TMPD,
 )
 
 # The three "Ours" samplers -- the only methods that carry a ``variant`` tag
 # (their likelihood-covariance mode). Every other method runs in a single mode.
 OURS_METHODS: frozenset[Method] = frozenset(
     (Method.OURS_SI_SDE, Method.OURS_DM_SDE, Method.OURS_FM_ODE)
+)
+
+# Methods tagged with the Ours likelihood-covariance ``variant`` (jacfree /
+# shared...): the Ours samplers plus SURGE run on top of them, so a SURGE row is
+# directly comparable with the Ours row of the same variant.
+VARIANT_METHODS: frozenset[Method] = OURS_METHODS | frozenset(
+    (Method.SURGE_SI_SDE, Method.SURGE_DM_SDE)
 )
 
 # likelihood_mode -> the tidy ``variant`` tag written for the Ours rows.
@@ -111,6 +125,16 @@ CLASSICAL_METHODS: tuple[Method, ...] = (
     Method.ENSEMBLE_SCORE_FILTER,
 )
 
+# Generative prior + EnKF (opt-in via +ns_methods; NOT in NS_METHODS): the EnKF
+# baseline with only the forecast swapped for the UNGUIDED Ours prior named here.
+# Routed through ``_evaluate_classical`` so the truth, observations, operator,
+# metrics and outputs are the EnKF row's; see enkf_baseline.run_prior_enkf_baseline.
+PRIOR_ENKF_METHODS: dict[Method, Method] = {
+    Method.PRIOR_ENKF_SI_SDE: Method.OURS_SI_SDE,
+    Method.PRIOR_ENKF_DM_SDE: Method.OURS_DM_SDE,
+    Method.PRIOR_ENKF_FM_ODE: Method.OURS_FM_ODE,
+}
+
 # Maps a Method to the YAML method-config name under configs/method/. Every entry
 # here is loaded eagerly by ``_method_cfgs`` so each must have a config file (the
 # two not-yet-wired methods carry placeholder configs).
@@ -124,6 +148,12 @@ METHOD_CONFIG_NAME: dict[Method, str] = {
     Method.SDA: "sda",
     Method.SURGE_SDA: "surge_sda",
     Method.SURGE_FLOWDAS: "surge_flowdas",
+    Method.SURGE_SI_SDE: "surge_si_sde",
+    Method.SURGE_DM_SDE: "surge_dm_sde",
+    Method.PRIOR_ENKF_SI_SDE: "prior_enkf_si_sde",
+    Method.PRIOR_ENKF_DM_SDE: "prior_enkf_dm_sde",
+    Method.PRIOR_ENKF_FM_ODE: "prior_enkf_fm_ode",
+    Method.TMPD: "tmpd",
 }
 
 # Main-table scenarios; the other two go to the appendix table.
@@ -221,7 +251,14 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         cfgs: dict[Method, object] = {}
         root = Path(__file__).resolve().parents[2] / "configs" / "method"
         for m, name in METHOD_CONFIG_NAME.items():
-            cfgs[m] = OmegaConf.load(root / f"{name}.yaml")
+            cfg = OmegaConf.load(root / f"{name}.yaml")
+            # ``inherit: <other>`` merges this file over another method config, so
+            # e.g. SURGE (SI-SDE) reuses si_sde.yaml's likelihood tables verbatim.
+            base = cfg.get("inherit", None)
+            if base:
+                cfg = OmegaConf.merge(OmegaConf.load(root / f"{base}.yaml"), cfg)
+                cfg.pop("inherit")
+            cfgs[m] = cfg
         return cfgs
 
     def _ensure_prior(self):  # type: ignore[no-untyped-def]
@@ -348,7 +385,7 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
     # -- per-(method, scenario, seed) evaluation --------------------------- #
 
     def evaluate(self, ctx: RunContext) -> Iterable[ResultRecord]:
-        if ctx.method in CLASSICAL_METHODS:
+        if ctx.method in CLASSICAL_METHODS or ctx.method in PRIOR_ENKF_METHODS:
             yield from self._evaluate_classical(ctx)
             return
         if ctx.method not in WIRED_METHODS:
@@ -385,6 +422,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         model, posterior, stepper = _ns_pipeline.build_posterior(
@@ -436,11 +476,18 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             # the SI-path methods (SI-SDE, FlowDAS, SURGE+FlowDAS) use the x0
             # point-mass init.
             gaussian_base=ctx.method
-            not in (Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS),
+            not in (
+                Method.OURS_SI_SDE, Method.FLOWDAS, Method.SURGE_FLOWDAS,
+                Method.SURGE_SI_SDE,
+            ),
             # Early-abort divergence guard (opt-in; None = off, unchanged runs).
             divergence_rmse_threshold=self._cfg_get(
                 "divergence_rmse_threshold", None
             ),
+            # Optional ensemble chunking inside the sampler (opt-in; None = one
+            # batch, unchanged). As urban's knob: bounds the members per
+            # forward/backward pass, e.g. for TMPD's VJPs on a small GPU.
+            batch_size=self._cfg_get("posterior_batch_size", None),
             forecast_correction=correction,
         )
         if correction is not None:
@@ -532,6 +579,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         from cases.navier_stokes import enkf_baseline  # lazy: pulls in jax (CPU)
@@ -607,6 +657,10 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 seed=ctx.seed,
                 analysis_steps=int(self._cfg_get("ensf_analysis_steps", 20)),
             )
+        elif ctx.method in PRIOR_ENKF_METHODS:
+            result = self._run_prior_enkf(
+                ctx, prior, scen_cfg, obs_operator, truth_obs, enkf_baseline
+            )
         else:  # Method.PARTICLE_FILTER
             result = enkf_baseline.run_particle_filter_baseline(
                 truth_obs=truth_obs,
@@ -648,6 +702,118 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             self._save_per_step(ctx, metrics)
 
         yield from self._metric_rows(ctx, metrics)
+
+    def _run_prior_enkf(self, ctx, prior, scen_cfg, obs_operator, truth_obs, enkf_baseline):  # type: ignore[no-untyped-def]
+        """Generative prior + EnKF: the EnKF call with the forecast swapped.
+
+        The prior is the Ours sampler of ``PRIOR_ENKF_METHODS`` built by
+        ``build_posterior`` exactly as for that Ours cell (stepper, diffusion,
+        ``drift_time_shift``; the likelihood is built but never called). Its
+        forecast is ``draw_unguided_forecast`` -- the unguided stepper of the
+        forecast correction -- with ``prior_enkf_forecast_num_steps`` (default
+        ``num_steps`` = M) and ``prior_enkf_forecast_stepper`` (default: the
+        sampler's). The EnKF arguments are read from the SAME keys, with the SAME
+        defaults, as the ``Method.ENKF`` branch.
+        """
+        from scisi.posterior_models.forecast_correction import draw_unguided_forecast
+
+        extra = ctx.extra
+        base = PRIOR_ENKF_METHODS[ctx.method]
+        if truth_obs.field_cond is not None or truth_obs.pars_cond is not None:
+            raise NotImplementedError("prior + EnKF: NS has no field/pars conditioning")
+        model, posterior, stepper = _ns_pipeline.build_posterior(
+            method_name=base.value,
+            method_cfg=self._method_cfgs()[ctx.method],
+            prior=prior,
+            obs_operator=obs_operator,
+            variance=extra["variance"],
+            likelihood_ensemble_size=extra["likelihood_ensemble_size"],
+            # Never called (no guidance); the cheapest mode builds no Jacobian state.
+            likelihood_mode="dps_jacobian_free",
+            drift_time_shift=self._cfg_get("drift_time_shift", None),
+            case_key=self.case.value,
+            scenario_key=scenario_key(
+                scen_cfg, "hparam_scenario", SCENARIO_CONFIG_NAME[ctx.scenario],
+                warn=True,
+            ),
+            num_steps=ctx.num_steps,
+        )
+        steps = int(self._prior_enkf_forecast_steps(ctx))
+        name = self._cfg_get("prior_enkf_forecast_stepper", None)
+        if name is not None:
+            if name not in _ns_pipeline._STEPPERS:
+                raise ValueError(
+                    f"prior_enkf_forecast_stepper must be sde or ode, got {name!r}"
+                )
+            stepper = _ns_pipeline._STEPPERS[name]
+        batch = int(self._cfg_get("prior_enkf_batch_size", ctx.ensemble_size))
+        logger.info(
+            "[NS] %s: unguided %s prior, %d steps, stepper=%s, batch=%d",
+            ctx.method.value, base.value, steps,
+            getattr(stepper, "__name__", stepper), batch,
+        )
+
+        def sample_fn(history):  # type: ignore[no-untyped-def]
+            return draw_unguided_forecast(
+                posterior, history, num_steps=steps, stepper=stepper, batch_size=batch
+            )
+
+        nfe = _ns_pipeline.attach_nfe_counter(model)
+        localization_type = self._cfg_get("enkf_localization_type", "distance")
+        corr_threshold = self._cfg_get("enkf_corr_threshold", None)
+        result = enkf_baseline.run_prior_enkf_baseline(
+            truth_obs=truth_obs,
+            obs_operator=obs_operator,
+            ensemble_size=ctx.ensemble_size,
+            variance=extra["variance"],
+            num_physical_steps=extra["num_physical_steps"],
+            len_field_history=prior.len_field_history,
+            seed=ctx.seed,
+            forecast=sample_fn,
+            localization_radius=self._cfg_get("enkf_localization_radius", None),
+            inflation=float(self._cfg_get("enkf_inflation", 1.0)),
+            localization_type=str(localization_type),
+            corr_threshold=(
+                float(corr_threshold) if corr_threshold is not None else None
+            ),
+            corr_inflation_max=float(self._cfg_get("enkf_corr_inflation_max", 4.0)),
+            corr_inflation_beta=float(self._cfg_get("enkf_corr_inflation_beta", 0.5)),
+            divergence_rmse_threshold=self._cfg_get("divergence_rmse_threshold", None),
+            nfe_counter=nfe,
+            label=ctx.method.value,
+        )
+        diag_dir = self._cfg_get("prior_enkf_diagnostics_dir", None)
+        if diag_dir:
+            import json
+            import re
+
+            slug = lambda v: re.sub(r"[^A-Za-z0-9]+", "_", str(v)).strip("_")  # noqa: E731
+            path = output_path(str(diag_dir)) / (
+                f"{self.case.value}__{slug(ctx.method.value)}__{slug(ctx.scenario.value)}"
+                f"__traj{int(extra.get('test_index', -1))}__seed{ctx.seed}"
+                f"__E{ctx.ensemble_size}_M{ctx.num_steps}.json"
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "method": ctx.method.value, "prior": base.value,
+                "scenario": ctx.scenario.value, "seed": ctx.seed,
+                "test_index": int(extra.get("test_index", -1)),
+                "E": ctx.ensemble_size, "M": ctx.num_steps, "forecast_num_steps": steps,
+                "stepper": getattr(stepper, "__name__", str(stepper)),
+                "localization_radius": self._cfg_get("enkf_localization_radius", None),
+                "inflation": float(self._cfg_get("enkf_inflation", 1.0)),
+                "diverged": bool(result.diverged),
+                "nfe_per_step": result.nfe_per_step,
+                "seconds_per_step": result.seconds_per_step,
+                **result.diagnostics,
+            }
+            path.write_text(json.dumps(payload, indent=1))
+            logger.info("[NS] prior + EnKF diagnostics -> %s", path)
+        return result
+
+    def _prior_enkf_forecast_steps(self, ctx) -> int:  # type: ignore[no-untyped-def]
+        steps = self._cfg_get("prior_enkf_forecast_num_steps", None)
+        return ctx.num_steps if steps is None else int(steps)
 
     # -- ablation entrypoint (spec Section 7) ------------------------------ #
 
@@ -726,6 +892,9 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 self.case.value, seed_label, extra["test_index"], ctx.seed
             ),
             device=device,
+            # Foreign IC (opt-in; None = the truth's own past). See
+            # prepare_truth_and_obs: history + x0 come from test row ic_index.
+            ic_index=self._cfg_get("ic_index", None),
         )
 
         smoke = bool(self._cfg_get("ablation_smoke", True))
@@ -870,7 +1039,11 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
         single mode and gets ``None`` (empty cell). Lets both Ours modes coexist
         as distinct rows under the same canonical method label.
         """
-        if method not in OURS_METHODS:
+        if method in PRIOR_ENKF_METHODS:
+            # The M column is num_steps; a different forecast step count is tagged.
+            steps = self._cfg_get("prior_enkf_forecast_num_steps", None)
+            return None if steps is None else f"forecast_steps{int(steps)}"
+        if method not in VARIANT_METHODS:
             return None
         # Explicit override (e.g. distinguish an ablation like the cached-Jacobian
         # shared mode from the every-step shared mode, which share a likelihood_mode).
@@ -906,6 +1079,21 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
                 scenario=ctx.scenario.value,
                 metric=metric.value,
                 value=metrics[key],
+                E=ctx.ensemble_size,
+                M=ctx.num_steps,
+                seed=ctx.seed,
+                nfe=metrics["nfe"],
+                seconds=metrics["seconds"],
+                variant=variant,
+            )
+        # Backward passes per step, only for methods that take them (TMPD).
+        if "vjp" in metrics:
+            yield ResultRecord(
+                case=self.case.value,
+                method=ctx.method.value,
+                scenario=ctx.scenario.value,
+                metric=Metric.VJP.value,
+                value=metrics["vjp"],
                 E=ctx.ensemble_size,
                 M=ctx.num_steps,
                 seed=ctx.seed,
@@ -1059,6 +1247,11 @@ class NavierStokesRunner(fcw.ForecastCorrectionMixin, ExperimentRunner):
             scenario=ctx.scenario.value,
             variant=variant if variant else "",
             test_index=int(ctx.extra.get("test_index", -1)),
+            # -1 = the truth's own initial condition.
+            ic_index=int(
+                -1 if self._cfg_get("ic_index", None) is None
+                else self._cfg_get("ic_index", None)
+            ),
             seed=int(ctx.seed),
             E=int(ctx.ensemble_size),
             M=int(ctx.num_steps),

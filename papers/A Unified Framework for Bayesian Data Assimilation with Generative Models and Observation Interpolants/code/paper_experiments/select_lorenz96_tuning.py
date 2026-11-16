@@ -75,6 +75,13 @@ RESULTS = _here / "results"
 CASE_CONFIG = _here / "configs" / "case" / "lorenz96.yaml"
 SCORE = "sliced_w2"
 DIVERGED_STEPS = "diverged_steps"
+#: Settings fixed by decision, not tuned: a row with another value is not eligible
+#: (it stays in the CSV and the summary). The corrected cells of the trained priors
+#: use the online Q_hat only, so no method is told the true model-noise covariance;
+#: the oracle (not tuned) keeps the exact Q by design.
+FIXED = {
+    cell: {"correction.q_source": "online"} for cell in ("si_sde_fc", "fm_ode_fc", "dm_sde_fc")
+}
 
 
 def tuning_dir(obs: str) -> Path:
@@ -120,9 +127,13 @@ def read_tuning_csv(path: Path) -> tuple[list[str], list[dict]]:
     return columns[: columns.index("base")], rows
 
 
-def eligible(row: dict) -> bool:
+def eligible(row: dict, cell: str = "") -> bool:
     diverged = as_float(row.get(DIVERGED_STEPS, "nan"))
-    return math.isfinite(as_float(row[SCORE])) and diverged == 0
+    fixed = all(
+        key not in row or parse_value(row[key]) == value
+        for key, value in FIXED.get(cell, {}).items()
+    )
+    return math.isfinite(as_float(row[SCORE])) and diverged == 0 and fixed
 
 
 def nested(flat: dict) -> dict:
@@ -157,12 +168,15 @@ def select(obs: str, stage: int) -> tuple[dict, str]:
         md.append("")
         tables = [(path, *read_tuning_csv(path)) for path in paths]
         for path, keys, rows in tables:
-            ok = [row for row in rows if eligible(row)]
+            ok = [row for row in rows if eligible(row, cell)]
+            fixed_out = [row for row in rows if eligible(row) and not eligible(row, cell)]
             points = {tuple(row[k] for k in keys) for row in rows}
             md.append(
                 f"- `{path.name}`: grid keys {keys}; {len(rows)} rows "
                 f"({len(points)} distinct points), {len(ok)} eligible, "
-                f"{len(rows) - len(ok)} diverged or non-finite"
+                f"{len(rows) - len(ok) - len(fixed_out)} diverged or non-finite"
+                + (f", {len(fixed_out)} excluded by the fixed setting "
+                   f"{json.dumps(FIXED[cell])}" if fixed_out else "")
             )
             for row in ok:
                 tuned = {k: parse_value(row[k]) for k in keys}

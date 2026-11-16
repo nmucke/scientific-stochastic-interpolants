@@ -2,8 +2,9 @@
 
 The expected values were computed on 2026-11-09 with
 ``archive/paper/scripts/analytical_utils/kl_divergence.py`` (numpy 2.2.6,
-scipy 1.16.3) on the inputs below. Exact equality: the functions were moved, not
-changed, so any difference means the analytical numbers would move too.
+scipy 1.16.3) on the inputs below. Compared to rel=1e-12: the functions were moved,
+not changed, so anything beyond floating-point noise (~1 ulp differs between BLAS /
+CPU builds, e.g. the DelftBlue login node) means the analytical numbers would move.
 """
 
 import numpy as np
@@ -31,9 +32,10 @@ def _samples(d):
 def test_matches_archived_analytical_utils(d):
     x, y = _samples(d)
     kl, w_default, w_custom = ARCHIVED[d]
-    assert gaussian_kl_divergence(x, y) == kl
-    assert wasserstein_distance(x, y) == w_default
-    assert wasserstein_distance(x, y, num_projections=16, seed=3) == w_custom
+    tol = dict(rel=1e-12, abs=0.0)
+    assert gaussian_kl_divergence(x, y) == pytest.approx(kl, **tol)
+    assert wasserstein_distance(x, y) == pytest.approx(w_default, **tol)
+    assert wasserstein_distance(x, y, num_projections=16, seed=3) == pytest.approx(w_custom, **tol)
 
 
 def test_driver_uses_case_metrics():

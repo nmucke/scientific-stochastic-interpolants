@@ -1,0 +1,20 @@
+# SURGE (SI-SDE) -- SURGE particle filter (wei_surge_2026) on OUR SI-SDE sampler.
+#
+# SURGE is the SMC layer; our interpolant likelihood supplies the guidance G.
+# The proposal is exactly Ours (SI-SDE)'s guided SDE (b_theta + w_tau Sbar, with
+# w_tau = a_tau + 1/2 g^2 and g = gamma_tau); SURGE adds the Girsanov-corrected
+# reweighting with the TRUE Gaussian reward on the SI Tweedie denoiser and ESS
+# resampling. Run under the same likelihood_mode / jacobian_refresh_every /
+# variant_override as the matching Ours row, so the two are directly comparable.
+#
+# Everything except `name` and `posterior_model` is inherited from si_sde.yaml
+# (the driver merges this file over it), including the per-scenario
+# jacobian_damping tables -- so there is one source of truth for those.
+inherit: si_sde
+name: SURGE (SI-SDE)
+
+posterior_model:
+  _target_: scisi.posterior_models.surge_posterior.SurgeStochasticInterpolantPosterior
+  # Resample when ESS / N drops below this fraction. Same value as the
+  # SURGE (FlowDAS) / SURGE (SDA) baselines; NOT tuned for this combination.
+  ess_threshold: 0.5

@@ -39,8 +39,10 @@ from scisi.likelihood_models.gaussian_likelihood import (
 )
 from scisi.likelihood_models.guidance import FIGGaussianLikelihood
 from scisi.likelihood_models.sda import SDALikelihood
+from scisi.likelihood_models.tmpd import TMPDLikelihood
 from scisi.posterior_models.diffusion_posterior import DiffusionPosterior
 from scisi.posterior_models.dflow_posterior import DFlowPosterior
+from scisi.posterior_models.tmpd_posterior import TMPDPosterior
 from scisi.posterior_models.flow_matching_posterior import (
     FlowMatchingPosterior,
     endpoint_vanishing_diffusion,
@@ -86,6 +88,9 @@ ANALYTICAL_METHODS: tuple[Method, ...] = (
     Method.ENKF,
     Method.PARTICLE_FILTER,
 )
+# Runnable by name (``+analytical_methods='["TMPD"]'``) but NOT on the default
+# lineup, so the default grid and its result files are unchanged.
+ANALYTICAL_OPT_IN_METHODS: tuple[Method, ...] = (Method.TMPD,)
 # GUIDED_FM_FIG rejoined the lineup on 2026-07-28 (user request) so the
 # analytical figures cover the same baselines as NS/urban. Its (k, c) cells in
 # configs/method/guided_fm_fig.yaml are UNTUNED placeholders (k=1, c=1.0): it
@@ -258,6 +263,15 @@ class AnalyticalRunner(ExperimentRunner):
     case = Case.ANALYTICAL
 
     def methods(self) -> Sequence[Method]:
+        # Optional subset / opt-in selection, e.g. +analytical_methods='["TMPD","SDA"]'.
+        names = self._cfg_get("analytical_methods", None)
+        if names:
+            allowed = set(ANALYTICAL_METHODS) | set(ANALYTICAL_OPT_IN_METHODS)
+            methods = tuple(Method(n) for n in names)
+            unknown = [m.value for m in methods if m not in allowed]
+            if unknown:
+                raise ValueError(f"Not an analytical method: {unknown}")
+            return methods
         return ANALYTICAL_METHODS
 
     def scenarios(self) -> Sequence[Scenario]:
@@ -283,6 +297,7 @@ class AnalyticalRunner(ExperimentRunner):
         Method.FLOWDAS: "flowdas",
         Method.D_FLOW_SGLD: "dflow_sgld",
         Method.SDA: "sda",
+        Method.TMPD: "tmpd",
         Method.SURGE_SDA: "surge_sda",
         Method.SURGE_FLOWDAS: "surge_flowdas",
         Method.GUIDED_FM_FIG: "guided_fm_fig",
@@ -408,8 +423,19 @@ class AnalyticalRunner(ExperimentRunner):
                 derive_seed("analytical", ctx.method.value, ctx.seed)
             )
             t0 = time.perf_counter()
+            self._last_vjp = None
             samp, nfe = self._sample_and_count(ctx.method, sys_, x0, y, n_eval, M, gm)
-            yield from _emit(samp, nfe, time.perf_counter() - t0, None)
+            seconds = time.perf_counter() - t0
+            yield from _emit(samp, nfe, seconds, None)
+            if self._last_vjp is not None:
+                # TMPD: reverse-mode VJPs (backward passes over the batch) per
+                # assimilation, reported beside -- not inside -- the NFE.
+                yield ResultRecord(
+                    case=self.case.value, method=ctx.method.value,
+                    scenario=ctx.scenario.value, metric=Metric.VJP.value,
+                    value=float(self._last_vjp), E=E, M=M, seed=ctx.seed,
+                    nfe=float(nfe), seconds=float(seconds), variant=None,
+                )
 
     def _sample_and_count(
         self,
@@ -546,6 +572,47 @@ class AnalyticalRunner(ExperimentRunner):
                     base=None, batch_size=n, num_steps=M,
                     field_history=fh, observations=y_obs,
                 )
+            return out.reshape(n, d), M
+
+        # ------------------------------------------------------------------
+        # TMPD (src/scisi TMPDLikelihood + TMPDPosterior): no tuned
+        # hyperparameter, only the covariance choice.
+        # Built like Ours (DM-SDE) -- the FM model with the endpoint-vanishing
+        # g passed explicitly -- NOT like SDA's ``build_dm_model``: the stock
+        # ``DenoiseDiffusionModel._compute_first_step`` drops ``v dt`` at
+        # tau = 0, and TMPD is the head-to-head competitor of Ours (DM-SDE),
+        # which takes the full first step. SDA keeps its own historical
+        # construction (its rows are unchanged).
+        # ------------------------------------------------------------------
+        if method == Method.TMPD:
+            cfg = self._method_cfg(Method.TMPD)
+            lik = cfg.get("likelihood_model", {})
+            fm_model = build_fm_model(d=d, prior_var=prior_var)
+            likelihood = TMPDLikelihood(
+                model=fm_model, obs_operator=obs_op, variance=obs_var,
+                model_class="fm",
+                covariance=str(_hp(lik, "covariance", "full")),
+                vjp_chunk_size=int(_hp(lik, "vjp_chunk_size", 64)),
+            )
+            posterior = TMPDPosterior(
+                model=fm_model, likelihood_model=likelihood,
+                diffusion_term=endpoint_vanishing_diffusion(
+                    fm_model.interpolation, scale=_G0
+                ),
+                guidance_weight=str(_hp(
+                    cfg.get("posterior_model", {}), "guidance_weight",
+                    "score_substitution",
+                )),
+            )
+            with torch.no_grad():
+                out = posterior.sample(
+                    base=None, batch_size=n, num_steps=M,
+                    field_history=fh, observations=y_obs,
+                )
+            # NFE = network forwards (one per step, as for SDA). The reverse-mode
+            # VJPs TMPD adds on top are NOT in it; ``evaluate`` reports them as a
+            # separate ``vjp`` row (``likelihood.vjp_count``).
+            self._last_vjp = likelihood.vjp_count
             return out.reshape(n, d), M
 
         # ------------------------------------------------------------------

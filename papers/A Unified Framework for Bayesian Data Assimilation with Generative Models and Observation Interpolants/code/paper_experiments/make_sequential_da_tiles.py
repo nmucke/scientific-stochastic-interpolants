@@ -7,6 +7,11 @@ truth ghost, so the sparsity is unmistakable), and three maximally-different
 posterior-ensemble members.  All fields share one symmetric RdBu_r scale,
 matching the paper's state figures.
 
+``--scenario`` / ``--method`` / ``--variant`` pick another archive (e.g. the
+wrong-IC rerun, where Ours SI-SDE shared diverged on traj 11 at sparse 1.5625%:
+``--M 100 --scenario sparse_5``). A run that is non-finite at any drawn step is
+refused rather than drawn as blank tiles.
+
 Output: paper_experiments/figures/sequential_da/*.png by default (300 dpi,
 borderless). Use ``--out`` to choose another directory.
 """
@@ -19,8 +24,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
-NPZ = (ROOT / "results/navier_stokes/states/traj11/"
-       "navier_stokes__Ours_SI_SDE__sparse_1_5625__shared_jac10__seed0__E64_M250.npz")
+# Archive name: navier_stokes__<method>__<scenario>__<variant>__seed0__E64_M<M>.npz
+NPZ_NAME = "navier_stokes__{method}__{scenario}__{variant}__seed0__E64_M{M}.npz"
 OUT = ROOT / "figures" / "sequential_da"
 STEPS = (13, 14, 15)         # three consecutive assimilation steps
 OBS_BG = "#EDEFF2"           # flat background for unobserved pixels
@@ -59,24 +64,47 @@ def pick_members(ens_t, k=3):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=OUT)
+    parser.add_argument("--results-root", type=Path, default=ROOT / "results",
+                        help="directory holding navier_stokes/")
+    parser.add_argument("--traj", type=int, default=11,
+                        help="trajectory whose saved states are drawn")
+    parser.add_argument("--M", type=int, default=250, help="sampler-step count")
+    parser.add_argument("--steps", type=int, nargs=3, default=STEPS,
+                        help="three consecutive physical-step indices")
+    parser.add_argument("--scenario", default="sparse_1_5625",
+                        help="scenario slug in the archive name (e.g. sparse_5)")
+    parser.add_argument("--method", default="Ours_SI_SDE",
+                        help="method slug in the archive name")
+    parser.add_argument("--variant", default="shared_jac10",
+                        help="variant slug in the archive name (e.g. jacfree)")
     args = parser.parse_args()
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
-    d = np.load(NPZ)
+    steps = tuple(args.steps)
+    d = np.load(args.results_root / "navier_stokes" / "states" / f"traj{args.traj}"
+                / NPZ_NAME.format(method=args.method, scenario=args.scenario,
+                                  variant=args.variant, M=args.M))
     truth = np.asarray(d["true_trajectory"])[0, 0]          # [H, W, T]
     ens = np.asarray(d["posterior_trajectory"])[:, 0]       # [E, H, W, T]
     obs = np.asarray(d["observations"])[0]                  # [Ny, T]
     idx = np.asarray(d["obs_indices"]).reshape(-1)
+    # A diverged run (divergence guard) leaves NaN states: refuse to draw them,
+    # an all-white tile would silently pass for a schematic field.
+    need = [steps[0] - 1, *steps]
+    bad = [t for t in need if not np.isfinite(ens[..., t]).all()]
+    if bad:
+        raise SystemExit(f"non-finite ensemble at physical steps {bad}: this run "
+                         "diverged there; pick other --steps/--scenario/--variant")
     ys, xs = np.divmod(idx, truth.shape[1])
 
-    m = float(max(np.abs(truth[:, :, t]).max() for t in STEPS))
-    print(f"steps={STEPS} sensors={idx.size} symmetric limit m={m:.3f}")
-    members = pick_members(ens[:, :, :, STEPS[0]])
+    m = float(max(np.abs(truth[:, :, t]).max() for t in steps))
+    print(f"steps={steps} sensors={idx.size} symmetric limit m={m:.3f}")
+    members = pick_members(ens[:, :, :, steps[0]])
     print("members:", members)
     # Single initial state: the first shown member one step before the window.
-    save_tile(out / "init.png", field=ens[members[0], :, :, STEPS[0] - 1],
+    save_tile(out / "init.png", field=ens[members[0], :, :, steps[0] - 1],
               vmin=-m, vmax=m)
-    for k, t in enumerate(STEPS):
+    for k, t in enumerate(steps):
         save_tile(out / f"true_{k}.png", field=truth[:, :, t], vmin=-m, vmax=m)
         save_tile(out / f"obs_{k}.png",
                   scatter=(xs.astype(float), ys.astype(float), obs[:, t]),

@@ -10,8 +10,8 @@ variant), the table group, the variant and legend labels, the line style and
 whether the cell writes the SMC metrics. ``driver.CELLS`` is derived from it, and
 the run script takes its cell lists from it::
 
-    python lorenz96_lineup.py cells generative   # run at every M of M_VALUES
-    python lorenz96_lineup.py cells fixed        # once per seed (M-independent)
+    python lorenz96_lineup.py cells generative [linear|arctan]  # every M of M_VALUES
+    python lorenz96_lineup.py cells fixed [linear|arctan]       # once per seed
     python lorenz96_lineup.py m-values           # M_VALUES
 
 Pure stdlib (no torch), like ``results_schema``.
@@ -70,6 +70,13 @@ class Row:
     style: str = "-"
     smc: bool = False  # writes the smc_* metrics
     legend: str = ""  # figure legend; "" means the method
+    # Sweeps the cell runs in. TMPD supports a linear h only: it has no
+    # ``methods_arctan`` block, is not in the arctan run lists and the driver
+    # refuses it there (its rows of the arctan tables are simply absent).
+    sweeps: tuple[str, ...] = OBS_CHOICES
+
+    def runs_on(self, obs: str) -> bool:
+        return obs in self.sweeps
 
     @property
     def generative(self) -> bool:
@@ -135,6 +142,9 @@ ROWS: tuple[Row, ...] = (
         smc=True),
     Row("sda", Method.SDA.value, "", "baselines", "", "#44AA99", "-"),
     Row("surge_sda", Method.SURGE_SDA.value, "", "baselines", "", "#44AA99", ":", smc=True),
+    # TMPD (boys_tweedie_2024) on the FM prior read as a DM, same g as dm_sde;
+    # linear h only. Not tuned (no knob but num_steps / diffusion_scale).
+    Row("tmpd", Method.TMPD.value, "", "baselines", "", "#A6761D", "-", sweeps=("linear",)),
     Row("dflow", Method.D_FLOW_SGLD.value, "", "baselines", "", "#999933", "-"),
     Row("fig", Method.GUIDED_FM_FIG.value, "", "baselines", "", "#AA4499", "-"),
 )
@@ -151,13 +161,17 @@ SEED_INDEPENDENT: tuple[str, ...] = ("pf_reference",)
 M_REFERENCE_LINES: tuple[str, ...] = ("pf_subsample", "enkf", "oracle")
 
 
-def run_cells(kind: str) -> list[str]:
+def run_cells(kind: str, obs: str | None = None) -> list[str]:
     """``generative``: cells run at every M; ``fixed``: M-independent cells run
-    once per seed (``pf_reference``, run once in all, is in neither)."""
+    once per seed (``pf_reference``, run once in all, is in neither). With
+    ``obs``, only the cells of that sweep (:attr:`Row.sweeps`)."""
+    if obs is not None and obs not in OBS_CHOICES:
+        raise ValueError(f"Unknown observation sweep {obs!r}; expected one of {OBS_CHOICES}.")
+    rows = [r for r in ROWS if obs is None or r.runs_on(obs)]
     if kind == "generative":
-        return [r.cell for r in ROWS if r.generative]
+        return [r.cell for r in rows if r.generative]
     if kind == "fixed":
-        return [r.cell for r in ROWS if not r.generative and r.cell not in SEED_INDEPENDENT]
+        return [r.cell for r in rows if not r.generative and r.cell not in SEED_INDEPENDENT]
     raise ValueError(f"kind must be 'generative' or 'fixed', got {kind!r}")
 
 
@@ -303,9 +317,11 @@ def main(argv: list[str]) -> None:
     if argv == ["m-values"]:
         print(" ".join(str(m) for m in M_VALUES))
         return
-    if len(argv) != 2 or argv[0] != "cells":
-        raise SystemExit("usage: lorenz96_lineup.py cells generative|fixed | m-values")
-    print(" ".join(run_cells(argv[1])))
+    if len(argv) not in (2, 3) or argv[0] != "cells":
+        raise SystemExit(
+            "usage: lorenz96_lineup.py cells generative|fixed [linear|arctan] | m-values"
+        )
+    print(" ".join(run_cells(*argv[1:])))
 
 
 if __name__ == "__main__":
