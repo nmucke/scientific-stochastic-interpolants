@@ -120,6 +120,10 @@ for f in "${FILES[@]}"; do
   [ "$a" = "$b" ] && echo "    md5 OK   $a  $dst" || { echo "    md5 DIFF $dst"; FAIL=1; }
 done
 
+# the single files above add tab_lorenz96*.tex to $S/generated AFTER the pe_generated tree was
+# copied: copy generated/ once more so results/_generated has them (found by verify, 2026-11-16)
+rsync -a --backup --backup-dir="$R/_overwritten/$TS/pe_generated" "$S/generated"/ "$R/_generated"/ || FAIL=1
+
 echo; echo "=== SUMMARY (files: source vs destination; md5 sample ok/checked)"
 printf "%-30s %8s %8s %10s %6s\n" tree src dst md5 status
 for s in "${SUMMARY[@]}"; do IFS='|' read -r a b c d e <<<"$s"; printf "%-30s %8s %8s %10s %6s\n" "$a" "$b" "$c" "$d" "$e"; done

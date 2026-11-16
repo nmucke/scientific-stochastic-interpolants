@@ -304,3 +304,23 @@ sequences (sanity check only). Results go to `/scratch/ntmucke/lorenz96_tmpd/pub
 has no `Method.TMPD`), then aggregate with this branch.
 
 Divergence caveat (found while wiring uDALES TMPD): a divergence-guard trip on the **last** step leaves no NaN padding, so `rmse` stays finite and `aggregate_ns._is_diverged` does not count the cell as diverged. The uDALES split merge closes this with an explicit `diverged` flag; the NS path and the other grids are unchanged. Check existing NS cells for this before the final tables.
+
+## 13. Final results export (2026-11-16, all jobs finished)
+
+Every result is collected in ONE folder on DelftBlue:
+`/scratch/ntmucke/scientific-stochastic-interpolants/paper_experiments/results/` (15,425 files, ~155 GB;
+see its `INDEX.md`, section "2026-11-16"). Built with `tools/sync_all_results.sh` (copy-only, replaced
+files kept in `results/_overwritten/`) and checked with `tools/verify_results_export.py` (md5 of every
+file of every source vs its copy, and of the 2026-11-12 backup), both run as Slurm job
+`tools/sync_and_verify.sbatch` (job 1333048; login nodes are not for jobs > 15 min). Result: everything
+present and identical, except 2 Lorenz 96 arctan tables that a sync-order bug left out; copied and
+verified by hand, and the script is fixed (`results/_provenance_pe/verify_20261116_followup.txt`).
+uDALES TMPD: the 10 cells were merged from their parts (`slurm_tmpd/udales_split/merge.sh`; the last 3 as job
+1333047 with `MERGE_DEVICE=cuda`); all 10 are diverged.
+
+Copy elsewhere and check: `rsync -aH --partial results/ <host>:<dir>/results/`, then
+`cd <dir>/results && md5sum -c --quiet MANIFEST.md5`. `MANIFEST.md5` does not list symlinks: 96 in
+`lorenz96/_tmpd_source/` (their targets are real files in `lorenz96/linear/reference/test/`) and 3 in
+`urban_foreign_ic_1p5_every3/` that have been dead since Aug 2026 (they point to a path on another machine;
+original paper results).
+

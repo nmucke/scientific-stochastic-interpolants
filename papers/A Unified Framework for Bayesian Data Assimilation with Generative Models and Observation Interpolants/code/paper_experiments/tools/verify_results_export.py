@@ -207,6 +207,11 @@ def main():
     log(f"\nOVERALL: {'ALL RESULTS PRESENT AND IDENTICAL' if not fail else 'PROBLEMS (see above)'}")
     with open(rep_path, "w") as f:
         f.write("\n".join(lines) + "\n")
+    # the report itself goes into the manifest too
+    with open(rep_path, "rb") as f:
+        h = hashlib.md5(f.read()).hexdigest()
+    with open(f"{R}/MANIFEST.md5", "a") as f:
+        f.write(f"{h}  {rep_path[len(R) + 1:]}\n")
     print(f"report: {rep_path}")
     sys.exit(1 if fail else 0)
 
