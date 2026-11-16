@@ -113,6 +113,8 @@ def series(values, method, variant_template, metric, steps):
     out = []
     for m in steps:
         variant = variant_template.format(M=m)
+        if collapsed(values, method, variant, m):
+            continue
         vals = np.asarray(values.get((method, variant, metric, m), []), dtype=float)
         vals = vals[np.isfinite(vals)]
         if vals.size:
@@ -121,6 +123,30 @@ def series(values, method, variant_template, metric, steps):
         return None
     ms, mean, std, n = map(np.asarray, zip(*out))
     return ms, mean, std, n
+
+
+#: An ensemble whose total variance is below this fraction of Kalman's has collapsed to
+#: (nearly) a point: its Gaussian KL is NaN or astronomically large and its W2 is that of
+#: a point mass. Such (method, M) points are left out of both panels and listed.
+COLLAPSE_VAR_RATIO = 1e-6
+COLLAPSED: set = set()
+
+
+def collapsed(values, method, variant, m) -> bool:
+    ratios = np.asarray(values.get((method, variant, "var_ratio", m), []), dtype=float)
+    hit = bool(ratios.size) and bool((~np.isfinite(ratios) | (ratios < COLLAPSE_VAR_RATIO)).any())
+    if hit:
+        COLLAPSED.add((method, variant, m))
+    return hit
+
+
+def collapse_note() -> str:
+    if not COLLAPSED:
+        return ""
+    by = defaultdict(list)
+    for method, variant, m in sorted(COLLAPSED):
+        by[method + (f" ({variant})" if variant else "")].append(str(m))
+    return "Ensemble collapsed, not shown: " + "; ".join(f"{k} at M={','.join(v)}" for k, v in by.items())
 
 
 def reference(values, method, metric):
@@ -182,6 +208,8 @@ def fig_all_variants(values, steps, out: Path):
                 handles.setdefault(l, h)
     fig.legend(handles.values(), handles.keys(), loc="lower center", ncol=5, frameon=False,
                bbox_to_anchor=(0.5, -0.01))
+    if collapse_note():
+        fig.text(0.5, -0.06, collapse_note(), ha="center", va="top", fontsize=9, style="italic")
     fig.suptitle(r"Multistep linear-Gaussian ($A=Q=H=R=I$, $K=20$, $N=10^5$): "
                  "time-averaged error vs M (mean $\\pm$ std, 5 seeds)", y=0.995)
     fig.tight_layout(rect=(0, 0.09, 1, 0.98))
@@ -212,6 +240,8 @@ def fig_fc_vs_nofc(values, steps, out: Path):
     fig.legend(handles, labels, loc="lower center", ncol=5, frameon=False, bbox_to_anchor=(0.5, -0.02))
     fig.suptitle(r"Ours (shared Jacobian) with and without forecast correction (FC, $S=M$), "
                  "and baselines", y=1.0)
+    if collapse_note():
+        fig.text(0.5, -0.06, collapse_note(), ha="center", va="top", fontsize=9, style="italic")
     fig.tight_layout(rect=(0, 0.2, 1, 0.97))
     return _save_fig(fig, out / "msweep_fc_vs_nofc")
 
@@ -266,6 +296,7 @@ def main():
     for path in (*fig_all_variants(values, steps, args.out), *fig_fc_vs_nofc(values, steps, args.out),
                  write_table(values, steps, args.root / "aggregated" / "msweep.csv")):
         print("wrote", path)
+    print(collapse_note() or "no collapsed ensembles")
 
 
 if __name__ == "__main__":
