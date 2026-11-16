@@ -43,6 +43,7 @@ accuracy column. The per-step curves are kept as computed (finite up to the trip
 from __future__ import annotations
 
 import argparse
+import os
 import csv
 import math
 import re
@@ -101,9 +102,12 @@ def assim_result(post: np.ndarray, data: dict, nfe: float, seconds: float,
 
     from cases.navier_stokes._ns_pipeline import AssimResult
 
+    # MERGE_DEVICE=cuda computes the metrics on the GPU (compute_metrics follows the tensors'
+    # device), as the runs did; default cpu.
+    dev = os.environ.get("MERGE_DEVICE", "cpu")
     return AssimResult(
-        posterior_trajectory=torch.from_numpy(np.ascontiguousarray(post)).float(),
-        true_trajectory=torch.from_numpy(np.ascontiguousarray(data["true_trajectory"])).float(),
+        posterior_trajectory=torch.from_numpy(np.ascontiguousarray(post)).float().to(dev),
+        true_trajectory=torch.from_numpy(np.ascontiguousarray(data["true_trajectory"])).float().to(dev),
         nfe_per_step=float(nfe), seconds_per_step=float(seconds), diverged=bool(diverged),
         vjp_per_step=None if vjp is None or math.isnan(vjp) else float(vjp),
     )

@@ -2,6 +2,8 @@
 # sync_all_results.sh -- copy every rebuttal result tree into the ONE shared results tree.
 #
 #   COPY ONLY: rsync -a, never --delete, never mv/rm. Every source stays where it is
+#   A destination file that would be REPLACED is first moved to results/_overwritten/<ts>/<tree>/
+#   (rsync --backup), so no earlier version is ever lost.
 #   (running jobs and post-processing scripts write/read the source paths).
 #   Idempotent: re-run any time; it only adds/updates files in the destination.
 #
@@ -14,6 +16,7 @@ set -uo pipefail
 S=/scratch/ntmucke/scientific-stochastic-interpolants/paper_experiments
 R=$S/results
 L96=/scratch/ntmucke/lorenz96_delftblue
+L96T=/scratch/ntmucke/lorenz96_tmpd
 L96_PE="/home/ntmucke/ssi-lorenz96/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments"
 NSAMPLE=${NSAMPLE:-20}
 
@@ -40,6 +43,14 @@ TREES=(
   "urban_fc|$S/results_udales_fc|$R/urban_fc"
   "smoke_prior_enkf|$S/smoke_prior_enkf|$R/_smoke_and_bench/smoke_prior_enkf"
   "slurm_bench|/scratch/ntmucke/scientific-stochastic-interpolants/slurm_bench|$R/_smoke_and_bench/slurm_bench"
+  "ns_wrong_ic_np40_tmpd|$S/results_wrong_ic_np40_tmpd|$R/navier_stokes_wrong_ic_np40/tmpd"
+  "urban_tmpd|$S/results_udales_tmpd|$R/urban_tmpd"
+  "smoke_tmpd|$S/results_tmpd_smoke|$R/_smoke_and_bench/tmpd_smoke"
+  "lorenz96_tmpd_source|$L96T|$R/lorenz96/_tmpd_source"
+  "results_full_20260730|$S/results_full|$R/_historical/results_full_20260730"
+  "pe_figures|$S/figures|$R/_figures"
+  "pe_generated|$S/generated|$R/_generated"
+  "pe_outputs|$S/outputs|$R/_outputs"
 )
 # single files: source | destination
 FILES=(
@@ -47,6 +58,8 @@ FILES=(
   "$L96_PE/LORENZ96_HANDOVER_2026-11-12.md|$R/lorenz96/_provenance/LORENZ96_HANDOVER_2026-11-12.md"
   "$L96_PE/LORENZ96_DELFTBLUE_HANDOVER.md|$R/lorenz96/_provenance/LORENZ96_DELFTBLUE_HANDOVER.md"
 )
+# top-level notes and logs of the scratch paper_experiments copy
+for f in "$S"/*.md "$S"/*.log; do [ -f "$f" ] && FILES+=("$f|$R/_provenance_pe/$(basename "$f")"); done
 # generated LaTeX tables from the Lorenz 96 worktree -> shared generated/ (re-globbed each run)
 for f in "$L96_PE"/generated/tab_lorenz96*.tex; do
   [ -e "$f" ] && FILES+=("$f|$S/generated/$(basename "$f")")
@@ -65,12 +78,14 @@ for t in "${TREES[@]}"; do
   echo; echo "--- [$name] $src/  ->  $dst/"
   if [ ! -d "$src" ]; then echo "    SOURCE MISSING, skipped"; SUMMARY+=("$name|missing|-|-|-"); continue; fi
   mkdir -p "$dst"
-  rsync -a "$src"/ "$dst"/ ; rc=$?
+  rsync -a --backup --backup-dir="$R/_overwritten/$TS/$name" "$src"/ "$dst"/ ; rc=$?
   # rc 24 = "some files vanished before they could be transferred" (live job tmp files): not fatal
   if [ $rc -ne 0 ] && [ $rc -ne 24 ]; then echo "    rsync exit $rc"; FAIL=1; fi
   # destination may contain extra provenance subtrees not in the source (lorenz96/_provenance)
   excl=""; [ "$name" = lorenz96_results ] && excl="$dst/_provenance"
   ns=$(nfiles "$src"); nd=$(nfiles "$dst" "$excl")
+  # lorenz96/: also exclude the copied TMPD tree and the TMPD files merged into linear/ (step below)
+  [ "$name" = lorenz96_results ] && nd=$(find "$dst" \( -path "$dst/_provenance" -o -path "$dst/_tmpd_source" \) -prune -o ! -type d ! -name '*tmpd*' -print | wc -l)
   # checksum sample: NSAMPLE random files + every aggregated*/ csv and tables/ file
   ok=0; bad=0
   while IFS= read -r rel; do
@@ -86,12 +101,21 @@ for t in "${TREES[@]}"; do
   SUMMARY+=("$name|$ns|$nd|$ok/$((ok+bad))|$st")
 done
 
+echo; echo "--- Lorenz 96 TMPD -> lorenz96/linear (add only: --ignore-existing; raw copy in lorenz96/_tmpd_source)"
+if [ -d "$L96T/published/linear" ]; then
+  rsync -a --ignore-existing "$L96T/published/linear"/ "$R/lorenz96/linear"/ || FAIL=1
+  while IFS= read -r rel; do
+    a=$(md5sum <"$L96T/published/linear/$rel" | cut -d' ' -f1); b=$(md5sum <"$R/lorenz96/linear/$rel" | cut -d' ' -f1)
+    [ "$a" = "$b" ] && echo "    md5 OK   $rel" || { echo "    md5 DIFF $rel"; FAIL=1; }
+  done < <(cd "$L96T/published/linear" && find . -type f | sed 's|^\./||')
+fi
+
 echo; echo "--- single files"
 for f in "${FILES[@]}"; do
   IFS='|' read -r src dst <<<"$f"
   if [ ! -f "$src" ]; then echo "    missing source: $src"; continue; fi
   mkdir -p "$(dirname "$dst")"
-  rsync -a "$src" "$dst"
+  rsync -a --backup --backup-dir="$R/_overwritten/$TS/_files$(dirname "$dst")" "$src" "$dst"
   a=$(md5sum <"$src" | cut -d' ' -f1); b=$(md5sum <"$dst" | cut -d' ' -f1)
   [ "$a" = "$b" ] && echo "    md5 OK   $a  $dst" || { echo "    md5 DIFF $dst"; FAIL=1; }
 done
