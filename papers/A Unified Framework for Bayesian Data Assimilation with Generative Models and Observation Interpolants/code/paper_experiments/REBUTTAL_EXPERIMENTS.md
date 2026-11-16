@@ -345,3 +345,13 @@ Smokes (1 cell, NP=7, MIG): 1334053 (r=8), 1334054 (r=20) → `results_ns_trueic
 (metrics, per_step, states/traj11, forecast_correction diagnostics, logs, manifests, run_config.txt).
 File stems `<scen>__M100__traj<N>__ours_shared_jac10__<fc_tag>__<si_sde|dm_sde|fm_ode>.csv`; the plain
 counterparts are the manuscript files `results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_shared_jac10.csv`.
+
+### 14b. More baselines on the original NS case (launched 2026-11-16)
+
+Same true-IC setting as §14 (NP=20, E=64, traj 10–14, 4 scenarios, guard 10, states traj 11, no KL),
+run from the frozen worktree `SSI/wt_trueic_more_a681003` (commit `a681003`).
+
+| Campaign | Settings | Launcher | Slurm | Results (new folder) |
+|---|---|---|---|---|
+| TMPD (plain, row_sum), 20 cells | as §12 NS TMPD, `+posterior_batch_size=16`, `likelihood_mode=dps_jacobian_free` | `slurm_tmpd/ns_trueic/submit.sh` with `NO_KL=1 PARTITION=gpu-v100 CPUS=8 MEM_PER_CPU=5000M TIME=04:00:00 PACK=1` | 1336447 (V100) | `paper_experiments/results_ns_trueic_tmpd/navier_stokes/` |
+| SI-SDE / FM-ODE prior + EnKF, 40 cells | unguided prior forecast (M=100), EnKF analysis: perturbed obs, inflation 1.0, **Gaspari–Cohn r=20 on all four scenarios** (super-res localised via the 948fa40 block centroids; the manuscript EnKF is global on super-res) | `slurm_trueic_prior_enkf/submit.sh` | 1336446 (MIG, 2 cells/job, %1) | `paper_experiments/results_ns_trueic_prior_enkf_r20/navier_stokes/` |
