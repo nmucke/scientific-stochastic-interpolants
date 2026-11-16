@@ -353,5 +353,7 @@ run from the frozen worktree `SSI/wt_trueic_more_a681003` (commit `a681003`).
 
 | Campaign | Settings | Launcher | Slurm | Results (new folder) |
 |---|---|---|---|---|
-| TMPD (plain, row_sum), 20 cells | as §12 NS TMPD, `+posterior_batch_size=16`, `likelihood_mode=dps_jacobian_free` | `slurm_tmpd/ns_trueic/submit.sh` with `NO_KL=1 PARTITION=gpu-v100 CPUS=8 MEM_PER_CPU=5000M TIME=04:00:00 PACK=1` | 1336447 (V100) | `paper_experiments/results_ns_trueic_tmpd/navier_stokes/` |
+| TMPD (plain, row_sum), 20 cells | as §12 NS TMPD, `+posterior_batch_size=16`, `likelihood_mode=dps_jacobian_free` | `slurm_tmpd/ns_trueic/submit.sh` with `NO_KL=1` (MIG defaults, 2 cells/job; time limit lowered to 2:30) | 1340840 (MIG, `afterany:1336446`; the V100 array 1336447 was cancelled before any cell ran) | `paper_experiments/results_ns_trueic_tmpd/navier_stokes/` |
 | SI-SDE / FM-ODE prior + EnKF, 40 cells | unguided prior forecast (M=100), EnKF analysis: perturbed obs, inflation 1.0, **Gaspari–Cohn r=20 on all four scenarios** (super-res localised via the 948fa40 block centroids; the manuscript EnKF is global on super-res) | `slurm_trueic_prior_enkf/submit.sh` | 1336446 (MIG, 2 cells/job, %1) | `paper_experiments/results_ns_trueic_prior_enkf_r20/navier_stokes/` |
+
+Scheduling changes 2026-11-16: time limits lowered on the queued tasks (FC 1:30, from the 22–45 min r=8 cells; prior+EnKF 2:30); the pending FC r=8 tasks (1334067_16–59) were moved to Slurm account `innovation` (user decision; `research-ceg-gse` fair-share had dropped to 0.001).
