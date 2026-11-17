@@ -57,7 +57,7 @@ else
     -n 1 -c "$CPUS" --gres="$GRES" --mem-per-cpu="$MEM_PER_CPU" --time="$TIME" --array="${ARRAY}%$THROTTLE"
     --output="$ROOT/slurm/%x_%A_%a.out" --export=ALL "$HERE/run_task.sh" "$MF")
 fi
-SUMMARY="variant=$VARIANT cells=[$ARRAY] account=$ACCOUNT | radius=$RADIUS fc_tag=$FC_TAG fc_overrides='$FC_OVERRIDES' | true IC, NP=$NP M=$M E=$E traj=[$TRAJ] save_traj=$SAVE_TRAJ | Ours x shared_jac10 | no KL | cells=$N
+SUMMARY="variant=$VARIANT cells=[$ARRAY] account=$ACCOUNT | radius=$RADIUS fc_tag=$FC_TAG fc_overrides='$FC_OVERRIDES' | true IC, NP=$NP M=$M E=$E traj=[$TRAJ] save_traj=$SAVE_TRAJ | Ours x $VARIANT | no KL | cells=$N
 slurm: ${CMD[*]:2:9}
 repo: $REPO commit $(git -C "$REPO" rev-parse HEAD) dirty $(git -C "$REPO" status --porcelain --untracked-files=no | wc -l) | scisi: $SCISI"
 if [ "$DRY_RUN" = 1 ]; then echo "=== DRY RUN"; echo "$SUMMARY"; echo "ROOT: $ROOT"; echo "first cell:"; sed -n "$(( ${ARRAY%-*} + 1 ))p" "$MF" | tr '\t' '\n' | sed 's/^/  /'; exit 0; fi

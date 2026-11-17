@@ -365,3 +365,14 @@ method × scenario at both radii (RMSE, CRPS and |1−SS|); r=20 is worse than r
 all three 16² cells, slightly better) and in all 12 on spread–skill; the largest loss is at sparse 5%
 (SI-SDE RMSE 0.173 → 0.356 (r=8) / 0.398 (r=20)). No divergences.
 
+
+### 14c. FC with the Jacobian-free likelihood on the original NS case (launched 2026-11-17)
+
+As §14 but `likelihood_mode=dps_jacobian_free` (the manuscript's `ours_jacfree` rows), **r=20 only**
+(`fc25_8797d2ae`), 60 cells, results in the same folder `results_ns_trueic_fc/navier_stokes/`
+(stems `<scen>__M100__traj<N>__ours_jacfree__fc25_8797d2ae__<method>.csv`; plain counterparts
+`results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_jacfree.csv`). Frozen worktree
+`SSI/wt_trueic_jacfree_47498c8`; manifest `manifests/jacfree_fc25_8797d2ae_20261117_170452.tsv`, split:
+cells 0–35 V100 `research-ceg-gse` (1350433), 36–45 V100 `innovation` (1350434), 46–59 MIG pairs (1350435).
+(Its `run_config.txt` summary line says "Ours x shared_jac10" — a wording slip in the launcher, fixed after
+launch; the cell arguments and the leading `variant=jacfree` are correct.)
