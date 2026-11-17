@@ -361,7 +361,7 @@ Rebalancing of FC r=8 (2026-11-17, same worktree/manifest, one place per cell): 
 
 **Status 2026-11-17: all §14/§14b campaigns complete, 0 failed cells** (FC 120/120, TMPD 20/20, prior+EnKF 40/40).
 **Findings (FC, paired over all 5 trajectories, vs the manuscript's plain shared_jac10 cells):** FC worsens every
-method × scenario at both radii (RMSE, CRPS and |1−SS|); r=20 is worse than r=8 in 10/12 cells on RMSE (exceptions:
-16² SI-SDE / DM-SDE / FM-ODE slightly better) and in all 12 on spread–skill; the largest loss is at sparse 5%
+method × scenario at both radii (RMSE, CRPS and |1−SS|); r=20 is worse than r=8 in 9/12 cells on RMSE (exceptions:
+all three 16² cells, slightly better) and in all 12 on spread–skill; the largest loss is at sparse 5%
 (SI-SDE RMSE 0.173 → 0.356 (r=8) / 0.398 (r=20)). No divergences.
 
