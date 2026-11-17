@@ -335,8 +335,8 @@ FC: online Q̂, `forecast_num_steps=25`, gain 1, no cap, diagnostics on; two cam
 
 | Campaign | FC tag | Slurm | Status |
 |---|---|---|---|
-| localisation radius 8 (defaults) | `fc25_70a3134d` | 1334067 (60 cells, V100, %16) | queued 2026-11-16 |
-| localisation radius 20 | `fc25_8797d2ae` | 1334068 (60 cells, V100, %16) | queued 2026-11-16 |
+| localisation radius 8 (defaults) | `fc25_70a3134d` | 1334067 (60 cells, V100, %16; cells 47–59 rebalanced, see below) | **complete** 2026-11-17 |
+| localisation radius 20 | `fc25_8797d2ae` | 1334068 (60 cells, V100, %16) | **complete** 2026-11-17 |
 
 Smokes (1 cell, NP=7, MIG): 1334053 (r=8), 1334054 (r=20) → `results_ns_trueic_fc_smoke/`.
 **Launcher:** `PE/slurm_trueic_fc/` (`RADIUS=8|20 bash submit.sh`), run from the frozen worktree
@@ -357,3 +357,11 @@ run from the frozen worktree `SSI/wt_trueic_more_a681003` (commit `a681003`).
 | SI-SDE / FM-ODE prior + EnKF, 40 cells | unguided prior forecast (M=100), EnKF analysis: perturbed obs, inflation 1.0, **Gaspari–Cohn r=20 on all four scenarios** (super-res localised via the 948fa40 block centroids; the manuscript EnKF is global on super-res) | `slurm_trueic_prior_enkf/submit.sh` | 1336446 (MIG, 2 cells/job, %1) | `paper_experiments/results_ns_trueic_prior_enkf_r20/navier_stokes/` |
 
 Scheduling changes 2026-11-16: time limits lowered on the queued tasks (FC 1:30, from the 22–45 min r=8 cells; prior+EnKF 2:30); the pending FC r=8 tasks (1334067_16–59) were moved to Slurm account `innovation` (user decision; `research-ceg-gse` fair-share had dropped to 0.001). `innovation` allows 1 running job per user, so on 2026-11-17 tasks 41–59 were moved back to `research-ceg-gse` (tasks 16–40 ran under `innovation`).
+Rebalancing of FC r=8 (2026-11-17, same worktree/manifest, one place per cell): cells 50–53 → V100 `innovation` array 1343980; 47–49 → `innovation` array 1346739; 54–59 → MIG pairs 1343977/1343978 (`results_ns_trueic_fc/navier_stokes/slurm/mig_pair.sbatch`), of which 54–55 were then moved to `innovation` array 1347880 (1343979 cancelled). All logged in that folder's `run_config.txt`.
+
+**Status 2026-11-17: all §14/§14b campaigns complete, 0 failed cells** (FC 120/120, TMPD 20/20, prior+EnKF 40/40).
+**Findings (FC, paired over all 5 trajectories, vs the manuscript's plain shared_jac10 cells):** FC worsens every
+method × scenario at both radii (RMSE, CRPS and |1−SS|); r=20 is worse than r=8 in 10/12 cells on RMSE (exceptions:
+16² SI-SDE / DM-SDE / FM-ODE slightly better) and in all 12 on spread–skill; the largest loss is at sparse 5%
+(SI-SDE RMSE 0.173 → 0.356 (r=8) / 0.398 (r=20)). No divergences.
+
