@@ -114,10 +114,12 @@ def test_observation_spec_is_validated():
         Observation("arctan")
     with pytest.raises(ValueError, match="no strength"):
         Observation("linear", 0.5)
-    with pytest.raises(ValueError, match="one of"):
+    with pytest.raises(ValueError, match="no strength"):
         Observation("square", 1.0)
     with pytest.raises(ValueError, match="one of"):
-        driver.case_config("square")
+        Observation("cube", 1.0)
+    with pytest.raises(ValueError, match="one of"):
+        driver.case_config("cube")
 
 
 def test_each_operator_reads_its_own_methods_block():

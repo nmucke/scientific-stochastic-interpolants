@@ -35,6 +35,19 @@ exact for any ``g``:
   The weights have finite variance when ``P > q / 2`` on every observed site, i.e.
   ``r > q g'^2``; otherwise a warning is issued (still exact, but possibly
   heavy-tailed weights).
+* ``"square_mixture"`` (``g(w) = w^2`` only, checked; selection ``H``): exact
+  importance sampling for the sign-blind square, whose one-site kick posterior
+  ``p(x_j | z_j, y_j) ∝ N(x_j; z_j, q) N(y_j; x_j^2, r)`` can be bimodal
+  (``x_j ≈ ±sqrt(y_j)``) and has ``g' = 2 x`` vanishing at 0, so one linearisation
+  can miss a mode. Per observed site the proposal is the defensive mixture
+  ``alpha N(z, q) + (1 - alpha) (pi_hi N(m_hi, P_hi) + pi_lo N(m_lo, P_lo))`` over
+  the local minima of ``f(x) = (x - z)^2 / (2q) + (y - x^2)^2 / (2r)`` (the outer
+  real roots of the cubic ``f'(x) = 0``, in closed form; both modes get a component
+  whenever both exist), ``P = 1 / f''`` (Laplace), ``pi ∝ exp(-f(m)) sqrt(P)``.
+  The weight is ``N(y; g(H x), r I) N(x; z, q I) / q(x | z, y)`` with the full
+  mixture density, so the filter is exact whatever the components; the prior
+  component bounds every weight by ``max N(y; x^2, r) / alpha`` (finite variance,
+  no mode can be dropped). Resampling happens after the kick.
 
 Particles are held state-major, ``[d, N]``, and processed in chunks.
 """
@@ -64,6 +77,51 @@ def selection_indices(obs_matrix: torch.Tensor) -> torch.Tensor:
 
 def _identity(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     return w, torch.ones_like(w)
+
+
+def _check_square(g: Optional[Nonlinearity]) -> None:
+    """Refuse a ``g`` other than ``w -> (w^2, 2 w)`` (``square_mixture`` solves the
+    cubic of exactly that ``g``)."""
+    w = torch.tensor([-3.0, -0.5, 0.0, 0.25, 2.0, 7.0], dtype=torch.float64)
+    ok = g is not None
+    if ok:
+        gw, dg = g(w)
+        ok = bool(torch.allclose(gw, w**2, rtol=1e-12, atol=0)) and bool(
+            torch.allclose(dg, 2.0 * w, rtol=1e-12, atol=0)
+        )
+    if not ok:
+        raise ValueError("the square_mixture proposal needs obs_nonlinearity g(w) = w^2")
+
+
+def square_kick_modes(z: torch.Tensor, y: torch.Tensor, q: float, r: float):
+    """Local minima of ``f(x) = (x - z)^2 / (2q) + (y - x^2)^2 / (2r)``, elementwise.
+
+    ``f'(x) = 0`` is the depressed cubic ``x^3 + p x + s = 0`` with
+    ``p = r / (2q) - y``, ``s = -r z / (2q)``. With one real root it is the only
+    minimum (returned twice); with three, the outer two are the minima (the middle
+    one is a maximum). Returns ``(m_hi, m_lo, f''(m_hi), f''(m_lo))`` in float64.
+    """
+    z, y = z.double(), y.double()
+    p = r / (2.0 * q) - y
+    s = -r * z / (2.0 * q)
+    disc = (s / 2.0) ** 2 + (p / 3.0) ** 3
+    root = disc.clamp(min=0.0).sqrt()
+    u, v = -s / 2.0 + root, -s / 2.0 - root
+    single = u.sign() * u.abs().pow(1.0 / 3.0) + v.sign() * v.abs().pow(1.0 / 3.0)
+    neg_p = (-p).clamp(min=1e-300)
+    amp = 2.0 * (neg_p / 3.0).sqrt()
+    arg = (-(3.0 * s) / (2.0 * neg_p) * (3.0 / neg_p).sqrt()).clamp(-1.0, 1.0)
+    theta = torch.arccos(arg) / 3.0
+    hi = amp * torch.cos(theta)  # largest root
+    lo = amp * torch.cos(theta - 4.0 * math.pi / 3.0)  # smallest root
+    three = disc <= 0
+    m_hi = torch.where(three, hi, single)
+    m_lo = torch.where(three, lo, single)
+
+    def curvature(x):
+        return 1.0 / q + (6.0 * x * x - 2.0 * y) / r
+
+    return m_hi, m_lo, curvature(m_hi), curvature(m_lo)
 
 
 def systematic_resample(
@@ -110,6 +168,12 @@ class ParticleFilterResult:
     ess: torch.Tensor  # [T] Kish ESS before resampling
     log_evidence: torch.Tensor  # [T] incremental log p(y^k | y^{1:k-1})
     num_particles: int
+    # [T, d] fraction of the (equally weighted, resampled) particles with x > 0:
+    # the mass of the positive mode of each site (sign-blind observations).
+    positive_fraction: Optional[torch.Tensor] = None
+    # [F, d] equally weighted draws of the LAST step (``final_samples`` > 0), the
+    # first F of the same permutation as ``samples[-1]``; None otherwise.
+    final_samples: Optional[torch.Tensor] = None
 
     @property
     def ess_fraction(self) -> torch.Tensor:
@@ -122,14 +186,20 @@ class BootstrapParticleFilter:
     Args:
         obs_matrix: ``H`` of shape ``[d_y, d]``.
         obs_variance: Scalar ``r`` with ``R = r I``.
-        proposal: ``"bootstrap"``, ``"optimal"`` (linear observations only) or
-            ``"linearised"`` (selection ``H``; see the module docstring).
+        proposal: ``"bootstrap"``, ``"optimal"`` (linear observations only),
+            ``"linearised"`` (selection ``H``) or ``"square_mixture"`` (selection
+            ``H``, ``g(w) = w^2``); see the module docstring.
         chunk_size: Particles processed at once; bounds peak memory and keeps the
             RK4 working set in cache.
         num_saved_samples: Posterior draws kept per step for sample-based metrics.
         obs_nonlinearity: Optional elementwise ``g`` of ``y = g(H x) + eps``,
             returning ``(g(w), g'(w))``. ``None`` means linear observations and
             leaves every linear code path as it was.
+        final_samples: Equally weighted draws of the last step to keep in
+            ``final_samples`` (0: none). They reuse the permutation of
+            ``samples``, so no random number is drawn for them.
+        mixture_defensive: ``alpha``, the weight of the prior component of the
+            ``square_mixture`` proposal.
     """
 
     def __init__(
@@ -140,8 +210,10 @@ class BootstrapParticleFilter:
         chunk_size: int = 1 << 15,
         num_saved_samples: int = 4096,
         obs_nonlinearity: Optional[Nonlinearity] = None,
+        final_samples: int = 0,
+        mixture_defensive: float = 0.1,
     ) -> None:
-        if proposal not in ("bootstrap", "optimal", "linearised"):
+        if proposal not in ("bootstrap", "optimal", "linearised", "square_mixture"):
             raise ValueError(f"unknown proposal {proposal!r}")
         if proposal == "optimal" and obs_nonlinearity is not None:
             raise ValueError(
@@ -154,7 +226,14 @@ class BootstrapParticleFilter:
         self.chunk_size = int(chunk_size)
         self.num_saved_samples = int(num_saved_samples)
         self.obs_nonlinearity = obs_nonlinearity
-        self.obs_index = selection_indices(self.H) if proposal == "linearised" else None
+        self.final_samples = int(final_samples)
+        if not 0.0 < float(mixture_defensive) < 1.0:
+            raise ValueError(f"mixture_defensive must be in (0, 1), got {mixture_defensive!r}")
+        self.mixture_defensive = float(mixture_defensive)
+        if proposal == "square_mixture":
+            _check_square(obs_nonlinearity)
+        selection = proposal in ("linearised", "square_mixture")
+        self.obs_index = selection_indices(self.H) if selection else None
 
     def _forecast(self, model, x: torch.Tensor, generator) -> torch.Tensor:
         out = torch.empty_like(x)
@@ -216,6 +295,7 @@ class BootstrapParticleFilter:
         S = q * (self.H @ self.H.T) + self.obs_variance * eye
         R = self.obs_variance * eye
         means, covariances, samples, ess, log_evidence = [], [], [], [], []
+        positive, final = [], None
 
         for y in observations:
             y_x = y.to(x)
@@ -227,8 +307,13 @@ class BootstrapParticleFilter:
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
                 x = self._kick_conditional(x, y_x, q, S, generator)
-            elif self.proposal == "linearised":
-                log_w = self._linearised_kick(z, y_x, q, generator)
+            elif self.proposal in ("linearised", "square_mixture"):
+                kick = (
+                    self._linearised_kick
+                    if self.proposal == "linearised"
+                    else self._square_mixture_kick
+                )
+                log_w = kick(z, y_x, q, generator)
                 _check_finite(log_w)
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
@@ -250,8 +335,11 @@ class BootstrapParticleFilter:
             mean, covariance = self._moments(x)
             means.append(mean)
             covariances.append(covariance)
+            positive.append(self._positive_fraction(x))
             pick = torch.randperm(num_particles, generator=generator)
             samples.append(x[:, pick[: self.num_saved_samples]].T.clone())
+        if self.final_samples > 0 and len(observations) > 0:
+            final = x[:, pick[: self.final_samples]].T.clone()
 
         covariances = torch.stack(covariances)
         return ParticleFilterResult(
@@ -262,7 +350,16 @@ class BootstrapParticleFilter:
             ess=torch.tensor(ess, dtype=torch.float64),
             log_evidence=torch.tensor(log_evidence, dtype=torch.float64),
             num_particles=num_particles,
+            positive_fraction=torch.stack(positive) if positive else None,
+            final_samples=final,
         )
+
+    def _positive_fraction(self, x: torch.Tensor) -> torch.Tensor:
+        """Fraction of the particles ``[d, N]`` with ``x > 0``, per coordinate."""
+        count = torch.zeros(x.shape[0], dtype=torch.float64)
+        for start in range(0, x.shape[1], self.chunk_size):
+            count += (x[:, start : start + self.chunk_size] > 0).sum(1).double()
+        return count / x.shape[1]
 
     def _moments(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Mean and unbiased covariance of ``[d, N]``, accumulated in float64."""
@@ -338,6 +435,71 @@ class BootstrapParticleFilter:
             log_prior = -0.5 * ((x_obs - w).pow(2) / q + math.log(2.0 * math.pi * q)).sum(0)
             log_prop = -0.5 * ((x_obs - m).pow(2) / P + (2.0 * math.pi * P).log()).sum(0)
             out[sl] = log_lik + log_prior - log_prop
+        return out
+
+    def _square_mixture_kick(
+        self, z: torch.Tensor, y: torch.Tensor, q: float, generator
+    ) -> torch.Tensor:
+        """Kick ``z`` in place from the ``square_mixture`` proposal; return log weights.
+
+        Per observed site: with probability ``alpha`` the prior kick ``N(w, q)``,
+        otherwise the Laplace component of the upper / lower minimum of ``f``
+        (:func:`square_kick_modes`) with probability ``pi_hi`` / ``pi_lo``. The log
+        weight is ``log N(y; x^2, r I)`` plus, on the observed sites,
+        ``log N(x_j; w, q) - log q_mix(x_j)`` with the full mixture density (the
+        unobserved factors cancel), evaluated in float64 at the stored ``x``.
+        """
+        r, alpha, index = self.obs_variance, self.mixture_defensive, self.obs_index
+        out = torch.empty(z.shape[1], dtype=torch.float64)
+        log_2pi = math.log(2.0 * math.pi)
+
+        def log_normal(x, m, v):
+            return -0.5 * ((x - m).pow(2) / v + v.log() + log_2pi)
+
+        for start in range(0, z.shape[1], self.chunk_size):
+            sl = slice(start, start + self.chunk_size)
+            xi = torch.randn(z[:, sl].shape, generator=generator, dtype=z.dtype)
+            u = torch.rand(index.numel(), xi.shape[1], generator=generator, dtype=torch.float64)
+            w = z[index, sl].double()
+            yy = y[:, None].double().expand_as(w)
+            m_hi, m_lo, c_hi, c_lo = square_kick_modes(w, yy, q, r)
+            # Laplace variances, capped at 4 q for a near-flat minimum (any P > 0 is
+            # valid; this only shapes the proposal).
+            P_hi = 1.0 / c_hi.clamp(min=0.25 / q)
+            P_lo = 1.0 / c_lo.clamp(min=0.25 / q)
+
+            def f(x):
+                return (x - w).pow(2) / (2.0 * q) + (yy - x * x).pow(2) / (2.0 * r)
+
+            logit = (-f(m_hi) + 0.5 * P_hi.log()) - (-f(m_lo) + 0.5 * P_lo.log())
+            use_prior = u < alpha
+            use_hi = (~use_prior) & (u < alpha + (1.0 - alpha) * torch.sigmoid(logit))
+            q_t = torch.full_like(w, q)
+            mean = torch.where(use_prior, w, torch.where(use_hi, m_hi, m_lo))
+            var = torch.where(use_prior, q_t, torch.where(use_hi, P_hi, P_lo))
+            kicked = (mean + var.sqrt() * xi[index].double()).to(z.dtype)
+            z[:, sl] = z[:, sl] + q**0.5 * xi
+            z[index, sl] = kicked
+            x_obs = kicked.double()
+            log_prior = log_normal(x_obs, w, q_t)
+            log_mix = math.log1p(-alpha)
+            log_prop = torch.logsumexp(
+                torch.stack(
+                    [
+                        math.log(alpha) + log_prior,
+                        log_mix + torch.nn.functional.logsigmoid(logit)
+                        + log_normal(x_obs, m_hi, P_hi),
+                        log_mix + torch.nn.functional.logsigmoid(-logit)
+                        + log_normal(x_obs, m_lo, P_lo),
+                    ]
+                ),
+                0,
+            )
+            residual = y[:, None].double() - x_obs * x_obs
+            log_lik = -0.5 * (
+                residual.pow(2).sum(0) / r + w.shape[0] * math.log(2.0 * math.pi * r)
+            )
+            out[sl] = log_lik + (log_prior - log_prop).sum(0)
         return out
 
 
@@ -501,5 +663,6 @@ __all__ = [
     "ParticleFilterResult",
     "effective_sample_size",
     "selection_indices",
+    "square_kick_modes",
     "systematic_resample",
 ]

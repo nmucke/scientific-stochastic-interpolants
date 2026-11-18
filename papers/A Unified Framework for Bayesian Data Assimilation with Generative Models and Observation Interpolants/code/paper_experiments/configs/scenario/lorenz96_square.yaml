@@ -1,0 +1,4 @@
+# Lorenz 96 with square observations h(x) = (L x)^2 on the sites of
+# configs/case/lorenz96.yaml (observations.square); same truths and noise draws as
+# scenario=lorenz96. Selects the `methods_square:` block and results/lorenz96/square/.
+name: lorenz96_square

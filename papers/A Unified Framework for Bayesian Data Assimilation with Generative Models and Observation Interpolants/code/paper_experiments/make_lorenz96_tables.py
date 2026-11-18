@@ -55,7 +55,11 @@ from lorenz96_lineup import (  # noqa: E402
 
 RESULTS = _here / "results"
 GENERATED = _here / "generated"
-OBS_TITLE = {"linear": "linear observations", "arctan": "arctan observations"}
+OBS_TITLE = {
+    "linear": "linear observations",
+    "arctan": "arctan observations",
+    "square": "square observations",
+}
 
 # (metric, latex header, markdown header, best rule): "min" lowest mean, "abs"
 # closest to zero, "pf" closest to the PF reference, None no bold.

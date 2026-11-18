@@ -1007,3 +1007,35 @@ before on the snapshot of 2 validation sequences, linear and arctan):
 
 Unchanged on purpose: `pf_subsample`'s permutation seed has no split (validation and
 test share one stream).
+
+## 16. Square observations (added 2026-11-18)
+
+A third problem on the same system: h(x) = (L x)^2 elementwise (`observations.square`,
+no strength), same sites, R = 4, truths and noise draws (`--obs square`, scenario
+`lorenz96_square`, results `results/lorenz96/square/`). Sign-blind by design: an
+observed site's posterior can be bimodal (+-sqrt(y)); the experiment tests whether a
+method represents both modes. Settings: `methods_square:` = verbatim copy of
+`methods_arctan:` (not tuned on square); `oracle_square.proposals` = 4096; TMPD
+excluded as for arctan. Samplers: `StandardisedSquareOperator` (g(w) = (std w +
+mean)^2, g' = 2 std (std w + mean)); EnKF: stochastic EnKF with h(x_i).
+
+- **PF reference: `square_mixture`** (library `BootstrapParticleFilter`), exact
+  importance sampling: per observed site a defensive mixture of the transition kick
+  (weight 0.1) and Laplace components at both local minima of the one-site kick
+  posterior (closed-form cubic roots), full-mixture density in the weight. Checked
+  against a 1D grid filter on a bimodal problem (`tests/test_filters_nonlinear_obs.py`).
+  The plain bootstrap collapses here (validation 0: ESS abs min 1 at N = 1e5 and
+  1e6; log-evidence -5265 / -2643 vs about -780), because each observation pins |x|
+  to about +-0.1-0.25.
+- **Probe (validation 0, `square_mixture`):** N = 1e6, 4 replicates: ESS fraction
+  mean 0.040-0.042, abs min 45-710, log-evidence -774.4 / -781.9 / -784.6 / -775.1
+  (sd about 5, so the strict `log_evidence_sd <= 0.5` gate criterion is NOT met at
+  1e6), P(x > 0) at the last step on the observed sites agrees to about 0.03 between
+  replicates; 73% of (step, site) entries have a minority sign mass >= 5%.
+- **Reference files** add `final_samples` (1e5 equally weighted draws of the last
+  step) and `positive_fraction` ([T, d] mode masses from all N particles) to the
+  arctan layout; `pf_gate.py converge` reports `mode_mass_error` and
+  `bimodal_fraction_{5,10}pct` per rung.
+- `driver.py cell --defer-scoring` runs a cell and saves the ensembles plus
+  `ensembles/<label>__seed<s>.meta.pt` without a reference; `cell --rescore` (same
+  arguments) scores them once the reference exists.

@@ -142,6 +142,8 @@ class Scenario(str, Enum):
     LORENZ96 = "lorenz96"  # one observation network, fixed in configs/case/lorenz96.yaml
     # Same sites, truths and noise draws, h = arctan(c L x) / c (`driver.py --obs arctan`).
     LORENZ96_ARCTAN = "lorenz96_arctan"
+    # Same sites, truths and noise draws, h = (L x)^2 (`driver.py --obs square`).
+    LORENZ96_SQUARE = "lorenz96_square"
 
 
 NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
@@ -150,6 +152,7 @@ NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
     Scenario.SPARSE_1p5_ARCTAN_VEL,
     Scenario.SPARSE_1p5_VEL,
     Scenario.LORENZ96_ARCTAN,
+    Scenario.LORENZ96_SQUARE,
 )
 """Opt-in nonlinear-observation study scenarios (and the urban linear control)."""
 

@@ -15,6 +15,7 @@ from scisi.particle_filter.bootstrap import (
     ImportanceOneStepOracle,
     OneStepPosteriorOracle,
     selection_indices,
+    square_kick_modes,
 )
 from scisi.particle_filter.enkf import EnsembleKalmanFilter, periodic_taper
 
@@ -177,6 +178,66 @@ def test_nonlinear_observation_filter_matches_grid_filter(proposal):
         [x.log_evidence.sum() for x in runs], log_evidence.sum(), "log evidence", 3.0
     )
     assert (runs[0].mean - mean).abs().max() < 0.03
+
+
+def square(w):
+    return w * w, 2.0 * w
+
+
+def test_square_kick_modes_are_the_minima_of_the_kick_posterior():
+    gen = torch.Generator().manual_seed(1)
+    z = 4.0 * torch.randn(300, generator=gen, dtype=torch.float64)
+    y = 20.0 * torch.randn(300, generator=gen, dtype=torch.float64) + 15.0
+    q, r = 1.0, 4.0
+    hi, lo, c_hi, c_lo = square_kick_modes(z, y, q, r)
+    xs = torch.linspace(-15, 15, 60001, dtype=torch.float64)
+    f = (xs - z[:, None]) ** 2 / (2 * q) + (y[:, None] - xs**2) ** 2 / (2 * r)
+    best = xs[f.argmin(1)]
+    assert torch.minimum((best - hi).abs(), (best - lo).abs()).max() < 1e-3
+    assert (c_hi > 0).all() and (c_lo > 0).all() and (hi >= lo).all()
+
+
+def test_square_mixture_matches_the_grid_filter_on_a_bimodal_posterior():
+    """Sign-blind y = x^2 + e with the state near 0: the posterior is bimodal."""
+    a, q, r = 0.9, 0.5, 0.4
+    gen = torch.Generator().manual_seed(7)
+    x, observations = torch.tensor(1.5, dtype=torch.float64), []
+    for _ in range(8):
+        x = a * x + q**0.5 * torch.randn((), generator=gen, dtype=torch.float64)
+        observations.append(x * x + r**0.5 * torch.randn((), generator=gen, dtype=torch.float64))
+    observations = torch.stack(observations)[:, None]
+    mean, variance, log_evidence = grid_filter(a, q, square, r, 0.0, 2.0, observations[:, 0])
+    H = torch.ones(1, 1, dtype=torch.float64)
+    model = LinearModel(torch.tensor([[a]], dtype=torch.float64), q)
+    runs = replicates(H, r, "square_mixture", model, torch.tensor([0.0], dtype=torch.float64),
+                      2.0, observations, 50_000, 12, square)
+    assert_unbiased([x.mean for x in runs], mean, "mean")
+    assert_unbiased([x.variance for x in runs], variance, "variance")
+    assert_unbiased(
+        [x.log_evidence.sum() for x in runs], log_evidence.sum(), "log evidence", 3.0
+    )
+    # Both modes are present (prior mean 0, symmetric) with their masses.
+    positive = torch.stack([x.positive_fraction for x in runs]).mean(0)[:, 0]
+    assert ((positive > 0.2) & (positive < 0.8)).all()
+
+
+def test_square_mixture_refuses_another_nonlinearity():
+    H = torch.ones(1, 1, dtype=torch.float64)
+    with pytest.raises(ValueError, match="w\\^2"):
+        BootstrapParticleFilter(H, 1.0, proposal="square_mixture", obs_nonlinearity=arctan(1.0))
+
+
+def test_final_samples_reuse_the_last_permutation(linear_problem):
+    A, q, H, r, m0, _, observations = linear_problem
+    runs = []
+    for final in (0, 3000):
+        gen = torch.Generator().manual_seed(4)
+        particles = m0[:, None] + torch.randn(4, 5000, generator=gen, dtype=torch.float64)
+        pf = BootstrapParticleFilter(H, r, num_saved_samples=1000, final_samples=final)
+        runs.append(pf.run(LinearModel(A, q), particles, observations, gen))
+    assert runs[0].final_samples is None and runs[1].final_samples.shape == (3000, 4)
+    torch.testing.assert_close(runs[0].samples, runs[1].samples, rtol=0, atol=0)
+    torch.testing.assert_close(runs[1].final_samples[:1000], runs[1].samples[-1], rtol=0, atol=0)
 
 
 def test_optimal_proposal_refuses_a_nonlinearity_and_linearised_needs_a_selection():

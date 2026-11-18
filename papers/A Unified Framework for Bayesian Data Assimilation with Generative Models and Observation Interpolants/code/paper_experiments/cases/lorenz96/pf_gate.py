@@ -14,12 +14,15 @@ and are never the held-out test sequences.
     python cases/lorenz96/pf_gate.py cross-proposal --out cross.json
     python cases/lorenz96/pf_gate.py --obs arctan converge --out convergence_4e6.json
 
-``--obs {linear,arctan}`` (before the subcommand) selects the observation operator
+``--obs {linear,arctan,square}`` (before the subcommand) selects the observation operator
 of ``configs/case/lorenz96.yaml``; a bare ``--out`` file name (and the default,
 ``<command>.json``) lands in ``results/lorenz96/<obs>/gate/``. The procedure and
 ``PASS_CRITERIA`` are the same for both operators. The filter is the reference's
 (:func:`reference_proposal`): the optimal proposal when linear, the linearised
-importance proposal for arctan, both exact. ``cross-proposal`` compares that
+importance proposal for arctan, the ``square_mixture`` importance proposal for
+square, all exact. ``converge`` also reports the mode masses (particle fraction with
+``x > 0`` per step and site) and their error across replicates and N, which matter
+for the sign-blind square problem. ``cross-proposal`` compares that
 proposal with the bootstrap; ``calibrate`` adds, for a nonlinear operator, the
 negative control of a filter that assumes linear observations.
 """
@@ -77,16 +80,28 @@ def reference_proposal(problem) -> str:
     forecast, exact weights ``p(y | x) p(x | z) / q(x | z, y)``) is used, which is
     exact for any ``h`` and reduces to the optimal proposal's weights as ``h``
     becomes linear (``scisi.particle_filter.bootstrap``).
+
+    ``square`` (``h = (L x)^2``, sign-blind, bimodal posteriors) uses
+    ``square_mixture``: exact importance sampling whose per-site proposal is a
+    defensive mixture of the transition kick and Laplace components at BOTH local
+    modes of the one-site kick posterior, so no mode can be dropped and the
+    weights are bounded. The plain ``bootstrap`` (requested first, 2026-11-18) was
+    measured to collapse on this problem (validation 0: ESS abs min 1 at N = 1e5
+    and 1e6, log-evidence -5265 / -2643 against about -780 for ``square_mixture``),
+    because each observation pins |x| to about +-0.1-0.25.
     """
-    return "optimal" if problem.linear_obs else "linearised"
+    if problem.linear_obs:
+        return "optimal"
+    return "square_mixture" if problem.observation.operator == "square" else "linearised"
 
 
-def run_pf(problem, sequence, n, seed, proposal=None):
+def run_pf(problem, sequence, n, seed, proposal=None, final_samples=0):
     """One float32 particle-filter run from the shared prior of ``sequence``.
 
     ``driver.py reference`` calls this same function, so what the gate validates is
     exactly what produces the references. ``proposal`` defaults to
-    :func:`reference_proposal`.
+    :func:`reference_proposal`. ``final_samples`` extra draws of the last step reuse
+    the saved draws' permutation (no change to any other output).
     """
     if proposal is None:
         proposal = reference_proposal(problem)
@@ -101,6 +116,7 @@ def run_pf(problem, sequence, n, seed, proposal=None):
         proposal,
         chunk_size=PF_CHUNK,
         obs_nonlinearity=problem.obs_nonlinearity,
+        final_samples=final_samples,
     )
     return pf.run(problem.model, particles, sequence.observations, gen)
 
@@ -282,6 +298,26 @@ def rung_stats(runs, top, skip):
         cov_err.append(((run.covariance - ref_cov) / scale).abs())
     mean_err, var_err = torch.stack(mean_err), torch.stack(var_err)
     cov_err = torch.stack(cov_err)
+    # Mode masses: |P(x > 0) of a run - mean of the other top runs|, per entry, and
+    # the share of entries whose minority sign holds >= 5% / 10% of the mass.
+    modes = {}
+    if all(r.positive_fraction is not None for r in (*runs, *top)):
+        sign_err = torch.stack(
+            [
+                (
+                    run.positive_fraction
+                    - torch.stack([r.positive_fraction for r in top if r is not run]).mean(0)
+                ).abs()
+                for run in runs
+            ]
+        )
+        top_positive = torch.stack([r.positive_fraction for r in top]).mean(0)
+        minority = torch.minimum(top_positive, 1.0 - top_positive)
+        modes = dict(
+            mode_mass_error=quantiles(sign_err),
+            bimodal_fraction_5pct=float((minority >= 0.05).double().mean()),
+            bimodal_fraction_10pct=float((minority >= 0.10).double().mean()),
+        )
     ess = torch.stack([r.ess for r in runs])
     evidence = torch.stack([r.log_evidence.sum() for r in runs])
     a, b = runs[0], runs[1]
@@ -304,6 +340,7 @@ def rung_stats(runs, top, skip):
         sliced_w2_between_runs=sw2,
         log_evidence=float(evidence.mean()),
         log_evidence_sd=float(evidence.std()),
+        **modes,
     )
 
 

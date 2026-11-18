@@ -33,12 +33,20 @@ def arctan_nonlinearity(w: torch.Tensor, strength: float) -> tuple[torch.Tensor,
     return NONLINEARITIES["arctan"](w, strength, None)
 
 
+def square_nonlinearity(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(w^2, 2 w)``: the library's ``square`` with ``c = 1``
+    (``observation_operators.NONLINEARITIES``), as a picklable function."""
+    return NONLINEARITIES["square"](w, 1.0, None)
+
+
 @dataclass(frozen=True)
 class Observation:
     """The observation operator on the selected sites ``L x`` (physical units).
 
     ``linear``: ``h(x) = L x``. ``arctan``: ``h(x) = arctan(c L x) / c`` with
-    ``c = strength``. The noise ``N(0, obs_variance I)`` is the same for both.
+    ``c = strength``. ``square``: ``h(x) = (L x)^2`` elementwise (no strength;
+    sign-blind, so the posterior can be bimodal). The noise ``N(0, obs_variance I)``
+    is the same for all.
     """
 
     operator: str = "linear"
@@ -47,8 +55,8 @@ class Observation:
     def __post_init__(self) -> None:
         if self.operator not in OBS_OPERATORS:
             raise ValueError(f"observation.operator must be one of {OBS_OPERATORS}, got {self.operator!r}")
-        if self.operator == "linear" and self.strength is not None:
-            raise ValueError("a linear observation takes no strength")
+        if self.operator in ("linear", "square") and self.strength is not None:
+            raise ValueError(f"a {self.operator} observation takes no strength")
         if self.operator == "arctan":
             if self.strength is None or not float(self.strength) > 0:
                 raise ValueError(f"arctan needs a strength > 0, got {self.strength!r}")
@@ -84,7 +92,7 @@ class Problem:
 
     @property
     def obs_label(self) -> str:
-        """``linear`` or ``arctan``: the results directory of this problem."""
+        """``linear``, ``arctan`` or ``square``: the results directory of this problem."""
         return self.observation.operator
 
     @property
@@ -97,6 +105,8 @@ class Problem:
         when linear (the filters then take their unchanged linear paths)."""
         if self.linear_obs:
             return None
+        if self.observation.operator == "square":
+            return square_nonlinearity
         return functools.partial(arctan_nonlinearity, strength=self.observation.strength)
 
     def observe(self, x: torch.Tensor) -> torch.Tensor:
@@ -169,6 +179,10 @@ def configure(cfg, obs: str = "linear"):
     if obs != "linear":
         cfg.problem.observation = OmegaConf.to_container(cfg.observations[obs])
         cfg.methods = cfg[CONFIG_BLOCK[obs]]
+    # Optional per-operator evaluation overrides (``evaluation_<obs>``), e.g. fewer test
+    # sequences; sequence i keeps its seeding, so a smaller split is a prefix.
+    if f"evaluation_{obs}" in cfg:
+        cfg.evaluation = OmegaConf.merge(cfg.evaluation, cfg[f"evaluation_{obs}"])
     cfg.obs = obs
     return cfg
 
