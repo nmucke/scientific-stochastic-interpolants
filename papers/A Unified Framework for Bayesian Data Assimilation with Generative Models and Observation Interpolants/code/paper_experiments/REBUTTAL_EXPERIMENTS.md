@@ -378,3 +378,14 @@ Rebalanced while `research-ceg-gse` waited on priority: 24–35 → `innovation`
 0–11 → `innovation` 1351360 (1350433 cancelled before any of its cells ran). **Complete 2026-11-18: 60/60, 0 failed.**
 (Its `run_config.txt` summary line says "Ours x shared_jac10" — a wording slip in the launcher, fixed after
 launch; the cell arguments and the leading `variant=jacfree` are correct.)
+
+## 15. NS poor (wrong) IC: true-solver EnKF with E=1000, r=20 (launched 2026-11-18)
+
+Wrong-IC grid settings (§1: ic_index=15, NP=40, traj 10–14, the 4 scenarios, guard 10, states traj 11, no KL);
+EnKF baseline (perturbed obs, inflation 1.0) with **E=1000** and Gaspari–Cohn **r=20 on all four scenarios**
+(super-res via the 948fa40 block centroids). Code: the frozen copy `code_ns_wrong_ic` (as the main-grid EnKF
+cells and §4); only E (and, on super-res, the localisation) differ. GPU only (user: CPU nodes not before
+21 Nov). Launcher `PE/slurm_enkf_e1000/` (`run_cell.sh` copied into the results folder at submit).
+Cells 0–9 (16², 32²) V100 `innovation` 1355752; cells 10–19 (sparse 5%, 1.5625%) V100 `research-ceg-gse` 1355753.
+Results: `paper_experiments/results_wrong_ic_np40_enkf_r20_e1000/navier_stokes/`
+(`<scen>__traj<N>__classical__enkf_r20_E1000.csv`; the `E` column is 1000).
