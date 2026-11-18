@@ -21,6 +21,7 @@
 #   LINEUPS=fc     one cell per forecast step count S in FC_STEPS, holding only the
 #                  corrected Ours rows, <setting>_fc<S>[_bank[<B>]][_g<E>]. The rows
 #                  are variants <jacfree|shared>_fc<S>[_bank[<B>]][_g<E>].
+#   LINEUPS=tmpd   <setting>_tmpd: TMPD only (opt-in baseline), no reference rows.
 #   LINEUPS=group  <setting>_g<E>: EnKF and adapted_shared on the same groups of
 #                  FC_GROUP members, the comparators of a grouped fc cell.
 # FC_STEPS (default "1 2 5 10 25 50"), FC_Q_SOURCE (online | bank, default online),
@@ -80,6 +81,7 @@ for SETTING in $SETTINGS; do
   case "$LINEUP" in
     base)  SPECS=("$SETTING|") ;;
     surge) SPECS=("${SETTING}_surge|+surge_only=true") ;;
+    tmpd)  SPECS=("${SETTING}_tmpd|+tmpd_only=true") ;;
     fc)    for S in $FC_STEPS; do
              SPECS+=("${SETTING}_fc${S}${FC_SUFFIX}|+fc_only=true +fc_steps=[$S] ${FC_ARGS[*]}")
            done ;;
