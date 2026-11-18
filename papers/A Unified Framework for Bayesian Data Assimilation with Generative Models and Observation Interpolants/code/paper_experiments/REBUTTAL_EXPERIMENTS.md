@@ -387,5 +387,6 @@ EnKF baseline (perturbed obs, inflation 1.0) with **E=1000** and Gaspari–Cohn 
 cells and §4); only E (and, on super-res, the localisation) differ. GPU only (user: CPU nodes not before
 21 Nov). Launcher `PE/slurm_enkf_e1000/` (`run_cell.sh` copied into the results folder at submit).
 Cells 0–9 (16², 32²) V100 `innovation` 1355752; cells 10–19 (sparse 5%, 1.5625%) V100 `research-ceg-gse` 1355753.
+**Cancelled 2026-11-18 by the user before any cell started** (no time to wait for the queue); no results.
 Results: `paper_experiments/results_wrong_ic_np40_enkf_r20_e1000/navier_stokes/`
 (`<scen>__traj<N>__classical__enkf_r20_E1000.csv`; the `E` column is 1000).
