@@ -374,5 +374,7 @@ As §14 but `likelihood_mode=dps_jacobian_free` (the manuscript's `ours_jacfree`
 `results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_jacfree.csv`). Frozen worktree
 `SSI/wt_trueic_jacfree_47498c8`; manifest `manifests/jacfree_fc25_8797d2ae_20261117_170452.tsv`, split:
 cells 0–35 V100 `research-ceg-gse` (1350433), 36–45 V100 `innovation` (1350434), 46–59 MIG pairs (1350435).
+Rebalanced while `research-ceg-gse` waited on priority: 24–35 → `innovation` 1351039, 12–23 → MIG 1351040,
+0–11 → `innovation` 1351360 (1350433 cancelled before any of its cells ran). **Complete 2026-11-18: 60/60, 0 failed.**
 (Its `run_config.txt` summary line says "Ours x shared_jac10" — a wording slip in the launcher, fixed after
 launch; the cell arguments and the leading `variant=jacfree` are correct.)
