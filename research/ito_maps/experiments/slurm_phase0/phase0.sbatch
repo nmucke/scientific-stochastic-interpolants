@@ -79,6 +79,19 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
       --num-threads 2 "${resume[@]}"
     $PY $EXP/rollout_diagnostics.py long --checkpoint-dir $SI --run-dir $out --data-cache $CACHE --burn-in 100 \
       --output $RES/d5_d6_d7_long_si128_exact.json ;;
+  map_smoke)
+    # Code test of the map paths on a 5-batch smoke Ito checkpoint (not a result).
+    run $stage
+    M=${MAP_SMOKE:-$ARR/smoke_ckpt/itomap_smoke_ito_1445467}
+    out=$ARR/smoke/map_$SLURM_JOB_ID
+    for m in d3 d4; do
+      $PY $EXP/map_spread_diagnostics.py $m --checkpoint-dir $M --data-cache $CACHE --val-ids 160 162 --origins 5 \
+        --ensemble 4 --budgets 4 2 1 --arrays-dir $out/$m --output $out/$m.json
+    done
+    $PY $EXP/map_spread_diagnostics.py d2 --checkpoint-dir $M --data-cache $CACHE --ensemble 16 --budgets 8 1 \
+      --reference $ARR/d1/d1_spectra_fft2.npz --arrays-dir $out/d2 --output $out/d2.json
+    $PY $EXP/rollout_diagnostics.py short --checkpoint-dir $M --data-cache $CACHE --trajectories 1 --origins 5 \
+      --ensemble 3 --leads 2 --steps 2 --arrays-dir $out/short --output $out/short.json ;;
   *) echo "unknown stage $stage"; exit 2 ;;
   esac
 done
