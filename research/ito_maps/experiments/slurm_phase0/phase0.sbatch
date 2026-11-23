@@ -29,8 +29,11 @@ nvidia-smi -L || true
 $PY -c "import scisi, torch; print('scisi from', scisi.__file__, torch.__version__, torch.cuda.get_device_name(0))"
 run() { echo "$(date '+%F %T') == stage $1"; }
 
-for stage in ${STAGES:-tests_after budget d1_smoke d1}; do
+for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
   case $stage in
+  cache)
+    run $stage
+    $PY $EXP/phase0_common.py --checkpoint-dir $SI --cache-dir $CACHE ;;
   tests_before)
     run $stage
     (cd $PRISTINE && PYTHONPATH=$PRISTINE/src $PY -m pytest tests research/ito_maps/tests -q -p no:cacheprovider 2>&1 | tail -25) || true ;;

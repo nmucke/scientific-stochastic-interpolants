@@ -157,13 +157,33 @@ def load_trajectories(config, ids, cache_dir=None):
     if cache_dir is not None:
         files = "_".join(Path(f).stem for f in data_config.files)
         cache = Path(cache_dir) / f"{files}_traj{lo:03d}_{hi:03d}.npy"
-        if cache.exists():
-            return torch.from_numpy(np.load(cache, mmap_mode="r").copy())
+        # Any cached range that covers [lo, hi) is sliced (memory-mapped).
+        for candidate in sorted(Path(cache_dir).glob(f"{files}_traj*_*.npy")):
+            a, b = (int(v) for v in candidate.stem.rsplit("_traj", 1)[1].split("_"))
+            if a <= lo and hi <= b:
+                stored = np.load(candidate, mmap_mode="r")
+                return torch.from_numpy(np.array(stored[lo - a : hi - a]))
     dataset = instantiate(data_config, preprocesser=None)
     data = torch.stack([dataset[i]["x"] for i in range(len(dataset))]).float()
     if cache is not None:
         atomic_npy(cache, data.numpy())
     return data
+
+
+def build_cache(config, ranges, cache_dir):
+    """Read the dataset once and store each ``(lo, hi)`` range as ``.npy``."""
+    lo, hi = min(r[0] for r in ranges), max(r[1] for r in ranges)
+    data_config = config.test_data.copy()
+    data_config.tajectories_ids = f"({lo}, {hi})"
+    data_config.train_or_test = "test"
+    files = "_".join(Path(f).stem for f in data_config.files)
+    dataset = instantiate(data_config, preprocesser=None)
+    for a, b in ranges:
+        path = Path(cache_dir) / f"{files}_traj{a:03d}_{b:03d}.npy"
+        if not path.exists():
+            data = torch.stack([dataset[i - lo]["x"] for i in range(a, b)]).float()
+            atomic_npy(path, data.numpy())
+        print("cached", path, flush=True)
 
 
 def normalise(x, mean, std, channel_axis=1):
@@ -389,3 +409,15 @@ def validation_cases(trajectories, origins, history_length):
                 raise ValueError("origin must leave a full history")
             cases.append((i, origin))
     return cases
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Cache train/validation trajectory ranges")
+    parser.add_argument("--checkpoint-dir", required=True)
+    parser.add_argument("--cache-dir", required=True)
+    args = parser.parse_args()
+    Path(args.cache_dir).mkdir(parents=True, exist_ok=True)
+    cfg = OmegaConf.load(Path(args.checkpoint_dir) / "config.yaml")
+    build_cache(cfg, [NS_TRAIN, NS_VALIDATION], args.cache_dir)
