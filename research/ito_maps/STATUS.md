@@ -1,5 +1,21 @@
 # Status
 
+## Improvement work (HANDOVER.md), updated 2026-11-23
+
+Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). Protocol: [PROTOCOL.md](PROTOCOL.md). Nothing below has been reviewed or merged into `dev`.
+
+| Unit | Branch / worktree (`/scratch/ntmucke/scientific-stochastic-interpolants/`) | State |
+|---|---|---|
+| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke test 1445467 queued |
+| Phase 0 diagnostics D1, D5–D7 (+ WP7 budget class) | `research/itomap-phase0` / `wt_itomap_phase0` | implementing |
+| WP1 + WP2 core (NoiseCovariance, variance clock, matched β, invariant) | `research/itomap-core` / `wt_itomap_core` | implementing; WP1 runs gated on D1 |
+
+- Data on DelftBlue: `data.npz` only; no 256² companion (does not exist). No earlier Itô/flow-map checkpoints or archived results here, hence the baseline retraining.
+- Large outputs: `/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/`; job logs in `slurm_itomap/logs/`.
+- Waiting for review: nothing yet.
+
+## Earlier status (2026-10-08)
+
 Updated 2026-10-08. Scope: stochastic Navier–Stokes only. The video-forecasting extension (KTH/CLEVRER) has been dropped from this folder and from the paper. The initial-stage results are archived and will not be used in the paper.
 
 ## Done
