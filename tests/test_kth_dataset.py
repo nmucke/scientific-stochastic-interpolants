@@ -228,3 +228,41 @@ def test_hydra_instantiation(data_dir):
     assert batch["field_history"].shape == (4, 1, SIZE, SIZE, 2)
     assert batch["base"].min() >= -1.0 and batch["base"].max() <= 1.0
     assert torch.equal(batch["base"], batch["field_history"][..., -1])
+
+
+# Latent frames, float32 [N_frames, C, h, w], as written by scripts/encode_kth.py.
+C = 4
+
+
+@pytest.fixture
+def latent_dir(data_dir):
+    """The pixel videos as latents: channel c holds the pixel values plus c."""
+    with np.load(data_dir / "kth_64.npz") as data:
+        arrays = {key: data[key] for key in data.files}
+    frames = arrays["frames"].astype(np.float32)
+    arrays["frames"] = np.stack([frames + c for c in range(C)], axis=1)
+    np.savez(data_dir / "kth_64_latents.npz", **arrays)
+    return data_dir
+
+
+def make_latent(latent_dir, **kwargs):
+    kwargs.setdefault("len_field_history", L)
+    return KTHDataset(paths=[str(latent_dir)], files=["kth_64_latents.npz"], **kwargs)
+
+
+def test_latent_train_samples(latent_dir):
+    dataset, pixels = make_latent(latent_dir), make(latent_dir)
+    assert dataset.num_channels == C
+    assert (dataset.height, dataset.width) == (SIZE, SIZE)
+    assert dataset.frames.dtype == torch.float32
+    assert len(dataset) == len(pixels)
+    for i in (0, 7, len(dataset) - 1):
+        sample, pixel_sample = dataset[i], pixels[i]
+        assert sample["field_history"].shape == (C, SIZE, SIZE, L)
+        assert sample["base"].shape == sample["target"].shape == (C, SIZE, SIZE)
+        assert torch.equal(sample["base"], sample["field_history"][..., -1])
+        for key, value in sample.items():
+            assert value.dtype == torch.float32
+            # Same windows as the pixel dataset, and the values are not rescaled.
+            for c in range(C):
+                assert torch.equal(value[c], pixel_sample[key][0] * 255 + c)

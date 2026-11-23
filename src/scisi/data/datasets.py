@@ -962,7 +962,7 @@ def _parse_ids(ids: Any) -> list[int] | None:
 
 
 class KTHDataset(torch.utils.data.Dataset):
-    """Dataset for the KTH human action video data (64x64 grayscale)."""
+    """Dataset for the KTH human action video data (64x64 grayscale or its latents)."""
 
     def __init__(
         self,
@@ -981,7 +981,9 @@ class KTHDataset(torch.utils.data.Dataset):
         """
         Initialize the dataset.
 
-        Frames are kept as uint8 and converted to float in [0, 1] per item. Train
+        Pixel frames (uint8 [N, H, W]) are kept as uint8 and converted to float in
+        [0, 1] per item. Latent frames (float [N, C, H, W], from
+        scripts/encode_kth.py) are returned as they are. Train
         samples are windows of len_field_history + 1 frames within one video; test
         samples are num_test_clips clips of test_clip_length frames, drawn with a
         seeded RNG (video uniform, start frame uniform within the video). Videos
@@ -989,7 +991,8 @@ class KTHDataset(torch.utils.data.Dataset):
 
         Args:
             paths: List of paths to the data.
-            files: List of files to load (the kth_64.npz written by scripts/download_kth.py).
+            files: List of files to load (the kth_64.npz written by scripts/download_kth.py
+                or the kth_64_latents.npz written by scripts/encode_kth.py).
             len_field_history: Length of the history.
             persons: List of person ids to load. (a,b) to load persons a to b, inclusive. None loads all.
             actions: List of actions to load. None loads all six.
@@ -1027,11 +1030,11 @@ class KTHDataset(torch.utils.data.Dataset):
                 selected &= np.isin(video_actions, actions)
             videos = np.flatnonzero(selected)
             frames = data["frames"]
-            # Keep only the selected videos, concatenated, as uint8.
+            # Keep only the selected videos, concatenated, in the stored dtype.
             self.frames = torch.from_numpy(
                 np.concatenate([frames[offsets[v] : offsets[v + 1]] for v in videos])
                 if len(videos)
-                else np.zeros((0, *frames.shape[1:]), dtype=np.uint8)
+                else np.zeros((0, *frames.shape[1:]), dtype=frames.dtype)
             )
             del frames
 
@@ -1043,6 +1046,7 @@ class KTHDataset(torch.utils.data.Dataset):
         self.scenario = video_scenarios[videos]
         self.names = video_names[videos]
 
+        self.path = paths[0]  # data directory, which also holds vqvae.ckpt
         self.len_field_history = len_field_history
         self.preprocesser = preprocesser
         self.train_or_test = train_or_test
@@ -1050,9 +1054,10 @@ class KTHDataset(torch.utils.data.Dataset):
         self.frame_skip = frame_skip
         self.seed = seed
         self.num_videos = len(videos)
-        self.num_channels = 1
-        self.height = self.frames.shape[1]
-        self.width = self.frames.shape[2]
+        self.is_latent = self.frames.ndim == 4  # [N, C, H, W] instead of [N, H, W]
+        self.num_channels = self.frames.shape[1] if self.is_latent else 1
+        self.height = self.frames.shape[-2]
+        self.width = self.frames.shape[-1]
 
         num_frames = (
             len_field_history + 1 if train_or_test == "train" else test_clip_length
@@ -1098,11 +1103,14 @@ class KTHDataset(torch.utils.data.Dataset):
         Get the frames of the sample at the given index.
 
         Returns:
-            torch.Tensor: Frames in [0, 1]. [num_channels, height, width, num_frames]
+            torch.Tensor: Pixel frames in [0, 1] or latent frames.
+                [num_channels, height, width, num_frames]
         """
         start = self.offsets[self.video_index[idx]] + self.start_index[idx]
         stop = start + self.frame_skip * (self.num_frames - 1) + 1
         frames = self.frames[start : stop : self.frame_skip]
+        if self.is_latent:
+            return frames.permute(1, 2, 3, 0).to(torch.float32)
         return frames.permute(1, 2, 0).unsqueeze(0).to(torch.float32) / 255.0
 
     def _prepare_train_sample(self, sample: torch.Tensor) -> dict:

@@ -1,0 +1,60 @@
+# @package _global_
+# KTH human actions in the latent space of the RIVER VQGAN: every 64x64 frame is a
+# 4x8x8 latent (data/KTH/kth_64_latents.npz from scripts/encode_kth.py).
+# The preprocesser standardizes every latent channel.
+# Train persons 1-18, val 19-20, test 21-25 (person ranges are inclusive).
+len_field_history: 10
+mask_path: null
+
+# Per-channel latent mean/std over the training persons, as logged by
+# scripts/encode_kth.py (and stored as `mean`/`std` in the npz).
+preprocesser:
+  _target_: scisi.preprocessing.preprocessor.Preprocesser
+  base:
+    mean: [-0.1113, -0.0668, 0.0883, -0.1227]
+    std: [0.1242, 0.3209, 0.6399, 0.6333]
+  target:
+    mean: [-0.1113, -0.0668, 0.0883, -0.1227]
+    std: [0.1242, 0.3209, 0.6399, 0.6333]
+
+train_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: true
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KTHDataset
+    paths: [data/KTH]
+    files: [kth_64_latents.npz]
+    len_field_history: ${len_field_history}
+    persons: (1, 18)
+    actions: null  # null: all six actions
+    frame_skip: 1
+
+val_data:
+  _target_: torch.utils.data.DataLoader
+  batch_size: 32
+  shuffle: false
+  num_workers: 4
+  dataset:
+    _target_: scisi.data.datasets.KTHDataset
+    paths: [data/KTH]
+    files: [kth_64_latents.npz]
+    len_field_history: ${len_field_history}
+    persons: (19, 20)
+    actions: null
+    frame_skip: 1
+
+# Fixed seeded clips of 10 context + 30 forecast frames, as in the KTH protocol.
+test_data:
+  _target_: scisi.data.datasets.KTHDataset
+  paths: [data/KTH]
+  files: [kth_64_latents.npz]
+  len_field_history: ${len_field_history}
+  persons: (21, 25)
+  actions: null
+  train_or_test: test
+  test_clip_length: 40
+  num_test_clips: 256
+  frame_skip: 1
+  seed: 0
