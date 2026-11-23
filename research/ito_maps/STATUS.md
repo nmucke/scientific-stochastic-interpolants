@@ -6,7 +6,7 @@ Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). P
 
 | Unit | Branch / worktree (`/scratch/ntmucke/scientific-stochastic-interpolants/`) | State |
 |---|---|---|
-| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke test 1445467 queued |
+| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke 1445467 passed (all phases + resume); training on V100: Itô 1445729, flow 1445730 (70 epochs × 1000 updates) |
 | Phase 0 diagnostics D1, D5–D7 (+ WP7 budget class) | `research/itomap-phase0` / `wt_itomap_phase0` | implementing |
 | WP1 + WP2 core (NoiseCovariance, variance clock, matched β, invariant) | `research/itomap-core` / `wt_itomap_core` | implementing; WP1 runs gated on D1 |
 
