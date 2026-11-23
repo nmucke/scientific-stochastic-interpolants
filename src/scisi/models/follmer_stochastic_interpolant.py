@@ -7,6 +7,7 @@ import torch.nn as nn
 import tqdm
 
 from scisi.models.base_model import BaseModel
+from scisi.sampling.brownian_path import make_brownian_path
 from scisi.sampling.ode_solvers import euler_step
 from scisi.sampling.sde_solvers import euler_maruyama_step
 
@@ -151,7 +152,19 @@ class FollmerStochasticInterpolant(BaseModel):
         diffusion_term: Optional[Callable] = None,
         ode_drift: bool = False,
     ) -> torch.Tensor:
-        """Sample from the Follmer stochastic interpolant."""
+        """Sample from the Follmer stochastic interpolant.
+
+        A non-identity ``interpolation.noise_covariance`` C colours the SDE
+        noise of the stepper (which must accept ``noise_covariance``);
+        alternative diffusions and the ODE drift assume white noise.
+        """
+        covariance = getattr(self.interpolation, "noise_covariance", None)
+        if covariance is not None and not covariance.is_identity:
+            if diffusion_term is not None or ode_drift:
+                raise NotImplementedError(
+                    "Alternative diffusions and the ODE drift assume white noise."
+                )
+            stepper = partial(stepper, noise_covariance=covariance)
 
         if diffusion_term is None:
             # If no diffusion term is provided, use the interpolant's gamma and trained drift model
@@ -179,6 +192,14 @@ class FollmerStochasticInterpolant(BaseModel):
             drift=drift_model,
             with_first_step=True,
         )
+
+    def make_brownian_path(self, x, generator=None):
+        """Exact driver M_t of this SDE (C and variance clock of the interpolation).
+
+        For Euler drift with exact integrated noise:
+        x <- x + dt * drift(x, t) + path.increment(t, t + dt).
+        """
+        return make_brownian_path(self.interpolation, x, generator=generator)
 
     def sample_trajectory(
         self,

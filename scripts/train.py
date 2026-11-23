@@ -22,6 +22,7 @@ import trackio
 from omegaconf import DictConfig, OmegaConf
 
 from scisi.architectures.architecture_utils import count_model_parameters
+from scisi.sampling.noise_covariance import same_noise_covariance
 from scisi.utils.device_utils import set_device
 
 torch.set_default_dtype(torch.float32)
@@ -120,6 +121,8 @@ def main(cfg: DictConfig) -> None:
             teacher.interpolation, "gamma_multiplier", None
         ):
             raise ValueError("Student and teacher diffusion amplitudes differ")
+        if not same_noise_covariance(model.interpolation, teacher.interpolation):
+            raise ValueError("Student and teacher noise covariances differ")
         model.map_model.load_from_teacher(teacher)
         del teacher
 

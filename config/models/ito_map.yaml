@@ -11,9 +11,21 @@ model:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: ${oc.select:gamma_multiplier,1.0}
     wiener_process: true
+    # Matched schedule (WP1): _target_: scisi.models.interpolations.MatchedStochasticInterpolation
+    # Coloured driver (WP1), default white; must equal the teacher's:
+    # noise_covariance:
+    #   _target_: scisi.sampling.noise_covariance.FourierDiagonalCovariance
+    #   spectrum_path: path/to/spectrum.npz
+    # With the invariant below, the noise must vanish on it: zero those modes
+    # in the spectrum, or wrap the covariance:
+    #   _target_: scisi.sampling.noise_covariance.ProjectedCovariance
+    #   covariance: {_target_: scisi.sampling.noise_covariance.IdentityCovariance}
+    #   invariant: {_target_: scisi.models.invariants.SpatialMeanInvariant}
   map_model:
     _target_: scisi.architectures.map_conditioning.MapConditionedNetwork
     backbone: ${backbone}
     path_channels: ${oc.select:path_channels,4}  # must equal num_path_features x state channels
   num_path_features: 4
   brownian_features: local  # or karhunen_loeve (global KL coefficients of W)
+  # Invariant-closed map (WP2), off by default; no masks:
+  # invariant: {_target_: scisi.models.invariants.SpatialMeanInvariant}

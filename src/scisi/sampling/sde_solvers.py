@@ -5,6 +5,14 @@ import torch
 import torch.nn as nn
 
 
+def _wiener_increment(x, dt, noise_covariance=None):
+    """sqrt(dt) xi with white xi, coloured as C^{1/2} sqrt(dt) xi if C is given."""
+    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)  # * mask
+    if noise_covariance is not None:
+        wiener_process = noise_covariance.sqrt(wiener_process)
+    return wiener_process
+
+
 def euler_maruyama_step(
     drift_model: nn.Module,
     diffusion_term: Callable,
@@ -15,9 +23,13 @@ def euler_maruyama_step(
     field_cond: torch.Tensor | None = None,
     pars_cond: torch.Tensor | None = None,
     mask: torch.Tensor = torch.tensor(1.0),
+    noise_covariance=None,
 ) -> torch.Tensor:
-    """Euler-Maruyama step."""
-    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)  # * mask
+    """Euler-Maruyama step; ``noise_covariance`` (C) colours the increment.
+
+    x + b dt + g(t) C^{1/2} sqrt(dt) xi, for additive, state-independent noise.
+    """
+    wiener_process = _wiener_increment(x, dt, noise_covariance)
     drift = drift_model(x, t, field_history, field_cond, pars_cond)
     diffusion = diffusion_term(t)
     return x + drift * dt + diffusion * wiener_process
@@ -33,9 +45,10 @@ def heun_step(
     field_cond: torch.Tensor | None = None,
     pars_cond: torch.Tensor | None = None,
     mask: torch.Tensor = torch.tensor(1.0),
+    noise_covariance=None,
 ) -> torch.Tensor:
-    """Heun step."""
-    wiener_process = torch.randn_like(x, device=x.device) * torch.sqrt(dt)  # * mask
+    """Heun step; ``noise_covariance`` (C) colours the increment."""
+    wiener_process = _wiener_increment(x, dt, noise_covariance)
 
     predictor_diffusion = diffusion_term(t)
     predictor_drift = drift_model(x, t, field_history, field_cond, pars_cond)

@@ -2,11 +2,12 @@
 
 import importlib.util
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+
+from scisi.models.interpolations import QuadraticStochasticInterpolation
 
 SCRIPT = (
     Path(__file__).parents[3] / "research/ito_maps/experiments/ns_path_compression.py"
@@ -17,7 +18,7 @@ spec.loader.exec_module(diagnostic)
 
 
 class LinearTeacher:
-    interpolation = SimpleNamespace(gamma_multiplier=1.0)
+    interpolation = QuadraticStochasticInterpolation(gamma_multiplier=1.0)
 
     def drift(self, x, t, **kwargs):
         return -4 * x

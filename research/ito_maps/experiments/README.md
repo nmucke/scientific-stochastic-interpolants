@@ -45,3 +45,9 @@ experiments.
 - `verify_confirmation.py`: audits the old frozen three-seed confirmation against `results/frozen_protocol.json` (now in `archive/results/`). It applies only to that protocol and would need a new protocol file to be useful. Kept only for `tests/test_verify_confirmation.py`.
 
 Archived to `research/ito_maps/archive/experiments/`: `run_confirmation.sh`, the exact frozen confirmation run, and `rebuild_confirmation_report.sh`, which rebuilt the old `final_report`.
+
+## WP1 step 1: coloured driver and matched schedule (handover §4 WP1)
+- `estimate_noise_spectrum.py`: writes the `FourierDiagonalCovariance` spectrum file C_k = κ Σ̄_k / q(1) for a dataset config, from `increment` (y − c, upper bound), `residuals` of a `models=conditional_mean` regressor on validation (preferred), `anomalies` of an ensemble file, or a precomputed `power` array (Phase 0 D1). Floor, mode smoothing, `--zero-mean` for the WP2 invariant. Covered by `tests/test_estimate_noise_spectrum.py`.
+- `wp1_euler_exact_noise.py`: Euler drift + exact integrated noise of an SI checkpoint at N = 1, 2, 4, 8 against its own N = 128 on one shared path per validation case: spread ratio, fair CRPS, same-path RMSE, shell spectra. Covered by `tests/test_wp1_euler_exact_noise.py`.
+- `ns_path_compression.py` now draws the teacher's own driver (covariance and variance clock), so it runs unchanged on coloured processes.
+- `slurm_wp1/`: `train_si.sbatch` (VARIANT = white_t2 | coloured_t | coloured_matched, SPECTRUM), `eval_si.sbatch` (path compression K = 1, 4 and the Euler diagnostic), `estimate_spectrum.sbatch`, `train_regressor.sbatch`, and `smoke.sbatch` (all of them at tiny budgets on a MIG slice). Outputs under `/scratch/.../results_itomap/wp1`. Submit from the worktree root.

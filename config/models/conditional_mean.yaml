@@ -1,0 +1,8 @@
+# @package _global_
+# Deterministic conditional-mean regressor m(h) = c + backbone(c, h), trained
+# with MSE by the FlowTrainer. Its validation residuals y - m(h) estimate the
+# coloured-noise spectrum (research/ito_maps/experiments/estimate_noise_spectrum.py).
+model_name: conditional_mean
+model:
+  _target_: scisi.models.conditional_mean_regressor.ConditionalMeanRegressor
+  network: ${backbone}

@@ -12,6 +12,8 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
+from scisi.sampling.noise_covariance import same_noise_covariance
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +65,8 @@ def run_training(cfg):
             teacher.interpolation, "gamma_multiplier", None
         ):
             raise ValueError("Student and teacher diffusion amplitudes differ")
+        if not same_noise_covariance(model.interpolation, teacher.interpolation):
+            raise ValueError("Student and teacher noise covariances differ")
         model.map_model.load_from_teacher(teacher)
         del teacher
     optimizer = instantiate(cfg.optimizer, params=model.parameters())

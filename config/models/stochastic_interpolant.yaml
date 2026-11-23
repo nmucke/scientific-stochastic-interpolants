@@ -8,5 +8,12 @@ model:
     _target_: scisi.models.interpolations.QuadraticStochasticInterpolation
     gamma_multiplier: ${oc.select:gamma_multiplier,1.0}
     wiener_process: true
+    # Matched schedule beta_t = t sqrt(3 - 2t) (WP1): replace _target_ above by
+    #   scisi.models.interpolations.MatchedStochasticInterpolation  (or Linear... for beta = t)
+    # Coloured driver (WP1), default white (identity). The spectrum file comes
+    # from research/ito_maps/experiments/estimate_noise_spectrum.py:
+    # noise_covariance:
+    #   _target_: scisi.sampling.noise_covariance.FourierDiagonalCovariance
+    #   spectrum_path: path/to/spectrum.npz
   mask_path: ${mask_path}
   drift_model: ${backbone}

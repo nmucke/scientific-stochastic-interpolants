@@ -25,10 +25,11 @@ from pathlib import Path
 
 import torch
 from hydra.utils import instantiate
+from omegaconf import OmegaConf
 
 from scisi.bin.main_map_model_train import load_teacher
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
-from scisi.sampling.brownian_path import WeightedBrownianPath
+from scisi.sampling.brownian_path import make_brownian_path
 
 
 @torch.no_grad()
@@ -96,7 +97,6 @@ def conditional_endpoints(
         raise ValueError("Feature counts must be nested integer refinements")
     if groups < 2 or replicas < 2 or batch_size < 1:
         raise ValueError("Need groups>=2, replicas>=2 and batch_size>=1")
-    gamma_multiplier = float(teacher.interpolation.gamma_multiplier)
     device = history.device
     coarse_generator = torch.Generator(device=device).manual_seed(seed)
     # Independent deterministic seed streams for each K/replica pair; no resetting
@@ -113,9 +113,8 @@ def conditional_endpoints(
         count = min(batch_size, groups - start)
         context = history.expand(count, *history.shape[1:])
         base = context[..., -1]
-        coarse_path = WeightedBrownianPath.sample_like(
-            base, gamma_multiplier, coarse_generator
-        )
+        # The teacher's own driver: its noise covariance and variance clock.
+        coarse_path = make_brownian_path(teacher.interpolation, base, coarse_generator)
         for k in counts:
             # The parent accumulates only requested coarse observations. Fine
             # solver queries occur on forks and never leak into later conditioning.
@@ -163,7 +162,8 @@ def main():
             "Output already contains results.json; select a new output directory"
         )
     torch.set_num_threads(4)
-    teacher, config = load_teacher(args.checkpoint_dir, args.device)
+    teacher = load_teacher(args.checkpoint_dir, args.device)
+    config = OmegaConf.load(args.checkpoint_dir / "config.yaml")
     if not isinstance(teacher, FollmerStochasticInterpolant):
         raise TypeError(
             "This experiment requires a frozen FollmerStochasticInterpolant teacher"
@@ -215,7 +215,9 @@ def main():
             (args.checkpoint_dir / "model.pth").read_bytes()
         ).hexdigest(),
         "teacher_steps": args.teacher_steps,
-        "solver": "Euler drift with exact integrated gamma(t)=a*(1-t) Brownian increments",
+        "solver": "Euler drift with exact integrated increments of the teacher's driver",
+        "interpolation": type(teacher.interpolation).__name__,
+        "noise_covariance": type(teacher.interpolation.noise_covariance).__name__,
         "gamma_multiplier": float(teacher.interpolation.gamma_multiplier),
         "device": args.device,
         "hardware": (

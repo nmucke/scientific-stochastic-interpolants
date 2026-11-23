@@ -1,14 +1,18 @@
 """Coherent Gaussian drivers for conditional Itô maps.
 
-The repository's stochastic interpolants use diffusion ``a * (1 - t)``.
-Its integrated noise is a Brownian motion in the variance clock
-``q(t) = a**2 * (t - t**2 + t**3 / 3)``. Lazy Gaussian bridges give
-exact joint laws at any finite set of queried times, without an SDE grid.
+The drivers sample ``M_t = C^{1/2} int_0^t gamma_r dW_r`` for an additive,
+state-independent diffusion with deterministic ``gamma``. Per coordinate it is
+a Brownian motion in the variance clock ``q(t) = int_0^t gamma_r^2 dr``; the
+fixed spatial covariance ``C`` (``scisi.sampling.noise_covariance``) colours
+each white draw and commutes with all bridge logic in time. Lazy Gaussian
+bridges give exact joint laws at any finite set of queried times, without an
+SDE grid. Defaults: ``C = Id`` and ``gamma = a(1 - t)``, for which
+``q(t) = a**2 * (t - t**2 + t**3 / 3)``.
 """
 
 from bisect import bisect_left
 import math
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 
@@ -25,7 +29,12 @@ class _WeightedPathBase:
         x: torch.Tensor,
         gamma_multiplier: float = 1.0,
         generator: Optional[torch.Generator] = None,
+        covariance=None,
+        variance_clock: Optional[Callable] = None,
     ) -> None:
+        """``covariance``: a NoiseCovariance (None means C = Id).
+        ``variance_clock(s, t) = q(t) - q(s)`` for float times (None means the
+        closed form for gamma = gamma_multiplier * (1 - t))."""
         if x.ndim < 2 or x.shape[0] == 0:
             raise ValueError("x must have a nonempty batch and a channel dimension")
         if not x.is_floating_point():
@@ -38,6 +47,8 @@ class _WeightedPathBase:
         self.dtype = x.dtype
         self.gamma_multiplier = amplitude
         self.generator = generator
+        self.covariance = covariance
+        self.variance_clock = variance_clock
 
     def fork(self, generator: Optional[torch.Generator] = None):
         """Copy the observed path values, then independently refine between them.
@@ -56,6 +67,8 @@ class _WeightedPathBase:
         child.dtype = self.dtype
         child.gamma_multiplier = self.gamma_multiplier
         child.generator = generator
+        child.covariance = self.covariance
+        child.variance_clock = self.variance_clock
         self._copy_cache(child)
         return child
 
@@ -63,9 +76,25 @@ class _WeightedPathBase:
         raise NotImplementedError
 
     def _randn(self, shape) -> torch.Tensor:
-        return torch.randn(
+        """The single white draw of every path value, coloured by C^{1/2}.
+
+        ``shape`` ends with the state shape [C, *spatial]; leading dims are
+        flattened into the batch that the covariance acts on.
+        """
+        draw = torch.randn(
             shape, device=self.device, dtype=self.dtype, generator=self.generator
         )
+        if self.covariance is None:
+            return draw
+        state = tuple(self.shape[1:])
+        coloured = self.covariance.sqrt(draw.reshape(-1, *state))
+        return coloured.reshape(shape)
+
+    def _endpoint_std(self) -> float:
+        """Standard deviation of M_1 per white coordinate, sqrt(q(1))."""
+        if self.variance_clock is None:
+            return self.gamma_multiplier / math.sqrt(3.0)
+        return math.sqrt(self._variance_between(0.0, 1.0))
 
     def _batch_times(self, t) -> list[float]:
         # Use double precision for the variance clock, also for float32 states.
@@ -88,6 +117,9 @@ class _WeightedPathBase:
         return torch.tensor(values, device=self.device, dtype=self.dtype)[:, None]
 
     def _variance_between(self, s: float, t: float) -> float:
+        """q(t) - q(s), from the given clock or gamma = a(1 - t)."""
+        if self.variance_clock is not None:
+            return float(self.variance_clock(s, t))
         # Factor the difference of cubes to remain accurate on tiny intervals.
         a, b = 1.0 - s, 1.0 - t
         return self.gamma_multiplier**2 * (t - s) * (a * a + a * b + b * b) / 3.0
@@ -119,9 +151,10 @@ class _WeightedPathBase:
 
 
 class WeightedBrownianPath(_WeightedPathBase):
-    """A batch of independent paths of ``M_t = integral a*(1-r) dW_r``.
+    """A batch of independent paths of ``M_t = C^{1/2} integral gamma_r dW_r``.
 
-    Each coordinate of the state has its own independent driver. Reusing this
+    With ``C = Id`` each coordinate of the state has its own independent
+    driver; otherwise ``Cov(M_t - M_s) = (q(t) - q(s)) C``. Reusing this
     object in a composed map preserves the same driving realization. Times
     may differ across batch entries. Path queries are random sampling
     operations and are intentionally not differentiable in query times.
@@ -137,10 +170,12 @@ class WeightedBrownianPath(_WeightedPathBase):
         x: torch.Tensor,
         gamma_multiplier: float = 1.0,
         generator: Optional[torch.Generator] = None,
+        covariance=None,
+        variance_clock: Optional[Callable] = None,
     ) -> None:
-        super().__init__(x, gamma_multiplier, generator)
+        super().__init__(x, gamma_multiplier, generator, covariance, variance_clock)
         zero = torch.zeros_like(x, requires_grad=False)
-        end = self._randn(x.shape) * (self.gamma_multiplier / math.sqrt(3.0))
+        end = self._randn(x.shape) * self._endpoint_std()
         self._times = [[0.0, 1.0] for _ in range(x.shape[0])]
         self._values = [[zero[b], end[b]] for b in range(x.shape[0])]
 
@@ -150,9 +185,17 @@ class WeightedBrownianPath(_WeightedPathBase):
         x: torch.Tensor,
         gamma_multiplier: float = 1.0,
         generator: Optional[torch.Generator] = None,
+        covariance=None,
+        variance_clock: Optional[Callable] = None,
     ) -> "WeightedBrownianPath":
         """Sample a driver with the batch, state shape, device and dtype of x."""
-        return cls(x, gamma_multiplier=gamma_multiplier, generator=generator)
+        return cls(
+            x,
+            gamma_multiplier=gamma_multiplier,
+            generator=generator,
+            covariance=covariance,
+            variance_clock=variance_clock,
+        )
 
     def _copy_cache(self, child) -> None:
         child._times = [times.copy() for times in self._times]
@@ -228,6 +271,9 @@ class KarhunenLoeveBrownianPath(_WeightedPathBase):
     2606.11156, Sec. 2.4), identical for every interval of one path.
 
     Caching, forking and seeding semantics match ``WeightedBrownianPath``.
+    The couplings ``m_n`` are closed forms for gamma = a(1 - t) only, so this
+    path has no ``variance_clock`` option. A ``covariance`` colours xi and R
+    alike, giving ``M = C^{1/2} M^white`` (features xi are then coloured too).
     """
 
     # Relative eigenvalue cutoff of the pseudo-inverse and relative variance
@@ -240,8 +286,9 @@ class KarhunenLoeveBrownianPath(_WeightedPathBase):
         gamma_multiplier: float = 1.0,
         generator: Optional[torch.Generator] = None,
         num_modes: int = 4,
+        covariance=None,
     ) -> None:
-        super().__init__(x, gamma_multiplier, generator)
+        super().__init__(x, gamma_multiplier, generator, covariance)
         if isinstance(num_modes, bool) or not isinstance(num_modes, int):
             raise TypeError("num_modes must be a positive integer")
         if num_modes < 1:
@@ -260,6 +307,7 @@ class KarhunenLoeveBrownianPath(_WeightedPathBase):
         gamma_multiplier: float = 1.0,
         generator: Optional[torch.Generator] = None,
         num_modes: int = 4,
+        covariance=None,
     ) -> "KarhunenLoeveBrownianPath":
         """Sample a driver with the batch, state shape, device and dtype of x."""
         return cls(
@@ -267,6 +315,7 @@ class KarhunenLoeveBrownianPath(_WeightedPathBase):
             gamma_multiplier=gamma_multiplier,
             generator=generator,
             num_modes=num_modes,
+            covariance=covariance,
         )
 
     def _copy_cache(self, child) -> None:
@@ -368,3 +417,51 @@ class KarhunenLoeveBrownianPath(_WeightedPathBase):
         if num_features != self.num_modes:
             raise ValueError("num_features must equal the number of KL modes")
         return self._xi.reshape(self.shape[0], -1, *self.shape[2:]).clone()
+
+
+def has_affine_gamma(interpolation) -> bool:
+    """Probe whether ``interpolation.gamma(t) == gamma_multiplier * (1 - t)``."""
+    amplitude = getattr(interpolation, "gamma_multiplier", None)
+    if amplitude is None:
+        return False
+    probe = torch.tensor([0.0, 0.25, 0.75, 1.0])
+    return torch.allclose(interpolation.gamma(probe), float(amplitude) * (1 - probe))
+
+
+def make_brownian_path(
+    interpolation,
+    x: torch.Tensor,
+    generator: Optional[torch.Generator] = None,
+    features: str = "local",
+    num_modes: int = 4,
+):
+    """Driver of an additive-noise interpolant, shaped like x.
+
+    Reads the noise covariance C and the variance clock from the
+    interpolation, so maps, trainers and solvers all use the same driver.
+    For gamma = a(1 - t) the path's built-in closed-form clock is used (it
+    equals ``interpolation.variance_clock``, and keeps white-noise draws
+    bit-identical); any other deterministic gamma uses
+    ``interpolation.variance_clock``. ``features="karhunen_loeve"`` requires
+    gamma = a(1 - t).
+    """
+    covariance = getattr(interpolation, "noise_covariance", None)
+    if covariance is not None and covariance.is_identity:
+        covariance = None
+    amplitude = float(getattr(interpolation, "gamma_multiplier", 1.0))
+    affine = has_affine_gamma(interpolation)
+    if features == "karhunen_loeve":
+        if not affine:
+            raise ValueError("Karhunen-Loeve paths require gamma(t)=a*(1-t).")
+        return KarhunenLoeveBrownianPath.sample_like(
+            x, amplitude, generator, num_modes=num_modes, covariance=covariance
+        )
+    if features != "local":
+        raise ValueError(f"Unknown Brownian path features {features!r}.")
+    return WeightedBrownianPath.sample_like(
+        x,
+        amplitude,
+        generator,
+        covariance=covariance,
+        variance_clock=None if affine else interpolation.variance_clock,
+    )
