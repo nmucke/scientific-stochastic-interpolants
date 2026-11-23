@@ -1,0 +1,17 @@
+[project]
+name = "river-lib"
+version = "0.1.0"
+description = "Frozen RIVER VQGAN autoencoder (f8_small) for 64x64 KTH frames"
+readme = "README.md"
+license = "GPL-3.0-only"
+requires-python = ">=3.13, <3.14"
+dependencies = [
+    "torch",
+]
+
+[tool.uv.build-backend]
+module-name = "river_lib"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"

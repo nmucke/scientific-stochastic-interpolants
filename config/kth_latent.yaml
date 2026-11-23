@@ -1,0 +1,64 @@
+# KTH human action video prediction (10 context frames -> 30 predicted) in the
+# latent space of the pretrained RIVER VQGAN (1x64x64 frame <-> 4x8x8 latent), as in
+# Chen et al., arXiv:2403.13724. The whole workflow:
+#
+#   uv pip install -e external_libs/river_lib      # the autoencoder (once)
+#   python scripts/download_kth.py                 # data/KTH/kth_64.npz
+#   python scripts/encode_kth.py                   # data/KTH/kth_64_latents.npz
+#   python scripts/train.py --config-name kth_latent experiment_tracking.name=my_run
+#   python scripts/test.py project=kth_latent name=my_run num_physical_steps=40
+#
+# Encoding needs data/KTH/vqvae.ckpt (link in scripts/encode_kth.py) and logs the
+# latent mean/std that are set in config/data/kth_latent.yaml. Choose the model with e.g. `models=ito_map`. Testing
+# forecasts one test clip in latent space and decodes it to video (figures/kth_latent/).
+defaults:
+  - data: kth_latent
+  - training: default
+  - models: stochastic_interpolant
+  - _self_
+
+experiment_tracking:
+  project: kth_latent
+
+path_channels: 16 # models=ito_map: num_path_features (4) x latent channels (4)
+
+# The 8x8 latent is downsampled twice (8 -> 4 -> 2), with attention at every level.
+backbone:
+  _target_: scisi.architectures.u_net.UNet
+  in_channels: 4
+  out_channels: 4
+  hidden_channels: [64, 128, 256]
+  cond_dim: 1 # scalar conditional input, typically pseudo time
+  cond_embedding_dim: 256
+  len_field_history: ${len_field_history}
+  field_cond_channels: null
+  pars_cond_dim: null
+  pars_cond_embedding_dim: null
+  multiplier: 2 # channel multiplier in the ConvNeXt blocks
+  num_blocks: 2 # ConvNeXt blocks per layer
+  dropout_rate: 0.1
+  padding: torch.nn.ReplicationPad2d # video frames are not periodic
+  attention_in_layers: [true, true, true] # last layer is the bottleneck
+  attention:
+    target: scisi.architectures.attention.SpatialAttention
+    pos_embedding_type: rotary
+    heads: 4
+    patch_size: 1 # 64, 16 and 4 tokens
+    dropout_rate: 0.1
+    qk_norm: true  # per-head RMSNorm on q and k; bounds attention logits by sqrt(head_dim)
+    embedding_dim: 512
+
+# Used by scisi.bin.main_map_model_test for map models; its metrics are computed
+# on the normalized latents, not on decoded frames. Each test clip has
+# test_data.test_clip_length = 40 frames: condition on frames 0-9, forecast 10-39.
+evaluation:
+  checkpoint_dir: ${oc.select:trainer.checkpoint_dir,null}
+  checkpoint_name: model.pth
+  output_dir: outputs/evaluation/${model_name}
+  num_steps: [1, 2, 4, 8]
+  ensemble_size: 16
+  origins: [10]
+  num_trajectories: 256
+  forecast_horizon: 30
+  seed: 20261007
+  device: cuda

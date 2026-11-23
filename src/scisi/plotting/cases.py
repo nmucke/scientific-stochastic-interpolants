@@ -27,17 +27,25 @@ def _plotting_times(num_steps: int) -> list[int]:
 
 
 def _animate(
-    true: torch.Tensor, predicted: torch.Tensor, file_name: str
+    true: torch.Tensor,
+    predicted: torch.Tensor,
+    file_name: str,
+    colormap: str = "viridis",
+    vmin: float | None = None,
+    vmax: float | None = None,
 ) -> None:
-    """Animate the true field [H, W, T] next to each ensemble member [B, H, W, T]."""
+    """Animate the true field [H, W, T] next to each ensemble member [B, H, W, T].
+
+    The color range defaults to the range of the true field.
+    """
     create_animation_from_tensors(
         [true] + [member for member in predicted],
         fps=10,
         file_name=file_name,
-        colormaps="viridis",
+        colormaps=colormap,
         titles=["True"] + [f"Ensemble member {i}" for i in range(len(predicted))],
-        vmin=np.min(true.numpy()),
-        vmax=np.max(true.numpy()),
+        vmin=np.min(true.numpy()) if vmin is None else vmin,
+        vmax=np.max(true.numpy()) if vmax is None else vmax,
         normalize=False,
     )
 
@@ -48,8 +56,14 @@ def _plot_snapshots(
     label: str,
     figure_path: str,
     show: bool,
+    colormap: str = "viridis",
+    vmin: float | None = None,
+    vmax: float | None = None,
 ) -> None:
-    """Plot true [H, W, T] and first ensemble member [H, W, T] at a few times."""
+    """Plot true [H, W, T] and first ensemble member [H, W, T] at a few times.
+
+    The color range defaults to the range of the true field.
+    """
     times = _plotting_times(true.shape[-1])
     plot_fields(
         fields=[[true[..., t] for t in times], [predicted[..., t] for t in times]],
@@ -57,10 +71,11 @@ def _plot_snapshots(
             [f"True {label} at t={t}" for t in times],
             [f"Predicted {label} at t={t}" for t in times],
         ],
-        vmin=np.min(true.numpy()),
-        vmax=np.max(true.numpy()),
+        vmin=np.min(true.numpy()) if vmin is None else vmin,
+        vmax=np.max(true.numpy()) if vmax is None else vmax,
         figsize=(15, 10),
         figure_path=figure_path,
+        imshow_kwargs={"cmap": colormap},
         show=show,
     )
 
@@ -179,12 +194,49 @@ def plot_knmi(true, predicted, test_dataset, figure_path, show=False) -> None:
     plt.show() if show else plt.close()
 
 
+def plot_kth(true, predicted, test_dataset, figure_path, show=False) -> None:
+    """Grayscale video [1, H, W, T] in [0, 1]: animation and snapshots."""
+    # The plot helpers draw with origin="lower"; flip the rows so videos are upright.
+    true, predicted = true[0].flip(0), predicted[:, 0].flip(1)
+    gray = {"colormap": "gray", "vmin": 0.0, "vmax": 1.0}
+    _animate(true, predicted, f"{figure_path}/video.mp4", **gray)
+    _plot_snapshots(
+        true, predicted[0], "frame", f"{figure_path}/video.png", show, **gray
+    )
+
+
+def plot_kth_latent(true, predicted, test_dataset, figure_path, show=False) -> None:
+    """Decode the latent trajectories [4, 8, 8, T] to video and plot it as plot_kth.
+
+    The true video is the decoded true latents, i.e. the autoencoder reconstruction.
+    """
+    from river_lib import KTHAutoencoder  # optional dependency, only needed here
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    autoencoder = KTHAutoencoder(ckpt_path=f"{test_dataset.path}/vqvae.ckpt").to(device)
+
+    def decode(latents: torch.Tensor) -> torch.Tensor:
+        """Latents [C, h, w, T] -> frames [1, H, W, T] in [0, 1]."""
+        with torch.no_grad():
+            frames = autoencoder.decode(latents.permute(3, 0, 1, 2).to(device))
+        return frames.permute(1, 2, 3, 0).cpu()
+
+    true = decode(true)
+    predicted = torch.stack([decode(member) for member in predicted])
+    forecast = slice(test_dataset.len_field_history, None)  # skip the given frames
+    rmse = (true[..., forecast] - predicted[0, ..., forecast]).pow(2).mean().sqrt()
+    logger.info(f"RMSE of the decoded first ensemble member: {rmse:.4f}")
+    plot_kth(true, predicted, test_dataset, figure_path, show)
+
+
 CASE_PLOTTERS: dict[str, Callable] = {
     "stochastic_navier_stokes": plot_stochastic_navier_stokes,
     "udales": plot_udales,
     "xie_and_castro": plot_xie_and_castro,
     "knmi": plot_knmi,
     "weather": plot_generic,
+    "kth": plot_kth,
+    "kth_latent": plot_kth_latent,
 }
 
 

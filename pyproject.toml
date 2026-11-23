@@ -66,6 +66,7 @@ conflicts = [
 members = [
     "external_libs/torch_cfd_lib",
     "external_libs/jax_cfd_lib",
+    "external_libs/river_lib",
 ]
 
 [tool.uv.build-backend]
