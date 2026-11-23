@@ -66,7 +66,7 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
     run $stage
     out=$ARR/smoke/long_$SLURM_JOB_ID
     $PY $EXP/long_horizon_ns.py --checkpoint-dir $SI --output $out --steps 4 --horizon 3 --ensemble 2 \
-      --trajectories 160 --origin 5 --raw-every 1 --raw-dense 3 --checkpoint-every 1 --si-noise exact --num-threads 2
+      --trajectories 160 --origin 5 --raw-every 1 --raw-dense 5 --checkpoint-every 1 --si-noise exact --num-threads 2
     $PY $EXP/long_horizon_ns.py --checkpoint-dir $SI --output $out --steps 4 --horizon 5 --ensemble 2 \
       --trajectories 160 --origin 5 --raw-every 1 --raw-dense 5 --checkpoint-every 1 --si-noise exact --num-threads 2 --resume
     $PY $EXP/rollout_diagnostics.py long --checkpoint-dir $SI --run-dir $out --data-cache $CACHE --burn-in 1 --output $out/long.json ;;
