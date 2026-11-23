@@ -45,3 +45,13 @@ experiments.
 - `verify_confirmation.py`: audits the old frozen three-seed confirmation against `results/frozen_protocol.json` (now in `archive/results/`). It applies only to that protocol and would need a new protocol file to be useful. Kept only for `tests/test_verify_confirmation.py`.
 
 Archived to `research/ito_maps/archive/experiments/`: `run_confirmation.sh`, the exact frozen confirmation run, and `rebuild_confirmation_report.sh`, which rebuilt the old `final_report`.
+
+## Phase 0 diagnostics (HANDOVER §3; validation split 160–179 only)
+Launcher: `slurm_phase0/phase0.sbatch` (staged, resumable; `STAGES=...`). Small JSON/figures go to `results/phase0/`, large arrays to `/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/phase0/`. The shared `.venv` (torch 2.15+cu132) has no V100 (sm_70) kernels, so these jobs use `gpu-a100-small`.
+- `phase0_common.py`: checkpoint loading and description, trajectory cache (`python phase0_common.py --checkpoint-dir ... --cache-dir ...` reads `data.npz` once), SI steppers (Euler–Maruyama as the existing solver, or Euler drift with exact integrated noise), `SharedBrownianPath`/`ZeroFeaturePath`, and `sample_next` for solver and map interfaces alike.
+- `uncertainty_spectrum.py` (D1, the gate): per-mode power of `y − c` (train and validation), the SI-128 ensemble anomaly (EM and exact noise) and the white level `a²/3`, all in normalised units with an orthonormal rfft2. Shell tables, trajectory-bootstrap bands, the gate verdict, and an `.npz` with the full 2D spectra (format in the JSON; first covariance estimate for WP1).
+- `ns_budget.py`: NS enstrophy/energy instances of `scisi.metrics.QuadraticBudget` from `../configs/ns_budget.yaml`, and the archive closure check (train and validation).
+- `rollout_diagnostics.py`: `short` = D5 and D6 over leads 1–10 (variance/climatology, member–member vs member–truth pattern correlation, injected vs propagated spread, budget residual); `long` = D6 by lead and D7 stationary statistics from a `long_horizon_ns.py --raw-every 1` run, against the validation data's whole-trajectory bootstrap band.
+- `map_spread_diagnostics.py` (D2/D3/D4, for retrained maps): spread spectrum vs the D1 SI reference, path-feature ablation, noise-leak regression. Budgets run finest-first on one path object, so all budgets share one Brownian realisation (checked).
+- `plot_phase0.py`: figures from the JSON files only.
+- `long_horizon_ns.py` now reads its config itself (`load_teacher` returns only the model) and takes `--si-noise exact`. `compare.py`, `plot_forecasts.py` and `ns_path_compression.py` still unpack `load_teacher` as a pair and will fail until fixed.
