@@ -324,3 +324,69 @@ Copy elsewhere and check: `rsync -aH --partial results/ <host>:<dir>/results/`, 
 `urban_foreign_ic_1p5_every3/` that have been dead since Aug 2026 (they point to a path on another machine;
 original paper results).
 
+
+## 14. Forecast correction on the ORIGINAL NS case (true IC, `tab:ns_accuracy` setting)
+
+**Settings:** the manuscript NS case: true IC (no `ic_index`), num_physical_steps=20 (5 history + 15 DA),
+M=100, E=64, seed 0, traj 10–14, the 4 scenarios, divergence guard 10, states traj 11; Ours
+(SI-SDE / DM-SDE / FM-ODE) × shared Jacobian (`inflated_shared`, refresh every 10, λ from
+`configs/method/*.yaml` = `run_ns_grid.sh` group `ours_shared_k10`); **no KL** (user, 2026-11-16).
+FC: online Q̂, `forecast_num_steps=25`, gain 1, no cap, diagnostics on; two campaigns:
+
+| Campaign | FC tag | Slurm | Status |
+|---|---|---|---|
+| localisation radius 8 (defaults) | `fc25_70a3134d` | 1334067 (60 cells, V100, %16; cells 47–59 rebalanced, see below) | **complete** 2026-11-17 |
+| localisation radius 20 | `fc25_8797d2ae` | 1334068 (60 cells, V100, %16) | **complete** 2026-11-17 |
+
+Smokes (1 cell, NP=7, MIG): 1334053 (r=8), 1334054 (r=20) → `results_ns_trueic_fc_smoke/`.
+**Launcher:** `PE/slurm_trueic_fc/` (`RADIUS=8|20 bash submit.sh`), run from the frozen worktree
+`SSI/wt_trueic_fc_be6fa0a` (detached at `be6fa0a`; `run_task.sh` pins PYTHONPATH to it).
+**Results (new folder, copy as one unit):** `/scratch/ntmucke/scientific-stochastic-interpolants/paper_experiments/results_ns_trueic_fc/navier_stokes/`
+(metrics, per_step, states/traj11, forecast_correction diagnostics, logs, manifests, run_config.txt).
+File stems `<scen>__M100__traj<N>__ours_shared_jac10__<fc_tag>__<si_sde|dm_sde|fm_ode>.csv`; the plain
+counterparts are the manuscript files `results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_shared_jac10.csv`.
+
+### 14b. More baselines on the original NS case (launched 2026-11-16)
+
+Same true-IC setting as §14 (NP=20, E=64, traj 10–14, 4 scenarios, guard 10, states traj 11, no KL),
+run from the frozen worktree `SSI/wt_trueic_more_a681003` (commit `a681003`).
+
+| Campaign | Settings | Launcher | Slurm | Results (new folder) |
+|---|---|---|---|---|
+| TMPD (plain, row_sum), 20 cells | as §12 NS TMPD, `+posterior_batch_size=16`, `likelihood_mode=dps_jacobian_free` | `slurm_tmpd/ns_trueic/submit.sh` with `NO_KL=1` (MIG defaults, 2 cells/job; time limit lowered to 2:30) | 1340840 (MIG, `afterany:1336446`; the V100 array 1336447 was cancelled before any cell ran) | `paper_experiments/results_ns_trueic_tmpd/navier_stokes/` |
+| SI-SDE / FM-ODE prior + EnKF, 40 cells | unguided prior forecast (M=100), EnKF analysis: perturbed obs, inflation 1.0, **Gaspari–Cohn r=20 on all four scenarios** (super-res localised via the 948fa40 block centroids; the manuscript EnKF is global on super-res) | `slurm_trueic_prior_enkf/submit.sh` | 1336446 (MIG, 2 cells/job, %1) | `paper_experiments/results_ns_trueic_prior_enkf_r20/navier_stokes/` |
+
+Scheduling changes 2026-11-16: time limits lowered on the queued tasks (FC 1:30, from the 22–45 min r=8 cells; prior+EnKF 2:30); the pending FC r=8 tasks (1334067_16–59) were moved to Slurm account `innovation` (user decision; `research-ceg-gse` fair-share had dropped to 0.001). `innovation` allows 1 running job per user, so on 2026-11-17 tasks 41–59 were moved back to `research-ceg-gse` (tasks 16–40 ran under `innovation`).
+Rebalancing of FC r=8 (2026-11-17, same worktree/manifest, one place per cell): cells 50–53 → V100 `innovation` array 1343980; 47–49 → `innovation` array 1346739; 54–59 → MIG pairs 1343977/1343978 (`results_ns_trueic_fc/navier_stokes/slurm/mig_pair.sbatch`), of which 54–55 were then moved to `innovation` array 1347880 (1343979 cancelled). All logged in that folder's `run_config.txt`.
+
+**Status 2026-11-17: all §14/§14b campaigns complete, 0 failed cells** (FC 120/120, TMPD 20/20, prior+EnKF 40/40).
+**Findings (FC, paired over all 5 trajectories, vs the manuscript's plain shared_jac10 cells):** FC worsens every
+method × scenario at both radii (RMSE, CRPS and |1−SS|); r=20 is worse than r=8 in 9/12 cells on RMSE (exceptions:
+all three 16² cells, slightly better) and in all 12 on spread–skill; the largest loss is at sparse 5%
+(SI-SDE RMSE 0.173 → 0.356 (r=8) / 0.398 (r=20)). No divergences.
+
+
+### 14c. FC with the Jacobian-free likelihood on the original NS case (launched 2026-11-17)
+
+As §14 but `likelihood_mode=dps_jacobian_free` (the manuscript's `ours_jacfree` rows), **r=20 only**
+(`fc25_8797d2ae`), 60 cells, results in the same folder `results_ns_trueic_fc/navier_stokes/`
+(stems `<scen>__M100__traj<N>__ours_jacfree__fc25_8797d2ae__<method>.csv`; plain counterparts
+`results/navier_stokes/metrics/<scen>__M100__traj<N>__ours_jacfree.csv`). Frozen worktree
+`SSI/wt_trueic_jacfree_47498c8`; manifest `manifests/jacfree_fc25_8797d2ae_20261117_170452.tsv`, split:
+cells 0–35 V100 `research-ceg-gse` (1350433), 36–45 V100 `innovation` (1350434), 46–59 MIG pairs (1350435).
+Rebalanced while `research-ceg-gse` waited on priority: 24–35 → `innovation` 1351039, 12–23 → MIG 1351040,
+0–11 → `innovation` 1351360 (1350433 cancelled before any of its cells ran). **Complete 2026-11-18: 60/60, 0 failed.**
+(Its `run_config.txt` summary line says "Ours x shared_jac10" — a wording slip in the launcher, fixed after
+launch; the cell arguments and the leading `variant=jacfree` are correct.)
+
+## 15. NS poor (wrong) IC: true-solver EnKF with E=1000, r=20 (launched 2026-11-18)
+
+Wrong-IC grid settings (§1: ic_index=15, NP=40, traj 10–14, the 4 scenarios, guard 10, states traj 11, no KL);
+EnKF baseline (perturbed obs, inflation 1.0) with **E=1000** and Gaspari–Cohn **r=20 on all four scenarios**
+(super-res via the 948fa40 block centroids). Code: the frozen copy `code_ns_wrong_ic` (as the main-grid EnKF
+cells and §4); only E (and, on super-res, the localisation) differ. GPU only (user: CPU nodes not before
+21 Nov). Launcher `PE/slurm_enkf_e1000/` (`run_cell.sh` copied into the results folder at submit).
+Cells 0–9 (16², 32²) V100 `innovation` 1355752; cells 10–19 (sparse 5%, 1.5625%) V100 `research-ceg-gse` 1355753.
+**Cancelled 2026-11-18 by the user before any cell started** (no time to wait for the queue); no results.
+Results: `paper_experiments/results_wrong_ic_np40_enkf_r20_e1000/navier_stokes/`
+(`<scen>__traj<N>__classical__enkf_r20_E1000.csv`; the `E` column is 1000).
