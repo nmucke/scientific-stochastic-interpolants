@@ -336,13 +336,20 @@ class MultistepRunner(AnalyticalRunner):
         return bool(self._case_get("group_only", False))
 
     @property
+    def tmpd_only(self) -> bool:
+        """Run only TMPD (opt-in baseline), for a cell added to a finished grid."""
+        return bool(self._case_get("tmpd_only", False))
+
+    @property
     def added_cell(self) -> bool:
         """A cell joined to a finished grid: it holds no reference rows."""
-        return self.surge_only or self.fc_only or self.group_only
+        return self.surge_only or self.fc_only or self.group_only or self.tmpd_only
 
     def methods(self) -> Sequence[Method]:
-        if sum((self.surge_only, self.fc_only, self.group_only)) > 1:
-            raise ValueError("surge_only, fc_only and group_only are separate cells")
+        if sum((self.surge_only, self.fc_only, self.group_only, self.tmpd_only)) > 1:
+            raise ValueError("surge_only, fc_only, group_only and tmpd_only are separate cells")
+        if self.tmpd_only:
+            return (Method.TMPD,)
         if self.surge_only:
             return SURGE_WRAPPED
         if self.fc_only:

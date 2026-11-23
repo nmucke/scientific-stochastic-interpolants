@@ -1,0 +1,4 @@
+# Lorenz 96 with linear observations and a longer time between observations
+# (problem_linear_long: of configs/case/lorenz96.yaml). Selects the
+# `methods_linear_long:` block and results/lorenz96/linear_long/.
+name: lorenz96_linear_long

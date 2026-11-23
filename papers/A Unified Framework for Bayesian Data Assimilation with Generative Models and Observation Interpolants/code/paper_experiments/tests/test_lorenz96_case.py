@@ -927,3 +927,63 @@ def test_a_disabled_correction_cell_needs_a_tag(tiny_case):
     driver.check_correction_label("si_sde", off, "")
     with pytest.raises(ValueError, match="enabled=false"):
         driver.check_correction_label("oracle_fc", off, "")
+
+
+@pytest.mark.parametrize("name", ["enkf", "si_sde"])
+def test_deferred_scoring_then_rescore_matches_inline_scoring(name, tiny_case, monkeypatch):
+    """``defer_scoring`` runs without touching the reference and writes only the
+    ensembles (+ meta); ``rescore`` later writes the files inline scoring writes,
+    with the same values up to the float32 ensembles file."""
+    inline = driver.evaluate_cell(name, 0, tiny_case, allow_other_m=True, write_metrics=True)
+    inline_sequences = json.loads(
+        driver.cell_file("per_sequence", name, 0, tiny_case).with_suffix(".json").read_text()
+    )
+    stored = torch.load(
+        driver.results_dir("linear") / "ensembles"
+        / f"{driver.cell_label(name, '', inline[0].M)}__seed0.pt"
+    )
+    for kind in ("metrics", "per_step"):
+        driver.cell_file(kind, name, 0, tiny_case).unlink()
+    driver.cell_file("per_sequence", name, 0, tiny_case).with_suffix(".json").unlink()
+
+    def no_reference(*args, **kwargs):
+        raise AssertionError("a deferred run must not read the reference")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(driver, "load_reference", no_reference)
+        deferred = driver.evaluate_cell(
+            name, 0, tiny_case, allow_other_m=True, write_metrics=True, defer_scoring=True
+        )
+    assert deferred == []
+    for kind in ("metrics", "per_step"):
+        assert not driver.cell_file(kind, name, 0, tiny_case).exists()
+    ensembles = driver.results_dir("linear") / "ensembles" / f"{driver.cell_label(name, '', inline[0].M)}__seed0.pt"
+    assert torch.equal(torch.load(ensembles), stored)
+    assert ensembles.with_suffix(".meta.pt").exists()
+
+    rescored = driver.evaluate_cell(
+        name, 0, tiny_case, allow_other_m=True, write_metrics=True, rescore=True
+    )
+    for kind in ("metrics", "per_step"):
+        assert driver.cell_file(kind, name, 0, tiny_case).exists()
+    sequences = json.loads(
+        driver.cell_file("per_sequence", name, 0, tiny_case).with_suffix(".json").read_text()
+    )
+    assert sequences.keys() == inline_sequences.keys()
+    by_metric = {r.metric: r for r in inline}
+    assert {r.metric for r in rescored} == set(by_metric)
+    for record in rescored:
+        if record.metric == Metric.SECONDS.value:  # timed in the deferred run
+            continue
+        assert record.value == pytest.approx(by_metric[record.metric].value, rel=1e-4, abs=1e-6)
+        assert (record.E, record.M, record.variant) == (
+            by_metric[record.metric].E, by_metric[record.metric].M, by_metric[record.metric].variant
+        )
+
+    # Rescoring with other settings than the deferred run's is refused.
+    if name == "enkf":
+        tiny_case.methods.enkf.inflation = 1.05
+    else:
+        tiny_case.methods.si_sde.jacobian_damping = 0.5
+    with pytest.raises(ValueError, match="rerun the cell"):
+        driver.evaluate_cell(name, 0, tiny_case, allow_other_m=True, rescore=True)

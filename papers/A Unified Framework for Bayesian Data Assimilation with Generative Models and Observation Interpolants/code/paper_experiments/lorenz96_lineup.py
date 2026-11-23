@@ -1,7 +1,9 @@
 """The Lorenz 96 lineup: the one place that names every cell and the shared constants.
 
-Two sweeps share every script: ``linear`` (h = every fourth site) and ``arctan``
-(h = arctan of the same sites). Each has its own result root
+Four sweeps share every script: ``linear`` (h = every fourth site), ``arctan``
+(h = arctan of the same sites), ``square`` (h = (L x)^2, elementwise, on the same
+sites: sign-blind, so the posterior can be bimodal) and ``abs`` (h = |L x|,
+elementwise: sign-blind as well). Each has its own result root
 ``results/lorenz96/<obs>/``, its own tidy ``scenario`` string and its own settings
 block of ``configs/case/lorenz96.yaml`` (:data:`CONFIG_BLOCK`).
 
@@ -10,8 +12,8 @@ variant), the table group, the variant and legend labels, the line style and
 whether the cell writes the SMC metrics. ``driver.CELLS`` is derived from it, and
 the run script takes its cell lists from it::
 
-    python lorenz96_lineup.py cells generative [linear|arctan]  # every M of M_VALUES
-    python lorenz96_lineup.py cells fixed [linear|arctan]       # once per seed
+    python lorenz96_lineup.py cells generative [linear|arctan|square|abs]  # every M
+    python lorenz96_lineup.py cells fixed [linear|arctan|square|abs]       # once per seed
     python lorenz96_lineup.py m-values           # M_VALUES
 
 Pure stdlib (no torch), like ``results_schema``.
@@ -33,14 +35,19 @@ if str(_here) not in sys.path:
 from results_schema import Method, Scenario  # noqa: E402
 
 CASE = "lorenz96"
-OBS_CHOICES: tuple[str, ...] = ("linear", "arctan")
+OBS_CHOICES: tuple[str, ...] = ("linear", "arctan", "square", "abs")
 # Tidy ``scenario`` per sweep (results_schema.Scenario values).
 SCENARIO_OF: dict[str, str] = {
     "linear": Scenario.LORENZ96.value,
     "arctan": Scenario.LORENZ96_ARCTAN.value,
+    "square": Scenario.LORENZ96_SQUARE.value,
+    "abs": Scenario.LORENZ96_ABS.value,
 }
 # Settings block of each sweep in configs/case/lorenz96.yaml.
-CONFIG_BLOCK: dict[str, str] = {"linear": "methods", "arctan": "methods_arctan"}
+CONFIG_BLOCK: dict[str, str] = {
+    "linear": "methods", "arctan": "methods_arctan", "square": "methods_square",
+    "abs": "methods_abs",
+}
 
 # Per-step and per-sequence metrics written by the SMC cells only (the six SURGE
 # cells and the particle filters); every other row leaves these table columns blank.
@@ -71,8 +78,8 @@ class Row:
     smc: bool = False  # writes the smc_* metrics
     legend: str = ""  # figure legend; "" means the method
     # Sweeps the cell runs in. TMPD supports a linear h only: it has no
-    # ``methods_arctan`` block, is not in the arctan run lists and the driver
-    # refuses it there (its rows of the arctan tables are simply absent).
+    # ``methods_arctan`` / ``methods_square`` / ``methods_abs`` block, is not in the nonlinear run
+    # lists and the driver refuses it there (its rows of those tables are absent).
     sweeps: tuple[str, ...] = OBS_CHOICES
 
     def runs_on(self, obs: str) -> bool:
@@ -319,7 +326,7 @@ def main(argv: list[str]) -> None:
         return
     if len(argv) not in (2, 3) or argv[0] != "cells":
         raise SystemExit(
-            "usage: lorenz96_lineup.py cells generative|fixed [linear|arctan] | m-values"
+            "usage: lorenz96_lineup.py cells generative|fixed [linear|arctan|square|abs] | m-values"
         )
     print(" ".join(run_cells(*argv[1:])))
 

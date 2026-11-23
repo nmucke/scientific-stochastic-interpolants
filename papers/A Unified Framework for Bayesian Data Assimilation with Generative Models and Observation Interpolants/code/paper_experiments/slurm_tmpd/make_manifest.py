@@ -8,7 +8,7 @@ i runs line i+1 (or lines i*PACK+1 .. (i+1)*PACK, see run_task.sh). Tab-separate
 
 Grids (defaults = the settings of the grid TMPD is compared against):
 
-* ``ns_wrong_ic``: slurm_wrong_ic/ (REBUTTAL_EXPERIMENTS.md section 1): ic_index 15,
+* ``ns_wrong_ic``: slurm_wrong_ic/ (rebuttal/docs/REBUTTAL_EXPERIMENTS.md section 1): ic_index 15,
   num_physical_steps 40, M 100, E 64, traj 10-14, 4 scenarios, skip KL, states for
   traj 11. File names as that grid's baseline cells:
   ``<scen>__M100__traj<N>__baselines__tmpd.csv``, so aggregate_ns.py picks them up.

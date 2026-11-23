@@ -15,6 +15,8 @@ from scisi.particle_filter.bootstrap import (
     ImportanceOneStepOracle,
     OneStepPosteriorOracle,
     selection_indices,
+    abs_kick_branches,
+    square_kick_modes,
 )
 from scisi.particle_filter.enkf import EnsembleKalmanFilter, periodic_taper
 
@@ -67,15 +69,18 @@ def kalman_filter(A, q, H, r, m0, P0, observations):
     return torch.stack(means), torch.stack(covs), torch.tensor(log_evidence)
 
 
-def grid_filter(a, q, g, r, m0, p0, observations, lo=-12.0, hi=12.0, n=6001):
-    """Scalar x' = a x + N(0, q), y = g(x) + N(0, r), by quadrature on a grid."""
+def grid_filter(a, q, g, r, m0, p0, observations, lo=-12.0, hi=12.0, n=6001,
+                positive=False):
+    """Scalar x' = a x + N(0, q), y = g(x) + N(0, r), by quadrature on a grid.
+
+    ``positive``: also return the filtering mass P(x > 0) per step."""
     x = torch.linspace(lo, hi, n, dtype=torch.float64)
     dx = float(x[1] - x[0])
     density = torch.exp(-0.5 * (x - m0) ** 2 / p0) / math.sqrt(2 * math.pi * p0)
     kernel = torch.exp(-0.5 * (x[:, None] - a * x[None, :]) ** 2 / q) / math.sqrt(
         2 * math.pi * q
     )
-    means, variances, log_evidence = [], [], []
+    means, variances, log_evidence, masses = [], [], [], []
     for y in observations:
         predicted = kernel @ density * dx
         likelihood = torch.exp(-0.5 * (y - g(x)[0]) ** 2 / r) / math.sqrt(2 * math.pi * r)
@@ -86,6 +91,14 @@ def grid_filter(a, q, g, r, m0, p0, observations, lo=-12.0, hi=12.0, n=6001):
         means.append(mean)
         variances.append(float(((x - mean) ** 2 * density).sum() * dx))
         log_evidence.append(math.log(evidence))
+        masses.append(float(density[x > 0].sum() * dx))
+    if positive:
+        return (
+            torch.tensor(means)[:, None],
+            torch.tensor(variances)[:, None],
+            torch.tensor(log_evidence),
+            torch.tensor(masses),
+        )
     return (
         torch.tensor(means)[:, None],
         torch.tensor(variances)[:, None],
@@ -177,6 +190,165 @@ def test_nonlinear_observation_filter_matches_grid_filter(proposal):
         [x.log_evidence.sum() for x in runs], log_evidence.sum(), "log evidence", 3.0
     )
     assert (runs[0].mean - mean).abs().max() < 0.03
+
+
+def square(w):
+    return w * w, 2.0 * w
+
+
+def test_square_kick_modes_are_the_minima_of_the_kick_posterior():
+    gen = torch.Generator().manual_seed(1)
+    z = 4.0 * torch.randn(300, generator=gen, dtype=torch.float64)
+    y = 20.0 * torch.randn(300, generator=gen, dtype=torch.float64) + 15.0
+    q, r = 1.0, 4.0
+    hi, lo, c_hi, c_lo = square_kick_modes(z, y, q, r)
+    xs = torch.linspace(-15, 15, 60001, dtype=torch.float64)
+    f = (xs - z[:, None]) ** 2 / (2 * q) + (y[:, None] - xs**2) ** 2 / (2 * r)
+    best = xs[f.argmin(1)]
+    assert torch.minimum((best - hi).abs(), (best - lo).abs()).max() < 1e-3
+    assert (c_hi > 0).all() and (c_lo > 0).all() and (hi >= lo).all()
+
+
+def test_square_mixture_matches_the_grid_filter_on_a_bimodal_posterior():
+    """Sign-blind y = x^2 + e with the state near 0: the posterior is bimodal."""
+    a, q, r = 0.9, 0.5, 0.4
+    gen = torch.Generator().manual_seed(7)
+    x, observations = torch.tensor(1.5, dtype=torch.float64), []
+    for _ in range(8):
+        x = a * x + q**0.5 * torch.randn((), generator=gen, dtype=torch.float64)
+        observations.append(x * x + r**0.5 * torch.randn((), generator=gen, dtype=torch.float64))
+    observations = torch.stack(observations)[:, None]
+    mean, variance, log_evidence = grid_filter(a, q, square, r, 0.0, 2.0, observations[:, 0])
+    H = torch.ones(1, 1, dtype=torch.float64)
+    model = LinearModel(torch.tensor([[a]], dtype=torch.float64), q)
+    runs = replicates(H, r, "square_mixture", model, torch.tensor([0.0], dtype=torch.float64),
+                      2.0, observations, 50_000, 12, square)
+    assert_unbiased([x.mean for x in runs], mean, "mean")
+    assert_unbiased([x.variance for x in runs], variance, "variance")
+    assert_unbiased(
+        [x.log_evidence.sum() for x in runs], log_evidence.sum(), "log evidence", 3.0
+    )
+    # Both modes are present (prior mean 0, symmetric) with their masses.
+    positive = torch.stack([x.positive_fraction for x in runs]).mean(0)[:, 0]
+    assert ((positive > 0.2) & (positive < 0.8)).all()
+
+
+def test_square_mixture_refuses_another_nonlinearity():
+    H = torch.ones(1, 1, dtype=torch.float64)
+    with pytest.raises(ValueError, match="w\\^2"):
+        BootstrapParticleFilter(H, 1.0, proposal="square_mixture", obs_nonlinearity=arctan(1.0))
+
+
+def absolute(w):
+    return w.abs(), w.sign()
+
+
+def kick_posterior_on_grid(z, y, q, r, xs):
+    """Unnormalised N(x; z, q) N(y; |x|, r) on the grid ``xs``, per row of z / y."""
+    return torch.exp(
+        -0.5 * (xs - z[:, None]) ** 2 / q - 0.5 * (y[:, None] - xs.abs()) ** 2 / r
+    ) / (2 * math.pi * math.sqrt(q * r))
+
+
+def test_abs_kick_branches_are_the_exact_kick_posterior():
+    """Predictive p(y | z) and sign mass against adaptive quadrature, incl. y < 0."""
+    mpmath = pytest.importorskip("mpmath")
+    mpmath.mp.dps = 30
+    gen = torch.Generator().manual_seed(2)
+    z = 5.0 * torch.randn(60, generator=gen, dtype=torch.float64)
+    y = 4.0 * torch.randn(60, generator=gen, dtype=torch.float64) + 2.0
+    q, r = 0.2, 4.0
+    _, _, _, log_pos, log_neg = abs_kick_branches(z, y, q, r)
+    for i in range(z.numel()):
+        zi, yi = float(z[i]), float(y[i])
+
+        def f(x):
+            return mpmath.exp(-((x - zi) ** 2) / (2 * q) - (yi - abs(x)) ** 2 / (2 * r)) / (
+                2 * mpmath.pi * mpmath.sqrt(q * r)
+            )
+
+        pos = mpmath.quad(f, [0, zi if zi > 0 else 1, mpmath.inf])
+        neg = mpmath.quad(f, [-mpmath.inf, zi if zi < 0 else -1, 0])
+        assert float(torch.logaddexp(log_pos[i], log_neg[i])) == pytest.approx(
+            float(mpmath.log(pos + neg)), abs=1e-9
+        )
+        assert float(torch.sigmoid(log_pos[i] - log_neg[i])) == pytest.approx(
+            float(pos / (pos + neg)), abs=1e-9
+        )
+
+
+@pytest.mark.parametrize(
+    "z, y",
+    [(0.0, 3.0), (0.3, 1.0), (-2.0, 2.5), (6.0, 0.5), (0.1, -3.0), (-9.0, 9.5), (-20.0, -8.0)],
+)
+def test_abs_optimal_kick_draws_the_exact_kick_posterior(z, y):
+    """One kick of many copies of one forecast ``z``: mean, variance and sign mass
+    of the draws against quadrature (both sign branches, deep truncation tails)."""
+    q, r, n = 0.2, 4.0, 400_000
+    H = torch.ones(1, 1, dtype=torch.float64)
+    pf = BootstrapParticleFilter(H, r, proposal="abs_optimal", obs_nonlinearity=absolute)
+    gen = torch.Generator().manual_seed(11)
+    draws = pf._abs_kick(torch.full((1, n), z, dtype=torch.float64),
+                         torch.tensor([y], dtype=torch.float64), q, gen)[0]
+    xs = torch.linspace(z - 15, z + 15, 300_001, dtype=torch.float64)
+    density = kick_posterior_on_grid(torch.tensor([z]), torch.tensor([y]), q, r, xs)[0]
+    density = density / density.sum()
+    mean = float((xs * density).sum())
+    var = float(((xs - mean) ** 2 * density).sum())
+    mass = float(density[xs > 0].sum())
+    assert torch.isfinite(draws).all()
+    assert abs(float(draws.mean()) - mean) < 5 * math.sqrt(var / n) + 1e-6
+    assert abs(float(draws.var()) / var - 1.0) < 0.02
+    assert abs(float((draws > 0).double().mean()) - mass) < 5 * math.sqrt(
+        mass * (1 - mass) / n
+    ) + 1e-6
+
+
+def test_abs_optimal_matches_the_grid_filter_on_a_bimodal_posterior():
+    """Sign-blind y = |x| + e: bimodal filtering posteriors, unequal mode masses."""
+    a, q, r = 0.9, 0.5, 0.3
+    gen = torch.Generator().manual_seed(7)
+    x, observations = torch.tensor(1.5, dtype=torch.float64), []
+    for _ in range(8):
+        x = a * x + q**0.5 * torch.randn((), generator=gen, dtype=torch.float64)
+        observations.append(x.abs() + r**0.5 * torch.randn((), generator=gen, dtype=torch.float64))
+    observations = torch.stack(observations)[:, None]
+    mean, variance, log_evidence, mass = grid_filter(
+        a, q, absolute, r, 0.6, 1.0, observations[:, 0], positive=True
+    )
+    H = torch.ones(1, 1, dtype=torch.float64)
+    model = LinearModel(torch.tensor([[a]], dtype=torch.float64), q)
+    runs = replicates(H, r, "abs_optimal", model, torch.tensor([0.6], dtype=torch.float64),
+                      1.0, observations, 50_000, 12, absolute)
+    assert_unbiased([x.mean for x in runs], mean, "mean")
+    assert_unbiased([x.variance for x in runs], variance, "variance")
+    assert_unbiased(
+        [x.log_evidence.sum() for x in runs], log_evidence.sum(), "log evidence", 3.0
+    )
+    assert_unbiased([x.positive_fraction[:, 0] for x in runs], mass, "P(x > 0)")
+    # Genuinely bimodal: the minority sign holds real mass at most steps.
+    assert (torch.minimum(mass, 1 - mass) > 0.1).sum() >= 4
+    # Fully adapted in 1D: the weight is p(y | z), so the ESS stays high.
+    assert min(float(x.ess_fraction.min()) for x in runs) > 0.3
+
+
+def test_abs_optimal_refuses_another_nonlinearity():
+    H = torch.ones(1, 1, dtype=torch.float64)
+    with pytest.raises(ValueError, match="\\|w\\|"):
+        BootstrapParticleFilter(H, 1.0, proposal="abs_optimal", obs_nonlinearity=square)
+
+
+def test_final_samples_reuse_the_last_permutation(linear_problem):
+    A, q, H, r, m0, _, observations = linear_problem
+    runs = []
+    for final in (0, 3000):
+        gen = torch.Generator().manual_seed(4)
+        particles = m0[:, None] + torch.randn(4, 5000, generator=gen, dtype=torch.float64)
+        pf = BootstrapParticleFilter(H, r, num_saved_samples=1000, final_samples=final)
+        runs.append(pf.run(LinearModel(A, q), particles, observations, gen))
+    assert runs[0].final_samples is None and runs[1].final_samples.shape == (3000, 4)
+    torch.testing.assert_close(runs[0].samples, runs[1].samples, rtol=0, atol=0)
+    torch.testing.assert_close(runs[1].final_samples[:1000], runs[1].samples[-1], rtol=0, atol=0)
 
 
 def test_optimal_proposal_refuses_a_nonlinearity_and_linearised_needs_a_selection():

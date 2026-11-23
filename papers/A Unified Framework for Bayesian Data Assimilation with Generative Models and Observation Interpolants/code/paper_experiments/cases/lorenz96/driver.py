@@ -23,10 +23,12 @@ every output path (``<cell>-<tag>``) and into the tidy ``variant``
 (``<variant>_<tag>``), so a sweep never overwrites, or is aggregated as, the
 default cell.
 
-``--obs {linear,arctan}`` (before the subcommand, default ``linear``) selects the
-observation operator (``observations:`` in ``configs/case/lorenz96.yaml``) and with
-it the settings block (``methods:`` or ``methods_arctan:``). Every output of a
-problem lives under ``results/lorenz96/<obs>/``, so the two sweeps never mix:
+``--obs {linear,arctan,square,abs}`` (before the subcommand, default ``linear``)
+selects the observation operator (``observations:`` in ``configs/case/lorenz96.yaml``)
+and with it the settings block (``methods:``, ``methods_arctan:``, ``methods_square:``
+or ``methods_abs:``).
+Every output of a problem lives under ``results/lorenz96/<obs>/``, so the sweeps
+never mix:
 
     python cases/lorenz96/driver.py --obs arctan reference --split validation
     python cases/lorenz96/driver.py --obs arctan cell --method enkf --seed 0
@@ -145,7 +147,7 @@ FIXED_NUM_STEPS = HEADLINE_M
 # Per-sequence scalars (not per step) written next to the per-step metrics.
 INNOVATION_LAG1 = "innovation_lag1"
 INNOVATION_MSQ = "innovation_msq"
-# Per-member ESS of the importance-sampling oracle (arctan `oracle` / `oracle_fc`):
+# Per-member ESS of the importance-sampling oracle (nonlinear `oracle` / `oracle_fc`):
 # per step the mean and the minimum over members (and sequences).
 ORACLE_ESS_MEAN = "oracle_ess_mean"
 ORACLE_ESS_MIN = "oracle_ess_min"
@@ -210,6 +212,11 @@ def reference_path(split: str, index: int, replicate: int, obs: str = "linear") 
     )
 
 
+# Equally weighted draws of the last step kept in a reference file (``final_samples``)
+# next to the ``samples`` of every step (4096): enough for a faithful 1D marginal.
+REFERENCE_FINAL_SAMPLES = 100_000
+
+
 def _reference_task(job) -> float:
     problem, sequence, split, index, replicate, particles = job
     torch.set_num_threads(1)
@@ -218,7 +225,7 @@ def _reference_task(job) -> float:
     seed = derive_seed(SEED_LABEL, "reference", split, index, replicate)
     start = time.time()
     # The gate's own filter, so its validity carries over by construction.
-    run = run_pf(problem, sequence, particles, seed)
+    run = run_pf(problem, sequence, particles, seed, final_samples=REFERENCE_FINAL_SAMPLES)
     seconds = time.time() - start
     path = reference_path(split, index, replicate, problem.obs_label)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -227,6 +234,11 @@ def _reference_task(job) -> float:
             mean=run.mean,
             variance=run.variance,
             samples=run.samples,
+            # Larger equally weighted draw at the last step (posterior marginal
+            # plots; bimodal for --obs square / abs) and the particle mass with x > 0 per
+            # step and site (mode masses), both from all N particles.
+            final_samples=run.final_samples,
+            positive_fraction=run.positive_fraction,
             ess=run.ess,
             log_evidence=run.log_evidence,
             num_particles=run.num_particles,
@@ -660,12 +672,14 @@ def run_enkf(cfg, name, problem, sequences, split, seed, members, settings) -> C
 
 def importance_oracle(problem, cfg) -> ImportanceOneStepOracle:
     """The per-member one-step oracle for a nonlinear ``h`` (no closed form), with
-    ``oracle_arctan.proposals`` candidates per member and step."""
+    ``oracle_<obs>.proposals`` candidates per member and step (``oracle_arctan``
+    when the problem has no block of its own, e.g. a linear problem)."""
+    block = cfg.get(f"oracle_{problem.obs_label}") or cfg.oracle_arctan
     return ImportanceOneStepOracle(
         problem.obs_matrix,
         problem.obs_variance,
         obs_nonlinearity=problem.obs_nonlinearity,
-        proposals=int(cfg.oracle_arctan.proposals),
+        proposals=int(block.proposals),
     )
 
 
@@ -1018,9 +1032,19 @@ def evaluate_cell(
     num_steps: int | None = None,
     allow_other_m: bool = False,
     write_metrics: bool = False,
+    defer_scoring: bool = False,
+    rescore: bool = False,
 ) -> list[ResultRecord]:
     """Run and score one (method, seed); writes per-step rows and the ensembles
     (and, with ``write_metrics``, the tidy metrics file ``cell`` writes).
+
+    Every run also writes ``ensembles/<label>__seed<seed>.meta.pt`` (what scoring
+    needs besides the ensembles: sizes, cost, innovations, SMC / oracle records,
+    settings). ``defer_scoring`` stops there, so a cell can run before its PF
+    reference exists; ``rescore`` later skips the run, reads the saved ensembles and
+    meta file (the settings must match) and scores them against the reference. A
+    rescored cell is scored from the float32 ensembles file, so its scores can
+    differ from inline scoring in the last digits.
 
     ``num_steps`` sets M of a generative cell (one with a ``num_steps`` setting);
     it is refused for the others. M comes from the cell's settings: it must be in
@@ -1072,29 +1096,57 @@ def evaluate_cell(
         per_step_seconds = finite_mean(seconds) / problem.num_steps
         members, pseudo_steps = int(cfg.evaluation.reference_particles), None
     else:
-        output = run_method(cfg, name, problem, sequences, split, seed, settings)
-        scores = score_output(output.ensembles, sequences, split, problem)
-        innovations = innovation_output(
-            output.ensembles,
-            sequences,
-            split,
-            seed,
-            problem,
-            own_initial=name not in NO_INITIAL_ENSEMBLE,
-        )
-        members, pseudo_steps, nfe = output.members, output.pseudo_steps, output.nfe
-        vjp = output.vjp
-        oracle_ess = output.oracle_ess
-        smc = output.smc
         path = results_dir(obs) / "ensembles" / f"{cell_label(name, tag, m)}__seed{seed}.pt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(output.ensembles.float(), path)
-        # Cost on equal terms: one sequence at this method's ensemble size, whereas
-        # the run above batches sequences for the generative methods only.
-        per_step_seconds = None
-        if name != "pf_subsample":
-            timed = run_method(cfg, name, problem, sequences[:1], split, seed, settings)
-            per_step_seconds = timed.seconds / problem.num_steps
+        meta_path = path.with_suffix(".meta.pt")
+        if rescore:
+            ensembles = torch.load(path).double()
+            meta = torch.load(meta_path, weights_only=False)
+            if meta["settings"] != settings or meta["split"] != split:
+                raise ValueError(
+                    f"{meta_path} was run with {meta['settings']} on {meta['split']}, "
+                    f"not {settings} on {split}: rerun the cell."
+                )
+        else:
+            output = run_method(cfg, name, problem, sequences, split, seed, settings)
+            ensembles = output.ensembles
+            path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(ensembles.float(), path)
+            # Cost on equal terms: one sequence at this method's ensemble size, whereas
+            # the run above batches sequences for the generative methods only.
+            per_step_seconds = None
+            if name != "pf_subsample":
+                timed = run_method(cfg, name, problem, sequences[:1], split, seed, settings)
+                per_step_seconds = timed.seconds / problem.num_steps
+            meta = dict(
+                settings=settings,
+                split=split,
+                members=output.members,
+                pseudo_steps=output.pseudo_steps,
+                nfe=output.nfe,
+                vjp=output.vjp,
+                oracle_ess=output.oracle_ess,
+                smc=output.smc,
+                per_step_seconds=per_step_seconds,
+                innovations=innovation_output(
+                    ensembles,
+                    sequences,
+                    split,
+                    seed,
+                    problem,
+                    own_initial=name not in NO_INITIAL_ENSEMBLE,
+                ),
+            )
+            torch.save(meta, meta_path)
+            if defer_scoring:
+                print(f"{name}: ensembles in {path}; scoring deferred (cell --rescore)", flush=True)
+                return []
+        scores = score_output(ensembles, sequences, split, problem)
+        innovations = meta["innovations"]
+        members, pseudo_steps, nfe = meta["members"], meta["pseudo_steps"], meta["nfe"]
+        vjp = meta["vjp"]
+        oracle_ess = meta["oracle_ess"]
+        smc = meta["smc"]
+        per_step_seconds = meta["per_step_seconds"]
 
     common = dict(
         case=Case.LORENZ96.value,
@@ -1303,6 +1355,8 @@ def cmd_cell(args) -> None:
         num_steps=getattr(args, "num_steps", None),
         allow_other_m=getattr(args, "allow_other_m", False),
         write_metrics=True,
+        defer_scoring=getattr(args, "defer_scoring", False),
+        rescore=getattr(args, "rescore", False),
     )
     for record in records:
         print(f"{record.metric:20s} {record.value:.4f}", flush=True)
@@ -1509,7 +1563,8 @@ class Lorenz96Runner(ExperimentRunner):
         by_label = {s.value: obs for obs, s in SCENARIOS.items()}
         if scenario not in by_label:
             raise ValueError(
-                f"Use scenario=lorenz96 or scenario=lorenz96_arctan with this case, "
+                f"Use scenario=lorenz96, lorenz96_arctan, lorenz96_square or lorenz96_abs "
+                f"with this case, "
                 f"not {scenario!r}."
             )
         self.obs = by_label[scenario]
@@ -1593,6 +1648,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-other-m",
         action="store_true",
         help=f"allow num_steps outside {M_VALUES}",
+    )
+    scoring = cell.add_mutually_exclusive_group()
+    scoring.add_argument(
+        "--defer-scoring",
+        action="store_true",
+        help="run and save the ensembles (+ .meta.pt) only, no reference needed",
+    )
+    scoring.add_argument(
+        "--rescore",
+        action="store_true",
+        help="score a deferred run from its saved ensembles (same arguments)",
     )
     cell.set_defaults(func=cmd_cell)
     quality = sub.add_parser("prior-quality")

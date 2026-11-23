@@ -139,6 +139,61 @@ class StandardisedArctanOperator(PointwiseObservationOperator):
         return self.std / (1.0 + cw**2)
 
 
+class StandardisedSquareOperator(PointwiseObservationOperator):
+    """``h(z) = (std L z + mean)^2``: physical square observations of standardised
+    states, as :class:`StandardisedArctanOperator` (only ``g`` / ``dg`` overridden).
+
+    ``g(w) = (std w + mean)^2`` (the library's ``square`` with ``c = 1`` of the
+    physical state) and ``g'(w) = 2 std (std w + mean)``, which vanishes at the
+    physical zero: there the linearised guidance carries no sign information.
+    ``std = 1, mean = 0`` is the library's square.
+    """
+
+    def __init__(self, inner, std: float = 1.0, mean: float = 0.0):
+        super().__init__(inner, nonlinearity="square", strength=1.0)
+        self.std = float(std)
+        self.mean = float(mean)
+
+    def g(self, z: torch.Tensor) -> torch.Tensor:
+        return super().g(self.std * z + self.mean)
+
+    def dg(self, z: torch.Tensor) -> torch.Tensor:
+        return 2.0 * self.std * (self.std * z + self.mean)
+
+
+class StandardisedAbsOperator(PointwiseObservationOperator):
+    """``h(z) = |std L z + mean|``: physical absolute-value observations of
+    standardised states, as :class:`StandardisedArctanOperator` (only ``g`` / ``dg``
+    overridden).
+
+    ``g(w) = |std w + mean|`` (EXACT, not the library's smoothed ``abs``) and
+    ``g'(w) = std sign(std w + mean)``: its magnitude never vanishes, but its sign
+    flips at the physical zero, so the linearised guidance pushes each member
+    toward the mode on its own side.
+    """
+
+    def __init__(self, inner, std: float = 1.0, mean: float = 0.0):
+        super().__init__(inner, nonlinearity="abs", strength=1.0)
+        self.std = float(std)
+        self.mean = float(mean)
+
+    def g(self, z: torch.Tensor) -> torch.Tensor:
+        return (self.std * z + self.mean).abs()
+
+    def dg(self, z: torch.Tensor) -> torch.Tensor:
+        return self.std * torch.sign(self.std * z + self.mean)
+
+
+def _pointwise_operator(problem: Problem, std: float = 1.0, mean: float = 0.0):
+    """The standardised pointwise operator of a nonlinear ``problem``."""
+    inner = build_obs_operator(problem)
+    if problem.observation.operator == "square":
+        return StandardisedSquareOperator(inner, std=std, mean=mean)
+    if problem.observation.operator == "abs":
+        return StandardisedAbsOperator(inner, std=std, mean=mean)
+    return StandardisedArctanOperator(inner, problem.observation.strength, std=std, mean=mean)
+
+
 def observation_model(problem: Problem, stats: "Standardisation") -> ObservationModel:
     """The observation model of ``problem`` for samplers in standardised units.
 
@@ -149,7 +204,9 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
     Arctan: the operator maps standardised states to PHYSICAL observations,
     ``arctan(c (std L z + mean)) / c`` (:class:`StandardisedArctanOperator`), so the
     observations are used as they are (``to_model`` is the identity) and the
-    variance is the physical ``R``.
+    variance is the physical ``R``. Square: the same, with
+    ``(std L z + mean)^2`` (:class:`StandardisedSquareOperator`), and abs with
+    ``|std L z + mean|`` (:class:`StandardisedAbsOperator`).
     """
     if problem.linear_obs:
         return ObservationModel(
@@ -158,12 +215,7 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
             to_model=stats.forward,
         )
     return ObservationModel(
-        operator=StandardisedArctanOperator(
-            build_obs_operator(problem),
-            problem.observation.strength,
-            std=stats.std,
-            mean=stats.mean,
-        ),
+        operator=_pointwise_operator(problem, std=stats.std, mean=stats.mean),
         variance=float(problem.obs_variance),
         to_model=_identity,
     )
@@ -171,11 +223,11 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
 
 def physical_obs_operator(problem: Problem):
     """``h`` on PHYSICAL states ``[B, 1, 1, d]`` as an operator (the oracle's
-    correction): the linear selection, or the arctan operator with ``std = 1``,
-    ``mean = 0``."""
+    correction): the linear selection, or the arctan / square / abs operator with
+    ``std = 1``, ``mean = 0``."""
     if problem.linear_obs:
         return build_obs_operator(problem)
-    return StandardisedArctanOperator(build_obs_operator(problem), problem.observation.strength)
+    return _pointwise_operator(problem)
 
 
 def _identity(y: torch.Tensor) -> torch.Tensor:
