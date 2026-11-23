@@ -79,6 +79,9 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
       --num-threads 2 "${resume[@]}"
     $PY $EXP/rollout_diagnostics.py long --checkpoint-dir $SI --run-dir $out --data-cache $CACHE --burn-in 100 \
       --output $RES/d5_d6_d7_long_si128_exact.json ;;
+  plots)
+    run $stage
+    $PY $EXP/plot_phase0.py --results $RES ;;
   map_smoke)
     # Code test of the map paths on a 5-batch smoke Ito checkpoint (not a result).
     run $stage
