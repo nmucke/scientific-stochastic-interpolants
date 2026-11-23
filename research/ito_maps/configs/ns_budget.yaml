@@ -1,0 +1,14 @@
+# Physical parameters of the stochastic NS archive used by the WP7/D6 budget.
+# Corroborated by the archive's energy/enstrophy balance (HANDOVER 1.2), NOT a
+# recovered generation manifest. Vorticity form on [0, L]^2, periodic:
+#   dw = (-u.grad w - drag w + viscosity Lap w) dt + forcing_scale dxi
+# so D = drag - viscosity Lap. The forcing (jax_cfd_lib navier_stokes_forward_model)
+# is sum over forcing_modes of (a cos(k.x) + b sin(k.x)), a, b independent
+# Brownian motions: area-mean variance 1/2 + 1/2 = forcing_mode_variance per mode.
+viscosity: 1.0e-3
+drag: 0.1
+forcing_scale: 1.0
+snapshot_spacing: 0.5        # Delta between stored frames (archive mean 0.4999)
+domain_length: 6.283185307179586
+forcing_modes: [[6, 0], [7, 0], [5, 5], [8, 8]]
+forcing_mode_variance: 1.0

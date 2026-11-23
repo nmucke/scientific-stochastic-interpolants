@@ -171,6 +171,8 @@ def run_rollout(
     snapshot_dt=None,
     provenance=None,
     concurrent_workload="unspecified; timings are diagnostic only",
+    solver_stepper=None,
+    solver_stepper_name="euler_maruyama",
 ):
     """Histories [B,C,H,W,N] and future truths [B,C,H,W,T] in archive units.
 
@@ -178,6 +180,8 @@ def run_rollout(
     intentionally preserves only dense initial states, periodic states, and
     final/failure states, while every lead has complete scalar diagnostics.
     Resume preserves model RNG and conditioning exactly at committed checkpoints.
+    ``solver_stepper`` replaces the SI solver's Euler-Maruyama stepper (for
+    example Euler drift with exact integrated noise); maps ignore it.
     """
     if ensemble_size < 2 or horizon < 1 or num_steps < 1:
         raise ValueError("Require ensemble>=2, horizon>=1 and num_steps>=1")
@@ -277,6 +281,9 @@ def run_rollout(
         "timing_interpretation": "Diagnostic wall time, not a controlled inference-speed comparison",
         "provenance": provenance or {},
     }
+    if solver_stepper is not None and isinstance(model, FollmerStochasticInterpolant):
+        # Recorded only when non-default, so older protocols still resume.
+        protocol["solver_stepper"] = solver_stepper_name
     path = directory / "protocol.json"
     if path.exists():
         if not resume:
@@ -422,6 +429,12 @@ def run_rollout(
                     count[0] = 0
                     sync(device)
                     begin = time.perf_counter()
+                    solver_kwargs = (
+                        {"stepper": solver_stepper}
+                        if solver_stepper is not None
+                        and isinstance(model, FollmerStochasticInterpolant)
+                        else {}
+                    )
                     generated, state = model.sample(
                         field_history=state,
                         batch_size=len(state),
@@ -432,6 +445,7 @@ def run_rollout(
                             else None
                         ),
                         return_field_history=True,
+                        **solver_kwargs,
                     )
                     sync(device)
                     seconds = time.perf_counter() - begin
@@ -553,9 +567,23 @@ def main():
     parser.add_argument(
         "--concurrent-workload", default="unspecified; timings are diagnostic only"
     )
+    parser.add_argument(
+        "--si-noise",
+        choices=["em", "exact"],
+        default="em",
+        help="SI solver noise: Euler-Maruyama (existing) or exact integrated noise",
+    )
     args = parser.parse_args()
     torch.set_num_threads(args.num_threads)
-    model, config = load_teacher(args.checkpoint_dir, args.device)
+    # load_teacher returns the model only; the config is read separately.
+    model = load_teacher(args.checkpoint_dir, args.device)
+    config = OmegaConf.load(Path(args.checkpoint_dir) / "config.yaml")
+    stepper, stepper_name = None, "euler_maruyama"
+    if args.si_noise == "exact":
+        from phase0_common import make_si_stepper
+
+        stepper, stepper_name = make_si_stepper("exact"), "euler_drift_exact_noise"
+
     length = int(config.len_field_history)
     if args.origin < length:
         raise ValueError("Origin must include the complete trained history")
@@ -643,6 +671,8 @@ def main():
         snapshot_dt=args.snapshot_dt,
         concurrent_workload=args.concurrent_workload,
         provenance=provenance,
+        solver_stepper=stepper,
+        solver_stepper_name=stepper_name,
     )
     print(
         json.dumps(

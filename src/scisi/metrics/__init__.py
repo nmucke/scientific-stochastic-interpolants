@@ -10,6 +10,7 @@ Section 3. Conventions:
 """
 
 from scisi.metrics.accuracy import ensemble_mean_rmse
+from scisi.metrics.budget import QuadraticBudget, u_statistic
 from scisi.metrics.calibration import (
     crps,
     plot_rank_histogram,
@@ -30,6 +31,8 @@ from scisi.metrics.spectral import (
 )
 
 __all__ = [
+    "QuadraticBudget",
+    "u_statistic",
     "ensemble_mean_rmse",
     "energy_spectrum_rmse",
     "radial_enstrophy_spectrum",
