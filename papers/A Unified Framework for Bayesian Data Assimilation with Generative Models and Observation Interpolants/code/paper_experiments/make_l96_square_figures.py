@@ -84,8 +84,9 @@ METHODS = (
     ("shared", "si_sde-shared", True, "Ours SI-SDE (shared)", "shared", "#0072B2", "-"),
     ("shared_corr", "si_sde_fc-shared", True, "Ours SI-SDE (shared) + corr.", "+corr.",
      "#009E73", "--"),
+    ("jacfree", "si_sde", True, "Ours SI-SDE (Jac-free)", "Jac-free", "#CC79A7", "-."),
 )
-FIG_METHODS = ("enkf", "shared", "shared_corr")  # drawn over the PF in the figure
+FIG_METHODS = ("enkf", "shared", "shared_corr", "jacfree")  # drawn over the PF in the figure
 METRICS = (("sliced_w2", "sliced $W_2$"), ("kl_knn", "$k$NN-KL"), ("energy_distance", "energy dist."))
 SEED_LABEL_FALLBACK = "lorenz96-evaluation"
 
@@ -174,6 +175,9 @@ def obs_functions(observation: dict | None):
     if op == "square":
         return (lambda w: c * w ** 2), (
             lambda y: [-math.sqrt(y / c), math.sqrt(y / c)] if y > 0 else [])
+    if op == "abs":
+        return (lambda w: c * np.abs(w)), (
+            lambda y: [-y / c, y / c] if y > 0 else [])
     raise ValueError(f"unknown observation operator {op!r}: add it to obs_functions()")
 
 
@@ -290,9 +294,10 @@ def pf_sign_table(ref_final: list[np.ndarray], obs_idx, bw_frac, mass) -> pd.Dat
     return t
 
 
-def choose_panels(table: pd.DataFrame, n_rows: int, sequences, sites):
-    """[(sequence, observed site, unobserved site)]: by default the sequences whose most
-    bimodal observed site (KDE two-peaked, then largest minor sign mass) scores best."""
+def choose_panels(table: pd.DataFrame, n_rows: int, sequences, sites, n_obs=2, n_unobs=2):
+    """[(sequence, [sites])]: by default the sequences whose most bimodal observed site
+    (KDE two-peaked, then largest minor sign mass) scores best; per sequence the n_obs
+    most bimodal observed and the n_unobs most bimodal unobserved sites (or --sites)."""
     obs_t, un_t = table[table.observed], table[~table.observed]
     if sequences is None:
         best = obs_t.sort_values(["score", "minor_mass"], ascending=False).drop_duplicates("sequence")
@@ -300,12 +305,12 @@ def choose_panels(table: pd.DataFrame, n_rows: int, sequences, sites):
     panels = []
     for j, i in enumerate(sequences):
         if sites is not None:
-            so, su = sites[2 * j % len(sites)], sites[(2 * j + 1) % len(sites)]
+            chosen = [int(k) for k in sites]
         else:
-            pick = lambda t: int(t[t.sequence == i].sort_values(  # noqa: E731
-                ["score", "minor_mass"], ascending=False).site.iloc[0])
-            so, su = pick(obs_t), pick(un_t)
-        panels.append((int(i), int(so), int(su)))
+            pick = lambda t, n: [int(k) for k in t[t.sequence == i].sort_values(  # noqa: E731
+                ["score", "minor_mass"], ascending=False).site.head(n)]
+            chosen = sorted(pick(obs_t, n_obs)) + sorted(pick(un_t, n_unobs))
+        panels.append((int(i), chosen))
     return panels
 
 
@@ -343,7 +348,7 @@ def apply_style() -> None:
 
 
 def draw_panel(ax, i, k, observed, pf, members, truth, y_k, preimage, style, bw_frac,
-               bw_members, p_pos, pf_p):
+               bw_members, p_pos, pf_p, pf_rep=None):
     s = pf.std()
     bw = bw_frac * s
     pts = [pf] + [m for m in members.values() if m is not None]
@@ -355,6 +360,10 @@ def draw_panel(ax, i, k, observed, pf, members, truth, y_k, preimage, style, bw_
     ax.fill_between(grid, f_pf, color="#BBBBBB", alpha=0.55, lw=0)
     ax.plot(grid, f_pf, color="#000000", lw=1.3)
     top = f_pf.max()
+    if pf_rep is not None:   # second independent PF replicate: the reference's own error
+        f_rep = kde(pf_rep, grid, bw)
+        ax.plot(grid, f_rep, color="#444444", lw=1.1, ls=(0, (1, 1.2)))
+        top = max(top, f_rep.max())
     for key, x in members.items():
         if x is None:
             continue
@@ -382,7 +391,8 @@ def draw_panel(ax, i, k, observed, pf, members, truth, y_k, preimage, style, bw_
     left = f_pf[: len(grid) // 3].sum() <= f_pf[-len(grid) // 3:].sum()
     x0, ha = (0.012, "left") if left else (0.988, "right")
     ax.text(x0, 0.985, "$P(x>0)$:", transform=ax.transAxes, fontsize=6.6, va="top", ha=ha)
-    entries = [(f"PF {pf_p:.2f}", "#000000")] + [
+    entries = [(f"PF {pf_p:.2f}", "#000000")] + (
+        [(f"PF rep. 2 {float((pf_rep > 0).mean()):.2f}", "#444444")] if pf_rep is not None else []) + [
         (f"{style[key][4]} {p_pos[key]:.2f}", style[key][5]) for key in members if members[key] is not None]
     for j, (text, colour) in enumerate(entries):
         ax.text(x0, 0.985 - 0.095 * (j + 1), text, transform=ax.transAxes, fontsize=6.6,
@@ -409,6 +419,8 @@ def main() -> None:
     ap.add_argument("--rows", type=int, default=4, help="sequences in the figure")
     ap.add_argument("--sequences", type=int, nargs="+", default=None,
                     help="figure sequences (default: the most bimodal ones, automatically)")
+    ap.add_argument("--n-observed", type=int, default=3, help="observed sites per sequence")
+    ap.add_argument("--n-unobserved", type=int, default=3, help="unobserved sites per sequence")
     ap.add_argument("--sites", type=int, nargs="+", default=None,
                     help="figure sites, pairs per row (left, right), cycled; default: per row "
                          "the most bimodal observed and unobserved site")
@@ -459,9 +471,13 @@ def main() -> None:
         print(f"  {key:12s} ensembles: {'ok ' + str(tuple(ens[key].shape)) if ens[key] is not None else 'MISSING'}"
               f"   per_sequence: {'ok' if perseq[key] else 'MISSING'}")
     keys = [k for k in keys if ens[k] is not None or perseq[k] is not None]
+    if ens.get("enkf") is not None:   # label with the actual ensemble size
+        e_size = int(ens["enkf"].shape[2])
+        style["enkf"] = (*style["enkf"][:3], f"EnKF ($E={e_size}$)", *style["enkf"][4:])
 
     # ---- PF sign masses and the bimodal sites --------------------------------
     ref_final = [r["samples"][t].double().numpy() for r in refs0]
+    ref_final1 = [r["samples"][t].double().numpy() if r is not None else None for r in refs1]
     signs = pf_sign_table(ref_final, obs_idx, args.bw, args.bimodal_mass)
     signs.to_csv(out / f"pf_sign_mass_{obs}.csv", index=False)
     nb = signs[signs.observed].bimodal.sum()
@@ -586,19 +602,30 @@ def main() -> None:
     print("\n" + "\n".join(md))
 
     # ---- figure --------------------------------------------------------------
-    panels = choose_panels(signs, args.rows, args.sequences, args.sites)
-    print(f"\nfigure panels (sequence, left site, right site): {panels}")
-    for i, so, su in panels:
-        for k in (so, su):
+    panels = choose_panels(signs, args.rows, args.sequences, args.sites,
+                           args.n_observed, args.n_unobserved)
+    print(f"\nfigure panels (sequence, sites): {panels}")
+    for i, chosen in panels:
+        for k in chosen:
             r = signs[(signs.sequence == i) & (signs.site == k)].iloc[0]
             print(f"  seq {i} site {k}: PF P(x>0)={r.pf_p_pos:.3f} kde_bimodal={r.kde_bimodal}")
     apply_style()
-    fig, axes = plt.subplots(len(panels), 2, figsize=(6.3, 1.55 * len(panels) + 0.55), squeeze=False)
+    ncols = max(len(c) for _, c in panels)
+    # one sequence: a grid with the observed sites on top and the unobserved below
+    if len(panels) == 1 and args.n_observed == args.n_unobserved and ncols == 2 * args.n_observed:
+        i0, chosen0 = panels[0]
+        panels = [(i0, chosen0[: args.n_observed]), (i0, chosen0[args.n_observed:])]
+        ncols = args.n_observed
+    fig, axes = plt.subplots(len(panels), ncols, figsize=(3.15 * ncols, 1.75 * len(panels) + 0.6),
+                             squeeze=False)
     fig_keys = [k for k in FIG_METHODS if k in keys and ens[k] is not None]
-    for row_axes, (i, so, su) in zip(axes, panels):
-        for ax, k in zip(row_axes, (so, su)):
+    for row_axes, (i, chosen) in zip(axes, panels):
+        for ax in row_axes[len(chosen):]:
+            ax.set_visible(False)
+        for ax, k in zip(row_axes, chosen):
             observed = k in obs_idx
             pf = ref_final[i][:, k]
+            pf_rep = ref_final1[i][:, k] if ref_final1[i] is not None else None
             members = {}
             for key in fig_keys:
                 x = ens[key][i, t].numpy()
@@ -606,17 +633,19 @@ def main() -> None:
             p_pos = {key: float((members[key] > 0).mean()) for key in fig_keys}
             y_k = ys[i, t, list(obs_idx).index(k)] if observed else None
             draw_panel(ax, i, k, observed, pf, members, truth[i, t + 1, k], y_k, preimage,
-                       style, args.bw, args.bw_members, p_pos, float((pf > 0).mean()))
+                       style, args.bw, args.bw_members, p_pos, float((pf > 0).mean()), pf_rep)
     for ax in axes[-1]:
         ax.set_xlabel(f"$x_k$ at step {t + 1}")
     handles = [Patch(facecolor="#BBBBBB", edgecolor="#000000", label=f"PF reference ($N=4\\times10^6$)")]
+    if any(r is not None for r in ref_final1):
+        handles += [Line2D([], [], color="#444444", lw=1.1, ls=(0, (1, 1.2)), label="PF, independent replicate")]
     handles += [Line2D([], [], color=style[k][5], ls=style[k][6], lw=1.3, label=style[k][3]) for k in fig_keys]
     handles += [Line2D([], [], color="#C0392B", lw=1.1, label="truth")]
-    pre_label = {"square": r"$\pm\sqrt{y/c}$", "arctan": r"$h^{-1}(y)$", "linear": "$y$"}
+    pre_label = {"square": r"$\pm\sqrt{y/c}$", "abs": r"$\pm y/c$", "arctan": r"$h^{-1}(y)$", "linear": "$y$"}
     op = (problem.get("observation") or {}).get("operator", "linear")
     handles += [Line2D([], [], color="#555555", lw=0.9, ls=(0, (3, 2)),
                        label=f"{pre_label.get(op, 'preimage of y')} (observed sites)")]
-    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False,
+    fig.legend(handles=handles, loc="lower center", ncol=max(3, min(5, ncols + 1)), frameon=False,
                bbox_to_anchor=(0.5, 0.0), handlelength=2.0, columnspacing=1.2)
     fig.tight_layout(rect=(0, 0.22 if len(panels) == 1 else 0.12 if len(panels) == 2 else 0.075, 1, 1), h_pad=0.6, w_pad=1.0)
     stem = out / f"l96_{obs}_final_marginals"

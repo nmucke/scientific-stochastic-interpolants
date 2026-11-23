@@ -161,11 +161,36 @@ class StandardisedSquareOperator(PointwiseObservationOperator):
         return 2.0 * self.std * (self.std * z + self.mean)
 
 
+class StandardisedAbsOperator(PointwiseObservationOperator):
+    """``h(z) = |std L z + mean|``: physical absolute-value observations of
+    standardised states, as :class:`StandardisedArctanOperator` (only ``g`` / ``dg``
+    overridden).
+
+    ``g(w) = |std w + mean|`` (EXACT, not the library's smoothed ``abs``) and
+    ``g'(w) = std sign(std w + mean)``: its magnitude never vanishes, but its sign
+    flips at the physical zero, so the linearised guidance pushes each member
+    toward the mode on its own side.
+    """
+
+    def __init__(self, inner, std: float = 1.0, mean: float = 0.0):
+        super().__init__(inner, nonlinearity="abs", strength=1.0)
+        self.std = float(std)
+        self.mean = float(mean)
+
+    def g(self, z: torch.Tensor) -> torch.Tensor:
+        return (self.std * z + self.mean).abs()
+
+    def dg(self, z: torch.Tensor) -> torch.Tensor:
+        return self.std * torch.sign(self.std * z + self.mean)
+
+
 def _pointwise_operator(problem: Problem, std: float = 1.0, mean: float = 0.0):
     """The standardised pointwise operator of a nonlinear ``problem``."""
     inner = build_obs_operator(problem)
     if problem.observation.operator == "square":
         return StandardisedSquareOperator(inner, std=std, mean=mean)
+    if problem.observation.operator == "abs":
+        return StandardisedAbsOperator(inner, std=std, mean=mean)
     return StandardisedArctanOperator(inner, problem.observation.strength, std=std, mean=mean)
 
 
@@ -180,7 +205,8 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
     ``arctan(c (std L z + mean)) / c`` (:class:`StandardisedArctanOperator`), so the
     observations are used as they are (``to_model`` is the identity) and the
     variance is the physical ``R``. Square: the same, with
-    ``(std L z + mean)^2`` (:class:`StandardisedSquareOperator`).
+    ``(std L z + mean)^2`` (:class:`StandardisedSquareOperator`), and abs with
+    ``|std L z + mean|`` (:class:`StandardisedAbsOperator`).
     """
     if problem.linear_obs:
         return ObservationModel(
@@ -197,7 +223,7 @@ def observation_model(problem: Problem, stats: "Standardisation") -> Observation
 
 def physical_obs_operator(problem: Problem):
     """``h`` on PHYSICAL states ``[B, 1, 1, d]`` as an operator (the oracle's
-    correction): the linear selection, or the arctan / square operator with
+    correction): the linear selection, or the arctan / square / abs operator with
     ``std = 1``, ``mean = 0``."""
     if problem.linear_obs:
         return build_obs_operator(problem)

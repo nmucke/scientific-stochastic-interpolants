@@ -59,6 +59,7 @@ OBS_TITLE = {
     "linear": "linear observations",
     "arctan": "arctan observations",
     "square": "square observations",
+    "abs": "absolute-value observations",
 }
 
 # (metric, latex header, markdown header, best rule): "min" lowest mean, "abs"

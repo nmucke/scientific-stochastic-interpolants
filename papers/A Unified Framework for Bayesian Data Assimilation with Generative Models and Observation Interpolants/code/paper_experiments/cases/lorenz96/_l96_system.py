@@ -39,13 +39,20 @@ def square_nonlinearity(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     return NONLINEARITIES["square"](w, 1.0, None)
 
 
+def abs_nonlinearity(w: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(|w|, sign(w))``: the EXACT absolute value (not the library's smoothed
+    ``abs``, ``sqrt(w^2 + eps^2)``), as a picklable function."""
+    return w.abs(), w.sign()
+
+
 @dataclass(frozen=True)
 class Observation:
     """The observation operator on the selected sites ``L x`` (physical units).
 
     ``linear``: ``h(x) = L x``. ``arctan``: ``h(x) = arctan(c L x) / c`` with
     ``c = strength``. ``square``: ``h(x) = (L x)^2`` elementwise (no strength;
-    sign-blind, so the posterior can be bimodal). The noise ``N(0, obs_variance I)``
+    sign-blind, so the posterior can be bimodal). ``abs``: ``h(x) = |L x|``
+    elementwise (no strength; sign-blind as well). The noise ``N(0, obs_variance I)``
     is the same for all.
     """
 
@@ -55,7 +62,7 @@ class Observation:
     def __post_init__(self) -> None:
         if self.operator not in OBS_OPERATORS:
             raise ValueError(f"observation.operator must be one of {OBS_OPERATORS}, got {self.operator!r}")
-        if self.operator in ("linear", "square") and self.strength is not None:
+        if self.operator in ("linear", "square", "abs") and self.strength is not None:
             raise ValueError(f"a {self.operator} observation takes no strength")
         if self.operator == "arctan":
             if self.strength is None or not float(self.strength) > 0:
@@ -92,7 +99,7 @@ class Problem:
 
     @property
     def obs_label(self) -> str:
-        """``linear``, ``arctan`` or ``square``: the results directory of this problem."""
+        """``linear``, ``arctan``, ``square`` or ``abs``: the results directory of this problem."""
         return self.observation.operator
 
     @property
@@ -107,6 +114,8 @@ class Problem:
             return None
         if self.observation.operator == "square":
             return square_nonlinearity
+        if self.observation.operator == "abs":
+            return abs_nonlinearity
         return functools.partial(arctan_nonlinearity, strength=self.observation.strength)
 
     def observe(self, x: torch.Tensor) -> torch.Tensor:

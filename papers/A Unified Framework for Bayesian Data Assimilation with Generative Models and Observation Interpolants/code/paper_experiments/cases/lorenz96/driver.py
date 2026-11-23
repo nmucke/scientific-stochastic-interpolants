@@ -23,9 +23,10 @@ every output path (``<cell>-<tag>``) and into the tidy ``variant``
 (``<variant>_<tag>``), so a sweep never overwrites, or is aggregated as, the
 default cell.
 
-``--obs {linear,arctan,square}`` (before the subcommand, default ``linear``) selects
-the observation operator (``observations:`` in ``configs/case/lorenz96.yaml``) and
-with it the settings block (``methods:``, ``methods_arctan:`` or ``methods_square:``).
+``--obs {linear,arctan,square,abs}`` (before the subcommand, default ``linear``)
+selects the observation operator (``observations:`` in ``configs/case/lorenz96.yaml``)
+and with it the settings block (``methods:``, ``methods_arctan:``, ``methods_square:``
+or ``methods_abs:``).
 Every output of a problem lives under ``results/lorenz96/<obs>/``, so the sweeps
 never mix:
 
@@ -234,7 +235,7 @@ def _reference_task(job) -> float:
             variance=run.variance,
             samples=run.samples,
             # Larger equally weighted draw at the last step (posterior marginal
-            # plots; bimodal for --obs square) and the particle mass with x > 0 per
+            # plots; bimodal for --obs square / abs) and the particle mass with x > 0 per
             # step and site (mode masses), both from all N particles.
             final_samples=run.final_samples,
             positive_fraction=run.positive_fraction,
@@ -1562,7 +1563,8 @@ class Lorenz96Runner(ExperimentRunner):
         by_label = {s.value: obs for obs, s in SCENARIOS.items()}
         if scenario not in by_label:
             raise ValueError(
-                f"Use scenario=lorenz96, lorenz96_arctan or lorenz96_square with this case, "
+                f"Use scenario=lorenz96, lorenz96_arctan, lorenz96_square or lorenz96_abs "
+                f"with this case, "
                 f"not {scenario!r}."
             )
         self.obs = by_label[scenario]

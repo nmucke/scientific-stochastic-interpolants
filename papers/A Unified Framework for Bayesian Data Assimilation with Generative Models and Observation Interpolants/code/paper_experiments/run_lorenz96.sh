@@ -33,7 +33,7 @@ cd "$(dirname "$0")"
 STAGE=${1:-}
 OBS=${2:-}
 case "$STAGE" in tune|apply|final) ;; *) echo "usage: $0 tune|apply|final linear|arctan" >&2; exit 2 ;; esac
-case "$OBS" in linear|arctan|square) ;; *) echo "usage: $0 tune|apply|final linear|arctan|square (not '$OBS')" >&2; exit 2 ;; esac
+case "$OBS" in linear|arctan|square|abs) ;; *) echo "usage: $0 tune|apply|final linear|arctan|square|abs (not '$OBS')" >&2; exit 2 ;; esac
 PY=${PY:-python}
 THREADS=${THREADS:-2}
 SEEDS=${SEEDS:-"0 1 2"}

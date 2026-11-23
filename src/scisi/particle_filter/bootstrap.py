@@ -48,6 +48,18 @@ exact for any ``g``:
   mixture density, so the filter is exact whatever the components; the prior
   component bounds every weight by ``max N(y; x^2, r) / alpha`` (finite variance,
   no mode can be dropped). Resampling happens after the kick.
+* ``"abs_optimal"`` (``g(w) = |w|`` only, checked; selection ``H``): the EXACT
+  optimal proposal for the sign-blind absolute value. On each half-line
+  ``N(x; z, q) N(y; |x|, r)`` is a Gaussian in ``x`` times a constant, so the one-site
+  kick posterior is a two-component mixture of truncated Gaussians: with
+  ``v = q + r``, ``s^2 = q r / v`` and ``m_± = (r z ± q y) / v``,
+  ``p(x | z, y) = pi_+ N(x; m_+, s^2 | x > 0) + pi_- N(x; m_-, s^2 | x < 0)``,
+  ``pi_± ∝ N(z; ±y, v) Phi(±m_± / s)``, and the per-site predictive is
+  ``p(y | z) = N(z; y, v) Phi(m_+ / s) + N(z; -y, v) Phi(-m_- / s)``. The weight
+  ``prod_j p(y_j | z_j)`` depends on ``z`` only, so (as for ``"optimal"``)
+  resampling happens BEFORE the kick, which is then drawn exactly (branch, then
+  inverse-CDF truncated normal; unobserved sites get the prior kick). Both sign
+  branches are sampled with their exact masses, so no mode can be dropped.
 
 Particles are held state-major, ``[d, N]``, and processed in chunks.
 """
@@ -91,6 +103,54 @@ def _check_square(g: Optional[Nonlinearity]) -> None:
         )
     if not ok:
         raise ValueError("the square_mixture proposal needs obs_nonlinearity g(w) = w^2")
+
+
+def _check_abs(g: Optional[Nonlinearity]) -> None:
+    """Refuse a ``g`` other than ``w -> |w|`` (``abs_optimal`` is exact for exactly
+    that ``g``; ``g'`` is not used)."""
+    w = torch.tensor([-3.0, -0.5, 0.0, 0.25, 2.0, 7.0], dtype=torch.float64)
+    ok = g is not None and bool(torch.equal(g(w)[0], w.abs()))
+    if not ok:
+        raise ValueError("the abs_optimal proposal needs obs_nonlinearity g(w) = |w|")
+
+
+def abs_kick_branches(z: torch.Tensor, y: torch.Tensor, q: float, r: float):
+    """The exact one-site kick posterior of ``y = |x| + N(0, r)``, ``x ~ N(z, q)``.
+
+    Elementwise, in float64: ``(m_pos, m_neg, s, log_pi_pos, log_pi_neg)`` with
+    ``p(x | z, y) = pi_pos N(x; m_pos, s^2 | x > 0) + pi_neg N(x; m_neg, s^2 | x < 0)``
+    where ``log_pi_pos + log_pi_neg`` are UNNORMALISED: their ``logaddexp`` is
+    ``log p(y | z)``, the per-site predictive (the ``abs_optimal`` log weight).
+    """
+    z, y = z.double(), y.double()
+    v = q + r
+    s = math.sqrt(q * r / v)
+    m_pos = (r * z + q * y) / v
+    m_neg = (r * z - q * y) / v
+    log_norm = -0.5 * math.log(2.0 * math.pi * v)
+    log_pi_pos = log_norm - 0.5 * (z - y).pow(2) / v + torch.special.log_ndtr(m_pos / s)
+    log_pi_neg = log_norm - 0.5 * (z + y).pow(2) / v + torch.special.log_ndtr(-m_neg / s)
+    return m_pos, m_neg, s, log_pi_pos, log_pi_neg
+
+
+def _standard_normal_above(a: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
+    """``Z ~ N(0, 1) | Z > a`` by inversion from uniforms ``u`` in ``[0, 1)``.
+
+    ``a <= 0``: ``Phi(Z) = Phi(a) + u Phi(-a)``; ``a > 0`` (tail):
+    ``Phi(-Z) = (1 - u) Phi(-a)``, in log space. Both are exact inversions, accurate
+    to float64 rounding. Where ``Phi(-a)`` underflows (``a`` beyond ~37) the exact
+    limit ``a (Z - a) -> Exp(1)`` is used.
+    """
+    tail = a > 0
+    log_upper = torch.log1p(-u) + torch.special.log_ndtr(-a)
+    z_tail = -torch.special.ndtri(log_upper.exp())
+    bulk = torch.special.ndtr(a) + u * torch.special.ndtr(-a)
+    z_bulk = torch.special.ndtri(bulk.clamp(max=1.0 - 2.0**-53))
+    z = torch.where(tail, z_tail, z_bulk)
+    deep = tail & (log_upper < -700.0)
+    if bool(deep.any()):
+        z = torch.where(deep, a - torch.log1p(-u) / a.clamp(min=1.0), z)
+    return torch.maximum(z, a)
 
 
 def square_kick_modes(z: torch.Tensor, y: torch.Tensor, q: float, r: float):
@@ -188,7 +248,8 @@ class BootstrapParticleFilter:
         obs_variance: Scalar ``r`` with ``R = r I``.
         proposal: ``"bootstrap"``, ``"optimal"`` (linear observations only),
             ``"linearised"`` (selection ``H``) or ``"square_mixture"`` (selection
-            ``H``, ``g(w) = w^2``); see the module docstring.
+            ``H``, ``g(w) = w^2``) or ``"abs_optimal"`` (selection ``H``,
+            ``g(w) = |w|``); see the module docstring.
         chunk_size: Particles processed at once; bounds peak memory and keeps the
             RK4 working set in cache.
         num_saved_samples: Posterior draws kept per step for sample-based metrics.
@@ -200,6 +261,9 @@ class BootstrapParticleFilter:
             ``samples``, so no random number is drawn for them.
         mixture_defensive: ``alpha``, the weight of the prior component of the
             ``square_mixture`` proposal.
+
+    ``"abs_optimal"`` (selection ``H``, ``g(w) = |w|``) is the exact optimal
+    proposal of the absolute value; see the module docstring.
     """
 
     def __init__(
@@ -213,7 +277,9 @@ class BootstrapParticleFilter:
         final_samples: int = 0,
         mixture_defensive: float = 0.1,
     ) -> None:
-        if proposal not in ("bootstrap", "optimal", "linearised", "square_mixture"):
+        if proposal not in (
+            "bootstrap", "optimal", "linearised", "square_mixture", "abs_optimal"
+        ):
             raise ValueError(f"unknown proposal {proposal!r}")
         if proposal == "optimal" and obs_nonlinearity is not None:
             raise ValueError(
@@ -232,7 +298,9 @@ class BootstrapParticleFilter:
         self.mixture_defensive = float(mixture_defensive)
         if proposal == "square_mixture":
             _check_square(obs_nonlinearity)
-        selection = proposal in ("linearised", "square_mixture")
+        if proposal == "abs_optimal":
+            _check_abs(obs_nonlinearity)
+        selection = proposal in ("linearised", "square_mixture", "abs_optimal")
         self.obs_index = selection_indices(self.H) if selection else None
 
     def _forecast(self, model, x: torch.Tensor, generator) -> torch.Tensor:
@@ -307,6 +375,12 @@ class BootstrapParticleFilter:
                 idx = systematic_resample(log_w, generator)
                 x = z[:, idx]
                 x = self._kick_conditional(x, y_x, q, S, generator)
+            elif self.proposal == "abs_optimal":
+                log_w = self._abs_log_predictive(z, y_x, q)
+                _check_finite(log_w)
+                idx = systematic_resample(log_w, generator)
+                x = z[:, idx]
+                x = self._abs_kick(x, y_x, q, generator)
             elif self.proposal in ("linearised", "square_mixture"):
                 kick = (
                     self._linearised_kick
@@ -503,6 +577,45 @@ class BootstrapParticleFilter:
         return out
 
 
+    def _abs_log_predictive(self, z: torch.Tensor, y: torch.Tensor, q: float) -> torch.Tensor:
+        """``sum_j log p(y_j | z_j)`` (:func:`abs_kick_branches`): the exact
+        ``abs_optimal`` log weights of the forecasts ``z`` ``[d, N]``."""
+        out = torch.empty(z.shape[1], dtype=torch.float64)
+        for start in range(0, z.shape[1], self.chunk_size):
+            sl = slice(start, start + self.chunk_size)
+            w = z[self.obs_index, sl].double()
+            yy = y[:, None].double().expand_as(w)
+            *_, log_pos, log_neg = abs_kick_branches(w, yy, q, self.obs_variance)
+            out[sl] = torch.logaddexp(log_pos, log_neg).sum(0)
+        return out
+
+    def _abs_kick(self, z: torch.Tensor, y: torch.Tensor, q: float, generator) -> torch.Tensor:
+        """Draw ``x ~ p(x | z, y)`` exactly for ``g = |.|``, in chunks and in place.
+
+        Unobserved sites: the prior kick ``z + sqrt(q) xi``. Observed sites: the sign
+        branch with probability ``pi_pos`` / ``pi_neg``, then the truncated normal
+        of that branch by inversion (:func:`_standard_normal_above`).
+        """
+        index, r = self.obs_index, self.obs_variance
+        for start in range(0, z.shape[1], self.chunk_size):
+            sl = slice(start, start + self.chunk_size)
+            xi = torch.randn(z[:, sl].shape, generator=generator, dtype=z.dtype)
+            shape = (index.numel(), xi.shape[1])
+            u = torch.rand(shape, generator=generator, dtype=torch.float64)
+            v = torch.rand(shape, generator=generator, dtype=torch.float64)
+            w = z[index, sl].double()
+            yy = y[:, None].double().expand_as(w)
+            m_pos, m_neg, s, log_pos, log_neg = abs_kick_branches(w, yy, q, r)
+            positive = u < torch.sigmoid(log_pos - log_neg)
+            # x > 0: x = m_pos + s Z, Z > -m_pos / s;  x < 0: x = m_neg - s Z, Z > m_neg / s.
+            a = torch.where(positive, -m_pos / s, m_neg / s)
+            draw = _standard_normal_above(a, v)
+            kicked = torch.where(positive, m_pos + s * draw, m_neg - s * draw)
+            z[:, sl] = z[:, sl] + q**0.5 * xi
+            z[index, sl] = kicked.to(z.dtype)
+        return z
+
+
 class OneStepPosteriorOracle:
     """Exact-model version of the paper's unweighted one-step assimilation.
 
@@ -661,6 +774,7 @@ __all__ = [
     "ImportanceOracleResult",
     "OneStepPosteriorOracle",
     "ParticleFilterResult",
+    "abs_kick_branches",
     "effective_sample_size",
     "selection_indices",
     "square_kick_modes",

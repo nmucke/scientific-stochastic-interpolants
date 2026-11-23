@@ -14,13 +14,13 @@ and are never the held-out test sequences.
     python cases/lorenz96/pf_gate.py cross-proposal --out cross.json
     python cases/lorenz96/pf_gate.py --obs arctan converge --out convergence_4e6.json
 
-``--obs {linear,arctan,square}`` (before the subcommand) selects the observation operator
+``--obs {linear,arctan,square,abs}`` (before the subcommand) selects the observation operator
 of ``configs/case/lorenz96.yaml``; a bare ``--out`` file name (and the default,
 ``<command>.json``) lands in ``results/lorenz96/<obs>/gate/``. The procedure and
 ``PASS_CRITERIA`` are the same for both operators. The filter is the reference's
 (:func:`reference_proposal`): the optimal proposal when linear, the linearised
 importance proposal for arctan, the ``square_mixture`` importance proposal for
-square, all exact. ``converge`` also reports the mode masses (particle fraction with
+square, the exact optimal proposal ``abs_optimal`` for abs, all exact. ``converge`` also reports the mode masses (particle fraction with
 ``x > 0`` per step and site) and their error across replicates and N, which matter
 for the sign-blind square problem. ``cross-proposal`` compares that
 proposal with the bootstrap; ``calibrate`` adds, for a nonlinear operator, the
@@ -89,10 +89,18 @@ def reference_proposal(problem) -> str:
     measured to collapse on this problem (validation 0: ESS abs min 1 at N = 1e5
     and 1e6, log-evidence -5265 / -2643 against about -780 for ``square_mixture``),
     because each observation pins |x| to about +-0.1-0.25.
+
+    ``abs`` (``h = |L x|``, sign-blind, bimodal posteriors) uses ``abs_optimal``:
+    the one-site kick posterior is an exact two-component mixture of truncated
+    Gaussians (one per sign), so the optimal proposal is available in closed form
+    (fully adapted, weights ``p(y | z)``; both sign branches drawn with their exact
+    masses, so no mode can be dropped).
     """
     if problem.linear_obs:
         return "optimal"
-    return "square_mixture" if problem.observation.operator == "square" else "linearised"
+    return {"square": "square_mixture", "abs": "abs_optimal"}.get(
+        problem.observation.operator, "linearised"
+    )
 
 
 def run_pf(problem, sequence, n, seed, proposal=None, final_samples=0):

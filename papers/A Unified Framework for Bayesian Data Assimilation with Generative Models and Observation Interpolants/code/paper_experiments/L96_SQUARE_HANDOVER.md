@@ -116,3 +116,21 @@ smallest mode-mass error at bimodal sites (0.12 vs EnKF 0.25, + corr. 0.23); the
 unimodal with a long tail (0.86) but has the best time-averaged sliced W2 / kNN-KL / energy
 distance (2.00 / 9.54 / 3.48 vs shared 2.67 / 11.0 / 5.30, + corr. 2.27 / 9.85 / 4.18).
 One sequence only.
+
+## Sibling experiment: h(x) = |x| (`--obs abs`, 2026-11-18)
+
+Same setup with **h(x) = |L x|** (exact, not smoothed; no strength), mirrored on every
+point above: `Observation("abs")` / `abs_nonlinearity`, `StandardisedAbsOperator`
+(g = |std w + mean|, g' = std sign(.)), `observations.abs`, `oracle_abs`,
+`evaluation_abs: {test_sequences: 3}`, `methods_abs:` (copy of `methods_arctan:`),
+scenario `lorenz96_abs`, results under `results/lorenz96/abs/`. Commands: replace
+`--obs square` by `--obs abs` (see `results/_runs/abs_operator_ready.md`).
+
+PF reference proposal `abs_optimal` (`src/scisi/particle_filter/bootstrap.py`): the EXACT
+optimal proposal. On each half-line N(x; z, q) N(y; |x|, r) is Gaussian, so the one-site kick
+posterior is a two-component mixture of truncated Gaussians, N(m_+, s^2 | x>0) and
+N(m_-, s^2 | x<0), m_± = (r z ± q y)/(q+r), s^2 = qr/(q+r), weights
+pi_± ∝ N(z; ±y, q+r) Phi(±m_±/s). Weight p(y|z) (fully adapted: resample, then kick
+exactly); both signs drawn with their exact masses. Tested against mpmath quadrature
+and a 1D grid filter (mean, variance, log-Z, P(x>0)). Plain bootstrap does not collapse
+here (obs noise sd 2 vs |x|), but `abs_optimal` has ~2x its ESS.

@@ -116,6 +116,8 @@ def test_observation_spec_is_validated():
         Observation("linear", 0.5)
     with pytest.raises(ValueError, match="no strength"):
         Observation("square", 1.0)
+    with pytest.raises(ValueError, match="no strength"):
+        Observation("abs", 1.0)
     with pytest.raises(ValueError, match="one of"):
         Observation("cube", 1.0)
     with pytest.raises(ValueError, match="one of"):
@@ -514,3 +516,74 @@ def test_gate_calibrate_adds_the_linear_operator_control(tmp_path, monkeypatch):
 def test_gate_screen_is_linear_only():
     with pytest.raises(ValueError, match="linear"):
         pf_gate.cmd_screen(argparse.Namespace(obs="arctan"))
+
+
+# --------------------------------------------------------------------------- #
+# h(x) = |L x| (``--obs abs``)
+# --------------------------------------------------------------------------- #
+
+
+def test_abs_problem_config_operator_and_wiring(tmp_path, monkeypatch):
+    cfg = driver.case_config("abs")
+    problem = driver.problem_of(cfg)
+    assert problem == load_problem(obs="abs")
+    assert problem.to_dict() == {**LINEAR_DICT, "observation": {"operator": "abs", "strength": None}}
+    assert problem.obs_label == "abs" and not problem.linear_obs
+    assert int(cfg.evaluation.test_sequences) == 5
+    assert OmegaConf.to_container(cfg.methods) == OmegaConf.to_container(cfg.methods_arctan)
+    assert int(cfg.oracle_abs.proposals) == 4096
+    assert pf_gate.reference_proposal(problem) == "abs_optimal"
+    assert driver.SCENARIOS["abs"] is Scenario.LORENZ96_ABS
+    assert Scenario.LORENZ96_ABS.value == "lorenz96_abs"
+    monkeypatch.setattr(driver, "RESULTS", tmp_path)
+    assert driver.reference_path("test", 0, 1, "abs") == (
+        tmp_path / "abs" / "reference" / "test" / "sequence0_replicate1.pt"
+    )
+    # Exact |w| (not the library's smoothed abs), sign as derivative.
+    w = torch.tensor([-3.0, -1e-6, 0.0, 1e-6, 2.5], dtype=torch.float64)
+    g, dg = problem.obs_nonlinearity(w)
+    assert torch.equal(g, w.abs()) and torch.equal(dg, w.sign())
+
+
+def test_abs_sequences_share_truth_and_noise_with_the_linear_ones():
+    linear, absolute = Problem(num_steps=6), replace(Problem(num_steps=6), observation=Observation("abs"))
+    a, b = make_sequence(linear, 11), make_sequence(absolute, 11)
+    assert torch.equal(a.truth, b.truth) and torch.equal(a.prior_mean, b.prior_mean)
+    noise = a.observations - a.truth[1:, linear.obs_indices]
+    torch.testing.assert_close(
+        b.observations, a.truth[1:, linear.obs_indices].abs() + noise, rtol=0, atol=1e-12
+    )
+
+
+def test_standardised_abs_operator_is_abs_of_physical_states():
+    problem = load_problem(obs="abs")
+    stats = Standardisation(2.23, 3.99)
+    observed = observation_model(problem, stats)
+    op = observed.operator
+    assert isinstance(op, generative.StandardisedAbsOperator) and not op.is_linear
+    assert observed.variance == problem.obs_variance
+    gen = torch.Generator().manual_seed(0)
+    x = 2.0 + 5.0 * torch.randn(5, 16, generator=gen, dtype=torch.float64)
+    z = stats.forward(x).reshape(5, 1, 1, 16)
+    torch.testing.assert_close(op(z), problem.observe(x), rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(
+        physical_obs_operator(problem)(x.reshape(5, 1, 1, 16)), problem.observe(x),
+        rtol=0, atol=0,
+    )
+    jac = torch.stack(
+        [torch.autograd.functional.jacobian(op, z[b : b + 1])[0, :, 0].reshape(4, 16) for b in range(5)]
+    )
+    v = torch.randn(5, 1, 1, 16, generator=gen, dtype=torch.float64)
+    torch.testing.assert_close(op.jvp(z, v), torch.einsum("bij,bj->bi", jac, v.reshape(5, 16)))
+    torch.testing.assert_close(op.gram(z), jac @ jac.transpose(1, 2))
+
+
+def test_abs_reference_filter_runs_and_keeps_both_signs():
+    problem = replace(load_problem(obs="abs"), num_steps=4)
+    sequence = make_sequence(problem, 3)
+    run = pf_gate.run_pf(problem, sequence, 4000, 5, final_samples=1000)
+    assert run.samples.shape == (4, 4000, 16)
+    assert run.final_samples.shape == (1000, 16)
+    assert run.positive_fraction.shape == (4, 16)
+    assert torch.isfinite(run.log_evidence).all() and float(run.ess.min()) > 100
+
