@@ -13,8 +13,8 @@
 #SBATCH --account=research-ceg-gse
 #SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --mem-per-cpu=8000M
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=5000M
 #SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/ntmucke/scientific-stochastic-interpolants/slurm_itomap/logs/%x_%j.out
 set -euo pipefail
