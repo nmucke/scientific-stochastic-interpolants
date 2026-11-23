@@ -6,9 +6,9 @@ Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). P
 
 | Unit | Branch / worktree (`/scratch/ntmucke/scientific-stochastic-interpolants/`) | State |
 |---|---|---|
-| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke 1445467 passed (all phases + resume); training on V100: Itô 1445729, flow 1445730 (70 epochs × 1000 updates) |
-| Phase 0 diagnostics D1, D5–D7 (+ WP7 budget class) | `research/itomap-phase0` / `wt_itomap_phase0` | implementing |
-| WP1 + WP2 core (NoiseCovariance, variance clock, matched β, invariant) | `research/itomap-core` / `wt_itomap_core` | implementing; WP1 runs gated on D1 |
+| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke 1445467 passed (all phases + resume); V100 jobs Itô 1445729, flow 1445730 **held**: shared `.venv` torch 2.15+cu132 has no sm_70 kernels; waiting for a cu126 venv |
+| Phase 0 diagnostics D1, D5–D7 (+ WP7 budget class) | `research/itomap-phase0` / `wt_itomap_phase0` (head 2a66b6d) | D1 done: **gate passed** (SI-128 anomaly/white ratio 0.004–87 over shells 1–64, peak shell 7; mismatch confirmed, WP1 may proceed). Budget closes on archive (enstrophy 1.9999 vs 2.000 train). Open: residual std 1.42× martingale prediction. Queued on MIG: 1445801 map smoke, 1446226 tests before/after + D5/D6 short, 1446227 long run + D7, 1446228 plots. D2–D4 wait for baselines |
+| WP1 + WP2 core (NoiseCovariance, variance clock, matched β, invariant) | `research/itomap-core` / `wt_itomap_core` (head b019f67) | implemented; test suites before/after queued (1445508, 1445706, compute-p1); WP1 runs unblocked by D1, launchers need moving to V100 + cu126 venv |
 
 - Data on DelftBlue: `data.npz` only; no 256² companion (does not exist). No earlier Itô/flow-map checkpoints or archived results here, hence the baseline retraining.
 - Large outputs: `/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/`; job logs in `slurm_itomap/logs/`.
