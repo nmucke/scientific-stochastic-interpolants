@@ -1,0 +1,70 @@
+=== SYMBOLIC ===
+beta=t | Claim 1 residual: 0
+beta=t | w(s,t) - claimed: 0
+beta=t | (1-t)/(1-s) + w(s,t) = 1
+beta=t | w(0,t) = t  w(s,1) = 1
+beta=t | Claim 3 weights: lambda + w(u,t)/w(s,t) - 1 = 0
+beta=t | lambda = (s - u)*(t - 1)/((s - t)*(u - 1))  ; lambda at t=1: 0
+beta=t | int_s^t kappa/(1-r) dr as t->1: oo
+beta=t^2 | Claim 1 residual: 0
+beta=t^2 | w(s,t) - claimed: 0
+beta=t^2 | (1-t)/(1-s) + w(s,t) = -s*t + s + t**2 - t + 1
+beta=t^2 | w(0,t) = t**2  w(s,1) = 1
+beta=t^2 | Claim 3 weights: lambda + w(u,t)/w(s,t) - 1 = 0
+beta=t^2 | lambda = (s - u)*(t - 1)*(s*u - s - u)/((s - t)*(u - 1)*(s*t - s - t))  ; lambda at t=1: 0
+beta=t^2 | int_s^t kappa/(1-r) dr as t->1: oo
+
+=== CLAIM 1 numeric: quadrature of E[-c + beta' y - a sqrt(t) z | I_t = x] ===
+max |b_quadrature - (kappa*yhat - x/(1-t))| and |yhat_quad - yhat_closed| over 400 random (t,x,c,a): 6.81e-13
+
+=== CLAIMS 2-3 numeric: fine EM of both forms on one Brownian path ===
+-- 2-mode c=0 a=1 beta=t
+   N=   512  claim2 RMS resid 2.27e-02 | form A vs form B strong RMS 4.01e-02 | claim3 max resid 6.66e-16 | std(M_1) 0.557 (a/sqrt3=0.577)
+   N=  2048  claim2 RMS resid 5.71e-03 | form A vs form B strong RMS 1.03e-02 | claim3 max resid 6.66e-16 | std(M_1) 0.557 (a/sqrt3=0.577)
+   N=  8192  claim2 RMS resid 1.43e-03 | form A vs form B strong RMS 2.58e-03 | claim3 max resid 6.66e-16 | std(M_1) 0.556 (a/sqrt3=0.577)
+   N= 32768  claim2 RMS resid 3.58e-04 | form A vs form B strong RMS 6.46e-04 | claim3 max resid 6.66e-16 | std(M_1) 0.556 (a/sqrt3=0.577)
+   RMS(Ybar_{0,t} - X_1): 1-t=2^-2: 0.235, 1-t=2^-4: 0.062, 1-t=2^-6: 0.017, 1-t=2^-8: 0.009, 1-t=2^-10: 0.024
+   baseline G_(0,1) = X_1 - c - M_1: corr(G, M_1) = 0.595, Var(G)=1.237 vs Var(X_1)=2.283
+-- 3-mode c=0.5 a=0.7 beta=t
+   N=   512  claim2 RMS resid 2.75e-02 | form A vs form B strong RMS 5.39e-02 | claim3 max resid 8.88e-16 | std(M_1) 0.390 (a/sqrt3=0.404)
+   N=  2048  claim2 RMS resid 6.94e-03 | form A vs form B strong RMS 1.36e-02 | claim3 max resid 8.88e-16 | std(M_1) 0.390 (a/sqrt3=0.404)
+   N=  8192  claim2 RMS resid 1.74e-03 | form A vs form B strong RMS 3.41e-03 | claim3 max resid 8.88e-16 | std(M_1) 0.389 (a/sqrt3=0.404)
+   N= 32768  claim2 RMS resid 4.35e-04 | form A vs form B strong RMS 8.53e-04 | claim3 max resid 1.11e-15 | std(M_1) 0.389 (a/sqrt3=0.404)
+   RMS(Ybar_{0,t} - X_1): 1-t=2^-2: 0.181, 1-t=2^-4: 0.045, 1-t=2^-6: 0.012, 1-t=2^-8: 0.009, 1-t=2^-10: 0.029
+   baseline G_(0,1) = X_1 - c - M_1: corr(G, M_1) = 0.665, Var(G)=2.284 vs Var(X_1)=3.219
+-- 3-mode c=0.5 a=0.7 beta=t^2
+   N=   512  claim2 RMS resid 2.71e-02 | form A vs form B strong RMS 5.71e-02 | claim3 max resid 8.88e-16 | std(M_1) 0.390 (a/sqrt3=0.404)
+   N=  2048  claim2 RMS resid 6.84e-03 | form A vs form B strong RMS 1.50e-02 | claim3 max resid 8.88e-16 | std(M_1) 0.390 (a/sqrt3=0.404)
+   N=  8192  claim2 RMS resid 1.71e-03 | form A vs form B strong RMS 3.84e-03 | claim3 max resid 8.88e-16 | std(M_1) 0.389 (a/sqrt3=0.404)
+   N= 32768  claim2 RMS resid 4.29e-04 | form A vs form B strong RMS 9.63e-04 | claim3 max resid 8.88e-16 | std(M_1) 0.389 (a/sqrt3=0.404)
+   RMS(Ybar_{0,t} - X_1): 1-t=2^-2: 0.244, 1-t=2^-4: 0.048, 1-t=2^-6: 0.013, 1-t=2^-8: 0.009, 1-t=2^-10: 0.029
+   baseline G_(0,1) = X_1 - c - M_1: corr(G, M_1) = 0.839, Var(G)=2.113 vs Var(X_1)=3.215
+(claim-2 residual and A-vs-B gap shrink ~O(h): the identity holds for the SDE; claim-3 residual is roundoff)
+law check t=0.50: W1(X_t^EM, I_t) = 0.0053
+law check t=1.00: W1(X_t^EM, I_t) = 0.0072
+
+=== CLAIM 4: KL features and M_1 ===
+m_n(1)/a = <1-r, sqrt2 cos(w_n r)> = sqrt2 / w_n^2,  w_n=(n-1/2)pi;  Var M_1 = a^2/3
+  K=1: captured fraction 0.985534  residual var 4.822e-03 a^2  residual std 0.0694 a
+  K=2: captured fraction 0.997701  residual var 7.662e-04 a^2  residual std 0.0277 a
+  K=4: captured fraction 0.999689  residual var 1.038e-04 a^2  residual std 0.0102 a
+  K=8: captured fraction 0.999960  residual var 1.326e-05 a^2  residual std 0.0036 a
+  repo KL path, K=1, MC n=20000: Var M_1=0.3414 (1/3), residual var after regressing on xi = 4.826e-03, fraction unexplained 0.01413
+  repo KL path, K=4, MC n=20000: Var M_1=0.3330 (1/3), residual var after regressing on xi = 1.016e-04, fraction unexplained 0.00031
+  un-cancellable noise of the *last* step of an n-step KL-feature sampler (a=1, K=4):
+    n=1: Var(M incr)=3.333e-01, unexplained by xi_1..4 = 1.038e-04 (0.0%), std 0.0102
+    n=2: Var(M incr)=4.167e-02, unexplained by xi_1..4 = 6.114e-03 (14.7%), std 0.0782
+    n=4: Var(M incr)=5.208e-03, unexplained by xi_1..4 = 1.526e-03 (29.3%), std 0.0391
+    n=8: Var(M incr)=6.510e-04, unexplained by xi_1..4 = 5.188e-04 (79.7%), std 0.0228
+  first step [0,1/n] (noise re-enters the state, later steps can only denoise it):
+    n=2: Var=2.917e-01, unexplained 6.768e-03 (2.3%)
+    n=4: Var=1.927e-01, unexplained 1.232e-02 (6.4%)
+    n=8: Var=1.100e-01, unexplained 2.406e-02 (21.9%)
+
+=== self-test of the exact Gauss-Legendre path sampler (used in training) ===
+Var W_st 0.7385 (0.74) | additivity err 1.1e-15 | Var M_st 0.21798 (exact 0.21877) | Cov(W,M) 0.3688 (exact 0.3700)
+feature cov diag (incW, K=4): [1.0006, 0.9993, 1.0011, 0.9986] max offdiag 0.0027
+feature cov diag (leg, K=4): [0.998, 1.0006, 0.9995, 1.0018] max offdiag 0.0028
+feature cov diag (incM, K=4): [0.1124, 0.0654, 0.0313, 0.0097] max offdiag 0.0002
+parent Legendre moments as a linear function of the two children's: max resid 3.55e-15
+parent K=4 increments regressed on children's K=4+4 increments (u not the midpoint): R^2 per feature [0.913, 0.808, 0.747, 0.852]
