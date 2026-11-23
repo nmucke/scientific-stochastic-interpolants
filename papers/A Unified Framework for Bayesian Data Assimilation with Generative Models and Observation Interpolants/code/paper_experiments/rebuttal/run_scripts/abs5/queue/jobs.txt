@@ -1,0 +1,93 @@
+dflow_M250|--method dflow --num-steps 250
+dm_sde_shared_corr_M250|--method dm_sde_fc --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+dm_sde_shared_M250|--method dm_sde --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+fm_ode_shared_corr_M250|--method fm_ode_fc --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+fm_ode_shared_M250|--method fm_ode --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+si_sde_shared_corr_M250|--method si_sde_fc --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=1.0 --set correction.q_source=online
+si_sde_shared_M250|--method si_sde --num-steps 250 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+surge_sda_M250|--method surge_sda --num-steps 250
+surge_flowdas_M250|--method surge_flowdas --num-steps 250
+sda_M250|--method sda --num-steps 250
+flowdas_M250|--method flowdas --num-steps 250
+surge_si_sde_M250|--method surge_si_sde --num-steps 250
+surge_dm_sde_M250|--method surge_dm_sde --num-steps 250
+dm_sde_jacfree_corr_M250|--method dm_sde_fc --num-steps 250
+dm_sde_jacfree_M250|--method dm_sde --num-steps 250
+fm_ode_jacfree_corr_M250|--method fm_ode_fc --num-steps 250
+fm_ode_jacfree_M250|--method fm_ode --num-steps 250
+si_sde_jacfree_corr_M250|--method si_sde_fc --num-steps 250
+si_sde_jacfree_M250|--method si_sde --num-steps 250
+fig_M250|--method fig --num-steps 250
+prior_enkf_M250|--method prior_enkf --num-steps 250
+prior_enkf_fm_M250|--method prior_enkf_fm --num-steps 250
+dflow_M100|--method dflow --num-steps 100
+dm_sde_shared_corr_M100|--method dm_sde_fc --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+dm_sde_shared_M100|--method dm_sde --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+fm_ode_shared_corr_M100|--method fm_ode_fc --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+fm_ode_shared_M100|--method fm_ode --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+si_sde_shared_corr_M100|--method si_sde_fc --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=1.0 --set correction.q_source=online
+si_sde_shared_M100|--method si_sde --num-steps 100 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+surge_sda_M100|--method surge_sda --num-steps 100
+surge_flowdas_M100|--method surge_flowdas --num-steps 100
+sda_M100|--method sda --num-steps 100
+flowdas_M100|--method flowdas --num-steps 100
+surge_si_sde_M100|--method surge_si_sde --num-steps 100
+surge_dm_sde_M100|--method surge_dm_sde --num-steps 100
+dm_sde_jacfree_corr_M100|--method dm_sde_fc --num-steps 100
+dm_sde_jacfree_M100|--method dm_sde --num-steps 100
+fm_ode_jacfree_corr_M100|--method fm_ode_fc --num-steps 100
+fm_ode_jacfree_M100|--method fm_ode --num-steps 100
+si_sde_jacfree_corr_M100|--method si_sde_fc --num-steps 100
+si_sde_jacfree_M100|--method si_sde --num-steps 100
+fig_M100|--method fig --num-steps 100
+prior_enkf_M100|--method prior_enkf --num-steps 100
+prior_enkf_fm_M100|--method prior_enkf_fm --num-steps 100
+dflow_M50|--method dflow --num-steps 50
+dm_sde_shared_corr_M50|--method dm_sde_fc --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+dm_sde_shared_M50|--method dm_sde --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+fm_ode_shared_corr_M50|--method fm_ode_fc --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+fm_ode_shared_M50|--method fm_ode --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+si_sde_shared_corr_M50|--method si_sde_fc --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=1.0 --set correction.q_source=online
+si_sde_shared_M50|--method si_sde --num-steps 50 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+surge_sda_M50|--method surge_sda --num-steps 50
+surge_flowdas_M50|--method surge_flowdas --num-steps 50
+sda_M50|--method sda --num-steps 50
+flowdas_M50|--method flowdas --num-steps 50
+surge_si_sde_M50|--method surge_si_sde --num-steps 50
+surge_dm_sde_M50|--method surge_dm_sde --num-steps 50
+dm_sde_jacfree_corr_M50|--method dm_sde_fc --num-steps 50
+dm_sde_jacfree_M50|--method dm_sde --num-steps 50
+fm_ode_jacfree_corr_M50|--method fm_ode_fc --num-steps 50
+fm_ode_jacfree_M50|--method fm_ode --num-steps 50
+si_sde_jacfree_corr_M50|--method si_sde_fc --num-steps 50
+si_sde_jacfree_M50|--method si_sde --num-steps 50
+fig_M50|--method fig --num-steps 50
+prior_enkf_M50|--method prior_enkf --num-steps 50
+prior_enkf_fm_M50|--method prior_enkf_fm --num-steps 50
+dflow_M25|--method dflow --num-steps 25
+dm_sde_shared_corr_M25|--method dm_sde_fc --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+dm_sde_shared_M25|--method dm_sde --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+fm_ode_shared_corr_M25|--method fm_ode_fc --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=0.75 --set correction.q_source=online
+fm_ode_shared_M25|--method fm_ode --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+si_sde_shared_corr_M25|--method si_sde_fc --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9 --set correction.gain_scale=1.0 --set correction.q_source=online
+si_sde_shared_M25|--method si_sde --num-steps 25 --tag shared --set likelihood_mode=inflated_shared --set jacobian_damping=0.9
+surge_sda_M25|--method surge_sda --num-steps 25
+surge_flowdas_M25|--method surge_flowdas --num-steps 25
+sda_M25|--method sda --num-steps 25
+flowdas_M25|--method flowdas --num-steps 25
+surge_si_sde_M25|--method surge_si_sde --num-steps 25
+surge_dm_sde_M25|--method surge_dm_sde --num-steps 25
+dm_sde_jacfree_corr_M25|--method dm_sde_fc --num-steps 25
+dm_sde_jacfree_M25|--method dm_sde --num-steps 25
+fm_ode_jacfree_corr_M25|--method fm_ode_fc --num-steps 25
+fm_ode_jacfree_M25|--method fm_ode --num-steps 25
+si_sde_jacfree_corr_M25|--method si_sde_fc --num-steps 25
+si_sde_jacfree_M25|--method si_sde --num-steps 25
+fig_M25|--method fig --num-steps 25
+prior_enkf_M25|--method prior_enkf --num-steps 25
+prior_enkf_fm_M25|--method prior_enkf_fm --num-steps 25
+enkf|--method enkf
+enkf_large|--method enkf_large
+pf_matched|--method pf_matched
+pf_subsample|--method pf_subsample
+pf_reference|--method pf_reference

@@ -1,0 +1,340 @@
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/_l96_system.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/_l96_system.py
+index 2e08201..d86737e 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/_l96_system.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/_l96_system.py	
+@@ -23,8 +23,11 @@ from scisi.likelihood_models.observation_operators import NONLINEARITIES
+ 
+ CASE_CONFIG = Path(__file__).resolve().parents[2] / "configs/case/lorenz96.yaml"
+ 
+-#: Observation operators of this case: ``driver.py --obs <name>``.
++#: Problems of this case: ``driver.py --obs <name>`` (an observation operator, or a
++#: variant of the problem block such as ``linear_long``; see :func:`configure`).
+ OBS_OPERATORS = OBS_CHOICES
++#: Observation operators ``h`` (``Observation.operator``).
++OPERATORS: tuple[str, ...] = ("linear", "arctan", "square")
+ 
+ 
+ def arctan_nonlinearity(w: torch.Tensor, strength: float) -> tuple[torch.Tensor, torch.Tensor]:
+@@ -53,8 +56,8 @@ class Observation:
+     strength: float | None = None
+ 
+     def __post_init__(self) -> None:
+-        if self.operator not in OBS_OPERATORS:
+-            raise ValueError(f"observation.operator must be one of {OBS_OPERATORS}, got {self.operator!r}")
++        if self.operator not in OPERATORS:
++            raise ValueError(f"observation.operator must be one of {OPERATORS}, got {self.operator!r}")
+         if self.operator in ("linear", "square") and self.strength is not None:
+             raise ValueError(f"a {self.operator} observation takes no strength")
+         if self.operator == "arctan":
+@@ -70,6 +73,11 @@ class Problem:
+     ``observation`` (default linear) selects the observation operator. A linear
+     problem's :meth:`to_dict` has no ``observation`` key, exactly the dictionary
+     stored in the data and the linear references before the option existed.
++
++    ``variant`` names a problem whose other fields differ from the case's
++    ``problem:`` block (``problem_<variant>:``, e.g. ``linear_long``); it is its
++    results directory (:attr:`obs_label`). ``None`` (every operator sweep) keeps
++    it out of :meth:`to_dict`, so those dictionaries are unchanged.
+     """
+ 
+     dim_state: int = 16
+@@ -83,6 +91,7 @@ class Problem:
+     prior_std: float = 1.0
+     num_steps: int = 50
+     observation: Observation = field(default_factory=Observation)
++    variant: str | None = None
+ 
+     def __post_init__(self) -> None:
+         if isinstance(self.observation, dict):
+@@ -92,8 +101,9 @@ class Problem:
+ 
+     @property
+     def obs_label(self) -> str:
+-        """``linear``, ``arctan`` or ``square``: the results directory of this problem."""
+-        return self.observation.operator
++        """``linear``, ``arctan``, ``square`` or the variant (``linear_long``): the
++        results directory of this problem."""
++        return self.variant or self.observation.operator
+ 
+     @property
+     def linear_obs(self) -> bool:
+@@ -117,7 +127,8 @@ class Problem:
+         return self.obs_nonlinearity(selected)[0]
+ 
+     def dynamics(self) -> "Problem":
+-        """The same problem with linear observations: what the data depend on."""
++        """The same problem with linear observations: what the data depend on
++        (a variant keeps its name and its other fields, e.g. the interval)."""
+         return replace(self, observation=Observation())
+ 
+     @property
+@@ -143,6 +154,8 @@ class Problem:
+         out = asdict(self)
+         if self.linear_obs:
+             del out["observation"]  # unchanged layout for the linear problem
++        if self.variant is None:
++            del out["variant"]  # unchanged layout for the operator sweeps
+         return out
+ 
+ 
+@@ -166,8 +179,11 @@ def configure(cfg, obs: str = "linear"):
+     ``linear`` leaves ``problem`` and ``methods`` as they are. Otherwise
+     ``problem.observation`` is set from ``observations.<obs>`` and ``methods`` is
+     replaced by ``methods_<obs>`` (:data:`CONFIG_BLOCK`), so every cell reads the
+-    settings of that problem. ``cfg.obs`` records the choice; configuring an
+-    already configured config for another operator is refused.
++    settings of that problem. A problem variant (``linear_long``) also has a
++    ``problem_<obs>`` block, merged into ``problem`` (with ``problem.variant = obs``,
++    so its results go to ``results/lorenz96/<obs>/``). ``cfg.obs`` records the
++    choice; configuring an already configured config for another operator is
++    refused.
+     """
+     if obs not in OBS_OPERATORS:
+         raise ValueError(f"obs must be one of {OBS_OPERATORS}, got {obs!r}")
+@@ -179,6 +195,14 @@ def configure(cfg, obs: str = "linear"):
+     if obs != "linear":
+         cfg.problem.observation = OmegaConf.to_container(cfg.observations[obs])
+         cfg.methods = cfg[CONFIG_BLOCK[obs]]
++    # Optional per-variant problem overrides (``problem_<obs>``), e.g. the interval.
++    if f"problem_{obs}" in cfg:
++        override = cfg[f"problem_{obs}"]
++        refused = {"observation", "variant"} & set(override.keys())
++        if refused:
++            raise ValueError(f"problem_{obs} may not set {sorted(refused)}")
++        cfg.problem = OmegaConf.merge(cfg.problem, override)
++        cfg.problem.variant = obs
+     # Optional per-operator evaluation overrides (``evaluation_<obs>``), e.g. fewer test
+     # sequences; sequence i keeps its seeding, so a smaller split is a prefix.
+     if f"evaluation_{obs}" in cfg:
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/driver.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/driver.py
+index 91f148b..0e36c8a 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/driver.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/cases/lorenz96/driver.py	
+@@ -1562,7 +1562,8 @@ class Lorenz96Runner(ExperimentRunner):
+         by_label = {s.value: obs for obs, s in SCENARIOS.items()}
+         if scenario not in by_label:
+             raise ValueError(
+-                f"Use scenario=lorenz96, lorenz96_arctan or lorenz96_square with this case, "
++                f"Use scenario=lorenz96, lorenz96_arctan, lorenz96_square or "
++                f"lorenz96_linear_long with this case, "
+                 f"not {scenario!r}."
+             )
+         self.obs = by_label[scenario]
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/configs/case/lorenz96.yaml b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/configs/case/lorenz96.yaml
+index 5b1c1b7..fb0f2e1 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/configs/case/lorenz96.yaml	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/configs/case/lorenz96.yaml	
+@@ -34,6 +34,9 @@ observations:
+   # the experiment tests whether a method represents both modes. The PF reference
+   # uses the exact `square_mixture` importance proposal (pf_gate.reference_proposal).
+   square: {operator: square}
++  # Linear h on a problem variant with a longer time between observations
++  # (problem_linear_long: below); outputs under results/lorenz96/linear_long/.
++  linear_long: {operator: linear}
+ 
+ # Trained priors, under checkpoints/lorenz96/.
+ checkpoints:
+@@ -221,3 +224,44 @@ methods_square:
+   surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.5}
+   surge_flowdas: {num_steps: 50, guidance_scale: 0.016, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
+   surge_sda: {num_steps: 50, gamma_sda: 0.001, ess_threshold: 0.5}
++
++# --- Linear observations, long interval (`--obs linear_long`, 2026-11-18) -------
++# Problem variant: these keys replace those of `problem:` (_l96_system.configure),
++# and the problem records variant: linear_long. Everything else is the linear
++# problem: same sites, obs noise, prior, 50 steps and seeds (but the truths differ,
++# since the dynamics do). Noise semantics unchanged: ONE N(0, noise_std^2 I) kick
++# per interval after the deterministic flow over the whole interval, so the kernel
++# is N(Phi(x), I) and the reference PF's optimal proposal stays exact. The
++# interval was chosen by an N = 1e5 PF sweep on 2 validation sequences
++# (skewness, kurtosis, whitened energy distance to the moment-matched Gaussian,
++# replicate agreement, ESS): see L96_LINEAR_LONG_HANDOVER.md. The trained priors
++# (checkpoints/lorenz96/) model the 0.2 transition and do not apply here.
++problem_linear_long:
++  interval: 1.2
++# 3 test sequences (the first 3 of the 12), as for square.
++evaluation_linear_long:
++  test_sequences: 3
++# NOT TUNED: a verbatim copy of `methods:` (without the TMPD line, which is a
++# linear-sweep-only cell in lorenz96_lineup). Untrained priors for this interval.
++methods_linear_long:
++  enkf: {inflation: 1.0, localisation: 4}
++  enkf_large: {inflation: 1.0, localisation: 8}
++  si_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
++  fm_ode: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0}
++  dm_sde: {num_steps: 50, likelihood_mode: dps_jacobian_free, jacobian_damping: 1.0, diffusion_scale: 1.0}
++  si_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
++  fm_ode_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
++  dm_sde_fc: {correction: {forecast_num_steps: null, localisation: 4, gain_scale: 0.75, q_source: online}}
++  oracle_fc: {correction: {localisation: 4, gain_scale: 1.0, q_source: exact}}
++  prior_enkf: {prior: si_sde, num_steps: 50, inflation: 1.0, localisation: 4}
++  prior_enkf_fm: {prior: fm_ode, num_steps: 50, inflation: 1.0, localisation: 4}
++  flowdas: {num_steps: 50, guidance_scale: 1.0, num_mc_samples: 25, max_grad_norm: null, mc_chunk: null}
++  sda: {num_steps: 50, gamma_sda: 0.0001}
++  dflow: {num_steps: 50, step_size: 0.02, noise_scale: 0.001, lambda_reg: 0.001, precond_decay: 0.99, precond_eps: 0.001, ode_steps: 6}
++  fig: {num_steps: 50, guidance_steps: 1, guidance_scale: 1, interpolant_noise: 0.0}
++  surge_si_sde: {ess_threshold: 1.0}
++  surge_dm_sde: {ess_threshold: 0.25}
++  surge_unguided_si: {num_steps: 50, ess_threshold: 0.5}
++  surge_unguided_dm: {num_steps: 50, diffusion_scale: 1.0, ess_threshold: 0.25}
++  surge_flowdas: {num_steps: 50, guidance_scale: 0.004, num_mc_samples: 25, max_grad_norm: null, ess_threshold: 0.5}
++  surge_sda: {num_steps: 50, gamma_sda: 1.0e-05, ess_threshold: 0.5}
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/lorenz96_lineup.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/lorenz96_lineup.py
+index 2bcb3fb..ef9ce2c 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/lorenz96_lineup.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/lorenz96_lineup.py	
+@@ -2,7 +2,9 @@
+ 
+ Three sweeps share every script: ``linear`` (h = every fourth site), ``arctan``
+ (h = arctan of the same sites) and ``square`` (h = (L x)^2, elementwise, on the same
+-sites: sign-blind, so the posterior can be bimodal). Each has its own result root
++sites: sign-blind, so the posterior can be bimodal); ``linear_long`` is the linear
++problem with a longer time between observations (``problem_linear_long:``), so the
++filtering posteriors are non-Gaussian. Each has its own result root
+ ``results/lorenz96/<obs>/``, its own tidy ``scenario`` string and its own settings
+ block of ``configs/case/lorenz96.yaml`` (:data:`CONFIG_BLOCK`).
+ 
+@@ -11,8 +13,8 @@ variant), the table group, the variant and legend labels, the line style and
+ whether the cell writes the SMC metrics. ``driver.CELLS`` is derived from it, and
+ the run script takes its cell lists from it::
+ 
+-    python lorenz96_lineup.py cells generative [linear|arctan|square]  # every M
+-    python lorenz96_lineup.py cells fixed [linear|arctan|square]       # once per seed
++    python lorenz96_lineup.py cells generative [linear|arctan|square|linear_long]  # every M
++    python lorenz96_lineup.py cells fixed [linear|arctan|square|linear_long]       # once per seed
+     python lorenz96_lineup.py m-values           # M_VALUES
+ 
+ Pure stdlib (no torch), like ``results_schema``.
+@@ -34,16 +36,18 @@ if str(_here) not in sys.path:
+ from results_schema import Method, Scenario  # noqa: E402
+ 
+ CASE = "lorenz96"
+-OBS_CHOICES: tuple[str, ...] = ("linear", "arctan", "square")
++OBS_CHOICES: tuple[str, ...] = ("linear", "arctan", "square", "linear_long")
+ # Tidy ``scenario`` per sweep (results_schema.Scenario values).
+ SCENARIO_OF: dict[str, str] = {
+     "linear": Scenario.LORENZ96.value,
+     "arctan": Scenario.LORENZ96_ARCTAN.value,
+     "square": Scenario.LORENZ96_SQUARE.value,
++    "linear_long": Scenario.LORENZ96_LINEAR_LONG.value,
+ }
+ # Settings block of each sweep in configs/case/lorenz96.yaml.
+ CONFIG_BLOCK: dict[str, str] = {
+     "linear": "methods", "arctan": "methods_arctan", "square": "methods_square",
++    "linear_long": "methods_linear_long",
+ }
+ 
+ # Per-step and per-sequence metrics written by the SMC cells only (the six SURGE
+@@ -323,7 +327,7 @@ def main(argv: list[str]) -> None:
+         return
+     if len(argv) not in (2, 3) or argv[0] != "cells":
+         raise SystemExit(
+-            "usage: lorenz96_lineup.py cells generative|fixed [linear|arctan|square] | m-values"
++            "usage: lorenz96_lineup.py cells generative|fixed [linear|arctan|square|linear_long] | m-values"
+         )
+     print(" ".join(run_cells(*argv[1:])))
+ 
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/make_lorenz96_tables.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/make_lorenz96_tables.py
+index 1e89cf4..271505e 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/make_lorenz96_tables.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/make_lorenz96_tables.py	
+@@ -59,6 +59,7 @@ OBS_TITLE = {
+     "linear": "linear observations",
+     "arctan": "arctan observations",
+     "square": "square observations",
++    "linear_long": "linear observations, long interval",
+ }
+ 
+ # (metric, latex header, markdown header, best rule): "min" lowest mean, "abs"
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results_schema.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results_schema.py
+index bb0f574..22683f1 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results_schema.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results_schema.py	
+@@ -144,6 +144,8 @@ class Scenario(str, Enum):
+     LORENZ96_ARCTAN = "lorenz96_arctan"
+     # Same sites, truths and noise draws, h = (L x)^2 (`driver.py --obs square`).
+     LORENZ96_SQUARE = "lorenz96_square"
++    # Linear h, longer time between observations (`driver.py --obs linear_long`).
++    LORENZ96_LINEAR_LONG = "lorenz96_linear_long"
+ 
+ 
+ NONLINEAR_STUDY_SCENARIOS: tuple[Scenario, ...] = (
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/run_lorenz96.sh b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/run_lorenz96.sh
+index 26838e0..e48a7f9 100755
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/run_lorenz96.sh	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/run_lorenz96.sh	
+@@ -33,7 +33,7 @@ cd "$(dirname "$0")"
+ STAGE=${1:-}
+ OBS=${2:-}
+ case "$STAGE" in tune|apply|final) ;; *) echo "usage: $0 tune|apply|final linear|arctan" >&2; exit 2 ;; esac
+-case "$OBS" in linear|arctan|square) ;; *) echo "usage: $0 tune|apply|final linear|arctan|square (not '$OBS')" >&2; exit 2 ;; esac
++case "$OBS" in linear|arctan|square|linear_long) ;; *) echo "usage: $0 tune|apply|final linear|arctan|square|linear_long (not '$OBS')" >&2; exit 2 ;; esac
+ PY=${PY:-python}
+ THREADS=${THREADS:-2}
+ SEEDS=${SEEDS:-"0 1 2"}
+diff --git a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/tests/test_lorenz96_nonlinear.py b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/tests/test_lorenz96_nonlinear.py
+index 2666442..95a7066 100644
+--- a/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/tests/test_lorenz96_nonlinear.py	
++++ b/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/tests/test_lorenz96_nonlinear.py	
+@@ -146,6 +146,61 @@ def test_each_operator_reads_its_own_methods_block():
+         driver.configure(linear, "arctan")
+ 
+ 
++def test_linear_long_variant_changes_only_the_interval(tmp_path, monkeypatch):
++    """``--obs linear_long``: the linear problem with ``problem_linear_long`` merged
++    in, recorded as ``variant``; the operator sweeps keep their dictionaries."""
++    raw = OmegaConf.load(driver.CASE_CONFIG)
++    interval = float(raw.problem_linear_long.interval)
++    assert interval > LINEAR_DICT["interval"]
++    cfg = driver.case_config("linear_long")
++    problem = driver.problem_of(cfg)
++    assert problem == load_problem(obs="linear_long")
++    assert problem.to_dict() == {**LINEAR_DICT, "interval": interval, "variant": "linear_long"}
++    assert problem.linear_obs and problem.obs_nonlinearity is None
++    assert problem.obs_label == "linear_long" and problem.model.interval == interval
++    assert pf_gate.reference_proposal(problem) == "optimal"  # exact for any interval
++    assert problem.dynamics() == problem
++    assert cfg.evaluation.test_sequences == 3 and cfg.obs == "linear_long"
++    assert driver.method_settings(cfg, "enkf") == driver.method_settings(driver.case_config(), "enkf")
++    # Same sites and noise draws; the truth follows the longer interval.
++    seq = make_sequence(problem, 7)
++    linear_seq = make_sequence(Problem(), 7)
++    assert not torch.allclose(seq.truth[1], linear_seq.truth[1])
++    noise = seq.observations - seq.truth[1:, problem.obs_indices]
++    linear_noise = linear_seq.observations - linear_seq.truth[1:, problem.obs_indices]
++    torch.testing.assert_close(noise, linear_noise, rtol=0, atol=1e-12)
++    # The operator sweeps are untouched: no variant key, the base interval.
++    for obs in ("linear", "arctan", "square"):
++        other = driver.problem_of(driver.case_config(obs))
++        assert "variant" not in other.to_dict() and other.interval == LINEAR_DICT["interval"]
++        assert other.obs_label == obs
++    # Paths, scenario and the runner.
++    monkeypatch.setattr(driver, "RESULTS", tmp_path)
++    assert driver.reference_path("test", 0, 1, problem.obs_label).parts[-4] == "linear_long"
++    assert driver.SCENARIOS["linear_long"] is Scenario.LORENZ96_LINEAR_LONG
++    runner = driver.Lorenz96Runner(
++        OmegaConf.create(
++            dict(
++                case=OmegaConf.to_container(raw),
++                scenario=dict(name="lorenz96_linear_long"),
++                method=dict(name="EnKF"),
++            )
++        )
++    )
++    assert runner.obs == "linear_long"
++    # References of the base linear problem are refused, and so is the 0.2 data.
++    assert Problem().to_dict() != problem.to_dict()
++    path = tmp_path / "data.npz"
++    np.savez(path, mean=2.2, std=4.0, problem=json.dumps(LINEAR_DICT), states=np.zeros(1))
++    with pytest.raises(ValueError, match="different problem"):
++        Standardisation.from_data(path, problem)
++    # A variant block may not change the operator or its own name.
++    bad = OmegaConf.load(driver.CASE_CONFIG)
++    bad.problem_linear_long.observation = {"operator": "square"}
++    with pytest.raises(ValueError, match="may not set"):
++        driver.configure(bad, "linear_long")
++
++
+ def test_paths_and_scenario_carry_the_operator(tmp_path, monkeypatch):
+     monkeypatch.setattr(driver, "RESULTS", tmp_path)
+     assert driver.reference_path("test", 0, 1, "arctan") == (

@@ -1,0 +1,3 @@
+#!/bin/bash
+for s in 1 2 3 0; do bash "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/si_corr_seeds/run.sh" $s 40 "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/si_corr_seeds/full"; done
+echo ALLDONE > "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/si_corr_seeds/full.done"

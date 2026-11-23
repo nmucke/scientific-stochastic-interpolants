@@ -1,6 +1,6 @@
 #!/bin/bash
 # TMPD (plain, row_sum) on the NS wrong-IC / long-horizon grid: the settings of
-# slurm_wrong_ic/ (REBUTTAL_EXPERIMENTS.md section 1). 20 cells = 4 scenarios x traj 10-14.
+# slurm_wrong_ic/ (rebuttal/docs/REBUTTAL_EXPERIMENTS.md section 1). 20 cells = 4 scenarios x traj 10-14.
 #   DRY_RUN=1 bash submit.sh     # print everything, submit nothing
 #   bash submit.sh               # submit (env knobs: ../submit_common.sh)
 # Aggregate together with the main grid: aggregate_ns.py over both metrics/ dirs

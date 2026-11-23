@@ -1,0 +1,5 @@
+source "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/env.sh"
+export PE="/export/scratch1/ntm/postdoc/scisi-wt-before/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments"
+export PYTHONPATH="/export/scratch1/ntm/postdoc/scisi-wt-before/src"
+python -c "import scisi; print(scisi.__file__)"
+python "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/linear_identity_snapshot.py" "/export/scratch1/ntm/postdoc/scientific-stochastic-interpolants/papers/A Unified Framework for Bayesian Data Assimilation with Generative Models and Observation Interpolants/code/paper_experiments/results/_runs/identity/before_bb58153.pt"
