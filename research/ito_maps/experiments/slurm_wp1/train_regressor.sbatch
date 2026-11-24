@@ -25,7 +25,7 @@ echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short
 $PY scripts/train.py --config-name stochastic_navier_stokes \
   models=conditional_mean \
   experiment_tracking.name="$RUN" \
-  seed="$SEED" \
+  ++seed="$SEED" \
   trainer.num_epochs="$EPOCHS" \
   scheduler.T_max="$EPOCHS" \
   hydra.run.dir="$WP1_ROOT/hydra/$RUN" \
