@@ -8,11 +8,11 @@
 #   RUN=wp1_si_coloured_matched_seed0 sbatch research/ito_maps/experiments/slurm_wp1/eval_si.sbatch
 #SBATCH --job-name=wp1_eval
 #SBATCH --account=research-ceg-gse
-#SBATCH --partition=gpu-a100
+#SBATCH --partition=gpu-v100
 #SBATCH --time=12:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --mem-per-cpu=12000M
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=5000M
 #SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/ntmucke/scientific-stochastic-interpolants/slurm_itomap/logs/%x_%j.out
 source research/ito_maps/experiments/slurm_wp1/common.sh

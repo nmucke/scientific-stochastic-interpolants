@@ -6,15 +6,14 @@
 #   VARIANT=coloured_matched SPECTRUM=$WP1_ROOT/spectra/<file>.npz \
 #     sbatch research/ito_maps/experiments/slurm_wp1/train_si.sbatch
 #
-# Not submitted: gated on the Phase 0 D1 result and the lead's review.
-# The shared .venv has torch 2.15+cu132 (no Volta/V100 kernels): use gpu-a100.
+# Runs on V100 with .venv_cu126 (common.sh); the shared .venv has no sm_70 kernels.
 #SBATCH --job-name=wp1_si
 #SBATCH --account=research-ceg-gse
-#SBATCH --partition=gpu-a100
+#SBATCH --partition=gpu-v100
 #SBATCH --time=2-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --mem-per-cpu=12000M
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=5000M
 #SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/ntmucke/scientific-stochastic-interpolants/slurm_itomap/logs/%x_%j.out
 source research/ito_maps/experiments/slurm_wp1/common.sh

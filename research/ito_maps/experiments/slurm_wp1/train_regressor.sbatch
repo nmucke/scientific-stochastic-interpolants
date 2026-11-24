@@ -2,14 +2,13 @@
 # Deterministic conditional-mean regressor m(h) = c + UNet(c, h) with MSE, for
 # the preferred spectrum estimate (validation residuals). Resumable; DONE marker.
 #   sbatch research/ito_maps/experiments/slurm_wp1/train_regressor.sbatch
-# Not submitted yet (prepared only).
 #SBATCH --job-name=wp1_regressor
 #SBATCH --account=research-ceg-gse
-#SBATCH --partition=gpu-a100
+#SBATCH --partition=gpu-v100
 #SBATCH --time=1-00:00:00
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH --mem-per-cpu=12000M
+#SBATCH --cpus-per-task=4
+#SBATCH --mem-per-cpu=5000M
 #SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/ntmucke/scientific-stochastic-interpolants/slurm_itomap/logs/%x_%j.out
 source research/ito_maps/experiments/slurm_wp1/common.sh

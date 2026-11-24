@@ -4,11 +4,11 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 export PYTHONPATH="$PWD/src"
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-2} MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK:-2}
-PY=.venv/bin/python
+PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv_cu126/bin/python}  # torch 2.9.1+cu126: V100 and A100
 WP1_ROOT=${WP1_ROOT:-/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/wp1}
 SPECTRA=$WP1_ROOT/spectra
 mkdir -p "$WP1_ROOT" "$SPECTRA"
-$PY -c "import scisi; print('scisi from', scisi.__file__)"
+$PY -c "import scisi, torch; print('scisi from', scisi.__file__, 'torch', torch.__version__, torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu')"
 
 # Hydra overrides for the three processes of WP1 step 1 (VARIANT):
 #   white_t2         QuadraticStochasticInterpolation, C = Id (today's process)
