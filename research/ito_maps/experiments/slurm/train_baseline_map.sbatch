@@ -25,6 +25,9 @@ MAX_BATCHES=${MAX_BATCHES:-1000}
 DIAG=${DIAG:-10}
 WARM=${WARM:-10}
 EXTRA=${EXTRA:-}
+# torch 2.9.1+cu126 venv: runs on V100 (sm_70) and A100; the shared .venv
+# (torch 2.15+cu132) has no sm_70 kernels.
+PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv_cu126/bin/python}
 
 cd "$SLURM_SUBMIT_DIR"
 export PYTHONPATH="$PWD/src"
@@ -34,11 +37,11 @@ if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
 if [ -f "$ckpt/last.pth" ]; then resume=(trainer.resume_from="$ckpt/last.pth"); fi
 echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short HEAD), resume=${#resume[@]}"
-.venv/bin/python -c "import scisi; print('scisi from', scisi.__file__)"
+"$PY" -c "import scisi, torch; print('scisi from', scisi.__file__, 'torch', torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"
 
 # Grid settings (train_ns_grid.sh): 10 diagonal-only epochs, then a 10-epoch
 # ramp of the off-diagonal weight, cosine schedule over the full budget.
-.venv/bin/python scripts/train.py --config-name stochastic_navier_stokes \
+"$PY" scripts/train.py --config-name stochastic_navier_stokes \
   models="$MODEL" \
   trainer.off_diagonal=progressive_self_distillation \
   experiment_tracking.name="$RUN" \

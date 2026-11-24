@@ -88,4 +88,8 @@ re-creations, not the original runs.
 
 ## Changes
 
-(none yet)
+- 2026-11-24: map training (baselines and new variants) runs on V100 with a
+  separate venv, torch 2.9.1+cu126 (`/scratch/.../.venv_cu126`), because the
+  shared `.venv` (torch 2.15+cu132) has no sm_70 kernels. Same package set
+  otherwise; the torch version is logged at the start of every job. No results
+  existed before this change.
