@@ -6,7 +6,7 @@ Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). P
 
 | Unit | Branch / worktree (`/scratch/ntmucke/scientific-stochastic-interpolants/`) | State |
 |---|---|---|
-| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | smoke 1445467 passed (all phases + resume); V100 jobs Itô 1445729, flow 1445730 **held**: shared `.venv` torch 2.15+cu132 has no sm_70 kernels; waiting for a cu126 venv |
+| Baseline maps (Itô PSD local K=4, flow PSD; seed 0; dropout 0) | `research/itomap-baselines` / `wt_itomap_baselines` | MIG smoke 1445467 passed. V100 with `.venv_cu126` (torch 2.9.1+cu126): smoke 1448881, then Itô 1448882 and flow 1448883 (afterok) |
 | Phase 0 diagnostics D1, D5–D7 (+ WP7 budget class) | `research/itomap-phase0` / `wt_itomap_phase0` (head 445a38b) | D1 **gate passed** (SI-128 anomaly/white 0.004–87, peak shell 7). Budget closes on archive. SI-128 long run (4 traj × E=8, 500 leads): enstrophy 4.21 vs data 4.76 [4.65, 4.88], budget residual −17% of injection (leads 96–500), lag-1 0.66 vs 0.61, shell-64 power 0.52× data: D7 fires for SI. Suites before/after pass (208/224). D2–D4 wait for baselines. Open: residual std 1.42× prediction |
 | WP1 + WP2 core (NoiseCovariance, variance clock, matched β, invariant) | `research/itomap-core` / `wt_itomap_core` (head 8b609d5) | suites: dev snapshot 205 pass / 3 fail (KTH, snapshot lacked `scripts/encode_kth.py`), after 249 pass. Smoke 1445698 failed on `seed` override, fixed (`++seed`), resubmitted 1448820 (MIG). Long WP1 runs need V100 + cu126 venv |
 
