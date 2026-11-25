@@ -93,3 +93,9 @@ re-creations, not the original runs.
   shared `.venv` (torch 2.15+cu132) has no sm_70 kernels. Same package set
   otherwise; the torch version is logged at the start of every job. No results
   existed before this change.
+- 2026-11-25: the WP1 conditional-mean regressor overfits (validation MSE
+  minimum 0.228 at epoch 17, 0.295 at epoch 59; train 0.04). Its 24 h job
+  stopped at 60/150 epochs and it is not continued. The residual spectrum uses
+  the best-validation weights (`model.pth`, epoch 17). Selecting the epoch on
+  validation and then measuring residuals on validation is mildly optimistic;
+  noted, not corrected.
