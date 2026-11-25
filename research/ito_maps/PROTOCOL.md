@@ -112,3 +112,13 @@ re-creations, not the original runs.
   (best loss and counter are restored). Map early stopping only counts from
   the first full-weight epoch (index diagonal_epochs + warmup_epochs − 1 = 19);
   SI and regressor count from epoch 0.
+- 2026-11-25 (user decision): **development moves to 64×64.** All 128×128
+  runs were cancelled; their partial checkpoints are kept but not used.
+  Data: `data/stochastic_navier_stokes_64/data.npz`, spectral truncation of the
+  128×128 archive (|k_i| < 32; drops 0.79% of train enstrophy, 0.016% of
+  energy), same splits and windows; std 3.08599 (64×64 train split). Config
+  `stochastic_navier_stokes_64`: UNet `[16, 32, 64]` with attention in the
+  16×16 bottleneck (same physical bottleneck as the 128×128 network), 4.33M
+  parameters for the maps, 4.26M for the SI. Everything else in this protocol
+  is unchanged. Results on 64×64 are development results; headline claims are
+  confirmed at 128×128.

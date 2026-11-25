@@ -25,6 +25,9 @@ MAX_BATCHES=${MAX_BATCHES:-1000}
 DIAG=${DIAG:-10}
 WARM=${WARM:-10}
 EXTRA=${EXTRA:-}
+# Development data: 64x64 (2026-11-25). The tracker project, and so the
+# checkpoint directory, is named after the config.
+CONFIG=${CONFIG:-stochastic_navier_stokes_64}
 PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-25)
 # torch 2.9.1+cu126 venv: runs on V100 (sm_70) and A100; the shared .venv
 # (torch 2.15+cu132) has no sm_70 kernels.
@@ -33,10 +36,10 @@ PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv_cu126/bin/pyt
 cd "$SLURM_SUBMIT_DIR"
 export PYTHONPATH="$PWD/src"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
-ckpt="checkpoints/stochastic_navier_stokes/$RUN"
+ckpt="checkpoints/$CONFIG/$RUN"
 # One trackio store per run: the shared SQLite file in $HOME broke under
 # concurrent jobs (2026-11-25).
-export TRACKIO_DIR=/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/baselines/trackio/$RUN
+export TRACKIO_DIR=/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/baselines/trackio/$CONFIG/$RUN
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
 if [ -f "$ckpt/last.pth" ]; then resume=(trainer.resume_from="$ckpt/last.pth"); fi
@@ -45,7 +48,7 @@ echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short
 
 # Grid settings (train_ns_grid.sh): 10 diagonal-only epochs, then a 10-epoch
 # ramp of the off-diagonal weight, cosine schedule over the full budget.
-"$PY" scripts/train.py --config-name stochastic_navier_stokes \
+"$PY" scripts/train.py --config-name "$CONFIG" \
   models="$MODEL" \
   trainer.off_diagonal=progressive_self_distillation \
   experiment_tracking.name="$RUN" \
@@ -58,7 +61,7 @@ echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short
   trainer.max_train_batches="$MAX_BATCHES" \
   backbone.dropout_rate=0.0 \
   backbone.attention.dropout_rate=0.0 \
-  hydra.run.dir="/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/baselines/hydra/$RUN" \
+  hydra.run.dir="/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/baselines/hydra/$CONFIG/$RUN" \
   "${resume[@]}" $EXTRA
 date '+%F %T' > "$ckpt/DONE"
 echo "$(date '+%F %T') done $RUN"
