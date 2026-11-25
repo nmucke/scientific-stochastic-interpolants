@@ -19,7 +19,7 @@
 source research/ito_maps/experiments/slurm_wp1/common.sh
 : "${VARIANT:?set VARIANT}"
 SEED=${SEED:-0}
-EPOCHS=${EPOCHS:-300}
+EPOCHS=${EPOCHS:-150}
 EXTRA=${EXTRA:-}
 RUN=${RUN:-wp1_si_${VARIANT}_seed${SEED}}
 ckpt="checkpoints/stochastic_navier_stokes/$RUN"
