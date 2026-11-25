@@ -21,6 +21,7 @@ source research/ito_maps/experiments/slurm_wp1/common.sh
 SEED=${SEED:-0}
 EPOCHS=${EPOCHS:-150}
 EXTRA=${EXTRA:-}
+PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-25)
 RUN=${RUN:-wp1_si_${VARIANT}_seed${SEED}}
 ckpt="checkpoints/stochastic_navier_stokes/$RUN"
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
@@ -32,6 +33,7 @@ $PY scripts/train.py --config-name stochastic_navier_stokes \
   models=stochastic_interpolant \
   experiment_tracking.name="$RUN" \
   ++seed="$SEED" \
+  trainer.early_stopping.patience="$PATIENCE" \
   trainer.num_epochs="$EPOCHS" \
   scheduler.T_max="$EPOCHS" \
   hydra.run.dir="$WP1_ROOT/hydra/$RUN" \
