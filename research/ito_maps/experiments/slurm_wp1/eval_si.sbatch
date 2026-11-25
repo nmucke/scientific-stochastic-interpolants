@@ -5,7 +5,7 @@
 #  (2) Euler + exact integrated noise at N=1,2,4,8 against its own N=128:
 #      spread ratio, fair CRPS, shell spectra (validation, 20 traj x 5 origins).
 #
-#   RUN=wp1_si_coloured_matched_seed0 sbatch research/ito_maps/experiments/slurm_wp1/eval_si.sbatch
+#   RUN=wp1_si_coloured_matched_e150_seed0 sbatch research/ito_maps/experiments/slurm_wp1/eval_si.sbatch
 #SBATCH --job-name=wp1_eval
 #SBATCH --account=research-ceg-gse
 #SBATCH --partition=gpu-v100
@@ -17,8 +17,8 @@
 #SBATCH --output=/scratch/ntmucke/scientific-stochastic-interpolants/slurm_itomap/logs/%x_%j.out
 source research/ito_maps/experiments/slurm_wp1/common.sh
 : "${RUN:?set RUN}"
-ckpt="checkpoints/stochastic_navier_stokes/$RUN"
-out="$WP1_ROOT/eval/$RUN"
+ckpt="$CKPT_ROOT/$RUN"
+out="$OUT/eval/$RUN"
 HISTORIES=${HISTORIES:-"160:45 165:25 170:65 175:85"}
 GROUPS_=${GROUPS_:-16}
 REPLICAS=${REPLICAS:-8}

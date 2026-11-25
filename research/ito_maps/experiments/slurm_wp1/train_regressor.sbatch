@@ -19,20 +19,20 @@ PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-
 RUN=${RUN:-wp1_conditional_mean_seed${SEED}}
 # One trackio store per run: the shared SQLite file in $HOME broke under
 # concurrent jobs (2026-11-25).
-export TRACKIO_DIR=$WP1_ROOT/trackio/$RUN
-ckpt="checkpoints/stochastic_navier_stokes/$RUN"
+export TRACKIO_DIR=$OUT/trackio/$RUN
+ckpt="$CKPT_ROOT/$RUN"
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
 if [ -f "$ckpt/last.pth" ]; then resume=(trainer.resume_from="$ckpt/last.pth"); fi
 echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short HEAD)"
-$PY scripts/train.py --config-name stochastic_navier_stokes \
+$PY scripts/train.py --config-name "$CONFIG" \
   models=conditional_mean \
   experiment_tracking.name="$RUN" \
   ++seed="$SEED" \
   trainer.early_stopping.patience="$PATIENCE" \
   trainer.num_epochs="$EPOCHS" \
   scheduler.T_max="$EPOCHS" \
-  hydra.run.dir="$WP1_ROOT/hydra/$RUN" \
+  hydra.run.dir="$OUT/hydra/$RUN" \
   "${resume[@]}" $EXTRA
 date '+%F %T' > "$ckpt/DONE"
 echo "$(date '+%F %T') done $RUN"

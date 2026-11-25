@@ -16,19 +16,21 @@ set -euo pipefail
 D=research/ito_maps/experiments/slurm_wp1
 export WP1_ROOT=/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/wp1_smoke_${SLURM_JOB_ID}
 TAG=wp1_smoke_${SLURM_JOB_ID}
-TINY="+trainer.max_train_batches=10 +trainer.max_val_batches=2"
+TINY="++trainer.max_train_batches=10 ++trainer.max_val_batches=2"
+export CONFIG=${CONFIG:-stochastic_navier_stokes_64}
+CK=checkpoints/$CONFIG
 stamp() { echo "=== $(date '+%F %T') $*"; }
 
 stamp spectrum
 MODE=increment NAME=increment_smoke MAX_BATCHES=4 bash $D/estimate_spectrum.sbatch
-export SPECTRUM=$WP1_ROOT/spectra/increment_smoke.npz
+export SPECTRUM=$WP1_ROOT/$CONFIG/spectra/increment_smoke.npz
 
 for variant in white_t2 coloured_t coloured_matched; do
   stamp train $variant
   VARIANT=$variant RUN=${TAG}_$variant EPOCHS=1 EXTRA="$TINY" bash $D/train_si.sbatch
 done
 stamp resume coloured_matched to 2 epochs
-rm checkpoints/stochastic_navier_stokes/${TAG}_coloured_matched/DONE
+rm $CK/${TAG}_coloured_matched/DONE
 VARIANT=coloured_matched RUN=${TAG}_coloured_matched EPOCHS=2 EXTRA="$TINY" bash $D/train_si.sbatch
 
 stamp eval coloured_matched
@@ -39,7 +41,7 @@ RUN=${TAG}_coloured_matched HISTORIES="160:45" GROUPS_=2 REPLICAS=2 TEACHER_STEP
 stamp regressor
 RUN=${TAG}_regressor EPOCHS=1 EXTRA="$TINY" bash $D/train_regressor.sbatch
 stamp residual spectrum
-MODE=residuals REGRESSOR=checkpoints/stochastic_navier_stokes/${TAG}_regressor NAME=residuals_smoke \
+MODE=residuals REGRESSOR=$CK/${TAG}_regressor NAME=residuals_smoke \
   MAX_BATCHES=2 bash $D/estimate_spectrum.sbatch
 stamp done
-ls -la $WP1_ROOT $WP1_ROOT/spectra checkpoints/stochastic_navier_stokes/${TAG}_*
+ls -la $WP1_ROOT/$CONFIG $WP1_ROOT/$CONFIG/spectra $CK/${TAG}_*

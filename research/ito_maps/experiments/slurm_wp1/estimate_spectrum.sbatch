@@ -1,9 +1,9 @@
 #!/bin/bash
 # Coloured-driver spectrum from the dataset config (WP1).
 #   MODE=increment KAPPA=1 sbatch .../estimate_spectrum.sbatch            (first pass, upper bound)
-#   MODE=residuals REGRESSOR=checkpoints/stochastic_navier_stokes/wp1_conditional_mean_seed0 sbatch ...
+#   MODE=residuals REGRESSOR=checkpoints/stochastic_navier_stokes_64/wp1_conditional_mean_seed0 sbatch ...
 #   MODE=power INPUT=$PHASE0/arrays/d1_spectra_fft2.npz KEY=anomaly_si128_exact sbatch ...
-# NAME sets the output file $WP1_ROOT/spectra/<NAME>.npz.
+# NAME sets the output file $WP1_ROOT/$CONFIG/spectra/<NAME>.npz.
 #SBATCH --job-name=wp1_spectrum
 #SBATCH --account=research-ceg-gse
 #SBATCH --partition=gpu-a100-small
@@ -17,7 +17,7 @@ source research/ito_maps/experiments/slurm_wp1/common.sh
 MODE=${MODE:-increment}
 KAPPA=${KAPPA:-1}
 NAME=${NAME:-${MODE}_kappa${KAPPA}}
-args=(--config-name stochastic_navier_stokes --mode "$MODE" --kappa "$KAPPA"
+args=(--config-name "$CONFIG" --mode "$MODE" --kappa "$KAPPA"
       --output "$SPECTRA/$NAME.npz" ${ZERO_MEAN:+--zero-mean} ${MAX_BATCHES:+--max-batches $MAX_BATCHES})
 case "$MODE" in
   residuals) args+=(--regressor-dir "${REGRESSOR:?set REGRESSOR}") ;;

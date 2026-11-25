@@ -1,9 +1,9 @@
 #!/bin/bash
-# WP1 step 1: retrain the SI drift (FollmerStochasticInterpolant, backbone
-# 16/32/64/128 of config/stochastic_navier_stokes.yaml) on one process.
+# WP1 step 1: retrain the SI drift (FollmerStochasticInterpolant, backbone of
+# config/$CONFIG.yaml, default stochastic_navier_stokes_64) on one process.
 # Resumable: continues from last.pth; writes DONE on success.
 #
-#   VARIANT=coloured_matched SPECTRUM=$WP1_ROOT/spectra/<file>.npz \
+#   VARIANT=coloured_matched SPECTRUM=$WP1_ROOT/$CONFIG/spectra/<file>.npz \
 #     sbatch research/ito_maps/experiments/slurm_wp1/train_si.sbatch
 #
 # Runs on V100 with .venv_cu126 (common.sh); the shared .venv has no sm_70 kernels.
@@ -22,24 +22,24 @@ SEED=${SEED:-0}
 EPOCHS=${EPOCHS:-150}
 EXTRA=${EXTRA:-}
 PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-25)
-RUN=${RUN:-wp1_si_${VARIANT}_seed${SEED}}
+RUN=${RUN:-wp1_si_${VARIANT}_e${EPOCHS}_seed${SEED}}
 # One trackio store per run: the shared SQLite file in $HOME broke under
 # concurrent jobs (2026-11-25).
-export TRACKIO_DIR=$WP1_ROOT/trackio/$RUN
-ckpt="checkpoints/stochastic_navier_stokes/$RUN"
+export TRACKIO_DIR=$OUT/trackio/$RUN
+ckpt="$CKPT_ROOT/$RUN"
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
 if [ -f "$ckpt/last.pth" ]; then resume=(trainer.resume_from="$ckpt/last.pth"); fi
 echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short HEAD), resume=${#resume[@]}"
 # shellcheck disable=SC2046
-$PY scripts/train.py --config-name stochastic_navier_stokes \
+$PY scripts/train.py --config-name "$CONFIG" \
   models=stochastic_interpolant \
   experiment_tracking.name="$RUN" \
   ++seed="$SEED" \
   trainer.early_stopping.patience="$PATIENCE" \
   trainer.num_epochs="$EPOCHS" \
   scheduler.T_max="$EPOCHS" \
-  hydra.run.dir="$WP1_ROOT/hydra/$RUN" \
+  hydra.run.dir="$OUT/hydra/$RUN" \
   $(variant_overrides "$VARIANT") \
   "${resume[@]}" $EXTRA
 date '+%F %T' > "$ckpt/DONE"
