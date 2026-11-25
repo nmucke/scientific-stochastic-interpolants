@@ -23,6 +23,9 @@ EPOCHS=${EPOCHS:-150}
 EXTRA=${EXTRA:-}
 PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-25)
 RUN=${RUN:-wp1_si_${VARIANT}_seed${SEED}}
+# One trackio store per run: the shared SQLite file in $HOME broke under
+# concurrent jobs (2026-11-25).
+export TRACKIO_DIR=$WP1_ROOT/trackio/$RUN
 ckpt="checkpoints/stochastic_navier_stokes/$RUN"
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
