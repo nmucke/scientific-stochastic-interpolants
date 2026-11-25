@@ -34,6 +34,9 @@ cd "$SLURM_SUBMIT_DIR"
 export PYTHONPATH="$PWD/src"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 ckpt="checkpoints/stochastic_navier_stokes/$RUN"
+# One trackio store per run: the shared SQLite file in $HOME broke under
+# concurrent jobs (2026-11-25).
+export TRACKIO_DIR=/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/baselines/trackio/$RUN
 if [ -f "$ckpt/DONE" ]; then echo "$RUN already done"; exit 0; fi
 resume=()
 if [ -f "$ckpt/last.pth" ]; then resume=(trainer.resume_from="$ckpt/last.pth"); fi
