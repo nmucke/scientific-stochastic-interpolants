@@ -290,8 +290,11 @@ class Trainer:
         self.model.load_state_dict(state["model"])
         self.optimizer.load_state_dict(state["optimizer"])
         self.scheduler.load_state_dict(state["scheduler"])
+        # Progress (best loss, counter) is restored; the configured patience
+        # wins, so it can be changed between resumed jobs.
         for key, value in state["early_stopping"].items():
-            setattr(self.early_stopping, key, value)
+            if key != "patience":
+                setattr(self.early_stopping, key, value)
         if state["gradient_clipper"] is not None and self.gradient_clipper is not None:
             vars(self.gradient_clipper).update(state["gradient_clipper"])
         self.full_precision = state["full_precision"]

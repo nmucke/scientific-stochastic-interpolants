@@ -25,6 +25,7 @@ MAX_BATCHES=${MAX_BATCHES:-1000}
 DIAG=${DIAG:-10}
 WARM=${WARM:-10}
 EXTRA=${EXTRA:-}
+PATIENCE=${PATIENCE:-20}  # early-stopping patience (epochs), all runs (2026-11-25)
 # torch 2.9.1+cu126 venv: runs on V100 (sm_70) and A100; the shared .venv
 # (torch 2.15+cu132) has no sm_70 kernels.
 PY=${PY:-/scratch/ntmucke/scientific-stochastic-interpolants/.venv_cu126/bin/python}
@@ -46,6 +47,7 @@ echo "$(date '+%F %T') start $RUN on $(hostname), commit $(git rev-parse --short
   trainer.off_diagonal=progressive_self_distillation \
   experiment_tracking.name="$RUN" \
   seed="$SEED" \
+  trainer.early_stopping.patience="$PATIENCE" \
   trainer.num_epochs="$EPOCHS" \
   scheduler.T_max="$EPOCHS" \
   trainer.diagonal_epochs="$DIAG" \

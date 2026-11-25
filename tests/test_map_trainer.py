@@ -54,7 +54,7 @@ def trainer(tmp_path, stochastic, value=0.4, **kwargs):
         val_dataloader=[batch()],
         optimizer=torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9),
         gradient_clipper=None,
-        early_stopping=EarlyStopping(patience=3),
+        early_stopping=kwargs.pop("early_stopping", EarlyStopping(patience=3)),
         device="cpu",
         checkpoint_dir=str(tmp_path),
         warmup_epochs=0,
@@ -296,3 +296,18 @@ def test_resume_restores_ema_and_matches_uninterrupted_training(tmp_path):
     ):
         torch.testing.assert_close(a.map_model.value, b.map_model.value, rtol=0, atol=0)
     assert uninterrupted.history == resumed.history
+
+
+def test_resume_keeps_configured_patience_and_restores_progress(tmp_path):
+    first = trainer(tmp_path / "first", True, num_epochs=1)
+    first.train()
+    resumed = trainer(
+        tmp_path / "resume",
+        True,
+        early_stopping=EarlyStopping(patience=7),
+        resume_from=tmp_path / "first" / "last.pth",
+    )
+    resumed.load_checkpoint(resumed.resume_from)
+    assert resumed.early_stopping.patience == 7
+    assert resumed.early_stopping.best_loss == first.early_stopping.best_loss
+    assert resumed.early_stopping.counter == first.early_stopping.counter
