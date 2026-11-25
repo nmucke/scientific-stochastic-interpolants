@@ -7,9 +7,9 @@ Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). P
 | Unit | Branch / worktree (`/scratch/ntmucke/scientific-stochastic-interpolants/`) | State |
 |---|---|---|
 | 64×64 dataset + config (development data from 2026-11-25) | `feature/ns-64-dataset` / `wt_ns64` (eae7a18, pushed) | built: `data/stochastic_navier_stokes_64/`, 7 tests pass; UNet [16,32,64], 4.33M params; MIG smoke ~4 it/s for maps (128: ~1.1) |
-| Baseline maps on 64 (Itô PSD local K=4, flow PSD; seeds 0–2; dropout 0; patience 20) | `research/itomap-baselines` / `wt_itomap_baselines` (30077c4) | V100: Itô 1471390/92/94, flow 1471391/93/95 (seeds 0/1/2) |
-| Phase 0 diagnostics on 64 | `research/itomap-phase0` / `wt_itomap_phase0` | agent: stage 1 (budget closure, D1 increment spectrum) now; SI and map stages when the checkpoints exist. 128 results kept in `results/phase0/` |
-| WP1 step 1 on 64 (regressor, spectrum, SI white_t2 / coloured_t / coloured_matched, 150 epochs) | `research/itomap-core` / `wt_itomap_core` | agent: launchers to 64, smoke, submit |
+| Baseline maps on 64 (Itô PSD local K=4, flow PSD; seeds 0–2; dropout 0; patience 20) | `research/itomap-baselines` / `wt_itomap_baselines` (30077c4) | V100 pending (no free nodes, fair-share 0.0013): Itô 1471390/92/94, flow 1471391/93/95 (seeds 0/1/2), limits cut to 24 h; continuations 1473422–27 |
+| Phase 0 diagnostics on 64 | `research/itomap-phase0` / `wt_itomap_phase0` (e3767e1) | code config-driven for 64; stage 1 (tests before/after, 64 budget, truncated-128 budget, D1 increments) = 1473403 (MIG, queued). Stage 2 (SI) / 3 (maps) ready in `launch_64.sh`. Analytic: the 128 residual-std excess (1.42×) is a missing second-order noise term; with it 1.02 (enstrophy), 1.06 (energy) |
+| WP1 step 1 on 64 (regressor, spectrum, SI white_t2 / coloured_t / coloured_matched, 150 epochs) | `research/itomap-core` / `wt_itomap_core` | agent: smoke 1473323 (MIG) → regressor 1473325 → spectrum 1473326 → SI 1473327–29 → eval 1473330–32 (V100) |
 | 128×128 runs | — | cancelled 2026-11-25 (user); partial checkpoints kept, not used |
 
 - Data on DelftBlue: `data.npz` only; no 256² companion (does not exist). No earlier Itô/flow-map checkpoints or archived results here, hence the baseline retraining.
