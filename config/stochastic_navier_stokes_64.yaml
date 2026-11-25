@@ -1,0 +1,10 @@
+# Stochastic Navier–Stokes at 64x64 (spectral truncation of the 128x128 data),
+# for fast development. Same models and backbone as stochastic_navier_stokes;
+# checkpoints go to checkpoints/stochastic_navier_stokes_64/<run>.
+defaults:
+  - stochastic_navier_stokes
+  - override data: stochastic_navier_stokes_64
+  - _self_
+
+experiment_tracking:
+  project: stochastic_navier_stokes_64
