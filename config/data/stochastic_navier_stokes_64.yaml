@@ -8,10 +8,10 @@ preprocesser:
   _target_: scisi.preprocessing.preprocessor.Preprocesser
   base:
     mean: [0.0]
-    std: [3.09969]
+    std: [3.08599]
   target:
     mean: [0.0]
-    std: [3.09969]
+    std: [3.08599]
 
 train_data:
   _target_: torch.utils.data.DataLoader

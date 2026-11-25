@@ -1,6 +1,7 @@
 # Stochastic Navier–Stokes at 64x64 (spectral truncation of the 128x128 data),
-# for fast development. Same models and backbone as stochastic_navier_stokes;
-# checkpoints go to checkpoints/stochastic_navier_stokes_64/<run>.
+# for fast development. Same models as stochastic_navier_stokes, UNet one level
+# shallower (below).
+# Checkpoints go to checkpoints/stochastic_navier_stokes_64/<run>.
 defaults:
   - stochastic_navier_stokes
   - override data: stochastic_navier_stokes_64
@@ -8,3 +9,10 @@ defaults:
 
 experiment_tracking:
   project: stochastic_navier_stokes_64
+
+# One level less than at 128x128: two downsamplings put the bottleneck (with
+# attention on 2x2 patches) at 16x16 = 8x8 tokens, the same physical
+# resolution as the 128x128 network's bottleneck. About 3M parameters.
+backbone:
+  hidden_channels: [16, 32, 64]
+  attention_in_layers: [false, false, true]  # last layer is the bottleneck
