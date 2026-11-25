@@ -99,3 +99,9 @@ re-creations, not the original runs.
   the best-validation weights (`model.pth`, epoch 17). Selecting the epoch on
   validation and then measuring residuals on validation is mildly optimistic;
   noted, not corrected.
+- 2026-11-25 (user decision): WP1 SI runs cut from 300 to 150 epochs
+  (cosine T_max 150), same for white_t2, coloured_t and coloured_matched; run
+  names `wp1_si_<variant>_e150_seed0`. The white run was restarted from scratch
+  because resuming keeps the saved 300-epoch scheduler. The partial 300-epoch
+  run `wp1_si_white_t2_seed0` (64 epochs) is kept but not used. Early-stopping
+  patience: 50 epochs for SI and regressor, 30 for maps (repo defaults).
