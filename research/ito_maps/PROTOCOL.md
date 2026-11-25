@@ -105,3 +105,10 @@ re-creations, not the original runs.
   because resuming keeps the saved 300-epoch scheduler. The partial 300-epoch
   run `wp1_si_white_t2_seed0` (64 epochs) is kept but not used. Early-stopping
   patience: 50 epochs for SI and regressor, 30 for maps (repo defaults).
+- 2026-11-25 (user decision): early-stopping patience 20 epochs for all runs
+  (`PATIENCE` in the launchers). The SI runs restart from scratch with it. The
+  map baselines keep 30 until their first job ends and use 20 from the
+  continuation; the trainer now keeps the configured patience on resume
+  (best loss and counter are restored). Map early stopping only counts from
+  the first full-weight epoch (index diagonal_epochs + warmup_epochs − 1 = 19);
+  SI and regressor count from epoch 0.
