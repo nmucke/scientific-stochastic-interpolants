@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -138,16 +139,32 @@ def run_short(args, model, config):
     budgets = build_ns_budgets(args.budget_config, *val.shape[2:4])
     local = [i - NS_VALIDATION[0] for i in ids]
     E, N = args.ensemble, args.leads
-    gen = make_generator(args.device, args.seed)
     rows, raw = [], {}
     phys = lambda x: x.double().numpy() * std.reshape(1, -1, 1, 1) + mean.reshape(1, -1, 1, 1)
     out_dir = Path(args.arrays_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Resumable per case: each finished case stores its rows next to its
+    # ensemble array, with the settings that produced them, and is reused.
+    # Each case has its own seed, so a resumed run equals an uninterrupted one.
+    settings = {
+        "checkpoint_sha256": sha256(Path(args.checkpoint_dir) / "model.pth"),
+        "ensemble": E, "leads": N, "steps": args.steps, "si_noise": args.si_noise, "seed": args.seed,
+    }
     for li, tid in zip(local, ids):
         x = normalise(val[li : li + 1], mean, std)
         for origin in args.origins:
             if origin + N > val.shape[-1]:
                 raise ValueError("Not enough truth frames for the requested leads")
+            case_rows = out_dir / f"short_traj{tid:03d}_o{origin:03d}_rows.json"
+            if case_rows.exists() and (out_dir / f"short_traj{tid:03d}_o{origin:03d}.npy").exists():
+                stored = json.loads(case_rows.read_text())
+                if stored["settings"] != settings:
+                    raise ValueError(f"{case_rows} was produced with other settings")
+                rows.extend(stored["rows"])
+                print(f"{time.strftime('%T')} traj {tid} origin {origin} reused", flush=True)
+                continue
+            gen = make_generator(args.device, args.seed + 1000 * tid + origin)
+            first_row = len(rows)
             history = x[..., origin - L : origin].repeat(E, 1, 1, 1, 1)
             prev_members = phys(history[..., -1])
             truth_prev = val_phys[li, ..., origin - 1]
@@ -182,6 +199,10 @@ def run_short(args, model, config):
                 prev_members, truth_prev = y_p, truth
                 history = torch.cat([history[..., 1:], y.unsqueeze(-1).to(history.dtype)], -1)
             atomic_npy(out_dir / f"short_traj{tid:03d}_o{origin:03d}.npy", np.stack(ens_all, -1).astype(np.float32))
+            # Plain JSON with NaN allowed, so a reused row equals the computed one.
+            tmp = case_rows.with_name(case_rows.name + ".tmp")
+            tmp.write_text(json.dumps({"settings": settings, "rows": rows[first_row:]}, allow_nan=True))
+            os.replace(tmp, case_rows)
             print(f"{time.strftime('%T')} traj {tid} origin {origin} done", flush=True)
     keys = [k for k in rows[0] if k not in ("trajectory", "origin", "lead") and not k.endswith("_members")]
     by_lead = {}

@@ -7,7 +7,10 @@
 # Everything dataset-specific (data file, normalisation, grid, history length,
 # default gamma_multiplier) comes from the Hydra case config (data-only stages)
 # or the checkpoint's config.yaml, never from this file.
-# Stages skip when their output exists, so a resubmission continues. Smoke
+# Stages skip when their output exists, so a resubmission after a timeout
+# continues: d1 reuses its per-trajectory ensembles, short rollouts their
+# per-case rows, long runs restart.pt; map d2/d3/d4 (minutes each) restart
+# only the unfinished mode. Smoke
 # stages run first in the same job; with set -e a failing smoke stops the job.
 # Python: torch 2.9.1+cu126 venv (V100 and A100); the shared .venv has no sm_70 kernels.
 # Map stages (map_*) need MAP=<checkpoint dir> and MAP_TAG=<name>; BUDGETS (default "8 4 2 1").
@@ -36,13 +39,20 @@ case ${CASE:-ns128} in
     SI=${SI:-checkpoints/stochastic_navier_stokes/stochastic_interpolant_small}
     RES=research/ito_maps/results/phase0
     ARR=$SCRATCH/results_itomap/phase0
-    LONG_TRAJ=${LONG_TRAJ:-160 161 162 163} ;;
+    LONG_TRAJ=${LONG_TRAJ:-160 161 162 163}
+    E_SPEC=${E_SPEC:-16}; E_SCORE=${E_SCORE:-8}            # as run at 128 (2026-11-23)
+    SHORT_TRAJ=${SHORT_TRAJ:-4}; SHORT_ORIGINS=${SHORT_ORIGINS:-5 45 85} ;;
   ns64)
     CONFIG_NAME=stochastic_navier_stokes_64
     SI=${SI:-checkpoints/stochastic_navier_stokes_64/wp1_si_white_t2_e150_seed0}
     RES=research/ito_maps/results/phase0_64
     ARR=$SCRATCH/results_itomap/phase0_64
-    LONG_TRAJ=${LONG_TRAJ:-160 165 170 175} ;;  # PROTOCOL.md, evaluation cases
+    # PROTOCOL.md evaluation cases: E=32 for spectra and spread ratios, E=16
+    # for scores/calibration, short rollouts on all 20 validation trajectories
+    # x origins 5/25/45/65/85, long runs on 160/165/170/175 with E=8.
+    LONG_TRAJ=${LONG_TRAJ:-160 165 170 175}
+    E_SPEC=${E_SPEC:-32}; E_SCORE=${E_SCORE:-16}
+    SHORT_TRAJ=${SHORT_TRAJ:-20}; SHORT_ORIGINS=${SHORT_ORIGINS:-5 25 45 65 85} ;;
   *) echo "unknown CASE $CASE"; exit 2 ;;
 esac
 CACHE=$ARR/cache
@@ -93,7 +103,7 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
   d1)
     run $stage
     [ -f $RES/d1_uncertainty_spectrum.json ] || $PY $EXP/uncertainty_spectrum.py --checkpoint-dir $SI --data-cache $CACHE \
-      --ensemble 16 --steps 128 --si-noise em exact \
+      --ensemble $E_SPEC --steps 128 --si-noise em exact \
       --arrays-dir $ARR/d1 --output $RES/d1_uncertainty_spectrum.json ;;
   short_smoke)
     run $stage
@@ -102,7 +112,7 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
   short)
     run $stage
     [ -f $RES/d5_d6_short_si128_exact.json ] || $PY $EXP/rollout_diagnostics.py short --checkpoint-dir $SI --data-cache $CACHE \
-      --trajectories 4 --origins 5 45 85 --ensemble 8 --leads 10 --steps 128 --si-noise exact \
+      --trajectories $SHORT_TRAJ --origins $SHORT_ORIGINS --ensemble $E_SCORE --leads 10 --steps 128 --si-noise exact \
       --arrays-dir $ARR/short_si128_exact --output $RES/d5_d6_short_si128_exact.json ;;
   long_smoke)
     run $stage
@@ -144,21 +154,22 @@ for stage in ${STAGES:-cache d1_smoke short_smoke long_smoke budget d1}; do
       --trajectories 160 --origin 5 --raw-every 1 --raw-dense 5 --checkpoint-every 1 --num-threads 2
     $PY $EXP/rollout_diagnostics.py long --checkpoint-dir $M --run-dir $out/long --data-cache $CACHE --burn-in 1 --output $out/long.json ;;
   map_d2)
-    # D2: map spread spectrum vs the SI-128 exact-noise reference of stage d1 (same cases, E=16).
+    # D2: map spread spectrum vs the SI-128 exact-noise reference of stage d1 (same cases, E=E_SPEC).
     run $stage; need_map; mkdir -p $(mres)
-    [ -f $(mres)/d2.json ] || $PY $EXP/map_spread_diagnostics.py d2 --checkpoint-dir $MAP --data-cache $CACHE --ensemble 16 \
+    [ -f $ARR/d1/d1_spectra_fft2.npz ] || { echo "D2 needs the stage-2 D1 reference"; exit 2; }
+    [ -f $(mres)/d2.json ] || $PY $EXP/map_spread_diagnostics.py d2 --checkpoint-dir $MAP --data-cache $CACHE --ensemble $E_SPEC \
       --budgets $BUDGETS --reference $ARR/d1/d1_spectra_fft2.npz --reference-name anomaly_si128_exact \
       --arrays-dir $(marr)/d2 --output $(mres)/d2.json ;;
   map_d3|map_d4)
     # D3 zeroed path features / D4 noise-leak regression (Ito maps only).
     run $stage; need_map; mkdir -p $(mres); m=${stage#map_}
-    [ -f $(mres)/$m.json ] || $PY $EXP/map_spread_diagnostics.py $m --checkpoint-dir $MAP --data-cache $CACHE --ensemble 16 \
+    [ -f $(mres)/$m.json ] || $PY $EXP/map_spread_diagnostics.py $m --checkpoint-dir $MAP --data-cache $CACHE --ensemble $E_SPEC \
       --budgets $BUDGETS --arrays-dir $(marr)/$m --output $(mres)/$m.json ;;
   map_short)
     run $stage; need_map; mkdir -p $(mres)
     for b in $BUDGETS; do
       [ -f $(mres)/d5_d6_short_b$b.json ] || $PY $EXP/rollout_diagnostics.py short --checkpoint-dir $MAP --data-cache $CACHE \
-        --trajectories 4 --origins 5 45 85 --ensemble 8 --leads 10 --steps $b \
+        --trajectories $SHORT_TRAJ --origins $SHORT_ORIGINS --ensemble $E_SCORE --leads 10 --steps $b \
         --arrays-dir $(marr)/short_b$b --output $(mres)/d5_d6_short_b$b.json
     done ;;
   map_long)
