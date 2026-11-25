@@ -174,16 +174,89 @@ def test_zero_feature_path_removes_feature_spread_only():
 # -------------------------------------------------------------- NS budget
 
 
-def test_ns_budget_constants_and_operators():
-    budgets = ns_budget.build_ns_budgets(height=32, width=32)
+@pytest.mark.parametrize("n", [32, 64, 128])
+def test_ns_budget_constants_and_operators(n):
+    # Grid independent: same I and operators on every grid that keeps the forced modes.
+    budgets = ns_budget.build_ns_budgets(height=n, width=n)
     z, e = budgets["enstrophy"], budgets["energy"]
     assert z.injection_rate == pytest.approx(2.0)
     assert e.injection_rate == pytest.approx(0.5 * (1 / 36 + 1 / 49 + 1 / 50 + 1 / 128))
-    x = torch.arange(32, dtype=torch.float64) * 2 * math.pi / 32
-    u = torch.cos(6 * x)[:, None].expand(32, 32).reshape(1, 1, 32, 32)
+    x = torch.arange(n, dtype=torch.float64) * 2 * math.pi / n
+    u = torch.cos(6 * x)[:, None].expand(n, n).reshape(1, 1, n, n)
     torch.testing.assert_close(z.dissipation(u), (0.1 + 1e-3 * 36) * u)
     torch.testing.assert_close(e.quadratic(u), torch.tensor([0.25 / 36], dtype=torch.float64))
     torch.testing.assert_close(z.martingale_variance(u), torch.tensor([0.5 * 0.25], dtype=torch.float64))
+
+
+def test_second_order_noise_variance_matches_synthetic_increments():
+    # q of a pure forcing increment eta (A cos + B sin per forced mode,
+    # A, B ~ N(0, Delta)): mean Delta*I, variance = second_order_variance.
+    n, budgets = 32, ns_budget.build_ns_budgets(height=n, width=n)
+    delta = budgets["enstrophy"].step
+    g = torch.Generator().manual_seed(3)
+    x = torch.arange(n, dtype=torch.float64) * 2 * math.pi / n
+    X, Y = torch.meshgrid(x, x, indexing="ij")
+    eta = torch.zeros(20000, 1, n, n, dtype=torch.float64)
+    for a, b in budgets["_config"]["forcing_modes"]:
+        phase = a * X + b * Y
+        coef = math.sqrt(delta) * torch.randn(2, 20000, 1, 1, 1, generator=g, dtype=torch.float64)
+        eta += coef[0] * torch.cos(phase) + coef[1] * torch.sin(phase)
+    for name in ("enstrophy", "energy"):
+        q = budgets[name].quadratic(eta)
+        assert float(q.mean()) == pytest.approx(budgets[name].injection, rel=0.03)
+        assert float(q.var()) == pytest.approx(budgets[name].second_order_variance, rel=0.06)
+
+
+def _load_downsample():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[3] / "scripts/downsample_navier_stokes.py"
+    spec = importlib.util.spec_from_file_location("downsample_navier_stokes", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_lowpass_budget_equals_downsampled_budget():
+    # The 64x64 archive is a spectral truncation; budgeting the low-passed fine
+    # field must give the coarse field's budget (area-mean inner product).
+    down = _load_downsample()
+    rng = np.random.default_rng(7)
+    fine = rng.standard_normal((6, 1, 48, 48))
+    coarse = torch.from_numpy(down.spectral_downsample(fine, (24, 24)))
+    low = ns_budget.spectral_lowpass(torch.from_numpy(fine), 12)
+    b_fine = ns_budget.build_ns_budgets(height=48, width=48)
+    b_coarse = ns_budget.build_ns_budgets(height=24, width=24)
+    for name in ("enstrophy", "energy"):
+        for method in ("quadratic", "dissipation_rate", "martingale_variance"):
+            torch.testing.assert_close(
+                getattr(b_fine[name], method)(low), getattr(b_coarse[name], method)(coarse)
+            )
+    # The dropped modes carry dissipation: the low-passed field dissipates less.
+    full = b_fine["enstrophy"].dissipation_rate(torch.from_numpy(fine))
+    assert torch.all(b_fine["enstrophy"].dissipation_rate(low) < full)
+
+
+def test_cache_manifest_guards_dataset_mix(tmp_path):
+    from omegaconf import OmegaConf
+
+    cfg = lambda p: OmegaConf.create({"paths": [p], "files": ["data.npz"]})
+    common.check_cache_manifest(tmp_path, cfg("data/a"))  # no manifest: accepted, nothing written
+    assert not (tmp_path / "dataset.json").exists()
+    common.check_cache_manifest(tmp_path, cfg("data/a"), write=True)
+    common.check_cache_manifest(tmp_path, cfg("data/a"))
+    with pytest.raises(ValueError):
+        common.check_cache_manifest(tmp_path, cfg("data/b"))
+
+
+def test_run_config_from_case_name_64():
+    cfg = common.load_run_config(config_name="stochastic_navier_stokes_64")
+    assert list(cfg.test_data.paths) == ["data/stochastic_navier_stokes_64"]
+    assert int(cfg.len_field_history) == 5
+    assert list(cfg.preprocesser.target.std) == pytest.approx([3.08599])
+    assert common.config_gamma_multiplier(cfg) == pytest.approx(1.0)
+    with pytest.raises(ValueError):
+        common.load_run_config()
 
 
 CACHE = Path(
@@ -202,6 +275,33 @@ def test_archive_budget_closes_on_validation_split():
         stats = ns_budget.validate_archive(budgets[name], data)
         assert stats["stationary_balance_ratio"] == pytest.approx(1.0, abs=0.03)
         assert abs(stats["residual_mean_over_injection"]) < 0.03
+
+
+CACHE_64 = Path(
+    os.environ.get(
+        "PHASE0_DATA_CACHE_64",
+        "/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/phase0_64/cache",
+    )
+) / "data_traj160_180.npy"
+
+
+@pytest.mark.skipif(
+    not (CACHE.exists() and CACHE_64.exists()), reason="128 and 64 validation caches needed (data test)"
+)
+def test_archive_64_budget_equals_truncated_128_budget():
+    fine = torch.from_numpy(np.load(CACHE, mmap_mode="r")[:4].copy())
+    coarse = torch.from_numpy(np.load(CACHE_64, mmap_mode="r")[:4].copy())
+    assert coarse.shape[2:4] == (64, 64)
+    b_fine = ns_budget.build_ns_budgets(height=128, width=128)
+    b_coarse = ns_budget.build_ns_budgets(height=64, width=64)
+    for name in ("enstrophy", "energy"):
+        a = ns_budget.validate_archive(b_fine[name], fine, cutoff=32)
+        b = ns_budget.validate_archive(b_coarse[name], coarse)
+        for key in ("mean_quadratic", "stationary_dissipation_mean"):
+            assert b[key] == pytest.approx(a[key], rel=1e-4), (name, key)
+        assert b["residual_mean_over_injection"] == pytest.approx(
+            a["residual_mean_over_injection"], abs=1e-4
+        ), name
 
 
 # --------------------------------------------------------- rollout helpers

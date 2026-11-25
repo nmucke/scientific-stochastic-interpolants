@@ -14,6 +14,15 @@ training and validation splits (never test) and reports:
 * per-pair residual ``r = q_+(y) - q_-(c) - Delta I``: mean (and its
   trajectory-bootstrap 90% band) relative to ``Delta I``, its correlation with
   ``q(c)``, and its std against the predicted martingale std.
+
+The grid size comes from the data (``build_ns_budgets(..., H, W)``); the
+physical constants are grid independent. ``--spectral-cutoff N`` additionally
+applies the budget to the archive low-passed to ``|k_i| < N`` per axis (the
+truncation of ``scripts/downsample_navier_stokes.py``) and reports the share
+of the stationary dissipation and of ``q`` carried by the dropped modes: run on
+the 128x128 archive with ``N = 32`` this is the expected shortfall of the
+64x64 budget (a truncated field misses the dissipation of the dropped modes,
+while the forced modes and hence ``I`` are unchanged).
 """
 
 from __future__ import annotations
@@ -80,16 +89,46 @@ def build_ns_budgets(config=None, height=128, width=128, device="cpu"):
             step=float(cfg.snapshot_spacing),
             forcing_quadratic_variation=quadratic_variation,
         )
+        # Second-order (Ito) fluctuation, missing from martingale_variance:
+        # q(c + eta) contains 1/2 <eta, W eta> for the forcing increment eta.
+        # Per forced mode eta = A cos + B sin with A, B ~ N(0, s2 Delta),
+        # s2 = forcing_scale^2 * forcing_mode_variance, so the area-mean term
+        # is w_k (A^2 + B^2) / 4 with variance w_k^2 s2^2 Delta^2 / 4 (its mean
+        # is the Delta I already subtracted). Damping within the step is
+        # neglected (relative error ~ (drag + viscosity |k|^2) Delta ~ 7%).
+        s2 = cfg.forcing_scale**2 * cfg.forcing_mode_variance
+        budgets[name].second_order_variance = (
+            0.25 * s2**2 * float(cfg.snapshot_spacing) ** 2 * sum(w * w for w in w_forced)
+        )
     budgets["_config"] = OmegaConf.to_container(cfg)
     budgets["_scale"] = scale
     return budgets
 
 
-def frame_terms(budget, frames, chunk=512):
-    """``(q, <w,WDw>, q_+, q_-, qv)`` per frame for ``[N, 1, H, W]`` fields."""
+def spectral_lowpass(u, cutoff):
+    """Keep the Fourier modes ``|k_i| < cutoff`` on both axes of ``[..., H, W]``.
+
+    Same mode set as ``scripts/downsample_navier_stokes.spectral_downsample``
+    (the coarse Nyquist modes are dropped), but on the original grid, so the
+    area-mean budget of the result equals that of the downsampled field.
+    """
+    h, w = u.shape[-2:]
+    kx = torch.fft.fftfreq(h, 1.0 / h, dtype=torch.float64)[:, None]
+    ky = torch.fft.fftfreq(w, 1.0 / w, dtype=torch.float64)[None, :]
+    keep = ((kx.abs() < cutoff) & (ky.abs() < cutoff)).to(torch.float64)
+    return torch.fft.ifft2(torch.fft.fft2(u.double()) * keep).real.to(u.dtype)
+
+
+def frame_terms(budget, frames, chunk=512, cutoff=None):
+    """``(q, <w,WDw>, q_+, q_-, qv)`` per frame for ``[N, 1, H, W]`` fields.
+
+    ``cutoff``: low-pass each chunk first (:func:`spectral_lowpass`).
+    """
     out = {k: [] for k in ("q", "dis", "qp", "qm", "qv")}
     for i in range(0, len(frames), chunk):
         x = frames[i : i + chunk].double()
+        if cutoff is not None:
+            x = spectral_lowpass(x, cutoff)
         q, d = budget.quadratic(x), budget.dissipation_rate(x)
         out["q"].append(q)
         out["dis"].append(d)
@@ -106,11 +145,14 @@ def trajectory_bootstrap(per_traj, n_boot=2000, seed=0):
     return float(np.quantile(boot, 0.05)), float(np.quantile(boot, 0.95))
 
 
-def validate_archive(budget, trajectories):
-    """Budget statistics on consecutive frames of ``[n, 1, H, W, T]`` archive data."""
+def validate_archive(budget, trajectories, cutoff=None):
+    """Budget statistics on consecutive frames of ``[n, 1, H, W, T]`` archive data.
+
+    With ``cutoff`` the frames are first low-passed (:func:`spectral_lowpass`).
+    """
     n, T = trajectories.shape[0], trajectories.shape[-1]
     frames = trajectories.permute(0, 4, 1, 2, 3).reshape(n * T, *trajectories.shape[1:-1])
-    terms = {k: v.reshape(n, T) for k, v in frame_terms(budget, frames).items()}
+    terms = {k: v.reshape(n, T) for k, v in frame_terms(budget, frames, cutoff=cutoff).items()}
     inj = budget.injection
     r = terms["qp"][:, 1:] - terms["qm"][:, :-1] - inj
     rel = r / inj
@@ -133,6 +175,12 @@ def validate_archive(budget, trajectories):
         "residual_std": float(r.std()),
         "predicted_martingale_std": predicted_std,
         "residual_std_over_predicted": float(r.std() / predicted_std),
+        "predicted_std_with_second_order_term": float(
+            np.sqrt(predicted_std**2 + getattr(budget, "second_order_variance", np.nan))
+        ),
+        "residual_std_over_predicted_with_second_order_term": float(
+            r.std() / np.sqrt(predicted_std**2 + getattr(budget, "second_order_variance", np.nan))
+        ),
         "corr_residual_with_q_prev": float(np.corrcoef(r.ravel(), terms["q"][:, :-1].ravel())[0, 1]),
         "corr_residual_with_dissipation_prev": float(
             np.corrcoef(r.ravel(), terms["dis"][:, :-1].ravel())[0, 1]
@@ -140,22 +188,36 @@ def validate_archive(budget, trajectories):
     }
 
 
+def truncation_shares(full, truncated):
+    """Share of the full-archive stationary terms carried by the dropped modes."""
+    return {
+        "dissipation_share_dropped": 1.0
+        - truncated["stationary_dissipation_mean"] / full["stationary_dissipation_mean"],
+        "quadratic_share_dropped": 1.0 - truncated["mean_quadratic"] / full["mean_quadratic"],
+        "expected_balance_ratio_after_truncation": truncated["stationary_balance_ratio"],
+    }
+
+
 def main(argv=None):
-    from phase0_common import NS_TRAIN, NS_VALIDATION, atomic_json, load_trajectories
+    from phase0_common import NS_TRAIN, NS_VALIDATION, atomic_json, load_run_config, load_trajectories
 
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--checkpoint-dir", required=True, help="supplies the dataset config")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--checkpoint-dir", help="supplies the dataset config")
+    source.add_argument("--config-name", help="Hydra case supplying the dataset, e.g. stochastic_navier_stokes_64")
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
     p.add_argument("--data-cache")
     p.add_argument("--output", required=True)
+    p.add_argument("--spectral-cutoff", type=int, help="also budget the archive low-passed to |k_i| < N")
     p.add_argument("--max-trajectories", type=int, help="smoke tests only")
     args = p.parse_args(argv)
-    run_config = OmegaConf.load(Path(args.checkpoint_dir) / "config.yaml")
+    run_config = load_run_config(args.checkpoint_dir, args.config_name)
     result = {
         "diagnostic": "WP7 budget closure on the data archive (train and validation only)",
         "argv": sys.argv if argv is None else argv,
         "budget_config": OmegaConf.to_container(OmegaConf.load(args.config)),
         "derivation": "r = q_+(y) - q_-(c) - Delta*I, q_pm(x) = 1/2 <x, W(Id +- Delta D) x>, area-mean inner product, trapezoid rule",
+        "dataset": [str(Path(d) / f) for d, f in zip(run_config.test_data.paths, run_config.test_data.files)],
         "splits": {},
     }
     for split, ids in (("train", NS_TRAIN), ("validation", NS_VALIDATION)):
@@ -165,9 +227,16 @@ def main(argv=None):
         budgets = build_ns_budgets(args.config, *data.shape[2:4])
         result["splits"][split] = {
             "ids": [ids[0], hi],
+            "grid": list(data.shape[2:4]),
             **{name: validate_archive(budgets[name], data) for name in ("enstrophy", "energy")},
-            "seconds": time.time() - t0,
         }
+        if args.spectral_cutoff is not None:
+            entry = result["splits"][split]
+            entry["truncated"] = {"cutoff": args.spectral_cutoff, "rule": "|k_i| < cutoff per axis"}
+            for name in ("enstrophy", "energy"):
+                trunc = validate_archive(budgets[name], data, cutoff=args.spectral_cutoff)
+                entry["truncated"][name] = {**trunc, **truncation_shares(entry[name], trunc)}
+        result["splits"][split]["seconds"] = time.time() - t0
         print(split, {k: {kk: round(vv, 5) for kk, vv in v.items() if isinstance(vv, float)} for k, v in result["splits"][split].items() if isinstance(v, dict)}, flush=True)
     atomic_json(args.output, result)
 

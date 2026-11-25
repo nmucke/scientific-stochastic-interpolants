@@ -134,7 +134,11 @@ def main(argv=None):
     p.add_argument("--val-ids", nargs=2, type=int, default=list(NS_VALIDATION))
     p.add_argument("--origins", nargs="+", type=int, default=[5, 25, 45, 65, 85])
     p.add_argument("--ensemble", type=int, default=16)
-    p.add_argument("--high-pass-shell", type=int, default=32)
+    p.add_argument(
+        "--high-pass-shell",
+        type=int,
+        help="D4 high-pass threshold; default min(H, W) // 4 (32 at 128x128, 16 at 64x64)",
+    )
     p.add_argument("--seed", type=int, default=20261125)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--data-cache")
@@ -151,6 +155,8 @@ def main(argv=None):
     ids = list(range(*args.val_ids))
     val = load_trajectories(config, tuple(args.val_ids), args.data_cache)
     basis = FourierBasis(*val.shape[2:4])
+    if args.high_pass_shell is None:
+        args.high_pass_shell = min(basis.height, basis.width) // 4
     arrays = Path(args.arrays_dir)
     arrays.mkdir(parents=True, exist_ok=True)
     budgets = sorted(set(args.budgets), reverse=True)

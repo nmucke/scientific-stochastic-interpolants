@@ -43,8 +43,10 @@ from phase0_common import (
     atomic_json,
     atomic_npy,
     atomic_npz,
+    config_gamma_multiplier,
     describe_model,
     load_model,
+    load_run_config,
     load_trajectories,
     make_generator,
     normalise,
@@ -53,7 +55,7 @@ from phase0_common import (
     sha256,
 )
 
-REPORT_SHELLS = (1, 4, 7, 11, 16, 32, 48, 64)
+REPORT_SHELLS = (1, 4, 7, 11, 16, 24, 32, 48, 64)  # shells beyond the grid are skipped
 
 
 # ------------------------------------------------------------------ bases
@@ -264,7 +266,12 @@ def shell_table(ratio, q05, q95, shells=REPORT_SHELLS, channel=0):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("--checkpoint-dir", required=True, help="SI checkpoint; also supplies the dataset config and normalisation")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--checkpoint-dir", help="SI checkpoint; also supplies the dataset config and normalisation")
+    source.add_argument(
+        "--config-name",
+        help="data-only run (needs --no-ensemble): Hydra case supplying dataset, normalisation and gamma_multiplier",
+    )
     p.add_argument("--basis", default="fft2", choices=sorted(BASES))
     p.add_argument("--train-ids", nargs=2, type=int, default=list(NS_TRAIN))
     p.add_argument("--val-ids", nargs=2, type=int, default=list(NS_VALIDATION))
@@ -284,8 +291,21 @@ def main(argv=None):
     p.add_argument("--bootstrap", type=int, default=1000)
     args = p.parse_args(argv)
 
-    model, config = load_model(args.checkpoint_dir, args.device)
-    info = describe_model(model, config)
+    if args.checkpoint_dir is not None:
+        model, config = load_model(args.checkpoint_dir, args.device)
+        info = describe_model(model, config)
+        checkpoint = Path(args.checkpoint_dir) / "model.pth"
+    else:
+        if not args.no_ensemble:
+            raise ValueError("--config-name runs need --no-ensemble (no trained model)")
+        model, config = None, load_run_config(config_name=args.config_name)
+        info = {
+            "model_class": None,
+            "config_name": args.config_name,
+            "gamma_multiplier": config_gamma_multiplier(config),
+            "note": "no checkpoint: white level from the case config's SI interpolation",
+        }
+        checkpoint = None
     a = info["gamma_multiplier"]
     if a is None:
         raise ValueError("D1 needs a stochastic model with a gamma_multiplier")
@@ -306,8 +326,10 @@ def main(argv=None):
     result = {
         "diagnostic": "D1 uncertainty spectrum vs white driver",
         "argv": sys.argv if argv is None else argv,
-        "checkpoint": str(Path(args.checkpoint_dir) / "model.pth"),
-        "checkpoint_sha256": sha256(Path(args.checkpoint_dir) / "model.pth"),
+        "checkpoint": None if checkpoint is None else str(checkpoint),
+        "checkpoint_sha256": None if checkpoint is None else sha256(checkpoint),
+        "dataset": [str(Path(d) / f) for d, f in zip(config.test_data.paths, config.test_data.files)],
+        "grid": [basis.height, basis.width],
         "model": info,
         "white_driver_level_per_mode": white,
         "normalisation": {"mean": mean.tolist(), "std": std.tolist()},

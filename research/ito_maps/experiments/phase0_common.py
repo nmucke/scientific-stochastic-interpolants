@@ -37,9 +37,13 @@ from scisi.models.base_map_model import BaseMapModel
 from scisi.models.follmer_stochastic_interpolant import FollmerStochasticInterpolant
 
 # Validation split of the NS archive (whole trajectories). Test is 180-199 and
-# must not be used for anything in Phase 0.
+# must not be used for anything in Phase 0. The 64x64 archive
+# (config stochastic_navier_stokes_64) has the same splits.
 NS_TRAIN = (0, 160)
 NS_VALIDATION = (160, 180)
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CONFIG_DIR = REPO_ROOT / "config"
 
 
 def finite_or_none(value):
@@ -100,6 +104,33 @@ def load_model(checkpoint_dir, device="cpu"):
     return model.eval(), config
 
 
+def load_run_config(checkpoint_dir=None, config_name=None, overrides=()):
+    """Run config from a checkpoint (``config.yaml``) or a Hydra case name.
+
+    Data-only stages (cache, archive budget, D1 increments) need no trained
+    model: ``config_name`` (e.g. ``stochastic_navier_stokes_64``) composes
+    ``config/<name>.yaml`` exactly as training would, so the dataset,
+    normalisation, history length and default ``gamma_multiplier`` come from
+    the case file, never from a hard-coded path. Exactly one source is used.
+    """
+    if (checkpoint_dir is None) == (config_name is None):
+        raise ValueError("Give exactly one of checkpoint_dir and config_name")
+    if checkpoint_dir is not None:
+        return OmegaConf.load(Path(checkpoint_dir) / "config.yaml")
+    from hydra import compose, initialize_config_dir
+
+    with initialize_config_dir(config_dir=str(CONFIG_DIR), version_base=None):
+        config = compose(config_name=config_name, overrides=list(overrides))
+    return config
+
+
+def config_gamma_multiplier(config):
+    """``gamma_multiplier`` of a composed SI/Ito-map config (``None`` if absent)."""
+    interpolation = (config.get("model") or {}).get("interpolation") or {}
+    value = interpolation.get("gamma_multiplier") if hasattr(interpolation, "get") else None
+    return None if value is None else float(value)
+
+
 def describe_model(model, config):
     """Record what Phase 0 must state per checkpoint (HANDOVER section 3)."""
     interpolation = getattr(model, "interpolation", None)
@@ -155,6 +186,7 @@ def load_trajectories(config, ids, cache_dir=None):
     data_config.train_or_test = "test"
     cache = None
     if cache_dir is not None:
+        check_cache_manifest(cache_dir, data_config)
         files = "_".join(Path(f).stem for f in data_config.files)
         cache = Path(cache_dir) / f"{files}_traj{lo:03d}_{hi:03d}.npy"
         # Any cached range that covers [lo, hi) is sliced (memory-mapped).
@@ -170,6 +202,28 @@ def load_trajectories(config, ids, cache_dir=None):
     return data
 
 
+def dataset_identity(data_config):
+    return [str(Path(p) / f) for p, f in zip(data_config.paths, data_config.files)]
+
+
+def check_cache_manifest(cache_dir, data_config, write=False):
+    """Guard against mixing datasets in one cache directory.
+
+    Cache file names only carry the archive file stem (``data``), which is the
+    same for the 128x128 and 64x64 archives. ``build_cache`` writes
+    ``dataset.json``; a mismatch raises. Directories without a manifest
+    (the earlier 128x128 cache) are accepted unchanged.
+    """
+    manifest = Path(cache_dir) / "dataset.json"
+    ident = dataset_identity(data_config)
+    if manifest.exists():
+        stored = json.loads(manifest.read_text())["files"]
+        if stored != ident:
+            raise ValueError(f"Cache {cache_dir} holds {stored}, not {ident}")
+    elif write:
+        atomic_json(manifest, {"files": ident})
+
+
 def build_cache(config, ranges, cache_dir):
     """Read the dataset once and store each ``(lo, hi)`` range as ``.npy``."""
     lo, hi = min(r[0] for r in ranges), max(r[1] for r in ranges)
@@ -177,6 +231,7 @@ def build_cache(config, ranges, cache_dir):
     data_config.tajectories_ids = f"({lo}, {hi})"
     data_config.train_or_test = "test"
     files = "_".join(Path(f).stem for f in data_config.files)
+    check_cache_manifest(cache_dir, data_config, write=True)
     dataset = instantiate(data_config, preprocesser=None)
     for a, b in ranges:
         path = Path(cache_dir) / f"{files}_traj{a:03d}_{b:03d}.npy"
@@ -415,9 +470,11 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Cache train/validation trajectory ranges")
-    parser.add_argument("--checkpoint-dir", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--checkpoint-dir")
+    source.add_argument("--config-name", help="Hydra case, e.g. stochastic_navier_stokes_64")
     parser.add_argument("--cache-dir", required=True)
     args = parser.parse_args()
     Path(args.cache_dir).mkdir(parents=True, exist_ok=True)
-    cfg = OmegaConf.load(Path(args.checkpoint_dir) / "config.yaml")
+    cfg = load_run_config(args.checkpoint_dir, args.config_name)
     build_cache(cfg, [NS_TRAIN, NS_VALIDATION], args.cache_dir)
