@@ -1,0 +1,34 @@
+{
+  "argv": [
+    "research/ito_maps/experiments/estimate_noise_spectrum.py",
+    "--config-name",
+    "stochastic_navier_stokes_64",
+    "--mode",
+    "residuals",
+    "--kappa",
+    "1",
+    "--output",
+    "/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/wp1/stochastic_navier_stokes_64/spectra/residuals_kappa1.npz",
+    "--regressor-dir",
+    "checkpoints/stochastic_navier_stokes_64/wp1_conditional_mean_seed0"
+  ],
+  "config_name": "stochastic_navier_stokes_64",
+  "overrides": [],
+  "mode": "residuals",
+  "split": "val",
+  "num_samples": 1880,
+  "q1": 0.3333333333333333,
+  "kappa": 1.0,
+  "floor_relative_to_channel_max": 0.0001,
+  "smoothing_half_width": 1,
+  "zero_mean": false,
+  "grid_shape": [
+    64,
+    64
+  ],
+  "units": "normalised model coordinates; E|e_k|^2 of the orthonormal FFT",
+  "sigma_over_white_min_max": [
+    0.0004027690814786497,
+    269.9615439371052
+  ]
+}
