@@ -1,6 +1,11 @@
 """Run identical held-out forecast cases for solver and learned-map checkpoints.
 
-Example: .venv/bin/python research/ito_maps/experiments/compare.py --split validation
+Example:
+    python research/ito_maps/experiments/compare.py --split validation \
+        --checkpoints itomap_base_ito_psd_local_seed0 --steps 1 2 4 8
+Defaults follow research/ito_maps/PROTOCOL.md (20 trajectories, origins
+5/25/45/65/85, E = 16). The data and preprocessing come from the first
+checkpoint; every other checkpoint must match them.
 All outputs include raw per-trajectory scores. Run validation before test; do not
 select hyperparameters on these test results.
 """
@@ -22,21 +27,23 @@ from scisi.bin.main_map_model_train import load_teacher
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", choices=["validation", "test"], default="validation")
+    parser.add_argument("--project", default="stochastic_navier_stokes_64")
     parser.add_argument(
-        "--checkpoints", nargs="+", default=["stochastic_interpolant", "flow_matching"]
+        "--checkpoints", nargs="+", required=True
     )
-    parser.add_argument("--steps", nargs="+", type=int, default=[1, 2, 4, 8, 16, 64])
-    parser.add_argument("--origins", nargs="+", type=int, default=[5, 45, 85])
-    parser.add_argument("--trajectories", type=int, default=4)
+    parser.add_argument("--steps", nargs="+", type=int, default=[1, 2, 4, 8])
+    parser.add_argument("--origins", nargs="+", type=int, default=[5, 25, 45, 65, 85])
+    parser.add_argument("--trajectories", type=int, default=20)
     parser.add_argument("--ensemble", type=int, default=16)
     parser.add_argument("--horizon", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20261007)
     parser.add_argument("--output", default="research/ito_maps/results/development")
     args = parser.parse_args()
     torch.set_num_threads(4)
-    config = OmegaConf.load(
-        "checkpoints/stochastic_navier_stokes/stochastic_interpolant/config.yaml"
-    )
+    def checkpoint_path(name):
+        return Path(name) if "/" in name else Path("checkpoints") / args.project / name
+
+    config = OmegaConf.load(checkpoint_path(args.checkpoints[0]) / "config.yaml")
     preprocessor = instantiate(config.preprocesser)
     data_config = config.test_data.copy()
     offset = 160 if args.split == "validation" else 180
@@ -51,17 +58,15 @@ def main():
                 "split": args.split,
                 "offset": offset,
                 "seed": args.seed,
+                "project": args.project,
             },
             indent=2,
         )
     )
     for name in args.checkpoints:
-        path = (
-            Path(name)
-            if "/" in name
-            else Path("checkpoints/stochastic_navier_stokes") / name
-        )
-        model, cfg = load_teacher(path, "cuda")
+        path = checkpoint_path(name)
+        model = load_teacher(str(path), "cuda")
+        cfg = OmegaConf.load(path / "config.yaml")
         if int(cfg.len_field_history) != int(config.len_field_history):
             raise ValueError(f"History length differs for checkpoint {path}")
         if OmegaConf.to_container(
