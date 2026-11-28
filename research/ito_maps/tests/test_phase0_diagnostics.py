@@ -191,7 +191,8 @@ def test_ns_budget_constants_and_operators(n):
 def test_second_order_noise_variance_matches_synthetic_increments():
     # q of a pure forcing increment eta (A cos + B sin per forced mode,
     # A, B ~ N(0, Delta)): mean Delta*I, variance = second_order_variance.
-    n, budgets = 32, ns_budget.build_ns_budgets(height=n, width=n)
+    n = 32
+    budgets = ns_budget.build_ns_budgets(height=n, width=n)
     delta = budgets["enstrophy"].step
     g = torch.Generator().manual_seed(3)
     x = torch.arange(n, dtype=torch.float64) * 2 * math.pi / n

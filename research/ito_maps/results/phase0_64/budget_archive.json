@@ -1,0 +1,158 @@
+{
+  "diagnostic": "WP7 budget closure on the data archive (train and validation only)",
+  "argv": [
+    "research/ito_maps/experiments/ns_budget.py",
+    "--config-name",
+    "stochastic_navier_stokes_64",
+    "--data-cache",
+    "/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/phase0_64/cache",
+    "--output",
+    "research/ito_maps/results/phase0_64/budget_archive.json"
+  ],
+  "budget_config": {
+    "viscosity": 0.001,
+    "drag": 0.1,
+    "forcing_scale": 1.0,
+    "snapshot_spacing": 0.5,
+    "domain_length": 6.283185307179586,
+    "forcing_modes": [
+      [
+        6,
+        0
+      ],
+      [
+        7,
+        0
+      ],
+      [
+        5,
+        5
+      ],
+      [
+        8,
+        8
+      ]
+    ],
+    "forcing_mode_variance": 1.0
+  },
+  "derivation": "r = q_+(y) - q_-(c) - Delta*I, q_pm(x) = 1/2 <x, W(Id +- Delta D) x>, area-mean inner product, trapezoid rule",
+  "dataset": [
+    "data/stochastic_navier_stokes_64/data.npz"
+  ],
+  "splits": {
+    "train": {
+      "ids": [
+        0,
+        160
+      ],
+      "grid": [
+        64,
+        64
+      ],
+      "enstrophy": {
+        "num_trajectories": 160,
+        "num_pairs": 15840,
+        "mean_quadratic": 4.761657167072828,
+        "stationary_dissipation_mean": 1.8461191082234352,
+        "injection_rate": 2.0,
+        "stationary_balance_ratio": 0.9230595541117176,
+        "injection_per_step": 1.0,
+        "residual_mean": -0.07833736115859052,
+        "residual_mean_over_injection": -0.07833736115859052,
+        "residual_mean_over_injection_q05_q95": [
+          -0.08575409328691543,
+          -0.07095368040164056
+        ],
+        "residual_mean_over_injection_trajectory_se": 0.004549626765854578,
+        "residual_std": 0.7235539586495388,
+        "predicted_martingale_std": 0.5100692751570755,
+        "residual_std_over_predicted": 1.4185405667234532,
+        "predicted_std_with_second_order_term": 0.7142623225813219,
+        "residual_std_over_predicted_with_second_order_term": 1.013008716509975,
+        "corr_residual_with_q_prev": -0.037179511532284326,
+        "corr_residual_with_dissipation_prev": -0.040365361519846835
+      },
+      "energy": {
+        "num_trajectories": 160,
+        "num_pairs": 15840,
+        "mean_quadratic": 0.14180176107942807,
+        "stationary_dissipation_mean": 0.03788366655003113,
+        "injection_rate": 0.03799922052154195,
+        "stationary_balance_ratio": 0.996959043634979,
+        "injection_per_step": 0.018999610260770974,
+        "residual_mean": -8.207506849592902e-05,
+        "residual_mean_over_injection": -0.00431982905804082,
+        "residual_mean_over_injection_q05_q95": [
+          -0.013434044209578612,
+          0.004930661762069189
+        ],
+        "residual_mean_over_injection_trajectory_se": 0.005768060519253193,
+        "residual_std": 0.016050129812303658,
+        "predicted_martingale_std": 0.011265804698508469,
+        "residual_std_over_predicted": 1.4246767312084336,
+        "predicted_std_with_second_order_term": 0.015165394221845922,
+        "residual_std_over_predicted_with_second_order_term": 1.0583391092585819,
+        "corr_residual_with_q_prev": -0.005360253716143757,
+        "corr_residual_with_dissipation_prev": -0.00456181096626099
+      },
+      "seconds": 31.273967742919922
+    },
+    "validation": {
+      "ids": [
+        160,
+        180
+      ],
+      "grid": [
+        64,
+        64
+      ],
+      "enstrophy": {
+        "num_trajectories": 20,
+        "num_pairs": 1980,
+        "mean_quadratic": 4.7256198473047135,
+        "stationary_dissipation_mean": 1.8316297265201997,
+        "injection_rate": 2.0,
+        "stationary_balance_ratio": 0.9158148632600999,
+        "injection_per_step": 1.0,
+        "residual_mean": -0.08298783417571924,
+        "residual_mean_over_injection": -0.08298783417571924,
+        "residual_mean_over_injection_q05_q95": [
+          -0.10628558401044838,
+          -0.06011863061873139
+        ],
+        "residual_mean_over_injection_trajectory_se": 0.014873163041856244,
+        "residual_std": 0.695821718887532,
+        "predicted_martingale_std": 0.5065202688361966,
+        "residual_std_over_predicted": 1.3737292694846797,
+        "predicted_std_with_second_order_term": 0.7117322409037635,
+        "residual_std_over_predicted_with_second_order_term": 0.9776453543877284,
+        "corr_residual_with_q_prev": -0.058729970708435074,
+        "corr_residual_with_dissipation_prev": -0.059253772398653315
+      },
+      "energy": {
+        "num_trajectories": 20,
+        "num_pairs": 1980,
+        "mean_quadratic": 0.14169486662738512,
+        "stationary_dissipation_mean": 0.0377902130200863,
+        "injection_rate": 0.03799922052154195,
+        "stationary_balance_ratio": 0.9944996897676581,
+        "injection_per_step": 0.018999610260770974,
+        "residual_mean": -0.00017095232665897468,
+        "residual_mean_over_injection": -0.008997675442424458,
+        "residual_mean_over_injection_q05_q95": [
+          -0.04040714422821748,
+          0.02207042588816402
+        ],
+        "residual_mean_over_injection_trajectory_se": 0.020345455850712704,
+        "residual_std": 0.015365247664580035,
+        "predicted_martingale_std": 0.01119435659734682,
+        "residual_std_over_predicted": 1.3725887263785896,
+        "predicted_std_with_second_order_term": 0.015112393788795489,
+        "residual_std_over_predicted_with_second_order_term": 1.0167315568478645,
+        "corr_residual_with_q_prev": -0.007971906910805704,
+        "corr_residual_with_dissipation_prev": -0.009286076596035092
+      },
+      "seconds": 2.5219438076019287
+    }
+  }
+}
