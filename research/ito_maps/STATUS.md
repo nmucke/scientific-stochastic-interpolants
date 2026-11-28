@@ -9,12 +9,12 @@ Spec: `notes/ideas/HANDOVER.md` (branch `research/ito-map-improvement-ideas`). P
 | 64×64 dataset + config (development data from 2026-11-25) | `feature/ns-64-dataset` / `wt_ns64` (eae7a18, pushed) | built: `data/stochastic_navier_stokes_64/`, 7 tests pass; UNet [16,32,64], 4.33M params; MIG smoke ~4 it/s for maps (128: ~1.1) |
 | Baseline maps on 64 (Itô PSD local K=4, flow PSD; seeds 0–2; dropout 0; patience 20) | `research/itomap-baselines` / `wt_itomap_baselines` (0c7e216) | **trained** 2026-11-26/27: 70/70 epochs each, ~16.5 h on V100; best val Itô 0.098/0.106/0.102, flow 0.144/0.145/0.140, still improving at the end. Validation eval (maps 1/2/4/8, white SI 16/64/128) = 1496188 |
 | Phase 0 diagnostics on 64 | `research/itomap-phase0` / `wt_itomap_phase0` (93e42ee) | stage 1 done (1473403). Agent reporting stage 1 and submitting stage 2 (SI white) and stage 3 (six maps) |
-| WP1 step 1 on 64 (regressor, spectrum, SI white_t2 / coloured_t / coloured_matched, 150 epochs) | `research/itomap-core` / `wt_itomap_core` | **trained + evaluated** (1473325–32). White 150/150 (best 0.0731); coloured_t early-stopped at 109 (best@88), coloured_matched at 112 (best@91), LR not annealed; regressor stopped at 37 (best@16). Agent compiling the step-1 report and falsifier verdict |
+| WP1 step 1 on 64 (regressor, spectrum, SI white_t2 / coloured_t / coloured_matched, 150 epochs) | `research/itomap-core` / `wt_itomap_core` (f01975a) | **done, falsifier fired** (seed 0): K=4 omitted variance white 2.6%, coloured_t 17.9%, matched 22.8%; few-step Euler still underdispersed (spread ratio 0.45–0.68 at N=2–8); coloured N=128 teachers worse than white (CRPS +0.02–0.03, spread/skill 0.75 vs 0.98). Report `results/wp1_stochastic_navier_stokes_64/wp1_step1_report_seed0.json`. **Waiting for review** |
 | 128×128 runs | — | cancelled 2026-11-25 (user); partial checkpoints kept, not used |
 
 - Data on DelftBlue: `data.npz` only; no 256² companion (does not exist). No earlier Itô/flow-map checkpoints or archived results here, hence the baseline retraining.
 - Large outputs: `/scratch/ntmucke/scientific-stochastic-interpolants/results_itomap/`; job logs in `slurm_itomap/logs/`.
-- Waiting for review: nothing yet.
+- Waiting for review: WP1 step 1 (falsifier fired; decision on controls pending).
 
 ## Earlier status (2026-10-08)
 
